@@ -587,6 +587,10 @@ class RealNativeArchiveSmoke(unittest.TestCase):
     def test_real_archive_round_trip_through_bridge(self):
         import os
         import importlib
+        from server import _paths
+
+        if _paths.GA_ROOT is None:
+            self.skipTest("requires configured GA_ROOT")
 
         # Stubbed tests above leave a bare ``frontends`` namespace placeholder in
         # ``sys.modules`` (a plain ModuleType without ``__path__``).  Ensure the

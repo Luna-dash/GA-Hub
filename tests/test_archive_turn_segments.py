@@ -2,6 +2,7 @@
 import hashlib
 
 import pytest
+from server import _paths
 from server.services.archive_messages import _items_from_messages, read_archive_messages
 from server.schemas import ConversationDetailResp, SessionMessagesResp
 
@@ -41,6 +42,7 @@ def test_models_keep_valid_turns_but_not_user_turns():
     assert page.model_dump()["items"][1]["turn_segs"] == ["step", "answer"]
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_native_paging_keeps_turns_and_identity(tmp_path):
     import json
     path = tmp_path / "archive.txt"

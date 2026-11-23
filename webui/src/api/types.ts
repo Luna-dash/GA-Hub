@@ -212,13 +212,29 @@ export type ChatWSOut = (
   | { type: 'replay_done'; session_id: string; event_id: number }
 ) & ChatWSMeta
 
-export type EventBusEnvelope = Omit<ApiSchemas['EventBusEnvelope'], 'payload'> & {
+type EventBusBase = Omit<ApiSchemas['EventBusEnvelope'], 'topic' | 'payload'>
+export interface KnownEventPayloadMap {
+  'session:runtime': SessionRuntime
+  'chat:error': { session_id: string; run_id: string; stream_id: string; code: string; detail: string }
+  'chat:rewound': { session_id: string; removed_sids: string[]; kept: number; history_lines: number }
+  'conductor:subagents': { items: ConductorSubagent[]; boot_id?: string | null; snapshot_revision?: number }
+  'conductor:chat': { item: ConductorChatMessage }
+}
+export type KnownEventBusEnvelope = {
+  [K in keyof KnownEventPayloadMap]: EventBusBase & { topic: K; payload: KnownEventPayloadMap[K] }
+}[keyof KnownEventPayloadMap]
+export type FallbackEventBusEnvelope = EventBusBase & {
+  topic: string
   payload: Record<string, any>
 }
+export type EventBusEnvelope = KnownEventBusEnvelope | FallbackEventBusEnvelope
 export type BusEvent = EventBusEnvelope & {
   event_id?: number
   epoch?: string
 }
+export type BusEventFor<T extends string = string> = T extends keyof KnownEventPayloadMap
+  ? EventBusBase & { topic: T; payload: KnownEventPayloadMap[T]; event_id?: number; epoch?: string }
+  : BusEvent
 export type HubEventControl =
   | { type: 'resync_required'; reason: string; epoch: string }
   | { type: 'replay_done'; event_id: number; epoch: string }

@@ -360,8 +360,8 @@ def test_scheduled_dispatch_matches_coordinator_submit_contract(
 
 
 def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeypatch) -> None:
-    from frontends.gahub.bridge import workspace as workspace_bridge
     from server.routes import sessions
+    workspace_bridge = sessions.workspace_bridge
     from server.services import session_lifecycle as lifecycle_module
     from server.services.session_coordinator import SessionCoordinator
     from server.services.session_lifecycle import SessionLifecycle
@@ -529,8 +529,8 @@ def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeyp
 
 
 def test_project_binding_rejects_unknown_or_running_session(tmp_path: Path, monkeypatch) -> None:
-    from frontends.gahub.bridge import workspace as workspace_bridge
     from server.routes import sessions
+    workspace_bridge = sessions.workspace_bridge
     from server.services.session_coordinator import SessionCoordinator
     from server.services.session_lifecycle import SessionLifecycle
     from server.services.session_metadata import SessionMetadataStore
@@ -574,7 +574,8 @@ def test_project_binding_rejects_unknown_or_running_session(tmp_path: Path, monk
 
 
 def test_project_delete_reports_mapping_removal_failure(tmp_path: Path, monkeypatch) -> None:
-    from frontends.gahub.bridge import workspace as workspace_bridge
+    from server.routes import sessions
+    workspace_bridge = sessions.workspace_bridge
 
     monkeypatch.setattr(workspace_bridge, "get_workspace", lambda name: {
         "name": name,

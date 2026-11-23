@@ -364,8 +364,11 @@ class ConductorService:
 
     def __init__(self):
         self._init_fields(store_path=_paths.ADMIN_DATA / "conductor" / "state.sqlite3")
-        self.timeout_monitor.start()
-        self.recovery.start()
+        # Defer monitor/recovery background threads until Conductor is actually used
+        # (ensure_relay) or durable storage still holds unfinished work to recover.
+        if self.store.has_unfinished_work():
+            self.timeout_monitor.start()
+            self.recovery.start()
 
     @classmethod
     def for_tests(cls, *, store_path=":memory:") -> "ConductorService":
@@ -847,6 +850,7 @@ class ConductorService:
         with self._relay_lock:
             if self._closed:
                 return
+            self.timeout_monitor.start()
             self.recovery.start()
             thread = self._relay_thread
             if thread is not None and thread.is_alive():

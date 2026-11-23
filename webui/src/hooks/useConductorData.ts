@@ -87,7 +87,8 @@ export function useConductorData(onChatMessage: () => void) {
       void qc.invalidateQueries({ queryKey: queryKeys.conductor.workflows })
       // The mounted dossier must show the worker's freshest snapshot the
       // moment its lifecycle changes (delivery, acceptance, failure).
-      const workerId = event.payload?.id
+      const payload = event.payload as Record<string, unknown> | undefined
+      const workerId = payload?.id
       if (typeof workerId === 'string') {
         void qc.invalidateQueries({ queryKey: queryKeys.conductor.subagent(workerId) })
       }

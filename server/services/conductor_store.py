@@ -379,6 +379,23 @@ class ConductorStore:
                 (self.engine_key,)).fetchall()
             return [self.command(row[0]) for row in ids]
 
+    def has_unfinished_work(self) -> bool:
+        """Whether durable storage still has non-terminal workflows or pending commands."""
+        with self.lock:
+            wf = self.db.execute(
+                """SELECT 1 FROM workflows WHERE engine_key=?
+                   AND json_extract(state_json, '$.terminal_event') IS NULL LIMIT 1""",
+                (self.engine_key,),
+            ).fetchone()
+            if wf is not None:
+                return True
+            cmd = self.db.execute(
+                """SELECT 1 FROM commands WHERE engine_key=?
+                   AND state IN ('pending','sending','unknown') LIMIT 1""",
+                (self.engine_key,),
+            ).fetchone()
+            return cmd is not None
+
     def close(self) -> None:
         with self.lock:
             if not self.closed:

@@ -479,6 +479,33 @@ class DesktopSidecarTests(unittest.TestCase):
         self.proc.stdin = None
         self.assertEqual(self.proc.wait(timeout=15), 0)
 
+    def test_desktop_update_mutating_routes_require_instance_token_when_bound(self) -> None:
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from server.routes import updates
+
+        app = FastAPI()
+        app.include_router(updates.router)
+        app.state.desktop_instance_token = "desktop-secret-token"
+        client = TestClient(app)
+
+        # Read-only status remains readable while mutating calls require X-GA-Hub-Instance.
+        assert client.get("/api/updates").status_code == 200
+        rejected = client.post("/api/updates/cancel", json={"id": "a" * 32})
+        assert rejected.status_code == 403
+        wrong = client.post(
+            "/api/updates/cancel",
+            json={"id": "a" * 32},
+            headers={"X-GA-Hub-Instance": "wrong-token"},
+        )
+        assert wrong.status_code == 403
+        allowed = client.post(
+            "/api/updates/cancel",
+            json={"id": "a" * 32},
+            headers={"X-GA-Hub-Instance": "desktop-secret-token"},
+        )
+        assert allowed.status_code != 403
+
 
 if __name__ == "__main__":
     unittest.main()

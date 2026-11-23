@@ -112,3 +112,48 @@ def test_new_run_ignores_old_callbacks(tmp_path, monkeypatch):
     assert metrics.get('s', 'new')['run_id'] == 'new'
     assert metrics.get('s', 'new')['turns'] == 0
     assert metrics.get('s', 'new')['report'] == ''
+
+
+def test_corrupt_theme_runs_quarantined_and_finished_rows_capped(tmp_path, monkeypatch):
+    monkeypatch.setattr(metrics._paths, 'ADMIN_DATA', tmp_path)
+    store_file = tmp_path / 'session_metadata' / 'theme_runs.json'
+    store_file.parent.mkdir(parents=True, exist_ok=True)
+    store_file.write_text('{bad-json', encoding='utf-8')
+
+    assert metrics.get('missing') is None
+    assert len(list(store_file.parent.glob('theme_runs.json.corrupt.*.bak'))) == 1
+    assert not store_file.exists()
+
+    rows = {
+        f's-{i:03d}': {
+            'session_id': f's-{i:03d}',
+            'run_id': f'r-{i:03d}',
+            'started_at': float(i),
+            'finished_at': float(i + 1),
+            'turns': 1,
+            'turn_ids': [],
+            'model_key': 'm',
+            'model_name': 'm',
+            'outcome': 'completed',
+            'report': '',
+        }
+        for i in range(510)
+    }
+    rows['active'] = {
+        'session_id': 'active',
+        'run_id': 'r-active',
+        'started_at': 1.0,
+        'finished_at': None,
+        'turns': 0,
+        'turn_ids': [],
+        'model_key': 'm',
+        'model_name': 'm',
+        'outcome': None,
+        'report': '',
+    }
+    metrics._write(rows)
+    saved = metrics._read()
+    assert 'active' in saved
+    assert len(saved) == 501
+    assert 's-000' not in saved
+    assert 's-509' in saved

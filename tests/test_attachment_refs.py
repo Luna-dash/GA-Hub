@@ -29,6 +29,25 @@ def test_unreadable_reference_is_rejected(tmp_path):
             validate_attachments([{"path": str(path)}])
 
 
+def test_unc_and_outside_managed_upload_paths_are_rejected(tmp_path, monkeypatch):
+    from server import _paths
+
+    with pytest.raises(ValueError, match="网络共享"):
+        validate_attachments([{"path": "\\\\evil.example\\share\\secret.txt", "name": "secret.txt", "source": "local_ref"}])
+
+    uploads_dir = tmp_path / "uploads"
+    uploads_dir.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(_paths, "ADMIN_DATA", tmp_path)
+    with pytest.raises(ValueError, match="受管目录"):
+        validate_attachments([{"path": str(outside), "name": "outside.txt", "source": "managed_upload"}])
+
+    inside = uploads_dir / "inside.txt"
+    inside.write_text("ok", encoding="utf-8")
+    validate_attachments([{"path": str(inside), "name": "inside.txt", "source": "managed_upload"}])
+
+
 def test_schedule_revalidates_and_recovers_after_file_restored(tmp_path):
     now = [1000.0]
     submitted = []

@@ -64,6 +64,16 @@ class AssetFilterTests(unittest.TestCase):
             staged = build_sidecar.stage_assets(staging)
             self.assertFalse((staged["nova"] / "removed_module.py").exists())
 
+    def test_write_bundle_sentinel_is_added_to_sidecar_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            staging = Path(tmp)
+            staged = build_sidecar.stage_assets(staging)
+            sentinel = build_sidecar.write_bundle_sentinel(staging)
+            self.assertTrue(sentinel.is_file())
+            self.assertEqual(sentinel.name, "gahub_sidecar_bundle.json")
+            args = build_sidecar._add_data_args(staged, sentinel)
+            self.assertIn(f"{sentinel};.", args)
+
 
 class RuntimeGuardTests(unittest.TestCase):
     def test_selftest_exit_is_not_zero_when_binary_is_missing(self) -> None:

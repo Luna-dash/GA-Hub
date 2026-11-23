@@ -635,8 +635,7 @@ def _archive_dir() -> str:
     return str(_paths.memory_dir() / "L4_raw_sessions")
 
 
-@router.get("/api/archive/zips", response_model=ArchiveZipListResp)
-async def list_archive_zips():
+def _list_archive_zips_sync() -> dict:
     adir = _archive_dir()
     if not os.path.isdir(adir):
         return {"zips": []}
@@ -650,6 +649,11 @@ async def list_archive_zips():
             except OSError:
                 pass
     return {"zips": zips}
+
+
+@router.get("/api/archive/zips", response_model=ArchiveZipListResp)
+async def list_archive_zips():
+    return await asyncio.to_thread(_list_archive_zips_sync)
 
 
 def _list_zip_entries_sync(path: str) -> dict:

@@ -5,7 +5,12 @@ import json
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
+from server import _paths
 from server.services import archive_messages
+
+pytestmark = pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 from server.services.archive_messages import (
     _build_archive_index,
     _project_indexed_groups,

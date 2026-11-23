@@ -24,7 +24,18 @@ import re
 from pathlib import Path
 from typing import Callable
 
-from frontends.gahub.bridge import archive as archive_bridge
+from .. import _paths
+if _paths.GA_ROOT is not None:
+    from frontends.gahub.bridge import archive as archive_bridge
+else:
+    class _UnavailableArchiveBridge:
+        def __getattr__(self, name: str):
+            def _missing(*_args, **_kwargs):
+                raise RuntimeError(f"GA_ROOT is not configured ({name})")
+
+            return _missing
+
+    archive_bridge = _UnavailableArchiveBridge()  # type: ignore[assignment]
 
 # Reuse the projection layer's constants: the header is defined once, next to
 # the read-side strip that keeps it out of UI responses.

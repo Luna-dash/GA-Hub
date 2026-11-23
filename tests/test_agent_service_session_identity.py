@@ -9,6 +9,7 @@ from unittest import mock
 
 import pytest
 
+from server import _paths
 from server.services import agent_service as svc_mod
 
 
@@ -51,6 +52,7 @@ def test_run_finished_waits_for_parent_handoff_and_child(child_finishes_first) -
     assert parent.run_finished
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_session_runtime_skips_process_global_preference_hooks() -> None:
     agent = FakeAgent()
     with mock.patch.object(svc_mod, "create_main_agent") as create_main, \
@@ -69,6 +71,7 @@ def test_session_runtime_skips_process_global_preference_hooks() -> None:
     restore.assert_not_called()
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_active_snapshot_carries_query_identity_for_partial_archive_adoption() -> None:
     from server.services.chat_stream_projection import ChatSnapshot
 
@@ -86,6 +89,7 @@ def test_active_snapshot_carries_query_identity_for_partial_archive_adoption() -
     }
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_submit_and_stream_events_keep_session_and_run_identity() -> None:
     agent = FakeAgent()
     with mock.patch.object(svc_mod.bus, "publish") as publish:
@@ -186,6 +190,7 @@ def test_done_postprocessing_failure_emits_one_consistent_terminal() -> None:
     assert service._streams == {}
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_unconsumed_stream_queue_is_bounded_and_preserves_terminal_item() -> None:
     class VerboseAgent(FakeAgent):
         def put_task(self, query, *, source, images):
@@ -224,6 +229,7 @@ def test_unconsumed_stream_queue_is_bounded_and_preserves_terminal_item() -> Non
     assert service._streams == {}
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_many_completed_submissions_do_not_accumulate_stream_handles() -> None:
     with mock.patch.object(svc_mod.bus, "publish"):
         service = svc_mod.AgentService(
@@ -245,6 +251,7 @@ def test_many_completed_submissions_do_not_accumulate_stream_handles() -> None:
     )
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_shutdown_wakes_a_fanout_with_no_terminal_frame() -> None:
     class StuckAgent(FakeAgent):
         def put_task(self, query, *, source, images):
@@ -270,6 +277,7 @@ def test_shutdown_wakes_a_fanout_with_no_terminal_frame() -> None:
     assert handle.display_queue.get_nowait()["done"] == handle.final_text
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_submit_is_rejected_after_agent_service_shutdown() -> None:
     service = svc_mod.AgentService(
         agent=FakeAgent(),
@@ -292,6 +300,7 @@ def test_run_final_text_reads_only_terminal_continuation(reply):
     assert child.run_final_text == reply
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_native_turns_reach_events_and_reconnect_snapshots() -> None:
     class NativeAgent(FakeAgent):
         def put_task(self, query, *, source, images):
@@ -313,6 +322,7 @@ def test_native_turns_reach_events_and_reconnect_snapshots() -> None:
 
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_chat_file_citations_do_not_auto_add_to_transfer_box(tmp_path, monkeypatch):
     from server.services import file_transfer as transfer
 
@@ -339,6 +349,7 @@ def test_chat_file_citations_do_not_auto_add_to_transfer_box(tmp_path, monkeypat
     assert transfer.FileTransfer().list() == []
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_abort_emits_scoped_chat_aborted_for_active_and_retry_streams() -> None:
     from server.services.chat_stream_projection import ChatSnapshot
 

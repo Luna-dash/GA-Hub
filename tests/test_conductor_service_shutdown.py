@@ -189,3 +189,43 @@ def test_shutdown_releases_the_class_singleton(monkeypatch) -> None:
 
     assert service.shutdown(timeout=0.1) is True
     assert conductor_service.ConductorService._instance is None
+
+
+def test_conductor_service_defers_idle_threads_until_relay_or_unfinished_work(tmp_path, monkeypatch) -> None:
+    from server import _paths
+
+    monkeypatch.setattr(_paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(conductor_service.GaConductorClient, "stream_events", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr(conductor_service.GaConductorClient, "stop", lambda self, **_kw: {"stopped": True})
+    monitor_starts = []
+    recovery_starts = []
+    monkeypatch.setattr(conductor_service.TimeoutMonitor, "start", lambda self: monitor_starts.append(self))
+    monkeypatch.setattr("server.services.conductor_recovery.ConductorRecovery.start", lambda self: recovery_starts.append(self))
+
+    empty_service = conductor_service.ConductorService()
+    try:
+        assert monitor_starts == []
+        assert recovery_starts == []
+        assert empty_service.store.has_unfinished_work() is False
+        empty_service.ensure_relay()
+        assert len(monitor_starts) == 1
+        assert len(recovery_starts) == 1
+    finally:
+        empty_service.shutdown(timeout=0.5)
+
+    # With an unfinished workflow persisted, __init__ eagerly resumes recovery & monitor.
+    monitor_starts.clear()
+    recovery_starts.clear()
+    store_path = tmp_path / "conductor" / "state.sqlite3"
+    seed = conductor_service.ConductorService.for_tests(store_path=str(store_path))
+    with seed.store.transaction():
+        seed.workflow_tracker.admit("req-unfinished")
+    seed.store.close()
+
+    resumed_service = conductor_service.ConductorService()
+    try:
+        assert resumed_service.store.has_unfinished_work() is True
+        assert len(monitor_starts) == 1
+        assert len(recovery_starts) == 1
+    finally:
+        resumed_service.shutdown(timeout=0.5)

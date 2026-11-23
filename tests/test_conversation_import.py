@@ -17,7 +17,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from server import _paths
 from server.error_mapping import install_error_handlers
+
+pytestmark = pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 from server.routes import conversations
 from server.services import archive_import
 from server.services.archive_import import (

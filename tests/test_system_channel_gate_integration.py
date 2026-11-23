@@ -174,6 +174,9 @@ def test_fire_succeeds_and_counts_once_the_gate_frees(gate) -> None:
 
 def test_autonomous_idle_tracks_user_sessions_without_cold_starting_system_agent(gate) -> None:
     """Idle trigger observes real user session activity without creating system-autonomous first."""
+    from server import _paths
+    if _paths.GA_ROOT is None:
+        pytest.skip("requires configured GA_ROOT")
     from server.services.autonomous_scheduler import AutonomousScheduler, Schedule
 
     channel = gate.channels.channel("autonomous")

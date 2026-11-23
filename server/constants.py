@@ -39,10 +39,12 @@ ENV_NODE_LICENSE = "GA_HUB_NODE_LICENSE"
 # (src-tauri/src/main.rs).
 ENV_SIDECAR = "GA_HUB_SIDECAR"
 ENV_BRIDGE_PORT = "GA_HUB_BRIDGE_PORT"
-# Trusted local updater: isolated smoke-test mode and instance-bound health receipt.
+# Trusted local updater: isolated smoke-test mode, instance-bound health receipt,
+# and startup block dialog suppression during automated tests.
 ENV_UPDATE_PREFLIGHT = "GA_HUB_UPDATE_PREFLIGHT"
 ENV_UPDATE_NONCE = "GA_HUB_UPDATE_NONCE"
 ENV_UPDATE_RECEIPT = "GA_HUB_UPDATE_RECEIPT"
+ENV_SUPPRESS_STARTUP_DIALOG = "GA_HUB_SUPPRESS_STARTUP_DIALOG"
 ENV_MYKEY_BASE_URL = "GA_MYKEY_BASE_URL"
 
 # ── session run capacity (server/routes/sessions.py + session_coordinator) ──

@@ -269,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
         from server.main import app
 
         token = args.instance_token or secrets.token_urlsafe(24)
+        if args.owned_stdin:
+            app.state.desktop_instance_token = token
 
         async def desktop_ready() -> dict[str, object]:
             return {"ok": True, "instance_token": token, "pid": os.getpid(), "port": port}

@@ -21,18 +21,25 @@ from typing import Any, AsyncIterator
 
 from .. import _paths
 
-if _paths.GA_ROOT is None:
-    raise RuntimeError("AgentService imported before GA_ROOT is configured")
+if _paths.GA_ROOT is not None:
+    from frontends.gahub.bridge.runtime import (  # noqa: E402
+        create_main_agent,
+        register_turn_end_hook,
+        unregister_turn_end_hook,
+    )
+    from frontends.gahub.bridge.session import (  # noqa: E402
+        release_current,
+        reset_conversation,
+    )
+else:
+    def _ga_unavailable(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("AgentService requires GA_ROOT to be configured")
 
-from frontends.gahub.bridge.runtime import (  # noqa: E402
-    create_main_agent,
-    register_turn_end_hook,
-    unregister_turn_end_hook,
-)
-from frontends.gahub.bridge.session import (  # noqa: E402
-    release_current,
-    reset_conversation,
-)
+    create_main_agent = _ga_unavailable
+    register_turn_end_hook = _ga_unavailable
+    unregister_turn_end_hook = _ga_unavailable
+    release_current = _ga_unavailable
+    reset_conversation = _ga_unavailable
 
 from .chat_retry import SCHEDULED_RETRY_SOURCES, ChatRetryConfig, classify_recoverable_error, compute_backoff_delay, load_chat_retry_config  # noqa: E402
 from .chat_stream_projection import ChatSnapshot, ChatStreamProjection  # noqa: E402

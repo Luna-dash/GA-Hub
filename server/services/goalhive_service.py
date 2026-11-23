@@ -16,10 +16,11 @@ from typing import Callable
 
 from .. import _paths
 
-if _paths.GA_ROOT is None:
-    raise RuntimeError("GoalHiveService imported before GA_ROOT is configured")
-
-from agentmain import GeneraticAgent  # noqa: E402  (resolved via _paths sys.path)
+if _paths.GA_ROOT is not None:
+    from agentmain import GeneraticAgent  # noqa: E402  (resolved via _paths sys.path)
+else:
+    def GeneraticAgent(*_args: object, **_kwargs: object):  # type: ignore[no-redef]
+        raise RuntimeError("GoalHiveService requires GA_ROOT to be configured")
 
 from .llm_registry import LlmRegistry
 

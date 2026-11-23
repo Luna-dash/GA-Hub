@@ -9,6 +9,7 @@ from unittest import mock
 
 import pytest
 
+from server import _paths
 from server.services.agent_service import AgentService
 from server.services.autonomous_scheduler import AutonomousScheduler
 from server.services.feishu_service import FeishuService
@@ -61,6 +62,7 @@ class _FakeAgent:
         self.is_running = False
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_agent_service_uses_runtime_bridge_factory_for_main_agent() -> None:
     agent = _FakeAgent()
     with mock.patch(
@@ -74,6 +76,7 @@ def test_agent_service_uses_runtime_bridge_factory_for_main_agent() -> None:
     assert agent._turn_end_hooks["webui"] is service._turn_end_hook
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_agent_service_shutdown_aborts_signals_and_joins_run_thread() -> None:
     agent = _FakeAgent()
     service = AgentService(agent=agent, manage_global_preference=False)
@@ -89,6 +92,7 @@ def test_agent_service_shutdown_aborts_signals_and_joins_run_thread() -> None:
     service.shutdown(timeout=0.1)  # idempotent
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_agent_service_shutdown_aborts_active_agent_before_sentinel() -> None:
     agent = _FakeAgent()
     agent.is_running = True
@@ -101,6 +105,7 @@ def test_agent_service_shutdown_aborts_active_agent_before_sentinel() -> None:
     assert agent.exited.is_set()
 
 
+@pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 def test_agent_shutdown_releases_singleton_even_when_deadline_missed() -> None:
     stopped = AgentService(agent=_FakeAgent(), manage_global_preference=False)
     AgentService._instance = stopped

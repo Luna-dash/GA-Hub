@@ -12,6 +12,7 @@ from uuid import uuid4
 from .. import _paths
 
 _lock = threading.RLock()
+MAX_FINISHED_THEME_RUNS = 500
 # Only admitted theme runs can write. Path scoping isolates app/test stores;
 # callbacks for other runs return before any persistence I/O.
 _active: set[tuple[Path, str, str]] = set()
@@ -31,10 +32,35 @@ def _path() -> Path:
 
 def _read() -> dict:
     p = _path()
-    return json.loads(p.read_text("utf-8")) if p.exists() else {}
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text("utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("theme runs store must be a JSON object")
+        return data
+    except (json.JSONDecodeError, ValueError, TypeError):
+        backup = p.with_name(f"{p.name}.corrupt.{time.time_ns()}.bak")
+        try:
+            os.replace(p, backup)
+            logging.getLogger(__name__).warning("theme runs store corrupted; quarantined to %s", backup, exc_info=True)
+        except OSError:
+            logging.getLogger(__name__).warning("theme runs store corrupted and backup failed", exc_info=True)
+        return {}
 
 
 def _write(rows: dict) -> None:
+    finished = [
+        (sid, row) for sid, row in rows.items()
+        if isinstance(row, dict) and row.get("finished_at") is not None
+    ]
+    if len(finished) > MAX_FINISHED_THEME_RUNS:
+        finished.sort(
+            key=lambda item: float(item[1].get("finished_at") or item[1].get("started_at") or 0.0),
+            reverse=True,
+        )
+        for sid, _ in finished[MAX_FINISHED_THEME_RUNS:]:
+            rows.pop(sid, None)
     p = _path()
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(f".{uuid4().hex}.tmp")

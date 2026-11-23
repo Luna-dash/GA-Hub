@@ -64,7 +64,7 @@ import type {
   UploadResult,
 } from './types'
 import type { components as GeneratedApiComponents } from './generated/schema'
-import { resolveApiUrl } from '@/runtime/runtimeConfig'
+import { getRuntimeConfig, resolveApiUrl } from '@/runtime/runtimeConfig'
 
 export { ChatSocket } from '@/runtime/chatSocket'
 
@@ -163,12 +163,20 @@ async function http<T>(method: string, path: string, body?: unknown, init?: Http
     ? `${path}${path.includes('?') ? '&' : '?'}${queryString}`
     : path
 
+  const { instanceToken } = getRuntimeConfig()
+  const baseHeaders: Record<string, string> = {}
+  if (body) baseHeaders['Content-Type'] = 'application/json'
+  if (instanceToken) baseHeaders['X-GA-Hub-Instance'] = instanceToken
+  const mergedHeaders = requestInit.headers
+    ? { ...baseHeaders, ...(requestInit.headers as Record<string, string>) }
+    : (Object.keys(baseHeaders).length > 0 ? baseHeaders : undefined)
+
   try {
     const res = await fetch(resolveApiUrl(requestPath), {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
       body: body ? JSON.stringify(body) : undefined,
       ...requestInit,
+      headers: mergedHeaders,
       signal: abortContext.signal,
     })
     if (!res.ok) {

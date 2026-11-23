@@ -28,7 +28,10 @@ vi.mock('@/api/client', async (importOriginal) => {
     },
   }
 })
-vi.mock('@/runtime/runtimeConfig', () => ({ resolveApiUrl: (path: string) => path }))
+vi.mock('@/runtime/runtimeConfig', () => ({
+  resolveApiUrl: (path: string) => path,
+  getRuntimeConfig: () => ({ apiOrigin: '' }),
+}))
 
 it('starts Anti on demand from the page header without leaving the chat', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)

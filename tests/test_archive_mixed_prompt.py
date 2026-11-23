@@ -3,10 +3,13 @@ import json
 
 import pytest
 
+from server import _paths
 from server.services.archive_messages import (
     _archive_index, _extract_ui_messages_from_text, read_archive_messages,
     read_ui_messages,
 )
+
+pytestmark = pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
 
 
 def _round(blocks, response, n):

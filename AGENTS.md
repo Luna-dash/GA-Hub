@@ -14,10 +14,11 @@
    不要在占用状态下反复重试。并发构建由 `src-tauri\target\.build_all.lock` 挡下。
 3. 成功判定 = 退出码 + 守卫输出：`0` 成功；`2` 预检失败；`3` 阶段失败；
    `5` 产物守卫失败。不要用「命令没报错」「文件存在」当成功依据。
-   守卫语义：三件产物（主 exe / sidecar 中间产物 / sidecar 交付副本）必须存在、
-   非空、且被**本次构建重写**；随后还会跑一次 sidecar 运行期自检
-   （`--selftest`，导入 pyexpat/ctypes/sqlite3 等），失败同样 `5`——因为
-   PyInstaller 漏收依赖 DLL 时只打 WARNING，产物「已刷新」但一启动就崩。
+   守卫语义：Windows 下四件产物（主 exe `ga-hub-desktop.exe` / sidecar 中间产物 /
+   sidecar 交付副本 `ga-hub-sidecar.exe` / 独立更新助手 `ga-hub-update.exe`）必须存在、
+   非空、且被**本次构建重写**；随后还会跑 sidecar 运行期自检
+   （`--selftest`，导入 pyexpat/ctypes/sqlite3 等）及独立更新助手运行期自检（`--help`），
+   失败同样 `5`——因为 PyInstaller 漏收依赖 DLL 时只打 WARNING，产物「已刷新」但一启动就崩。
    `3` 时脚本会补一次产物体检，看到「产物集不配套」
    的警告就不要把那几件当交付物。
 4. 构建产物不进 git（`src-tauri/target/` 等已忽略）。
@@ -26,8 +27,8 @@
 
 - 后端测试：`python -m pytest tests -q`（pyproject 已限定 testpaths=tests/）
 - 前端测试：`npm --prefix webui test -- --run`
-- 发布前全量验证 + 构建：`python scripts\build_all.py --full`
-- 交付物 = 便携版两个 exe（本链不产出 MSI/NSIS 安装包）
+- 发布前全量验证 + 构建：`python scripts\build_all.py --full`（依次跑前端构建、后端 `pytest`、前端 `vitest` 与 Rust `cargo test`）
+- 交付物 = 便携版 exe（Windows 下为 `ga-hub-desktop.exe`、`ga-hub-sidecar.exe` 与 `ga-hub-update.exe`，本链不产出 MSI/NSIS 安装包）
 
 ## 过程产物去哪（仓根不许堆东西）
 
@@ -56,7 +57,7 @@
 - 退出码 `2/3/5` 与失败路径的产物体检
 - 产物守卫语义：缺失 / 为空 / 未被本次构建重写 = 失败
 - 前端构建归 build_all 独占——**不要**给 tauri.conf.json 加回 `beforeBuildCommand`
-- 交付物只有便携版两个 exe——Tauri 阶段恒传 `--no-bundle`
+- 交付物只有便携版 exe——Tauri 阶段恒传 `--no-bundle`
 - 并发锁 `.build_all.lock` 与占用预检
 - Windows MSVC 环境在 Python 统一入口预检自动加载、校验架构及 SDK；失败 exit 2，
   仅当前进程及子进程生效，不修改全局 PATH；非标准 VS 可用 `GA_HUB_VCVARSALL`

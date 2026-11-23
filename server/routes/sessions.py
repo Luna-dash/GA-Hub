@@ -18,7 +18,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 # puts the GA checkout on sys.path, and a fresh process importing this
 # route directly (e.g. test_sessions_api alone) otherwise fails here.
 from .. import _paths as _ga_paths_bootstrap  # noqa: F401  (bootstrap order)
-from frontends.gahub.bridge import workspace as workspace_bridge
+if _ga_paths_bootstrap.GA_ROOT is not None:
+    from frontends.gahub.bridge import workspace as workspace_bridge
+else:
+    class _UnavailableWorkspaceBridge:
+        def __getattr__(self, name: str):
+            def _missing(*_args, **_kwargs):
+                raise RuntimeError(f"GA_ROOT is not configured ({name})")
+
+            return _missing
+
+    workspace_bridge = _UnavailableWorkspaceBridge()  # type: ignore[assignment]
 
 from ..origin_policy import is_allowed_ui_origin
 from ..schemas import (

@@ -1622,6 +1622,27 @@ fn follow_current_update() -> Result<bool, String> {
     Ok(true)
 }
 
+#[cfg(windows)]
+fn show_startup_block_dialog(error: &str) {
+    if cfg!(test) || std::env::var_os("GA_HUB_SUPPRESS_STARTUP_DIALOG").is_some() {
+        return;
+    }
+    let body = format!(
+        "GA-Hub 检测到上次应用更新尚未完成切换，为保护数据已阻止启动。\n\n详情：{error}\n\n请检查用户数据目录下的 updates 状态后重试。"
+    );
+    let title: Vec<u16> = "GA-Hub 启动受阻".encode_utf16().chain(std::iter::once(0)).collect();
+    let text: Vec<u16> = body.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            windows_sys::Win32::UI::WindowsAndMessaging::MB_OK
+                | windows_sys::Win32::UI::WindowsAndMessaging::MB_ICONERROR,
+        );
+    }
+}
+
 fn main() {
     #[cfg(windows)]
     match follow_current_update() {
@@ -1629,6 +1650,7 @@ fn main() {
         Ok(false) => (),
         Err(error) => {
             record_startup_diagnostic(&format!("follow_current_update failed: {error}"));
+            show_startup_block_dialog(&error);
             eprintln!("{error}");
             std::process::exit(1);
         }

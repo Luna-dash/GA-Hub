@@ -26,7 +26,11 @@ from typing import Any, NamedTuple
 from .archive_turn_segments import valid_turn_segments
 
 from .. import _paths  # Bootstrap GA's import path for the native archive parser.
-from frontends.gahub.bridge.session import restore_archive
+if _paths.GA_ROOT is not None:
+    from frontends.gahub.bridge.session import restore_archive
+else:
+    def restore_archive(*_args: Any, **_kwargs: Any) -> Any:
+        raise HistoryUnavailableError("GA_ROOT is not configured")
 
 
 _NATIVE_HEADER_RE = re.compile(

@@ -283,7 +283,8 @@ fn collect_candidates(temp: &Path, report: &mut MeiSweepReport) -> Vec<Candidate
 /// versioned `generic_agent_admin-<version>.dist-info`.
 fn carries_our_fingerprint(top_level: &[String]) -> bool {
     top_level.iter().any(|name| {
-        name == "generic_agent_admin.egg-info"
+        name == "gahub_sidecar_bundle.json"
+            || name == "generic_agent_admin.egg-info"
             || (name.starts_with("generic_agent_admin-") && name.ends_with(".dist-info"))
     })
 }
@@ -503,6 +504,10 @@ mod tests {
 
     #[test]
     fn gahub_bundles_are_recognised_in_both_packaging_shapes() {
+        assert!(carries_our_fingerprint(&names(&[
+            "gahub_sidecar_bundle.json",
+            "certifi",
+        ])));
         assert!(carries_our_fingerprint(&names(&[
             "generic_agent_admin.egg-info",
             "certifi",

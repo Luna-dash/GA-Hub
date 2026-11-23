@@ -24,6 +24,10 @@ OPENAPI_PATH = ROOT / "docs" / "api" / "openapi.json"
 class GeneratedApiContractTests(unittest.TestCase):
     def test_checked_in_openapi_matches_running_app(self) -> None:
         """Fail when routes or schemas change without regenerating the artifact."""
+        from server import _paths
+
+        if _paths.GA_ROOT is None:
+            self.skipTest("normal-mode OpenAPI contract requires configured GA_ROOT")
         with OPENAPI_PATH.open(encoding="utf-8") as handle:
             checked_in = json.load(handle)
 

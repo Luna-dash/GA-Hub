@@ -1,4 +1,4 @@
-import type { BusEvent, HubEventControl, HubEventMessage } from '@/api/types'
+import type { BusEvent, BusEventFor, HubEventControl, HubEventMessage } from '@/api/types'
 import { ManagedJsonSocket, type ManagedSocketState } from './managedJsonSocket'
 
 export const CONTROL_EVENT_PREFIXES = [
@@ -52,9 +52,9 @@ export class HubEventClient {
     this.transport.stop()
   }
 
-  subscribe(prefix: string, handler: EventHandler): () => void {
+  subscribe<K extends string = string>(prefix: K, handler: (event: BusEventFor<K>) => void): () => void {
     const id = this.nextSubscriberId++
-    this.eventHandlers.set(id, { prefix, handler })
+    this.eventHandlers.set(id, { prefix, handler: handler as EventHandler })
     return () => {
       this.eventHandlers.delete(id)
     }

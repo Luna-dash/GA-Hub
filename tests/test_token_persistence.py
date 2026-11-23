@@ -5,6 +5,7 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
+from server import _paths
 from server.routes import tokens
 
 
@@ -86,6 +87,7 @@ class TokenPersistenceTests(unittest.TestCase):
             ],
         )
 
+    @unittest.skipIf(_paths.GA_ROOT is None, "requires configured GA_ROOT")
     def test_native_ledger_keeps_parallel_chat_sessions_separate(self) -> None:
         timestamp = int(datetime(2026, 7, 6, 9, 0).timestamp())
         ledger = [
@@ -110,6 +112,7 @@ class TokenPersistenceTests(unittest.TestCase):
         self.assertEqual(result["all_time"]["total"], 53)
         self.assertEqual(result["days"][0]["total"], 53)
 
+    @unittest.skipIf(_paths.GA_ROOT is None, "requires configured GA_ROOT")
     def test_native_ledger_exposes_conductor_workers_without_session_metadata(self) -> None:
         timestamp = int(datetime(2026, 7, 6, 9, 0).timestamp())
         ledger = [
@@ -152,6 +155,7 @@ class TokenPersistenceTests(unittest.TestCase):
         # 压缩/迁移行聚合了多次调用，1 是可证明的下界
         self.assertEqual(tokens._ledger_totals(legacy_aggregate_row)["requests"], 1)
 
+    @unittest.skipIf(_paths.GA_ROOT is None, "requires configured GA_ROOT")
     def test_token_stats_sums_requests_across_streaming_row_pairs(self) -> None:
         timestamp = int(datetime(2026, 7, 6, 9, 0).timestamp())
         ledger = [

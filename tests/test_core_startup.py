@@ -15,6 +15,8 @@ from server import _paths, main
 from server.services import core_contract
 from server.services.core_contract import ContractReport, CoreRuntimeUnavailable
 
+pytestmark = pytest.mark.skipif(_paths.GA_ROOT is None, reason="requires configured GA_ROOT")
+
 
 @pytest.mark.parametrize("failure", ["contract", "probe_crash", "route_import"])
 def test_failed_core_keeps_diagnostics_and_rejects_work(monkeypatch, tmp_path, failure):

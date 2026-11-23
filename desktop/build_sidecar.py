@@ -23,6 +23,15 @@ RUNTIME_ASSETS = {
     "nova": ("connector.py",),
     "remote_access": ("gateway.py", "artifacts.py", "remote_progress.py"),
 }
+MEI_BUNDLE_SENTINEL = "gahub_sidecar_bundle.json"
+
+
+def write_bundle_sentinel(staging_root: Path) -> Path:
+    """Write a marker file bundled into `_MEI*` root so cleanup identifies our unpack dir."""
+    staging_root.mkdir(parents=True, exist_ok=True)
+    sentinel = staging_root / MEI_BUNDLE_SENTINEL
+    sentinel.write_text('{"app":"ga-hub-sidecar"}\n', encoding="utf-8")
+    return sentinel
 
 
 def stage_assets(staging_root: Path) -> dict[str, Path]:
@@ -41,10 +50,12 @@ def stage_assets(staging_root: Path) -> dict[str, Path]:
     return staged
 
 
-def _add_data_args(staged: dict[str, Path]) -> list[str]:
+def _add_data_args(staged: dict[str, Path], sentinel: Path | None = None) -> list[str]:
     args: list[str] = []
     for name, path in staged.items():
         args.extend(["--add-data", f"{path};assets/{name}"])
+    if sentinel is not None:
+        args.extend(["--add-data", f"{sentinel};."])
     worker = ROOT / "server" / "services" / "message-presentation-worker.cjs"
     if not worker.is_file():
         raise RuntimeError("Build message presentation with node assets/remote_access/build-remote.cjs")
@@ -72,7 +83,7 @@ def main() -> int:
                "--collect-all", "websockets",
                "--collect-all", "aiohttp",
                *hidden_import_args(sys.platform),
-               *(_add_data_args(stage_assets(workspace / "assets-stage"))),
+               *(_add_data_args(stage_assets(workspace / "assets-stage"), write_bundle_sentinel(workspace))),
                "--add-binary", f"{stage_node(workspace / 'node-stage', args.target) / ('node.exe' if suffix else 'node')};runtime/node",
                "--add-data", f"{workspace / 'node-stage' / 'LICENSE'};runtime/node",
                "--add-data", f"{workspace / 'node-stage' / 'runtime.json'};runtime/node",

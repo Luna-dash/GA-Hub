@@ -100,7 +100,7 @@ export function useConductorRuntimeEffects(): void {
     if (event.topic.startsWith('conductor:subagent_')) {
       const name = event.topic.slice('conductor:subagent_'.length)
       if (!WORKER_EVENT_LABEL[name]) return
-      const payload = event.payload ?? {}
+      const payload = (event.payload ?? {}) as Record<string, unknown>
       addWorkerActivity({
         id: `ev:${event.event_id ?? `${name}:${payload.id}:${event.ts}`}`,
         name,
@@ -112,7 +112,7 @@ export function useConductorRuntimeEffects(): void {
     } else if (event.topic.startsWith('conductor:workflow_')) {
       const kind = event.topic.slice('conductor:'.length) as
         | 'workflow_completed' | 'workflow_failed' | 'workflow_cancelled' | 'workflow_killed'
-      const payload = event.payload ?? {}
+      const payload = (event.payload ?? {}) as Record<string, unknown>
       if (!WORKFLOW_EVENT_LABEL[kind] || typeof payload.request_id !== 'string') return
       addWorkflowActivity({
         request_id: payload.request_id,
@@ -120,10 +120,12 @@ export function useConductorRuntimeEffects(): void {
         at: event.ts,
         text: WORKFLOW_EVENT_LABEL[kind],
       })
-    } else if (event.topic === 'conductor:request_outcome' && typeof event.payload?.request_id === 'string') {
+    } else if (event.topic === 'conductor:request_outcome') {
+      const payload = (event.payload ?? {}) as Record<string, unknown>
+      if (typeof payload.request_id !== 'string') return
       addTurnActivity({
-        request_id: event.payload.request_id,
-        status: String(event.payload.status ?? ''),
+        request_id: payload.request_id,
+        status: String(payload.status ?? ''),
         at: event.ts,
       })
     }

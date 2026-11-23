@@ -151,6 +151,10 @@ def test_shutdown_timeout_barriers_fire_before_releasing_singleton(
     service_factory,
     instance_attr,
 ) -> None:
+    if scheduler_type == "autonomous":
+        from server import _paths
+        if _paths.GA_ROOT is None:
+            pytest.skip("requires configured GA_ROOT")
     service = service_factory(_Handle())
     entered = threading.Event()
     release = threading.Event()
@@ -269,6 +273,10 @@ def test_completed_task_watcher_records_and_reaps_itself() -> None:
 def test_timed_out_shutdown_keeps_inflight_fire_admissible(
     factory, schedule_id: str,
 ) -> None:
+    if factory is _autonomous_scheduler:
+        from server import _paths
+        if _paths.GA_ROOT is None:
+            pytest.skip("requires configured GA_ROOT")
     service = factory(_Handle())
     entered = threading.Event()
     release = threading.Event()

@@ -12,7 +12,17 @@ import threading
 from typing import Any
 
 from .. import _paths
-from frontends.gahub.bridge import rewind as ga_rewind
+if _paths.GA_ROOT is not None:
+    from frontends.gahub.bridge import rewind as ga_rewind
+else:
+    class _UnavailableRewindBridge:
+        def __getattr__(self, name: str):
+            def _missing(*_args, **_kwargs):
+                raise RuntimeError(f"GA_ROOT is not configured ({name})")
+
+            return _missing
+
+    ga_rewind = _UnavailableRewindBridge()  # type: ignore[assignment]
 from .chat_stream_projection import ChatStreamProjection
 from .event_bus import bus
 from ..event_topics import CHAT_REWOUND

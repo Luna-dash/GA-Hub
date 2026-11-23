@@ -66,9 +66,10 @@ export function useDesktopNotifyEffects() {
       void notify('流程结果可以查看了', { body: 'Conductor 本次流程已结束，可以查看结果了。', confirmText: '查看流程', tag: 'conductor-task-done', onOpen: () => navigate('/conductor') })
     })
     const unsubscribeConductorFailed = hubEventClient.subscribe('conductor:workflow_failed', (event) => {
+      const payload = (event.payload ?? {}) as Record<string, unknown>
       // The backend also emits workflow_failed for deliberate cancellation.
-      if (event.payload.status === 'cancelled' || event.payload.status === 'killed') return
-      void notify('Conductor 流程失败', { body: '本次流程未能完成，请进入 Conductor 查看原因。', confirmText: '查看流程', tag: `conductor-task-failed:${event.payload.request_id ?? ''}`, onOpen: () => navigate('/conductor') })
+      if (payload.status === 'cancelled' || payload.status === 'killed') return
+      void notify('Conductor 流程失败', { body: '本次流程未能完成，请进入 Conductor 查看原因。', confirmText: '查看流程', tag: `conductor-task-failed:${String(payload.request_id ?? '')}`, onOpen: () => navigate('/conductor') })
     })
     return () => {
       alive = false

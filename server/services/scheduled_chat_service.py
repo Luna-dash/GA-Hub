@@ -15,6 +15,7 @@ from .attachment_refs import validate_attachments
 from .session_metadata import SessionNotFoundError
 
 log = logging.getLogger(__name__)
+MAX_FINISHED_TASKS = 500
 
 
 @dataclass
@@ -216,10 +217,32 @@ class ScheduledChatService:
                 self._tasks[task.id] = task
             if recovered:
                 self._save_locked()
+        except (json.JSONDecodeError, ValueError, TypeError):
+            corrupt_backup = self._path.with_name(f"{self._path.name}.corrupt.{time.time_ns()}.bak")
+            try:
+                self._path.replace(corrupt_backup)
+                log.warning("scheduled chat state corrupted; quarantined to %s", corrupt_backup, exc_info=True)
+            except OSError:
+                log.exception("scheduled chat state unreadable; starting empty")
         except Exception:
             log.exception("scheduled chat state unreadable; starting empty")
 
+    def _prune_finished_locked(self) -> None:
+        finished = [
+            task for task in self._tasks.values()
+            if task.status not in {"pending", "dispatching"}
+        ]
+        if len(finished) <= MAX_FINISHED_TASKS:
+            return
+        finished.sort(
+            key=lambda task: (task.sent_at or task.cancelled_at or task.created_at),
+            reverse=True,
+        )
+        for task in finished[MAX_FINISHED_TASKS:]:
+            self._tasks.pop(task.id, None)
+
     def _save_locked(self) -> None:
+        self._prune_finished_locked()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
         tmp.write_text(

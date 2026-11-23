@@ -193,6 +193,33 @@ class ScheduledChatServiceTests(unittest.TestCase):
         self.assertEqual(service.list("alpha"), [])
         self.assertEqual([row["id"] for row in service.list("beta")], [keep["id"]])
 
+    def test_corrupt_json_quarantined_and_finished_tasks_capped(self):
+        self.path.write_text("{corrupt-json", encoding="utf-8")
+        service = self.service()
+        self.assertEqual(service.list("alpha"), [])
+        quarantined = list(self.path.parent.glob(f"{self.path.name}.corrupt.*.bak"))
+        self.assertEqual(len(quarantined), 1)
+        self.assertFalse(self.path.exists())
+
+        with service._lock:
+            for i in range(510):
+                tid = f"done-{i:03d}"
+                service._tasks[tid] = __import__("server.services.scheduled_chat_service", fromlist=["ScheduledChat"]).ScheduledChat(
+                    id=tid,
+                    session_id="alpha",
+                    text="done",
+                    images=[],
+                    scheduled_for=1_000 + i,
+                    created_at=1_000 + i,
+                    status="sent",
+                    sent_at=1_000 + i,
+                )
+            service._save_locked()
+        saved = json.loads(self.path.read_text("utf-8"))
+        self.assertEqual(len(saved), 500)
+        self.assertNotIn("done-000", {row["id"] for row in saved})
+        self.assertIn("done-509", {row["id"] for row in saved})
+
 
 if __name__ == "__main__":
     unittest.main()

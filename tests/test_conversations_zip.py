@@ -53,6 +53,7 @@ def _call(fake: _Archive, monkeypatch):
     def fake_zip_file(_path):
         yield fake
 
+    monkeypatch.setattr(conversations, "_archive_dir", lambda: ".")
     monkeypatch.setattr(conversations.zipfile, "ZipFile", fake_zip_file)
     monkeypatch.setattr(conversations.os.path, "isfile", lambda _path: True)
     monkeypatch.setattr(conversations, "_ZIP_ENTRY_MAX_SIZE", 8)
