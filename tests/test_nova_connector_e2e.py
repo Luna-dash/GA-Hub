@@ -65,6 +65,15 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
             return web.json_response({'presentation_version':1,'session_id':'s1','items':[{'role':'assistant','compact':True,'progress':{'final_body':body}}]}, headers={'ETag': etag})
         app = web.Application();app.router.add_get('/api/sessions',sessions);app.router.add_get('/ws/sessions/s1',live)
         app.router.add_get('/api/sessions/s1/messages', messages)
+        async def projects(_r):
+            return web.json_response({'items': [{'name': 'test', 'path': str(report.parent), 'dangling': False}]})
+        app.router.add_get('/api/projects', projects)
+        chat_runs = []
+        async def submit_chat(r):
+            body = await r.json()
+            chat_runs.append(body)
+            return web.json_response({'run_id': 'c-run-1', 'accepted': True})
+        app.router.add_post('/api/sessions/s1/runs', submit_chat)
         agy_session = {'id': 'a1', 'title': 'Agy', 'project': 'test'}
         agy_runs = []
         approval = {"id": "a" * 32, "title": "Edit note", "details": "note.txt"}
@@ -92,6 +101,9 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                 return web.json_response({**daemon, 'port': 54321, 'detail': 'local-only diagnostic'})
             if resource == 'models':
                 return web.json_response({'items': [{'id': 'model-1', 'display_name': 'Model 1'}]})
+            if resource == 'sessions' and r.method == 'POST':
+                created_body = await r.json()
+                return web.json_response({'id': 'a2', 'title': 'Agy Created', 'project': created_body['project']})
             if resource == 'sessions':
                 return web.json_response([agy_session] if agy_session else [])
             if resource == 'sessions/a1' and r.method == 'PATCH':
@@ -232,6 +244,15 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                     r = await client.get(agy + '/models', headers=auth)
                     self.assertEqual(r.status, 200, await r.text())
                     self.assertEqual((await r.json())['items'][0]['id'], 'model-1')
+                    r = await client.get(agy + '/projects', headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    agy_pid = (await r.json())['items'][0]['id']
+                    r = await client.post(agy + '/sessions', json={'project_id': agy_pid, 'request_id': str(uuid.uuid4())}, headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    self.assertEqual(await r.json(), {'id': 'a2'})
+                    r = await client.post(api + '/sessions/s1/runs', json={'text': 'Chat after Agy create', 'request_id': str(uuid.uuid4())}, headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    self.assertEqual(chat_runs[-1]['text'], 'Chat after Agy create')
                     r = await client.patch(agy + '/sessions/a1', json={'title': 'Renamed'}, headers=auth)
                     self.assertEqual(r.status, 200, await r.text())
                     form = FormData()

@@ -96,7 +96,10 @@ def test_health_failure_never_runs_versions_together(setup, ready, stopped, expe
     store, plan, old, host, worker = setup
     host.ready, host.stopped = ready, stopped
     worker.arm(plan["id"], old)
-    assert worker.run(plan["id"])["state"] == expected
+    result = worker.run(plan["id"])
+    assert result["state"] == expected
+    if expected == "failed":
+        assert result["switch_started"] is True
     assert ("restore" in host.events) == stopped
     assert not (store.root / "current.json").exists()
 
@@ -105,7 +108,9 @@ def test_old_exit_timeout_does_not_start_or_stop_anything(setup):
     store, plan, old, host, worker = setup
     host.exited = False
     worker.arm(plan["id"], old)
-    assert worker.run(plan["id"])["state"] == "failed"
+    result = worker.run(plan["id"])
+    assert result["state"] == "failed"
+    assert result["switch_started"] is False
     assert host.events == ["validate", "wait"]
 
 

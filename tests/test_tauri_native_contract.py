@@ -143,6 +143,8 @@ def test_tauri_shutdown_is_immediate_for_the_window_and_graceful_for_the_sidecar
     assert "const STOP_TIMEOUT: Duration = Duration::from_secs(5)" in rust
     assert '"--owned-stdin"' in rust
     assert ".stdin(Stdio::piped())" in rust
+    assert "process.take_owner_stdin()" in rust
+    assert "process.child.stdin.take()" not in rust
     assert 'stdin.write_all(b"\\n")' in rust
     assert "fn spawn_background_shutdown" in rust
     assert "thread::spawn(move ||" in rust

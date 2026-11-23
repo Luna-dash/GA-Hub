@@ -370,6 +370,7 @@ struct OwnedProcess {
     ///
     /// Created by the shell itself instead of `Stdio::piped()`: see
     /// [`owner_stdin_pipe`] for why the standard-library path is unusable here.
+    #[cfg(windows)]
     owner_stdin: Option<OwnedHandle>,
     #[cfg(unix)]
     process_group: libc::pid_t,
@@ -1350,7 +1351,7 @@ fn stop_owned_process(process: &mut OwnedProcess) {
         process.cleanup_complete = matches!(process.child.try_wait(), Ok(Some(_)));
         return;
     }
-    if let Some(mut stdin) = process.child.stdin.take() {
+    if let Some(mut stdin) = process.take_owner_stdin() {
         let _ = stdin.write_all(b"\n");
         let _ = stdin.flush();
     }
@@ -1496,7 +1497,9 @@ fn ensure_safe_update_fallback(updates_dir: &Path) -> Result<(), String> {
     let state = value["state"]
         .as_str()
         .ok_or_else(|| "Missing update state field".to_string())?;
-    if matches!(state, "armed" | "switching" | "verifying" | "failed") {
+    let pre_switch_failure =
+        state == "failed" && value["switch_started"] == serde_json::Value::Bool(false);
+    if !pre_switch_failure && matches!(state, "armed" | "switching" | "verifying" | "failed") {
         return Err(format!(
             "Unresolved update ({state}); inspect/recover before launch"
         ));
@@ -2096,6 +2099,36 @@ mod tests {
     }
 
     #[test]
+    fn stop_owned_process_signals_owner_stdin_without_waiting_for_timeout() {
+        #[cfg(windows)]
+        let mut command = Command::new("sort.exe");
+        #[cfg(unix)]
+        let mut command = Command::new("cat");
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+
+        let mut process =
+            OwnedProcess::spawn(command).expect("owned stdin-reading process should start");
+        let started = Instant::now();
+        stop_owned_process(&mut process);
+        let elapsed = started.elapsed();
+
+        assert!(process.cleanup_complete, "stop_owned_process must complete cleanup");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "owner stdin shutdown should finish well before STOP_TIMEOUT, took {elapsed:?}"
+        );
+        let status = process
+            .child
+            .try_wait()
+            .expect("child exit status should be readable")
+            .expect("child must have exited");
+        assert!(
+            status.success(),
+            "child should exit cleanly after stdin signal/EOF rather than forced kill: {status:?}"
+        );
+    }
+
+    #[test]
     fn fallback_launch_blocks_maintenance_and_unresolved_updates() {
         let dir = env::temp_dir().join(format!("gahub-fallback-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
@@ -2106,15 +2139,39 @@ mod tests {
             assert!(ensure_safe_update_fallback(&dir).is_ok(), "state {safe_state} should allow fallback");
         }
 
+        fs::write(
+            dir.join("state.json"),
+            r#"{"state":"failed","switch_started":false}"#,
+        )
+        .unwrap();
+        assert!(
+            ensure_safe_update_fallback(&dir).is_ok(),
+            "pre-switch failure must allow safe fallback launch"
+        );
+
         for blocked_state in ["armed", "switching", "verifying", "failed"] {
             fs::write(dir.join("state.json"), format!(r#"{{"state":"{blocked_state}"}}"#)).unwrap();
             assert!(ensure_safe_update_fallback(&dir).is_err(), "state {blocked_state} must block fallback");
         }
 
+        fs::write(
+            dir.join("state.json"),
+            r#"{"state":"failed","switch_started":true}"#,
+        )
+        .unwrap();
+        assert!(
+            ensure_safe_update_fallback(&dir).is_err(),
+            "mid-switch failure must block fallback launch"
+        );
+
         fs::write(dir.join("state.json"), "{not-json").unwrap();
         assert!(ensure_safe_update_fallback(&dir).is_err());
 
-        fs::write(dir.join("state.json"), r#"{"state":"idle"}"#).unwrap();
+        fs::write(
+            dir.join("state.json"),
+            r#"{"state":"failed","switch_started":false}"#,
+        )
+        .unwrap();
         fs::write(dir.join("maintenance.json"), "{}").unwrap();
         assert!(ensure_safe_update_fallback(&dir).is_err());
 

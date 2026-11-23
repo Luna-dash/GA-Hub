@@ -17,6 +17,10 @@ from .update_preflight import verify_admission
 COUNTDOWN = 60
 
 
+class _PreSwitchHandoffAbort(ValueError):
+    """Raised when handoff expires or the old desktop exits before switching starts."""
+
+
 def task_name(admin: Path) -> str:
     suffix = hashlib.sha256(str(admin.resolve()).casefold().encode()).hexdigest()[:12]
     return f"GAHub-Update-{suffix}"
@@ -166,7 +170,7 @@ def worker(store: UpdateStore, admin: Path, *, approval_timeout: float = 600,
                     sleep(max(0, delay))
                     break
                 if clock() >= deadline or not alive(old):
-                    raise ValueError("Approval expired or old desktop exited")
+                    raise _PreSwitchHandoffAbort("Approval expired or old desktop exited")
                 sleep(.25)
             with store.lock:
                 plan = store.read()
@@ -174,7 +178,7 @@ def worker(store: UpdateStore, admin: Path, *, approval_timeout: float = 600,
                     raise ValueError("Update identity changed")
                 verify_admission(store, plan)
                 if not alive(old):
-                    raise ValueError("Desktop identity changed before close")
+                    raise _PreSwitchHandoffAbort("Desktop identity changed before close")
                 for name, expected in value["old_sha256"].items():
                     if digest(old.executable.parent / name) != expected:
                         raise ValueError("Old desktop pair changed")
@@ -191,13 +195,40 @@ def worker(store: UpdateStore, admin: Path, *, approval_timeout: float = 600,
             with store.lock:
                 plan = store.read()
                 if plan.get("id") == value["id"] and plan.get("state") == "armed":
-                    store.transition(value["id"], {"armed"}, "failed", error=str(exc))
-                value.update(state="failed", error=str(exc))
+                    if isinstance(exc, _PreSwitchHandoffAbort) and not paused:
+                        try:
+                            verify_admission(store, plan)
+                        except Exception as verify_exc:
+                            detail = f"{exc}; {verify_exc}"
+                            store.transition(
+                                value["id"], {"armed"}, "failed",
+                                switch_started=False, error=detail,
+                            )
+                            value.update(state="failed", error=detail)
+                        else:
+                            store.transition(
+                                value["id"], {"armed"}, "prepared",
+                                switch_started=False, error=None, old=None,
+                            )
+                            value.update(state="cancelled", error=str(exc))
+                    else:
+                        store.transition(
+                            value["id"], {"armed"}, "failed",
+                            switch_started=False, error=str(exc),
+                        )
+                        value.update(state="failed", error=str(exc))
+                else:
+                    value.update(state="failed", error=str(exc))
                 atomic_json(path, value)
             raise
         finally:
             if paused:
-                state = store.read().get("state")
+                plan_after = store.read()
+                state = plan_after.get("state")
                 # Unresolved switch failures stay paused to avoid a competing launch.
-                if state in {"succeeded", "rolled_back"} or alive(old):
+                if (
+                    state in {"succeeded", "rolled_back"}
+                    or plan_after.get("switch_started") is False
+                    or alive(old)
+                ):
                     marker.unlink(missing_ok=True)

@@ -23,8 +23,15 @@ class CoreContractGuard:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = scope.get("path", "")
         diagnostics = (
-            path in {"/api/status", "/api/health", "/api/health/core-contract", "/ws/events"}
-            or path.startswith(("/api/setup/", "/api/events/"))
+            path in {
+                "/api/desktop/ready",
+                "/api/status",
+                "/api/health",
+                "/api/health/core-contract",
+                "/api/updates",
+                "/ws/events",
+            }
+            or path.startswith(("/api/setup/", "/api/events/", "/api/updates/", "/api/appearance/"))
         )
         guarded = path.startswith(("/api/", "/ws/")) and not diagnostics
         if self.enabled and guarded and scope["type"] in {"http", "websocket"}:

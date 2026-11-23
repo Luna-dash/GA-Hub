@@ -68,6 +68,7 @@ class LocalGateway(gateway.Gateway):
         self.checked = 0
         self.http = None
         self.submissions = {}
+        self.agy_creations = {}
         self.uploads = {}
         self.artifacts = gateway.ArtifactStore(ARTIFACT_ROOTS)
         self.upload_slots = asyncio.Semaphore(2)
@@ -157,17 +158,28 @@ class LocalGateway(gateway.Gateway):
             project = catalog.get(body['project_id']) if isinstance(body['project_id'], str) else None
             if not project:
                 raise web.HTTPBadRequest(text='请选择已登记项目')
-            # Coalesce an uncertain response within the lifetime of this connector.
-            key = ('agy-create', request.cookies.get(gateway.COOKIE), body['request_id'])
-            if key not in self.submissions:
-                if len(self.submissions) >= 512:
-                    self.submissions.pop(next(iter(self.submissions)))
+            # Coalesce an uncertain response within the lifetime of this connector
+            # without sharing Gateway.submissions' 3-tuple chat submission schema.
+            now = time.monotonic()
+            self.agy_creations = {
+                k: v for k, v in self.agy_creations.items()
+                if not v[2].done() or now - v[0] < gateway.TTL
+            }
+            key = (request.cookies.get(gateway.COOKIE), body['request_id'])
+            if key not in self.agy_creations:
+                if len(self.agy_creations) >= 512:
+                    self.agy_creations.pop(next(iter(self.agy_creations)))
                 task = asyncio.create_task(self.anti_json('POST', path, {'project': project['name']}))
-                self.submissions[key] = (body['project_id'], task)
-            project_id, task = self.submissions[key]
+                self.agy_creations[key] = (now, body['project_id'], task)
+            _, project_id, task = self.agy_creations[key]
             if project_id != body['project_id']:
                 raise web.HTTPConflict(text='创建请求与原项目不一致')
-            row = await asyncio.shield(task)
+            try:
+                row = await asyncio.shield(task)
+            except BaseException:
+                if task.done() and self.agy_creations.get(key, (None, None, None))[2] is task:
+                    self.agy_creations.pop(key, None)
+                raise
             return web.json_response({'id': row['id']})
         session = re.fullmatch(r'/sessions/([A-Za-z0-9_-]{1,128})(/upload|/reset)?', path)
         if session:

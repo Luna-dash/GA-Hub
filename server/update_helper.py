@@ -14,7 +14,14 @@ from pathlib import Path
 
 import psutil
 
-from .services.self_update import DATA_EPOCH, EXECUTABLES, UpdateStore, atomic_json, digest
+from .services.self_update import (
+    DATA_EPOCH,
+    EXECUTABLES,
+    UpdateStore,
+    atomic_json,
+    digest,
+    is_unresolved_update,
+)
 from .services.update_executor import UpdateExecutor
 from .services.update_lock import FileMutex
 from .services.update_native import NativeHost, desktop_environment, identity, outside_job
@@ -50,7 +57,7 @@ def launch_current(store: UpdateStore, admin_data: Path) -> int:
     if Path(pointer["executable"]).resolve() != candidate / EXECUTABLES[0]:
         raise ValueError("Invalid current executable pointer")
     active = store.read()
-    if active.get("state") in {"armed", "switching", "verifying", "failed"}:
+    if is_unresolved_update(active):
         raise ValueError("Unresolved update; inspect/recover before launch")
     completed = json.loads((store.root / "completed" / f"{pointer['id']}.json").read_text(encoding="utf8"))
     if (completed.get("state") != "succeeded" or completed.get("id") != pointer["id"]

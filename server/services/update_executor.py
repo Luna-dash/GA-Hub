@@ -62,10 +62,17 @@ class UpdateExecutor:
             candidate = self.store.verify(plan)
             if candidate == old_path.parent:
                 raise ValueError("Candidate must not overwrite the running version")
-            return self.store.transition(plan_id, {"prepared"}, "armed", old={
-                "pid": old.pid, "created": old.created, "executable": str(old_path),
-                "sha256": old_hashes,
-            })
+            return self.store.transition(
+                plan_id,
+                {"prepared"},
+                "armed",
+                switch_started=False,
+                error=None,
+                old={
+                    "pid": old.pid, "created": old.created, "executable": str(old_path),
+                    "sha256": old_hashes,
+                },
+            )
 
     def run(self, plan_id: str, *, exit_timeout: float = 120, health_timeout: float = 90) -> dict:
         plan = self.store.read()
@@ -80,8 +87,9 @@ class UpdateExecutor:
         # must happen after the armed receipt, or this simply times out.
         if not self.host.wait_old_exit(old, exit_timeout):
             return self.store.transition(plan_id, {"armed"}, "failed",
+                                         switch_started=False,
                                          error="Old desktop did not exit; no candidate started")
-        self.store.transition(plan_id, {"armed"}, "switching")
+        self.store.transition(plan_id, {"armed"}, "switching", switch_started=True)
         start_attempted = False
         pointer_published = False
         pointer_path = self.store.root / "current.json"

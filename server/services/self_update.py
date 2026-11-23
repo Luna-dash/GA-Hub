@@ -26,6 +26,14 @@ DATA_EPOCH = 1  # Changes require an explicit migration/backup strategy, not a b
 STATES = {"prepared", "armed", "switching", "verifying", "succeeded", "rolled_back", "failed", "cancelled"}
 
 
+def is_unresolved_update(plan: dict[str, Any]) -> bool:
+    """True only when a switch may be in progress or ended in an uncertain state."""
+    state = plan.get("state")
+    if state in {"armed", "switching", "verifying"}:
+        return True
+    return state == "failed" and plan.get("switch_started") is not False
+
+
 def digest(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as stream:
@@ -96,7 +104,8 @@ class UpdateStore:
     def prepare(self, archive: Path, expected_sha256: str = "", *, trusted: bool) -> dict[str, Any]:
         """Require a trusted archive; optionally compare a separately sourced checksum."""
         with self.lock:
-            if self.read()["state"] in {"prepared", "armed", "switching", "verifying", "failed"}:
+            current = self.read()
+            if current["state"] == "prepared" or is_unresolved_update(current):
                 raise ValueError("An update is already prepared, being applied, or requires manual recovery")
             if not trusted:
                 raise ValueError("Explicit confirmation of the release source is required")
@@ -158,5 +167,10 @@ class UpdateStore:
             return plan
 
     def cancel(self, plan_id: str) -> dict[str, Any]:
-        # Once armed, only the independently running executor can conclude it.
-        return self.transition(plan_id, {"prepared"}, "cancelled")
+        # Once armed or mid-switch, only the independently running executor can conclude it.
+        with self.lock:
+            current = self.read()
+            allowed = {"prepared"}
+            if current.get("state") == "failed" and current.get("switch_started") is False:
+                allowed = {"prepared", "failed"}
+            return self.transition(plan_id, allowed, "cancelled")

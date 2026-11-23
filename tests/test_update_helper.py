@@ -120,6 +120,17 @@ def test_launch_current_survives_later_prepared_plan(tmp_path, monkeypatch):
         cli.launch_current(store, tmp_path)
     assert len(seen) == 1
 
+    # A failure before switching began does not strand the existing verified install.
+    store.transition(newer["id"], {"armed"}, "failed", switch_started=False)
+    assert cli.launch_current(store, tmp_path) == 12345
+    assert len(seen) == 2
+
+    # A mid-switch failure must still block launching until recovered.
+    store.transition(newer["id"], {"failed"}, "failed", switch_started=True)
+    with pytest.raises(ValueError, match="Unresolved"):
+        cli.launch_current(store, tmp_path)
+    assert len(seen) == 2
+
 
 def test_native_wait_and_candidate_stop_real_processes(tmp_path):
     """Only short-lived Python test processes; no actual desktop or shared data."""

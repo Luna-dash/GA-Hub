@@ -50,7 +50,7 @@ def test_same_worker_runs_two_updates(tmp_path, monkeypatch):
     assert len(hosts) == 2
 
 
-def test_unapproved_worker_never_closes(tmp_path, monkeypatch):
+def test_unapproved_worker_never_closes_and_keeps_candidate_prepared(tmp_path, monkeypatch):
     store, old = setup_request(tmp_path, monkeypatch)
     plan = prepare(store, release(tmp_path))
     handoff.request(store, tmp_path, plan['id'], old.pid)
@@ -63,7 +63,42 @@ def test_unapproved_worker_never_closes(tmp_path, monkeypatch):
         handoff.worker(store, tmp_path, clock=lambda: next(ticks), sleep=lambda _: None,
                        host_factory=lambda *args: FakeHost(), close=closed.append)
     assert closed == []
-    assert store.read()['state'] == 'failed'
+    assert store.read()['state'] == 'prepared'
+    assert handoff.read_json(store.root / 'handoff.json')['state'] == 'cancelled'
+    assert not (store.root / 'maintenance.json').exists()
+
+    # The already-verified candidate stays usable without re-downloading.
+    handoff.request(store, tmp_path, plan['id'], old.pid)
+    def advance(_seconds):
+        current = handoff.read_json(store.root / 'handoff.json')
+        if current['state'] == 'ready':
+            handoff.approve(store, plan['id'])
+            current = handoff.read_json(store.root / 'handoff.json')
+            current['not_before'] = 0
+            atomic_json(store.root / 'handoff.json', current)
+    result = handoff.worker(store, tmp_path, sleep=advance,
+                            host_factory=lambda *args: FakeHost(), close=closed.append)
+    assert result['state'] == 'succeeded'
+    assert closed == [old]
+
+
+def test_old_desktop_exit_before_approval_reverts_to_prepared(tmp_path, monkeypatch):
+    store, old = setup_request(tmp_path, monkeypatch)
+    plan = prepare(store, release(tmp_path))
+    handoff.request(store, tmp_path, plan['id'], old.pid)
+    old_alive = {'value': True}
+    monkeypatch.setattr(handoff, 'alive', lambda proc: old_alive['value'] if proc == old else True)
+    closed = []
+
+    def user_closed_window(_seconds):
+        old_alive['value'] = False
+
+    with pytest.raises(ValueError, match='old desktop exited'):
+        handoff.worker(store, tmp_path, sleep=user_closed_window,
+                       host_factory=lambda *args: FakeHost(), close=closed.append)
+    assert closed == []
+    assert store.read()['state'] == 'prepared'
+    assert handoff.read_json(store.root / 'handoff.json')['state'] == 'cancelled'
     assert not (store.root / 'maintenance.json').exists()
 
 
@@ -88,5 +123,7 @@ def test_tampering_during_countdown_never_closes(tmp_path, monkeypatch, target):
         handoff.worker(store, tmp_path, sleep=advance,
                        host_factory=lambda *args: FakeHost(), close=closed.append)
     assert closed == []
-    assert store.read()['state'] == 'failed'
+    persisted = store.read()
+    assert persisted['state'] == 'failed'
+    assert persisted['switch_started'] is False
     assert not (store.root / 'maintenance.json').exists()

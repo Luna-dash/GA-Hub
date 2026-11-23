@@ -170,6 +170,20 @@ def test_unresolved_plan_cannot_be_replaced(tmp_path, state):
     assert store.read()["id"] == plan["id"]
 
 
+def test_pre_switch_failed_plan_can_be_cancelled_or_replaced(tmp_path):
+    store = UpdateStore(tmp_path / "updates")
+    archive = release(tmp_path)
+    first = prepare(store, archive)
+    store.transition(first["id"], {"prepared"}, "failed", switch_started=False)
+    assert store.cancel(first["id"])["state"] == "cancelled"
+
+    second = prepare(store, archive)
+    store.transition(second["id"], {"prepared"}, "failed", switch_started=False)
+    third = prepare(store, archive)
+    assert third["id"] != second["id"]
+    assert third["state"] == "prepared"
+
+
 def test_invalid_zip_api_returns_client_error(tmp_path, monkeypatch):
     from server.routes import updates
     monkeypatch.setattr(updates._paths, "ADMIN_DATA", tmp_path / "admin")

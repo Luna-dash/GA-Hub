@@ -336,3 +336,122 @@ class ConnectorAgyParityTest(unittest.IsolatedAsyncioTestCase):
         r_evt = await gw.handle_agy(make_mocked_request('GET', '/api/agy/sessions/s1/runs/r1/events?after=0', headers=headers))
         evts = json.loads(r_evt.text)
         self.assertEqual(evts[0]['step'], {'index': 0, 'kind': 'tool_call', 'state': 'DONE', 'tool': 'read_file'})
+
+    async def test_agy_session_create_does_not_poison_chat_submit_on_same_connector(self):
+        from aiohttp import streams, web
+        from aiohttp.test_utils import make_mocked_request
+
+        connector_dir = str(Path(__file__).resolve().parents[1] / 'assets' / 'nova')
+        remote_dir = str(Path(__file__).resolve().parents[1] / 'assets' / 'remote_access')
+        sys.path.insert(0, connector_dir)
+        sys.path.insert(0, remote_dir)
+        try:
+            import connector
+        finally:
+            if connector_dir in sys.path:
+                sys.path.remove(connector_dir)
+            if remote_dir in sys.path:
+                sys.path.remove(remote_dir)
+
+        gw = connector.LocalGateway()
+        gw.fixed_backend = 'http://127.0.0.1:18765'
+        cookie_val = gw.token()
+        common_headers = {
+            'Host': connector.gateway.PUBLIC,
+            'Origin': 'https://' + connector.gateway.PUBLIC,
+            'Authorization': 'Bearer ' + gw.local_secret,
+            'Cookie': f'{connector.gateway.COOKIE}={cookie_val}',
+        }
+
+        class FakeResp:
+            def __init__(self, status, payload):
+                self.status = status
+                self._payload = payload
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def json(self):
+                return self._payload
+
+            async def read(self):
+                return json.dumps(self._payload).encode()
+
+        class FakeHttp:
+            def get(self, url, **kwargs):
+                if url.endswith('/api/projects'):
+                    return FakeResp(200, {'items': [{'name': 'demo', 'path': 'D:/demo', 'dangling': False}]})
+                raise AssertionError(url)
+
+            def post(self, url, **kwargs):
+                if url.endswith('/api/sessions/chat-1/runs'):
+                    return FakeResp(200, {'run_id': 'chat-run-1', 'accepted': True})
+                raise AssertionError(url)
+
+        gw.http = FakeHttp()
+        create_attempts = {'count': 0, 'fail_once': True}
+
+        async def fake_anti(method, path, payload=None, *, action=None):
+            if method == 'POST' and path == '/sessions':
+                create_attempts['count'] += 1
+                if create_attempts['fail_once']:
+                    create_attempts['fail_once'] = False
+                    raise web.HTTPBadGateway(text='transient upstream error')
+                return {'id': 'agy-created-1', 'project': payload['project'], 'title': 'Agy'}
+            raise AssertionError((method, path))
+
+        gw.anti_json = fake_anti
+
+        def json_req(method, path, body):
+            raw = json.dumps(body).encode()
+            protocol = type(
+                'Proto',
+                (),
+                {'_reading_paused': False, 'pause_reading': lambda self: None, 'resume_reading': lambda self: None},
+            )()
+            reader = streams.StreamReader(protocol, 2**16, loop=asyncio.get_running_loop())
+            reader.feed_data(raw)
+            reader.feed_eof()
+            return make_mocked_request(
+                method,
+                path,
+                headers={**common_headers, 'Content-Type': 'application/json', 'Content-Length': str(len(raw))},
+                payload=reader,
+            )
+
+        catalog = await gw.project_catalog()
+        project_id = next(iter(catalog))
+
+        # A failed Agy creation must be evicted so retrying the same request_id can succeed.
+        agy_req_id = '33333333-3333-3333-3333-333333333333'
+        with self.assertRaises(web.HTTPBadGateway):
+            await gw.handle(json_req('POST', '/api/agy/sessions', {
+                'project_id': project_id,
+                'request_id': agy_req_id,
+            }))
+
+        created = await gw.handle(json_req('POST', '/api/agy/sessions', {
+            'project_id': project_id,
+            'request_id': agy_req_id,
+        }))
+        self.assertEqual(created.status, 200)
+        self.assertEqual(json.loads(created.text), {'id': 'agy-created-1'})
+
+        # Repeating the succeeded request_id coalesces onto the cached creation.
+        coalesced = await gw.handle(json_req('POST', '/api/agy/sessions', {
+            'project_id': project_id,
+            'request_id': agy_req_id,
+        }))
+        self.assertEqual(json.loads(coalesced.text), {'id': 'agy-created-1'})
+        self.assertEqual(create_attempts['count'], 2)
+
+        # Submitting a normal Chat message on the same LocalGateway instance must not IndexError.
+        chat_resp = await gw.handle(json_req('POST', '/api/sessions/chat-1/runs', {
+            'text': 'hello after agy create',
+            'request_id': '44444444-4444-4444-4444-444444444444',
+        }))
+        self.assertEqual(chat_resp.status, 200)
+        self.assertEqual(json.loads(chat_resp.body.decode()), {'run_id': 'chat-run-1', 'accepted': True})

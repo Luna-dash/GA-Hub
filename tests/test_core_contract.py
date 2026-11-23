@@ -224,5 +224,60 @@ class LiveContractTests(unittest.TestCase):
         self.assertNotIn("frontends.continue_cmd.reset_conversation", declared)
 
 
+class CoreContractGuardTests(unittest.TestCase):
+    """Self-update, appearance, and shell readiness stay reachable when GA core fails."""
+
+    def test_guard_allows_self_update_appearance_and_desktop_ready_when_contract_fails(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from server.runtime_guard import CoreContractGuard
+        from server.services.core_contract import ContractReport
+
+        app = FastAPI()
+
+        @app.get("/api/desktop/ready")
+        def desktop_ready():
+            return {"ok": True}
+
+        @app.get("/api/updates")
+        def updates_status():
+            return {"plan": {"state": "idle"}}
+
+        @app.get("/api/updates/ready")
+        def updates_ready():
+            return {"ready": True}
+
+        @app.get("/api/appearance/fonts")
+        def appearance_fonts():
+            return {"items": []}
+
+        @app.get("/api/sessions")
+        def sessions():
+            return {"items": []}
+
+        failing = ContractReport(
+            ga_root="C:/ga",
+            core_commit=None,
+            ok=False,
+            items=[],
+            errors=["missing symbol"],
+        )
+        app.add_middleware(CoreContractGuard, enabled=True, report=lambda: failing)
+        client = TestClient(app)
+
+        for allowed in (
+            "/api/desktop/ready",
+            "/api/updates",
+            "/api/updates/ready",
+            "/api/appearance/fonts",
+        ):
+            resp = client.get(allowed)
+            self.assertEqual(resp.status_code, 200, f"{allowed} should remain reachable: {resp.text}")
+
+        blocked = client.get("/api/sessions")
+        self.assertEqual(blocked.status_code, 503)
+        self.assertEqual(blocked.json()["detail"]["code"], "core_contract_failed")
+
+
 if __name__ == "__main__":
     unittest.main()
