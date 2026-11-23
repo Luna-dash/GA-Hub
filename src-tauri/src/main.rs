@@ -23,6 +23,8 @@ mod mei_cleanup;
 mod file_attachments;
 mod message_dialog;
 mod update_receipt;
+#[cfg(windows)]
+mod window_icon;
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -1650,6 +1652,11 @@ fn main() {
                 .center()
                 .resizable(true)
                 .build()?;
+
+            #[cfg(windows)]
+            if let Ok(hwnd) = main_window.hwnd() {
+                window_icon::install(hwnd.0.cast());
+            }
 
             fit_main_window_to_work_area(&main_window);
             record_startup_diagnostic(&format!(
