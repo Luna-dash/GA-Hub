@@ -1,4 +1,4 @@
-import { readThemeCompletion, recordThemeCompletion } from '@/stores/themeCompletionStore'
+import { readThemeCompletion, recordThemeCompletion, useUnreadThemeSessionIds } from '@/stores/themeCompletionStore'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -85,7 +85,7 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
   </ModalOverlay>
 }
 
-function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, autoOpen = false, onAutoOpened }: { session: HubSession; onSettings: () => void; refresh: () => void; expanded: boolean; onExpandedChange: (id: string | null) => void; autoOpen?: boolean; onAutoOpened?: () => void }) {
+function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, autoOpen = false, onAutoOpened, unread = false }: { session: HubSession; onSettings: () => void; refresh: () => void; expanded: boolean; onExpandedChange: (id: string | null) => void; autoOpen?: boolean; onAutoOpened?: () => void; unread?: boolean }) {
   const navigate = useNavigate()
   const client = useQueryClient()
   // Idle cards do not poll. Runtime events/reconnect refresh the snapshots;
@@ -199,10 +199,19 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
     } catch (e) { setError(errorMessageFromError(e)) }
     finally { lock.current = false; setPending(false) }
   }
-  return <article ref={cardRef} className={`ga-paper-card scroll-mt-4 min-w-0 ${expanded ? 'col-span-full overflow-hidden rounded-2xl ring-1 ring-accent/15' : ''}`} aria-label={`主题任务卡片：${title}`}>
+  const showUnread = unread && !active
+  return <article ref={cardRef} data-unread={showUnread ? 'true' : undefined} className={`ga-paper-card scroll-mt-4 min-w-0 ${expanded ? 'col-span-full overflow-hidden rounded-2xl ring-1 ring-accent/15' : showUnread ? 'border-accent/85 ring-2 ring-accent/55 shadow-[0_6px_18px_rgba(166,91,42,0.16)]' : ''}`} aria-label={`主题任务卡片：${title}`}>
     <div className={expanded ? 'border-b border-line/45' : 'p-4'}>
       <header className={expanded ? 'grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 px-4 py-2 lg:grid-cols-[188px_minmax(0,1fr)_auto] lg:gap-x-4' : 'flex items-start justify-between gap-3'}>
-        <h2 className="min-w-0 truncate text-sm font-semibold" title={title}>{title}</h2>
+        <div className="flex min-w-0 items-center gap-2">
+          <h2 className="min-w-0 truncate text-sm font-semibold" title={title}>{title}</h2>
+          {showUnread && !expanded && (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-red-500/35 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+              <span>新完成</span>
+            </span>
+          )}
+        </div>
         {expanded && <div className="order-3 col-span-2 min-w-0 pt-1 lg:order-none lg:col-span-1 lg:pt-0"><ThemeTaskTabs tab={tab} onChange={setTab} /></div>}
         <div className="flex shrink-0 items-center gap-2">{!expanded && <button type="button" aria-label={`${active ? '停止' : '运行'}主题任务：${title}`} title={active ? runtime?.status === 'aborting' ? '正在停止' : '停止任务' : retryRunId ? '请展开并确认重试' : '按本次提示词运行'} disabled={active ? pending || uncertain || runtime?.status === 'aborting' : disabled || !draft.trim() || Boolean(retryRunId)} className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${active ? 'bg-status-danger/10 text-status-danger hover:bg-status-danger/20 disabled:cursor-not-allowed disabled:opacity-45' : 'ga-solid-primary'}`} onClick={() => void (active ? stop() : execute(draft.trim(), true))}>
           {active ? <Square className="h-3 w-3 fill-current" aria-hidden="true" /> : <Play className="h-3 w-3 fill-current" aria-hidden="true" />}
@@ -290,8 +299,14 @@ export default function ThemeTasks() {
   const [search, setSearch] = useState('')
   const refresh = () => { void client.invalidateQueries({ queryKey: queryKeys.sessions }) }
   const tasks = sessions.filter(s => s.theme_task)
+  const unreadSessionIds = useUnreadThemeSessionIds()
+  const unreadCount = tasks.filter(s => unreadSessionIds.has(s.id)).length
   // Keep keys/instances stable so promoting a card never resets its draft.
-  const orderedTasks = [...tasks.filter(s => s.id === expandedId), ...tasks.filter(s => s.id !== expandedId)]
+  const orderedTasks = [
+    ...tasks.filter(s => s.id === expandedId),
+    ...tasks.filter(s => s.id !== expandedId && unreadSessionIds.has(s.id)),
+    ...tasks.filter(s => s.id !== expandedId && !unreadSessionIds.has(s.id)),
+  ]
   const llms = useQuery({ queryKey: queryKeys.llms, queryFn: api.llms })
   const modelName = (key?: string | null) => key ? llms.data?.llms.find(m => m.key === key)?.name ?? key : '未绑定模型'
   const pickable = sessions
@@ -324,13 +339,19 @@ export default function ThemeTasks() {
         <span className="inline-flex items-center gap-1.5 rounded-full border border-line/65 bg-bg-soft/90 px-2.5 py-0.5 tabular-nums text-ink-muted">
           <span>主题 {tasks.length} 项</span>
         </span>
+        {unreadCount > 0 && (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/35 bg-red-500/10 px-2.5 py-0.5 tabular-nums text-red-700">
+            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+            <span>待查看 {unreadCount} 项</span>
+          </span>
+        )}
       </div>
     }
     actions={<button type="button" className="ga-btn-sm-primary" onClick={() => setPicking(true)}><Plus className="h-3.5 w-3.5" aria-hidden="true" /><span>从会话转入</span></button>}
   >
     <div className="ga-page-board">
       {sessionsQuery.isError && <p role="alert" className="text-status-danger">加载失败。<button className={button} onClick={() => void sessionsQuery.refetch()}><RefreshIcon size={12} /><span>重试</span></button></p>}
-      {sessionsQuery.isLoading ? <p className="text-sm text-ink-faint">正在加载…</p> : tasks.length === 0 ? <div className="ga-paper-card border-dashed bg-bg-card/55 p-8 text-center"><p className="mb-4 text-sm text-ink-faint">暂无主题任务</p><button className={button} onClick={() => setPicking(true)}>选择已有会话</button></div> : <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">{orderedTasks.map(s => <ThemeCard key={s.id} expanded={expandedId === s.id} onExpandedChange={setExpandedId} session={s} onSettings={() => setSetting(s)} refresh={refresh} autoOpen={openId === s.id} onAutoOpened={clearOpen} />)}</div>}
+      {sessionsQuery.isLoading ? <p className="text-sm text-ink-faint">正在加载…</p> : tasks.length === 0 ? <div className="ga-paper-card border-dashed bg-bg-card/55 p-8 text-center"><p className="mb-4 text-sm text-ink-faint">暂无主题任务</p><button className={button} onClick={() => setPicking(true)}>选择已有会话</button></div> : <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">{orderedTasks.map(s => <ThemeCard key={s.id} expanded={expandedId === s.id} onExpandedChange={setExpandedId} session={s} unread={unreadSessionIds.has(s.id)} onSettings={() => setSetting(s)} refresh={refresh} autoOpen={openId === s.id} onAutoOpened={clearOpen} />)}</div>}
     </div>
     {picking && (
       <ModalOverlay onClose={() => setPicking(false)} labelledBy="theme-pick-title" panelClassName="w-[min(560px,94vw)] rounded-2xl border border-line bg-bg p-6">

@@ -34,15 +34,15 @@ export function ConversationIndexRail({ children }: ConversationIndexRailProps) 
       data-collapsed={collapsed ? 'true' : 'false'}
       className={clsx(
         'relative z-10 h-full shrink-0 transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-        collapsed ? 'w-14' : 'w-96 max-w-[calc(100vw-3rem)]',
+        collapsed ? 'w-14' : 'w-96 max-w-[calc(100vw-4rem)]',
       )}
     >
       <aside
         aria-label="历史对话索引"
         className={clsx(
-          'absolute inset-y-0 left-0 overflow-y-auto border-r border-line/55 bg-bg-soft',
+          'ga-paper-card absolute inset-y-0 left-0 overflow-y-auto',
           'transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-          collapsed ? 'w-14' : 'w-96 max-w-[calc(100vw-3rem)]',
+          collapsed ? 'w-14' : 'w-96 max-w-[calc(100vw-4rem)]',
         )}
       >
         {typeof children === 'function' ? children(collapsed) : children}

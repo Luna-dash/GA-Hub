@@ -449,3 +449,56 @@ def test_active_cooldown_by_profile_exposed_in_profiles_endpoint(tmp_path, monke
         rows = {row["id"]: row for row in resp.json()["profiles"]}
         assert rows[p.id]["cooldown_seconds"] >= 1
         assert "cooldown_seconds" not in rows["default"]
+
+
+@pytest.mark.parametrize("active", [False, True])
+def test_session_worker_records_each_available_commands_snapshot_once(tmp_path, active):
+    runtime = agy_runtime.AgyRuntimeManager()
+    captured = []
+
+    def on_commands(cmds):
+        captured.append(cmds)
+        runtime._record_commands("default", cmds)
+
+    worker = agy_runtime.AgySessionWorker(
+        profile_id="default",
+        session_id="s-cmd",
+        workspace=tmp_path,
+        executable="agy",
+        version=None,
+        on_commands=on_commands,
+    )
+    if active:
+        worker.active_turn = SimpleNamespace(
+            touch=lambda: None,
+            read_repair=SimpleNamespace(track_update=lambda update: update),
+            normalizer=agy_runtime.SessionUpdateNormalizer(),
+            on_event=lambda event: None,
+        )
+
+    def publish(items):
+        worker._handle_session_update({
+            "update": {
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": items,
+            }
+        })
+
+    fallback = runtime.commands("default")
+    assert fallback
+    items = [
+        {"name": "compact", "description": "Compact context"},
+        {"name": "workflow-x", "description": "Run custom workflow"},
+    ]
+    publish(items)
+    assert captured == [items]
+    assert runtime.commands("default") == items
+
+    publish(None)  # Ignore a malformed update, not an explicit empty snapshot.
+    assert captured == [items]
+    assert runtime.commands("default") == items
+
+    publish([])
+    assert captured == [items, []]
+    assert runtime.commands("default") == []
+    assert runtime.commands("other-profile") == fallback

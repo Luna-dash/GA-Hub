@@ -315,6 +315,11 @@ class AgySessionWorker:
         update = params.get("update")
         if not isinstance(update, dict):
             return
+        # Command snapshots may arrive before, during, or between active turns.
+        if update.get("sessionUpdate") == "available_commands_update":
+            cmds = update.get("availableCommands")
+            if isinstance(cmds, list) and self._on_commands:
+                self._on_commands(cmds)
         turn = self.active_turn
         if turn is None:
             return
@@ -325,9 +330,6 @@ class AgySessionWorker:
                 turn.on_event(evt)
             except Exception:
                 log.debug("Failed to deliver ACP session update", exc_info=True)
-        if update.get("sessionUpdate") == "available_commands_update" and turn.normalizer.available_commands:
-            if self._on_commands:
-                self._on_commands(turn.normalizer.available_commands)
 
     def _handle_incoming_request(self, req_id: Any, method: Any, params: dict[str, Any]) -> None:
         turn = self.active_turn
@@ -1032,15 +1034,14 @@ class AgyRuntimeManager:
             if isinstance(inp, dict) and str(inp.get("hint") or "").strip():
                 entry["hint"] = str(inp["hint"]).strip()
             cleaned.append(entry)
-        if cleaned:
-            with self._lock:
-                self._cached_commands[profile_id] = cleaned
+        with self._lock:
+            self._cached_commands[profile_id] = cleaned
 
     def commands(self, profile_id: str | None = None) -> list[dict[str, Any]]:
         pid = profile_id or agy_profile.snapshot()[0]
         with self._lock:
             cached = self._cached_commands.get(pid)
-            if cached:
+            if cached is not None:
                 return list(cached)
         return [
             {"name": "plan", "description": "先进行调研并生成结构化方案", "hint": "<目标>"},

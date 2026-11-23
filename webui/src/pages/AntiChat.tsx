@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom'
 import type { TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
-import { Brain, ClipboardList, Pencil, RefreshCw, ShieldAlert, ShieldCheck, Slash, UserCheck } from 'lucide-react'
+import { Brain, Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, Slash, UserCheck } from 'lucide-react'
 import { CloseIconButton, RotateCw } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/components/ChatLayout'
 import { bubbleTone } from '@/components/bubbleTone'
+import { Z_LAYERS } from '@/config/zLayers'
 import { ImagePasteInput } from '@/components/ImagePasteInput'
 import { AntiDaemonControl, useAntiDaemonStatus } from '@/components/AntiDaemonControl'
 import { AntiAgyProfiles, useAgyProfiles } from '@/components/AntiAgyProfiles'
@@ -69,6 +70,68 @@ const permissionLabels: Record<AntiPermissionMode, string> = {
   auto: 'Auto',
   'full-access': '全放行',
 }
+
+interface ExecutionPolicyOption {
+  id: string
+  mode: AntiMode
+  permissionMode: AntiPermissionMode
+  label: string
+  triggerLabel: string
+  description: string
+}
+
+const EXECUTION_POLICIES: readonly ExecutionPolicyOption[] = [
+  {
+    id: 'plan',
+    mode: 'plan',
+    permissionMode: 'approval-required',
+    label: 'Plan · 只读规划',
+    triggerLabel: 'Plan',
+    description: '先调研分析并输出结构化方案，不修改工作区文件',
+  },
+  {
+    id: 'accept-edits:approval-required',
+    mode: 'accept-edits',
+    permissionMode: 'approval-required',
+    label: 'Edit · 逐次审批',
+    triggerLabel: 'Edit · 逐次审批',
+    description: '修改文件或执行命令行前每次弹窗确认',
+  },
+  {
+    id: 'accept-edits:auto-accept-edits',
+    mode: 'accept-edits',
+    permissionMode: 'auto-accept-edits',
+    label: 'Edit · 自动改文件',
+    triggerLabel: 'Edit · 自动改文件',
+    description: '工作区内改写自动放行，命令行或跨目录仍需确认',
+  },
+  {
+    id: 'accept-edits:auto',
+    mode: 'accept-edits',
+    permissionMode: 'auto',
+    label: 'Edit · Auto',
+    triggerLabel: 'Edit · Auto',
+    description: '由 Agy 自动评估风险，仅高风险操作需要确认',
+  },
+  {
+    id: 'accept-edits:full-access',
+    mode: 'accept-edits',
+    permissionMode: 'full-access',
+    label: 'Edit · 全放行',
+    triggerLabel: 'Edit · 全放行',
+    description: '自动允许所有文件与命令操作，无需逐次审批',
+  },
+]
+
+const DEFAULT_ANTI_COMMANDS: readonly {
+  name: string
+  description?: string | null
+  hint?: string | null
+}[] = [
+    { name: 'plan', description: '先进行调研并生成结构化方案', hint: '<目标>' },
+    { name: 'compact', description: '压缩当前对话上下文以节省额度' },
+    { name: 'review', description: '审查工作区改动与潜在问题' },
+  ]
 
 function formatRunUsage(usage?: Run['usage']): string | null {
   if (!usage) return null
@@ -281,6 +344,30 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
   const [mode, setMode] = usePageState<AntiMode>('antiChat.mode', 'plan')
   const [permissionMode, setPermissionMode] = usePageState<AntiPermissionMode>('antiChat.permissionMode', 'approval-required')
   const [commandsOpen, setCommandsOpen] = useState(false)
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0)
+  const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null)
+  const [policyOpen, setPolicyOpen] = useState(false)
+  const policyAnchorRef = useRef<HTMLDivElement>(null)
+  const composerWrapRef = useRef<HTMLDivElement>(null)
+  const activePolicy = mode === 'plan'
+    ? EXECUTION_POLICIES[0]
+    : (EXECUTION_POLICIES.find(p => p.mode === 'accept-edits' && p.permissionMode === permissionMode) ?? EXECUTION_POLICIES[1])
+
+  useEffect(() => {
+    if (!policyOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (!policyAnchorRef.current?.contains(event.target as Node)) setPolicyOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPolicyOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [policyOpen])
   const [fontScale, setFontScale] = useState(getChatFontScale)
   useEffect(() => {
     const sync = (event: Event) => setFontScale((event as CustomEvent<number>).detail || getChatFontScale())
@@ -377,14 +464,36 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
       cache.setQueryData<Session[]>(sessionsKey, old => old?.map(row => row.id === updated.id ? { ...row, ...updated } : row))
     },
   })
-  const showSlashMenu = commandsOpen || /^\/\S*$/.test(prompt.trim())
+  const slashMatch = /^\/(\S*)$/.exec(prompt.trimStart())
+  const slashQuery = slashMatch ? slashMatch[1].toLowerCase() : ''
+  const showSlashMenu = !current && !pending && (
+    commandsOpen || (Boolean(slashMatch) && dismissedSlashText !== prompt)
+  )
   const commands = useQuery({
     queryKey: ['anti-commands', profileId],
     enabled: showSlashMenu,
     queryFn: ({ signal }) => antiApi.commands(signal),
-    staleTime: 60_000,
     retry: false,
   })
+  const rawCommands = commands.data?.items ?? DEFAULT_ANTI_COMMANDS
+  const filteredCommands = slashQuery
+    ? rawCommands.filter(cmd =>
+      cmd.name.toLowerCase().includes(slashQuery)
+      || (cmd.description ?? '').toLowerCase().includes(slashQuery),
+    )
+    : rawCommands
+
+  useEffect(() => {
+    setSlashActiveIndex(0)
+  }, [prompt, commandsOpen])
+
+  const applySlashCommand = (cmdName: string) => {
+    setPrompt(`/${cmdName} `)
+    setCommandsOpen(false)
+    setDismissedSlashText(null)
+    requestAnimationFrame(() => composerWrapRef.current?.querySelector('textarea')?.focus())
+  }
+
   const scrollToLatest = useCallback(() => {
     if (transcript.current && followTranscript.current) transcript.current.scrollTop = transcript.current.scrollHeight
   }, [])
@@ -392,8 +501,9 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
   const submit = () => {
     const trimmedPrompt = prompt.trim()
     if (current || send.isPending || !history.isSuccess || (!trimmedPrompt && !attachments.length && !references.length)) return
+    const effectivePermission = mode === 'plan' ? 'approval-required' : permissionMode
     const body = pending ?? {
-      prompt: trimmedPrompt, model, effort, mode, permission_mode: permissionMode,
+      prompt: trimmedPrompt, model, effort, mode, permission_mode: effectivePermission,
       ...(references.length ? { references: references.map(({ id, path }) => ({ id, path })) } : {}),
       ...(attachments.length ? {
         attachments: attachments.map(({ path, name, source, size }) => ({
@@ -567,106 +677,165 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
         </div>
       </div>
     </div>
-    <ChatComposerFrame>
-      {profileId && profileId !== 'default' && (
-        <div className="flex items-center gap-1.5 px-3.5 pt-2 text-[11px] text-ink-muted">
-          <UserCheck size={12} className="shrink-0 text-accent" aria-hidden="true" />
-          <span>当前隔离账号：<span className="font-medium text-ink">{profileName ?? profileId}</span>（多轮上下文按账号独立续接）</span>
-        </div>
-      )}
-      {references.length > 0 && <ul aria-label="引用文件" className="flex flex-wrap gap-1 pl-[3.25rem] pr-3 pt-2 text-xs">
-        {references.map(file => <li key={file.path} className="flex min-w-0 items-center gap-1 rounded-md bg-bg-soft px-2 py-1" title={file.path}>
-          <span className="truncate">{file.name}</span>
-          <CloseIconButton
-            label={`移除引用 ${file.name}`}
-            variant="compact"
-            iconSize={12}
-            disabled={Boolean(pending) || Boolean(current)}
-            className="text-ink-muted hover:text-accent disabled:opacity-40"
-            onClick={() => setReferences(old => old.filter(item => item.path !== file.path))}
-          />
-        </li>)}
-      </ul>}
-      {showSlashMenu && commands.data?.items?.length ? (
-        <div role="listbox" aria-label="Agy 原生命令" className="flex flex-wrap gap-1.5 border-b border-line/60 bg-bg-soft/70 px-3 py-2 text-xs">
-          {commands.data.items.map(cmd => (
-            <button
-              key={cmd.name}
-              type="button"
-              role="option"
-              aria-selected={false}
-              className="inline-flex items-center gap-1 rounded-lg border border-line bg-bg-card px-2 py-1 text-left hover:border-accent/60"
-              onClick={() => {
-                setPrompt(`/${cmd.name} `)
-                setCommandsOpen(false)
-              }}
-            >
-              <span className="font-mono font-semibold text-accent">/{cmd.name}</span>
-              {cmd.description && <span className="text-ink-muted">{cmd.description}</span>}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      <ImagePasteInput
-        text={prompt}
-        onText={setPrompt}
-        attachments={attachments}
-        onAttachments={setAttachments}
-        inputLabel="发给 Anti"
-        placeholder="发给 Anti，输入 / 查看原生命令，可粘贴/拖放图片或文件…"
-        readOnly={Boolean(pending)}
-        maxLength={24000}
-        onSubmit={submit}
-        submitDisabled={Boolean(current) || send.isPending || !history.isSuccess}
-        submitAccessory={
-          <div className="mb-0.5 flex shrink-0 items-center gap-1.5">
-            <button
-              type="button"
-              disabled={Boolean(current || pending)}
-              aria-label="插入原生命令"
-              title="查看并插入 Agy ACP 原生命令"
-              onClick={() => setCommandsOpen(v => !v)}
-              className="ga-btn inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl p-0 text-ink-muted"
-            >
-              <Slash size={14} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              disabled={Boolean(current || pending)}
-              aria-label={mode === 'plan' ? '当前为规划模式，点击切换到编辑模式' : '当前为编辑模式，点击切换到规划模式'}
-              title={mode === 'plan' ? 'Plan 规划模式（只读分析，点击切到 Edit）' : 'Edit 编辑模式（可执行修改，点击切到 Plan）'}
-              onClick={() => setMode(mode === 'plan' ? 'accept-edits' : 'plan')}
-              className="ga-btn inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-2.5 text-xs font-medium leading-none text-ink"
-            >
-              {mode === 'plan'
-                ? <><ClipboardList size={14} className="shrink-0" aria-hidden="true" /><span>Plan</span></>
-                : <><Pencil size={14} className="shrink-0 text-accent" aria-hidden="true" /><span>Edit</span></>}
-            </button>
-            {mode === 'accept-edits' && (
-              <div className="relative inline-flex h-10 shrink-0 items-center">
-                <ShieldCheck size={13} className="pointer-events-none absolute left-2.5 text-accent" aria-hidden="true" />
-                <select
-                  aria-label="权限策略"
-                  title="工具审批策略（下轮立即生效）"
-                  value={permissionMode}
-                  disabled={Boolean(current || pending)}
-                  onChange={e => setPermissionMode(e.target.value as AntiPermissionMode)}
-                  className="ga-select h-10 rounded-xl pl-7 pr-6 text-xs font-medium text-ink disabled:opacity-50"
+    <div ref={composerWrapRef}>
+      <ChatComposerFrame>
+        {profileId && profileId !== 'default' && (
+          <div className="flex items-center gap-1.5 px-3.5 pt-2 text-[11px] text-ink-muted">
+            <UserCheck size={12} className="shrink-0 text-accent" aria-hidden="true" />
+            <span>当前隔离账号：<span className="font-medium text-ink">{profileName ?? profileId}</span>（多轮上下文按账号独立续接）</span>
+          </div>
+        )}
+        {references.length > 0 && <ul aria-label="引用文件" className="flex flex-wrap gap-1 pl-[3.25rem] pr-3 pt-2 text-xs">
+          {references.map(file => <li key={file.path} className="flex min-w-0 items-center gap-1 rounded-md bg-bg-soft px-2 py-1" title={file.path}>
+            <span className="truncate">{file.name}</span>
+            <CloseIconButton
+              label={`移除引用 ${file.name}`}
+              variant="compact"
+              iconSize={12}
+              disabled={Boolean(pending) || Boolean(current)}
+              className="text-ink-muted hover:text-accent disabled:opacity-40"
+              onClick={() => setReferences(old => old.filter(item => item.path !== file.path))}
+            />
+          </li>)}
+        </ul>}
+        {showSlashMenu && (
+          <div role="listbox" aria-label="Agy 原生命令" className="flex flex-wrap items-center gap-1.5 border-b border-line/60 bg-bg-soft/70 px-3 py-2 text-xs">
+            {filteredCommands.length > 0 ? filteredCommands.map((cmd, idx) => {
+              const isActive = idx === slashActiveIndex
+              return (
+                <button
+                  key={cmd.name}
+                  type="button"
+                  role="option"
+                  aria-selected={isActive}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-left transition-colors ${isActive
+                    ? 'border-accent bg-accent-soft/75 text-ink shadow-xs'
+                    : 'border-line bg-bg-card hover:border-accent/60'
+                    }`}
+                  onMouseEnter={() => setSlashActiveIndex(idx)}
+                  onClick={() => applySlashCommand(cmd.name)}
                 >
-                  <option value="approval-required">逐次审批</option>
-                  <option value="auto-accept-edits">自动改文件</option>
-                  <option value="auto">Auto</option>
-                  <option value="full-access">全放行</option>
-                </select>
-              </div>
+                  <span className="font-mono font-semibold text-accent">/{cmd.name}</span>
+                  {cmd.hint && <span className="font-mono text-[11px] text-ink-faint">{cmd.hint}</span>}
+                  {cmd.description && <span className="text-ink-muted">{cmd.description}</span>}
+                </button>
+              )
+            }) : (
+              <span className="text-ink-faint">{rawCommands.length === 0
+                ? '当前没有可用的原生命令，按 Esc 关闭'
+                : `未找到匹配 /${slashQuery} 的原生命令，按 Esc 关闭或继续输入`}</span>
             )}
           </div>
-        }
-        submitLabel={pending && send.isError ? '查询或重试同一请求' : '发送'}
-        stopActive={Boolean(current)}
-        stopDisabled={cancel.isPending}
-        onStop={() => { if (current) cancel.mutate(current.id) }}
-      />
-    </ChatComposerFrame>
+        )}
+        <ImagePasteInput
+          text={prompt}
+          onText={(value) => {
+            setDismissedSlashText(null)
+            setPrompt(value)
+          }}
+          attachments={attachments}
+          onAttachments={setAttachments}
+          inputLabel="发给 Anti"
+          placeholder="发给 Anti，输入 / 查看原生命令，可粘贴/拖放图片或文件…"
+          readOnly={Boolean(pending)}
+          maxLength={24000}
+          onSubmit={submit}
+          submitDisabled={Boolean(current) || send.isPending || !history.isSuccess}
+          slashAutocomplete={{
+            open: showSlashMenu,
+            itemCount: filteredCommands.length,
+            activeIndex: slashActiveIndex,
+            onActiveIndexChange: setSlashActiveIndex,
+            onSelectIndex: (idx) => {
+              const picked = filteredCommands[idx]
+              if (picked) applySlashCommand(picked.name)
+            },
+            onClose: () => {
+              setCommandsOpen(false)
+              setDismissedSlashText(prompt)
+            },
+          }}
+          submitAccessory={
+            <div className="mb-0.5 flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                disabled={Boolean(current || pending)}
+                aria-label="插入原生命令"
+                aria-expanded={showSlashMenu}
+                title="查看并插入 Agy ACP 原生命令（也可直接输入 /）"
+                onClick={() => {
+                  setCommandsOpen(v => !v)
+                  requestAnimationFrame(() => composerWrapRef.current?.querySelector('textarea')?.focus())
+                }}
+                className={`ga-btn inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl p-0 ${showSlashMenu ? 'border-accent/65 bg-accent-soft/60 text-accent-deep' : 'text-ink-muted'}`}
+              >
+                <Slash size={14} aria-hidden="true" />
+              </button>
+              <div ref={policyAnchorRef} className="relative shrink-0">
+                <button
+                  type="button"
+                  disabled={Boolean(current || pending)}
+                  aria-label="执行与审批模式"
+                  aria-haspopup="listbox"
+                  aria-expanded={policyOpen}
+                  title={`${activePolicy.label}：${activePolicy.description}`}
+                  onClick={() => setPolicyOpen(v => !v)}
+                  className="ga-btn inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-2.5 text-xs font-medium leading-none text-ink"
+                >
+                  {mode === 'plan'
+                    ? <ClipboardList size={14} className="shrink-0" aria-hidden="true" />
+                    : <Pencil size={14} className="shrink-0 text-accent" aria-hidden="true" />}
+                  <span>{activePolicy.triggerLabel}</span>
+                  <ChevronDown size={13} className={`shrink-0 text-ink-muted transition-transform ${policyOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+                </button>
+                {policyOpen && (
+                  <div
+                    role="listbox"
+                    aria-label="执行与审批模式选项"
+                    style={{ zIndex: Z_LAYERS.contextMenu }}
+                    className="ga-paper-popover absolute right-0 bottom-full mb-2 w-72 rounded-xl p-1.5"
+                  >
+                    {EXECUTION_POLICIES.map(option => {
+                      const selected = option.id === activePolicy.id
+                      const isPlan = option.mode === 'plan'
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() => {
+                            setMode(option.mode)
+                            if (option.mode === 'accept-edits') setPermissionMode(option.permissionMode)
+                            setPolicyOpen(false)
+                          }}
+                          className={`flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${selected
+                            ? 'bg-accent-soft/75 text-ink ring-1 ring-accent/30'
+                            : 'hover:bg-bg-card/85 text-ink'
+                            }`}
+                        >
+                          <span className="mt-0.5 shrink-0 text-accent">
+                            {isPlan ? <ClipboardList size={14} className="text-ink-muted" aria-hidden="true" /> : <Pencil size={14} aria-hidden="true" />}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-xs font-semibold leading-tight">{option.label}</span>
+                            <span className="mt-0.5 block text-[11px] leading-snug text-ink-muted">{option.description}</span>
+                          </span>
+                          {selected && <Check size={14} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          }
+          submitLabel={pending && send.isError ? '查询或重试同一请求' : '发送'}
+          stopActive={Boolean(current)}
+          stopDisabled={cancel.isPending}
+          onStop={() => { if (current) cancel.mutate(current.id) }}
+        />
+      </ChatComposerFrame>
+    </div>
   </>
 }

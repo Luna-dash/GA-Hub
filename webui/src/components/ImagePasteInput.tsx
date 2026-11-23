@@ -40,6 +40,14 @@ interface Props {
   /** Session runtime used by /btw. Omit on non-session chat surfaces. */
   btwSessionId?: string
   onSlashCommand?: (command: Exclude<SlashCommand['name'], '/btw'>) => void
+  slashAutocomplete?: {
+    open: boolean
+    itemCount: number
+    activeIndex: number
+    onActiveIndexChange: (index: number) => void
+    onSelectIndex: (index: number) => void
+    onClose: () => void
+  }
   placeholder?: string
   inputLabel?: string
   readOnly?: boolean
@@ -63,7 +71,7 @@ interface PendingUpload {
 }
 
 export function ImagePasteInput({
-  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, stopDisabled, stopTitle, submitLabel, submitAccessory, btwSessionId, onSlashCommand,
+  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, stopDisabled, stopTitle, submitLabel, submitAccessory, btwSessionId, onSlashCommand, slashAutocomplete,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
   inputLabel, readOnly, maxLength, disabled, submitDisabled, scheduleDisabled = submitDisabled, acceptFiles = true, autoFocus = true,
 }: Props) {
@@ -524,6 +532,30 @@ export function ImagePasteInput({
             const isRecentImeEnter = e.key === 'Enter' && Date.now() - lastCompEndRef.current < 80
             if (isComposing || isRecentImeEnter) return
 
+            // Autocomplete must not intercept native modified Enter/Tab actions.
+            if ((slashAutocomplete?.open || slashCommands.length > 0)
+              && (e.key === 'Enter' || e.key === 'Tab')
+              && (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey)) return
+
+            if (slashAutocomplete?.open && slashAutocomplete.itemCount > 0) {
+              const extResult = handleSlashMenuKey(
+                e.key,
+                slashAutocomplete.activeIndex,
+                slashAutocomplete.itemCount,
+              )
+              if (extResult.handled) {
+                e.preventDefault()
+                if (extResult.close) slashAutocomplete.onClose()
+                else if (extResult.selectIndex != null) slashAutocomplete.onSelectIndex(extResult.selectIndex)
+                else slashAutocomplete.onActiveIndexChange(extResult.activeIndex)
+                return
+              }
+            } else if (slashAutocomplete?.open && e.key === 'Escape') {
+              e.preventDefault()
+              slashAutocomplete.onClose()
+              return
+            }
+
             const menuResult = handleSlashMenuKey(e.key, slashActiveIndex, slashCommands.length)
             if (menuResult.handled) {
               e.preventDefault()
@@ -544,7 +576,7 @@ export function ImagePasteInput({
           }}
           role="combobox"
           aria-autocomplete="list"
-          aria-expanded={slashCommands.length > 0}
+          aria-expanded={slashCommands.length > 0 || Boolean(slashAutocomplete?.open && slashAutocomplete.itemCount > 0)}
           aria-controls={slashCommands.length > 0 ? 'slash-command-menu' : undefined}
           aria-activedescendant={slashCommands.length > 0 ? `slash-command-${slashActiveIndex}` : undefined}
           wrap="soft"

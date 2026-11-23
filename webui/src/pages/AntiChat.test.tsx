@@ -830,17 +830,16 @@ it('supports Edit mode switching, permission policy selection, and interactive A
     await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
     await flush()
 
-    const modeBtn = host.querySelector<HTMLButtonElement>('button[aria-label="当前为规划模式，点击切换到编辑模式"]')!
-    await act(async () => { modeBtn.click() })
+    const policyBtn = host.querySelector<HTMLButtonElement>('button[aria-label="执行与审批模式"]')!
+    expect(policyBtn.textContent).toBe('Plan')
+    await act(async () => { policyBtn.click() })
     await flush()
-    expect(modeBtn.textContent).toBe('Edit')
 
-    const permSelect = host.querySelector<HTMLSelectElement>('select[aria-label="权限策略"]')!
-    await act(async () => {
-      permSelect.value = 'auto-accept-edits'
-      permSelect.dispatchEvent(new Event('change', { bubbles: true }))
-    })
+    const autoAcceptOpt = [...host.querySelectorAll<HTMLButtonElement>('[role="listbox"][aria-label="执行与审批模式选项"] [role="option"]')]
+      .find(b => b.textContent?.includes('Edit · 自动改文件'))!
+    await act(async () => { autoAcceptOpt.click() })
     await flush()
+    expect(policyBtn.textContent).toBe('Edit · 自动改文件')
 
     const input = host.querySelector('textarea')!
     await act(async () => {
@@ -893,6 +892,7 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
   const eventsCalled: string[] = []
   let calibratedPct: number | null = null
   let codeSubmitted = ''
+  let commandItems = [{ name: 'plan', description: '先生成方案', hint: '<goal>' }]
   let resetCalls = 0
   const approvalCalls: Record<string, unknown>[] = []
 
@@ -901,7 +901,7 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     if (path === '/api/anti/status') return reply({ state: 'ready', agy_available: true, auth_state: 'authenticated', version: '1.5.14' })
     if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认', has_credentials: true, auth_state: 'authenticated' }] })
     if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
-    if (path === '/api/anti/commands') return reply({ items: [{ name: 'plan', description: '先生成方案', hint: '<goal>' }] })
+    if (path === '/api/anti/commands') return reply({ items: commandItems })
     if (path === '/api/anti/sessions') return reply([session])
     if (path === `/api/anti/sessions/${session.id}/reset`) {
       resetCalls += 1
@@ -1033,15 +1033,48 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     expect(calibratedPct).toBe(88)
     expect(document.body.textContent).toContain('已校准剩余 88%')
 
-    // 4. Native slash command picker + interaction_* question card
+    // 4. Native slash command picker (click + typing '/' filter + Enter) & interaction_* question card
+    const textarea = host.querySelector('textarea')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '/')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+    expect(host.querySelector('[role="listbox"][aria-label="Agy 原生命令"]')?.textContent).toContain('/plan')
+
+    for (const key of ['Enter', 'Tab']) {
+      const combo = new KeyboardEvent('keydown', { key, shiftKey: true, bubbles: true, cancelable: true })
+      await act(async () => { textarea.dispatchEvent(combo) })
+      expect(combo.defaultPrevented).toBe(false)
+      expect(textarea.value).toBe('/')
+    }
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '/pl')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    await flush()
+    expect(textarea.value).toBe('/plan ')
+
     const slashBtn = host.querySelector<HTMLButtonElement>('button[aria-label="插入原生命令"]')!
     await act(async () => { slashBtn.click() })
     await flush()
-    const planOption = [...host.querySelectorAll('[role="listbox"] button')].find(b => b.textContent?.includes('/plan')) as HTMLButtonElement
+    const planOption = [...host.querySelectorAll('[role="listbox"][aria-label="Agy 原生命令"] button')].find(b => b.textContent?.includes('/plan')) as HTMLButtonElement
     await act(async () => { planOption.click() })
     await flush()
-    const textarea = host.querySelector('textarea')!
     expect(textarea.value).toBe('/plan ')
+
+    commandItems = []
+    await act(async () => { slashBtn.click() })
+    await flush()
+    const emptyMenu = host.querySelector('[role="listbox"][aria-label="Agy 原生命令"]')
+    expect(emptyMenu?.textContent).toContain('当前没有可用的原生命令')
+    expect(emptyMenu?.querySelector('[role="option"]')).toBeNull()
+    await act(async () => { slashBtn.click() })
 
     const sendBtn = host.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!
     await act(async () => { sendBtn.click() })

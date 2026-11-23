@@ -403,9 +403,14 @@ it('does not show a previous conclusion when a new run has no metrics yet', asyn
 
 it('keeps a completed compact card unread until its conclusion is expanded', async () => {
   expect(hasUnreadThemeCompletions()).toBe(true)
+  const card = host.querySelector('[aria-label="主题任务卡片：签到"]') as HTMLElement
+  expect(card.getAttribute('data-unread')).toBe('true')
+  expect(card.textContent).toContain('新完成')
+  expect(host.textContent).toContain('待查看 1 项')
   const expand = host.querySelector('[aria-label="打开主题任务：签到"]') as HTMLButtonElement
   act(() => expand.click())
   expect(hasUnreadThemeCompletions()).toBe(false)
+  expect(card.getAttribute('data-unread')).toBeNull()
 })
 
 it('shows an empty-state message in the session picker when no non-theme sessions match', async () => {

@@ -41,6 +41,21 @@ export function retainThemeCompletions(sessionIds: ReadonlySet<string>) {
 export function hasUnreadThemeCompletions() {
   return Object.values(load()).some(value => value && value.read === false)
 }
+let cachedRaw: string | null | undefined
+let cachedUnreadIds: ReadonlySet<string> = new Set()
+export function getUnreadThemeSessionIds(): ReadonlySet<string> {
+  let raw: string | null = null
+  try { raw = localStorage.getItem(storageKeys.themeCompletions) } catch { raw = null }
+  if (raw === cachedRaw) return cachedUnreadIds
+  cachedRaw = raw
+  const parsed = load()
+  cachedUnreadIds = new Set(
+    Object.entries(parsed)
+      .filter(([, value]) => value && value.read === false)
+      .map(([id]) => id),
+  )
+  return cachedUnreadIds
+}
 function subscribe(listener: () => void) {
   window.addEventListener(changed, listener)
   window.addEventListener('storage', listener)
@@ -51,4 +66,8 @@ function subscribe(listener: () => void) {
 }
 export function useUnreadThemeCompletions() {
   return useSyncExternalStore(subscribe, hasUnreadThemeCompletions, () => false)
+}
+const EMPTY_UNREAD_IDS: ReadonlySet<string> = new Set()
+export function useUnreadThemeSessionIds() {
+  return useSyncExternalStore(subscribe, getUnreadThemeSessionIds, () => EMPTY_UNREAD_IDS)
 }

@@ -393,13 +393,13 @@ export default function Conversations() {
         </div>
       }
     >
-      <div className="flex h-full">
+      <div className="mx-auto flex h-full w-full max-w-[96rem] gap-5 px-4 py-4 sm:gap-6 sm:px-6 sm:py-6">
         <ConversationIndexRail>
           {(collapsed) => (
             <>
               {!collapsed && (
-                <div className="sticky top-0 z-10 border-b border-line/50 bg-bg-soft/95 px-2.5 py-2 backdrop-blur-[2px]">
-                  <div className="flex flex-wrap items-center gap-1">
+                <div className="sticky top-0 z-10 border-b border-line/50 bg-bg-card/95 px-3.5 py-3 backdrop-blur-[4px]">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     {SOURCE_FILTERS.map((f) => {
                       const activeFilter = sourceFilter === f.value
                       return (
@@ -411,7 +411,7 @@ export default function Conversations() {
                           className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
                             activeFilter
                               ? 'bg-accent-soft text-accent-deep ring-1 ring-accent/35'
-                              : 'text-ink-muted hover:bg-ink/[0.04] hover:text-ink'
+                              : 'text-ink-muted hover:bg-bg-soft/75 hover:text-ink'
                           }`}
                         >
                           {f.label}
@@ -421,7 +421,7 @@ export default function Conversations() {
                   </div>
                 </div>
               )}
-              <div className={collapsed ? 'space-y-1 py-1' : 'space-y-1 p-1.5'}>
+              <div className={collapsed ? 'space-y-1.5 px-1.5 py-2.5' : 'space-y-2 p-2.5'}>
                 {listLoading && items.length === 0 && !collapsed && (
                   Array.from({ length: 4 }, (_, idx) => (
                     <div key={`skeleton-${idx}`} className="rounded-lg bg-bg-card/60 px-2.5 py-2.5 animate-pulse space-y-2">
@@ -466,8 +466,8 @@ export default function Conversations() {
               </div>
               {total > limit && (
                 <div className={collapsed
-                  ? 'sticky bottom-0 z-10 flex flex-col items-center gap-1 border-t border-line/50 bg-bg-soft/95 py-2 text-xs text-ink-muted'
-                  : 'sticky bottom-0 z-10 flex items-center justify-between gap-2 border-t border-line/50 bg-bg-soft/95 px-2.5 py-2 text-xs text-ink-muted'}
+                  ? 'sticky bottom-0 z-10 flex flex-col items-center gap-1 border-t border-line/50 bg-bg-card/95 py-2.5 text-xs text-ink-muted backdrop-blur-[4px]'
+                  : 'sticky bottom-0 z-10 flex items-center justify-between gap-2 border-t border-line/50 bg-bg-card/95 px-3.5 py-2.5 text-xs text-ink-muted backdrop-blur-[4px]'}
                 >
                   <button
                     type="button"
@@ -515,10 +515,10 @@ export default function Conversations() {
           )}
         </ConversationIndexRail>
 
-        <div ref={detailScrollRef} className="min-w-0 flex-1 overflow-y-auto [overflow-anchor:none]">
+        <div ref={detailScrollRef} className="min-w-0 flex-1 overflow-y-auto pr-1 [overflow-anchor:none]">
           {!active && (
-            <div className="flex h-full items-center justify-center p-6">
-              <div className="max-w-sm rounded-2xl border border-line/65 bg-bg-card/80 px-7 py-8 text-center shadow-[0_2px_10px_rgba(45,34,22,0.05)]">
+            <div className="flex h-full items-center justify-center p-2">
+              <div className="ga-paper-card max-w-sm px-8 py-9 text-center">
                 <div className="mx-auto mb-3.5 flex h-11 w-11 items-center justify-center rounded-xl bg-accent-soft/80 text-accent-deep ring-1 ring-accent/20">
                   <History size={20} strokeWidth={1.85} aria-hidden="true" />
                 </div>
@@ -530,15 +530,15 @@ export default function Conversations() {
             </div>
           )}
           {active && detailLoading && !detail && (
-            <div role="status" className="flex h-full items-center justify-center p-6">
-              <div className="flex items-center gap-2.5 rounded-xl border border-line/65 bg-bg-card/85 px-4 py-3 text-sm text-ink-muted shadow-sm">
+            <div role="status" className="flex h-full items-center justify-center p-2">
+              <div className="ga-paper-card flex items-center gap-2.5 px-5 py-3.5 text-sm text-ink-muted">
                 <LoaderCircle size={16} strokeWidth={1.85} aria-hidden="true" className="animate-spin text-accent" />
                 <span>正在读取会话详情…</span>
               </div>
             </div>
           )}
           {active && detailError && !detail && (
-            <div role="alert" className="flex h-full items-center justify-center p-6">
+            <div role="alert" className="flex h-full items-center justify-center p-2">
               <div className="max-w-md rounded-2xl border border-status-danger-line bg-status-danger-soft/75 px-6 py-6 text-center shadow-sm">
                 <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-status-danger-soft text-status-danger ring-1 ring-status-danger-line">
                   <AlertTriangle size={18} strokeWidth={1.85} aria-hidden="true" />
@@ -570,8 +570,8 @@ export default function Conversations() {
             const matchedSummary = items.find((item) => item.id === detail.id)
             const lastActivityText = matchedSummary ? formatRelativeTime(matchedSummary.mtime) : ''
             return (
-              <div className="mx-auto max-w-5xl p-5 sm:p-6">
-                <header className="ga-paper-card mb-6 px-5 py-4">
+              <div className="mx-auto max-w-4xl pb-8">
+                <header className="ga-paper-card mb-6 px-5 py-4 sm:px-6 sm:py-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <h2 className="text-base font-semibold leading-snug text-ink break-words" title={conversationDisplayTitle(detail)}>
@@ -1082,8 +1082,8 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
         title={`${index}. ${title}${excerpt ? `\n${excerpt}` : ''}\n来源：${meta.label}${lastActive ? `\n最后活动：${lastActive}` : ''}`}
         className={`mx-auto flex h-8 w-8 items-center justify-center rounded-lg text-[11px] font-medium tabular-nums transition-colors ${
           active
-            ? 'bg-bg-card font-semibold text-accent-deep shadow-sm ring-1 ring-accent/40'
-            : 'text-ink-muted hover:bg-bg-card/70 hover:text-ink'
+            ? 'bg-accent-soft font-semibold text-accent-deep shadow-xs ring-1 ring-accent/40'
+            : 'text-ink-muted hover:bg-bg-soft/85 hover:text-ink'
         }`}
       >
         {index}
@@ -1096,10 +1096,10 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
       type="button"
       onClick={onClick}
       aria-current={active ? 'page' : undefined}
-      className={`group/row relative block w-full rounded-lg px-2.5 py-2 text-left transition-colors ${
+      className={`group/row relative block w-full rounded-xl px-3 py-2.5 text-left transition-colors ${
         active
-          ? 'bg-bg-card shadow-[0_1px_3px_rgba(45,34,22,0.08)] ring-1 ring-accent/35'
-          : 'hover:bg-bg-card/65'
+          ? 'bg-accent-soft/55 shadow-[0_1px_3px_rgba(45,34,22,0.08)] ring-1 ring-accent/35'
+          : 'hover:bg-bg-soft/75'
       }`}
     >
       {active && (

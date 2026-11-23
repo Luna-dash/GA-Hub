@@ -113,13 +113,19 @@ export default function Memory() {
       }
     >
       <div className="h-full flex flex-col overflow-hidden">
-        <div className="shrink-0 border-b border-line/55 bg-bg-card/55 px-5 py-2 flex items-center gap-2 text-xs text-ink-muted">
-          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-bg-card text-accent shadow-xs ring-1 ring-line/45">
-            <LayerIcon className="h-3.5 w-3.5" aria-hidden="true" />
-          </span>
-          <span className="font-medium text-ink">{activeMeta.label}</span>
-          <span className="text-ink-faint">·</span>
-          <span className="truncate">{activeMeta.desc}</span>
+        <div className="shrink-0 px-4 pt-4 sm:px-6 sm:pt-5">
+          <div
+            className={`mx-auto w-full flex items-center gap-2.5 rounded-xl border border-line/65 bg-bg-card/80 px-4 py-2 text-xs text-ink-muted shadow-[0_1px_2px_rgba(45,34,22,0.04)] ${
+              tab === 'sop' || tab === 'skill' ? 'max-w-[90rem]' : 'max-w-5xl'
+            }`}
+          >
+            <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-bg-soft/85 text-accent ring-1 ring-line/45">
+              <LayerIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
+            <span className="font-medium text-ink">{activeMeta.label}</span>
+            <span className="text-ink-faint">·</span>
+            <span className="truncate">{activeMeta.desc}</span>
+          </div>
         </div>
         <div className="flex-1 min-h-0 overflow-hidden">
           {tab === 'sop' && <SopList active={activeSop} q={sopQuery} setQ={setSopQuery} selectSop={(name) => changeSelection('sop', name)} onDirtyChange={handleDirtyChange} />}
@@ -142,7 +148,7 @@ function memoryWriteError(error: unknown): void {
 
 function MemoryLoadingCard({ label }: { label: string }) {
   return (
-    <div className="mx-auto w-full max-w-5xl p-5 sm:p-6 h-full">
+    <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6 sm:pb-6 sm:pt-4 h-full">
       <div className="ga-paper-card h-full grid place-items-center text-sm text-ink-faint" role="status">
         正在载入 {label}…
       </div>
@@ -155,7 +161,7 @@ function GlobalMem({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void 
   const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.global, queryFn: api.globalMem })
   if (isLoading || !data) return <MemoryLoadingCard label="global_mem.txt" />
   return (
-    <div className="mx-auto w-full max-w-5xl p-5 sm:p-6 h-full min-h-0">
+    <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6 sm:pb-6 sm:pt-4 h-full min-h-0">
       <VersionedMemoryEditor
         label="memory/global_mem.txt"
         snapshot={data}
@@ -181,7 +187,7 @@ function Insight({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void })
   const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.insight, queryFn: api.insight })
   if (isLoading || !data) return <MemoryLoadingCard label="global_mem_insight.txt" />
   return (
-    <div className="mx-auto w-full max-w-5xl p-5 sm:p-6 h-full min-h-0">
+    <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6 sm:pb-6 sm:pt-4 h-full min-h-0">
       <VersionedMemoryEditor
         label="memory/global_mem_insight.txt"
         snapshot={data}
@@ -246,7 +252,7 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
             )}
           </div>
         </div>
-        <ul className="flex-1 min-h-0 overflow-y-auto divide-y divide-line/30">
+        <ul className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
           {visible.map((s) => {
             const selected = active === s.name
             return (
@@ -254,10 +260,10 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
                 <button
                   type="button"
                   onClick={() => selectSop(s.name)}
-                  className={`w-full text-left px-3.5 py-2.5 text-sm transition-colors border-l-[3px] ${
+                  className={`w-full text-left rounded-lg px-3 py-2 text-sm transition-colors ${
                     selected
-                      ? 'border-l-accent bg-accent-soft/65 text-accent font-medium'
-                      : 'border-l-transparent text-ink hover:bg-bg-soft/70'
+                      ? 'bg-accent-soft/70 text-accent font-medium ring-1 ring-accent/30 shadow-[0_1px_2px_rgba(45,34,22,0.04)]'
+                      : 'text-ink hover:bg-bg-soft/75'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -327,13 +333,13 @@ function SkillList() {
   return (
     <div className="ga-archive-split">
       <div className="ga-archive-rail">
-        <div className="px-3.5 py-2.5 border-b border-line/40 bg-bg-soft/45 flex items-center justify-between gap-2">
+        <div className="px-4 py-3 border-b border-line/45 bg-bg-soft/45 flex items-center justify-between gap-2">
           <span className="text-xs font-semibold text-ink">Skill 脚本</span>
           <span className="rounded-full bg-bg-card px-2 py-0.5 text-[11px] tabular-nums text-ink-muted ring-1 ring-line/45">
             {skills.length}
           </span>
         </div>
-        <ul className="flex-1 min-h-0 overflow-y-auto divide-y divide-line/30">
+        <ul className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
           {skills.map((s) => {
             const selected = active === s.path
             return (
@@ -341,10 +347,10 @@ function SkillList() {
                 <button
                   type="button"
                   onClick={() => { setActive(s.path); setCopied(false) }}
-                  className={`w-full text-left px-3.5 py-2.5 text-sm transition-colors border-l-[3px] ${
+                  className={`w-full text-left rounded-lg px-3 py-2 text-sm transition-colors ${
                     selected
-                      ? 'border-l-accent bg-accent-soft/65 text-accent font-medium'
-                      : 'border-l-transparent text-ink hover:bg-bg-soft/70'
+                      ? 'bg-accent-soft/70 text-accent font-medium ring-1 ring-accent/30 shadow-[0_1px_2px_rgba(45,34,22,0.04)]'
+                      : 'text-ink hover:bg-bg-soft/75'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
