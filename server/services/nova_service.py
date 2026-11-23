@@ -16,6 +16,22 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 PUBLIC = "https://nova.lunadash.me"
+_ERROR_NOT_FOUND = 1168  # Win32: credential was already removed.
+
+
+def _clear_binding(connector, config: Path, data: dict) -> None:
+    try:
+        connector.win32cred.CredDelete(connector.credential_target(data["server"]), 1)
+    except Exception as exc:
+        if getattr(exc, "winerror", None) != _ERROR_NOT_FOUND:
+            raise
+    config.unlink(missing_ok=True)
+
+
+def _save_revocation(config: Path, data: dict) -> None:
+    staged = config.with_suffix(".new")
+    staged.write_text(json.dumps(data), encoding="utf-8")
+    staged.replace(config)
 
 
 class NovaServiceError(Exception):
@@ -51,6 +67,14 @@ class NovaService:
             self.connector.ARTIFACT_ROOTS = tuple(roots)
         return self.connector
 
+    def _require_connector(self):
+        if self.connector is None and sys.platform != "win32":
+            raise NovaServiceError(503, "此平台不支持 Nova 的 Windows 凭据服务")
+        try:
+            return self.load()
+        except ImportError as exc:
+            raise NovaServiceError(503, "Nova 组件或本机凭据服务不可用") from exc
+
     async def start(self) -> None:
         # An unavailable optional connector must never prevent Hub startup.
         if self.task and not self.task.done():
@@ -58,8 +82,8 @@ class NovaService:
         self.connected = False
         self.error = None
         try:
-            c = self.load()
-            if (c.STATE / "device.json").exists():
+            c = self._require_connector()
+            if await asyncio.to_thread((c.STATE / "device.json").exists):
                 from ..constants import DEFAULT_WEBUI_PORT
                 from ..runtime_endpoint import runtime_http_origin
 
@@ -72,7 +96,10 @@ class NovaService:
                 )
                 self.task.add_done_callback(self._done)
         except Exception as exc:
-            self.error = type(exc).__name__
+            if isinstance(exc, NovaServiceError) and exc.__cause__ is None:
+                self.error = exc.detail
+            else:
+                self.error = type(exc.__cause__ or exc).__name__
 
     def _set_connected(self, connected: bool) -> None:
         self.connected = connected
@@ -104,7 +131,7 @@ class NovaService:
 
     def snapshot(self) -> dict[str, object]:
         try:
-            c = self.load()
+            c = self._require_connector()
             return {
                 "device": c.identity(),
                 "paired": (c.STATE / "device.json").exists(),
@@ -113,26 +140,28 @@ class NovaService:
                 "server": PUBLIC,
             }
         except Exception as exc:
-            return {"error": type(exc).__name__, "running": False}
+            return {"error": exc.detail if isinstance(exc, NovaServiceError) else type(exc).__name__, "running": False}
 
     async def unpair(self) -> dict[str, object]:
         async with self.lock:
-            c = self.load()
+            c = self._require_connector()
             await self.stop()
             config = c.STATE / "device.json"
-            if config.exists():
-                data = json.loads(config.read_text(encoding="utf-8"))
-                with contextlib.suppress(Exception):
-                    c.win32cred.CredDelete(c.credential_target(data["server"]), 1)
-                config.unlink()
+            try:
+                if await asyncio.to_thread(config.exists):
+                    data = json.loads(await asyncio.to_thread(config.read_text, encoding="utf-8"))
+                    await asyncio.to_thread(_clear_binding, c, config, data)
+                device = await asyncio.to_thread(c.identity)
+            except Exception as exc:
+                raise NovaServiceError(502, "本机 Nova 绑定清理未完成，请重试") from exc
             self.pending = None
             self.error = None
-            return {"paired": False, "device": c.identity()}
+            return {"paired": False, "device": device}
 
     async def start_pair(self, read_name: Callable[[], Awaitable[str]]) -> dict[str, object]:
         async with self.lock:
-            c = self.load()
-            if (c.STATE / "device.json").exists():
+            c = self._require_connector()
+            if await asyncio.to_thread((c.STATE / "device.json").exists):
                 raise NovaServiceError(409, "Already paired; revoke the device in Nova before rebinding")
             # Preserve conflict precedence without moving HTTP parsing into the service.
             name = await read_name()
@@ -141,11 +170,11 @@ class NovaService:
                     response.raise_for_status()
                     data = await response.json()
             self.pending = {**data, "name": name}
-            return {"code": data["code"], "confirm_url": PUBLIC + "/devices", "device": c.identity()}
+            return {"code": data["code"], "confirm_url": PUBLIC + "/devices", "device": await asyncio.to_thread(c.identity)}
 
     async def finish_pair(self) -> dict[str, object]:
         async with self.lock:
-            c = self.load()
+            c = self._require_connector()
             if not self.pending:
                 raise NovaServiceError(409, "Start pairing first")
             p = self.pending
@@ -161,12 +190,12 @@ class NovaService:
                 token = secrets.token_urlsafe(48)
                 async with http.post(
                     PUBLIC + "/v1/agent/pair/finish",
-                    json={"code": p["code"], "secret": p["secret"], "token": token, "device_id": c.identity()},
+                    json={"code": p["code"], "secret": p["secret"], "token": token, "device_id": await asyncio.to_thread(c.identity)},
                 ) as response:
                     if response.status != 200:
                         raise NovaServiceError(response.status, (await response.text())[:200])
                     done = await response.json()
-            c.save_pair(PUBLIC, done["device"], p["name"], token)
+            await asyncio.to_thread(c.save_pair, PUBLIC, done["device"], p["name"], token)
             self.pending = None
             self.error = None
             await self.stop()
@@ -178,7 +207,7 @@ class NovaService:
             await self.stop()
             self.error = None
             await self.start()
-            return self.snapshot()
+            return await asyncio.to_thread(self.snapshot)
 
     async def account_action(
         self,
@@ -193,9 +222,9 @@ class NovaService:
         if not confirm:
             raise NovaServiceError(400, "请先确认远程操作授权或撤销操作")
         async with self.lock:
-            c = self.load()
+            c = self._require_connector()
             config = c.STATE / "device.json"
-            if config.exists() != unlink:
+            if (await asyncio.to_thread(config.exists)) != unlink:
                 raise NovaServiceError(409, "请先撤销已有绑定" if not unlink else "本机尚未绑定")
             async with c.aiohttp.ClientSession(timeout=c.aiohttp.ClientTimeout(total=30)) as http:
                 async def post(path: str, *, form=None, payload=None, json_result: bool = False):
@@ -222,23 +251,24 @@ class NovaService:
                             response.raise_for_status()
                             devices = await response.json()
                         rows = devices.get("devices", [])
-                        data = json.loads(config.read_text(encoding="utf-8"))
-                        owned = next((d for d in rows if d.get("id") == c.identity()), None)
+                        data = json.loads(await asyncio.to_thread(config.read_text, encoding="utf-8"))
+                        device = await asyncio.to_thread(c.identity)
+                        owned = next((d for d in rows if d.get("id") == device), None)
                         # Persist confirmed cloud revocation before touching Credential Manager.
                         # /v1/me hides revoked devices; this marker permits a same-owner retry.
                         already_revoked = data.get("revoked_owner") == devices["name"]
                         if owned is None and not already_revoked:
                             raise NovaServiceError(403, "此账号不拥有当前设备，未清除本机绑定")
                         if owned is not None:
-                            await post("/v1/devices/" + c.identity() + "/revoke", form={})
+                            await post("/v1/devices/" + device + "/revoke", form={})
                             data["revoked_owner"] = devices["name"]
-                            staged = config.with_suffix(".new")
-                            staged.write_text(json.dumps(data), encoding="utf-8")
-                            staged.replace(config)
+                            await asyncio.to_thread(_save_revocation, config, data)
                         await self.stop()
                         # If credential deletion fails, retain configuration for a safe retry.
-                        c.win32cred.CredDelete(c.credential_target(data["server"]), 1)
-                        config.unlink()
+                        try:
+                            await asyncio.to_thread(_clear_binding, c, config, data)
+                        except Exception as exc:
+                            raise NovaServiceError(502, "云端已撤销，本机清理未完成；请用同一账号重试") from exc
                     else:
                         pending = await post("/v1/agent/pair/start", payload={"name": name}, json_result=True)
                         await post("/v1/pair/approve", payload={"code": pending["code"]})
@@ -249,18 +279,18 @@ class NovaService:
                                 "code": pending["code"],
                                 "secret": pending["secret"],
                                 "token": token,
-                                "device_id": c.identity(),
+                                "device_id": await asyncio.to_thread(c.identity),
                             },
                             json_result=True,
                         )
-                        c.save_pair(PUBLIC, done["device"], name, token)
+                        await asyncio.to_thread(c.save_pair, PUBLIC, done["device"], name, token)
                         self.error = None
                         await self.stop()
                         await self.start()
                     self.pending = None
                     if unlink:
                         self.error = None
-                    return self.snapshot()
+                    return await asyncio.to_thread(self.snapshot)
                 except NovaServiceError:
                     raise
                 except Exception as exc:

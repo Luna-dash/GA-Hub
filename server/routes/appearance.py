@@ -108,8 +108,8 @@ def update_font_preferences(body: FontPreferencesReq):
 
 
 @router.post("/import", response_model=FontSettingsResp)
-async def import_local_font(file: UploadFile = File(...)):
-    data = await file.read(MAX_LOCAL_FONT_BYTES + 1)
+def import_local_font(file: UploadFile = File(...)):
+    data = file.file.read(MAX_LOCAL_FONT_BYTES + 1)
     if len(data) > MAX_LOCAL_FONT_BYTES:
         raise HTTPException(413, "字体文件不能超过 40 MB")
     try:

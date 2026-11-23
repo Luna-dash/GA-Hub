@@ -1,6 +1,7 @@
 """Local-only HTTP routes for the opt-in Nova connector."""
 from __future__ import annotations
 
+import asyncio
 import secrets
 
 from fastapi import APIRouter, HTTPException, Request
@@ -71,7 +72,7 @@ def build_nova_router(service: NovaService) -> APIRouter:
     @router.get("/nova/status")
     async def status(r: Request):
         _guard(r, service.nonce)
-        return service.snapshot()
+        return await asyncio.to_thread(service.snapshot)
 
     @router.post("/nova/unpair")
     async def unpair(r: Request):
@@ -97,7 +98,7 @@ def build_nova_router(service: NovaService) -> APIRouter:
     async def settings(r: Request):
         _guard(r, service.nonce)
         return JSONResponse(
-            {**service.snapshot(), "local_token": service.nonce},
+            {**(await asyncio.to_thread(service.snapshot)), "local_token": service.nonce},
             headers={"Cache-Control": "no-store"},
         )
 

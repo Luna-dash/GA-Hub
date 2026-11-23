@@ -204,7 +204,7 @@ _TURN_MARKER_RE = re.compile(
 _META_TAG_RE = re.compile(r"<(summary|thinking|think|analysis)>", re.IGNORECASE)
 _TOOL_HEADER_RE = re.compile(r"🛠️?\s*Tool\s*[:：]\s*`([\w.-]+)`(?:[ \t]*📥[ \t]*args:)?", re.IGNORECASE)
 _COMPACT_TOOL_RE = re.compile(r"🛠️?\s*([\w.-]+)\s*\(")
-_FENCE_EDGE_RE = re.compile(r"[ \t]*(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)")
+_FENCE_EDGE_RE = re.compile(r"[ \t]*(?:(`{3,})([^`\r\n]*)|(~{3,})([^\r\n]*))(?:\r?\n|$)")
 _STATUS_LINE_RE = re.compile(
     r"^[ \t]*\[(?:Info|Warn|Error|Status|Stdout|Stderr|系统)\][^\r\n]*$",
     re.IGNORECASE | re.MULTILINE,
@@ -250,7 +250,7 @@ def _fence_end(source: str, start: int) -> int:
     open_match = _FENCE_EDGE_RE.match(source, start)
     if not open_match:
         return start
-    fence = open_match.group(1)
+    fence = open_match.group(1) or open_match.group(3)
     char = fence[0]
     size = len(fence)
     close_re = re.compile(rf"^[ \t]*{re.escape(char)}{{{size},}}[ \t]*$")
@@ -276,7 +276,7 @@ def _skip_tool_fences(source: str, pos: int) -> int:
         while ws < n and source[ws].isspace():
             ws += 1
         edge = _FENCE_EDGE_RE.match(source, ws)
-        if edge and edge.group(1).startswith("`") and len(edge.group(1)) >= 4:
+        if edge and edge.group(1) and len(edge.group(1)) >= 4:
             pos = _fence_end(source, ws)
             continue
         if ws < n and re.fullmatch(r"`{1,3}", source[ws:]):
@@ -423,24 +423,21 @@ def _extract_turn_conclusion(turn_text: str) -> tuple[str, list[str]]:
 def extract_task_result(raw: str) -> str:
     """Identify final answer prose, not earlier turns, tool output or progress summaries."""
     raw = (raw or "").strip()
-    marker = _FINAL_MARKER_RE.search(raw)
-    if marker:
-        # The legacy bare-fence wrapper is allowed at top level, but status
-        # text inside a user code block (including an unclosed one) is data.
-        pos = 0
-        while pos < marker.start():
-            if _FENCE_EDGE_RE.match(raw, pos):
-                end = _fence_end(raw, pos)
-                if end > marker.start():
-                    marker = None
-                    break
-                pos = end
-            else:
-                newline = raw.find("\n", pos)
-                if newline < 0:
-                    break
-                pos = newline + 1
-    text = raw[:marker.start()].strip() if marker else raw
+    # Inspect markers only at top-level line boundaries. Match the legacy
+    # bare-fence wrapper before treating that line as a Markdown fence.
+    pos = 0
+    while pos < len(raw):
+        if _FINAL_MARKER_RE.match(raw, pos):
+            raw = raw[:pos].rstrip()
+            break
+        if _FENCE_EDGE_RE.match(raw, pos):
+            pos = _fence_end(raw, pos)
+        else:
+            newline = raw.find("\n", pos)
+            if newline < 0:
+                break
+            pos = newline + 1
+    text = raw
     turns = _split_top_level_turns(text)
     # The caller already verified successful logical completion. The legacy
     # marker is optional; it is not emitted by current engines.

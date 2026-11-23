@@ -401,3 +401,14 @@ def test_task_result_preserves_legacy_marker_inside_user_code(sample):
     from server.services.task_scheduler import extract_task_result
 
     assert extract_task_result(sample) == sample
+
+
+@pytest.mark.parametrize("example", [
+    "```text\n[Info] Final response to user.\n```",
+    "~~~text\n[Info] Final response to user.\n~~~",
+    "```inline```\nBody after inline code.",
+])
+def test_task_result_skips_false_markers_before_legacy_end(example):
+    from server.services.task_scheduler import extract_task_result
+
+    assert extract_task_result(example + "\n[Info] Final response to user.") == example

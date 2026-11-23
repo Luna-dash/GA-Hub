@@ -86,6 +86,32 @@ class NovaComponentTest(unittest.TestCase):
         self.component.connector.win32cred.CredDelete.assert_called_once_with('target',1)
 
 
+    def test_unpair_retries_credential_failure_and_accepts_missing_credential(self):
+        class CredentialError(Exception):
+            def __init__(self, winerror):
+                self.winerror = winerror
+
+        path = Path(self.tmp.name) / 'device.json'
+        path.write_text(json.dumps({'server': 'https://nova.lunadash.me'}))
+        delete = self.component.connector.win32cred.CredDelete
+        delete.side_effect = [CredentialError(5), CredentialError(1168)]
+        headers = {'Origin': 'http://testserver', 'X-Nova-Local': self.component.nonce}
+        first = self.client.post('/nova/unpair', json={}, headers=headers)
+        self.assertEqual(first.status_code, 502, first.text)
+        self.assertTrue(path.exists())
+        retry = self.client.post('/nova/unpair', json={}, headers=headers)
+        self.assertEqual(retry.status_code, 200, retry.text)
+        self.assertFalse(path.exists())
+
+    def test_optional_connector_unavailable_returns_503_on_mutation(self):
+        self.component.connector = None
+        headers = {'Origin': 'http://testserver', 'X-Nova-Local': self.component.nonce}
+        with patch('server.services.nova_service.sys.platform', 'linux'), patch.object(self.component, 'load') as load:
+            response = self.client.post('/nova/unpair', json={}, headers=headers)
+        self.assertEqual(response.status_code, 503, response.text)
+        load.assert_not_called()
+
+
 class NovaLifecycleTest(unittest.IsolatedAsyncioTestCase):
     async def test_optional_import_failure_does_not_stop_hub(self):
         c=NovaService()
