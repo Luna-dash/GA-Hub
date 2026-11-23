@@ -223,4 +223,37 @@
     background: var(--c-accent);
     border-radius: 9999px;
   }
+
+  /* 页面任务类型与统一气口（有限统一：Workspace / Board / Archive 三大原型） */
+  .ga-page-workspace {
+    @apply flex h-full min-h-0 min-w-0 flex-col;
+  }
+
+  .ga-page-board {
+    @apply mx-auto w-full max-w-6xl p-5 sm:p-6 space-y-5;
+  }
+
+  .ga-page-dossier {
+    @apply mx-auto w-full max-w-6xl p-5 sm:p-6;
+  }
+
+  .ga-page-dossier-narrow {
+    @apply mx-auto w-full max-w-3xl p-5 sm:p-6;
+  }
+
+  .ga-archive-split {
+    @apply h-full min-h-0 grid grid-cols-1 lg:grid-cols-[19rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)];
+  }
+
+  .ga-archive-rail {
+    @apply flex flex-col min-h-0 overflow-hidden border-b border-line/55 bg-bg-card/45 lg:border-b-0 lg:border-r;
+  }
+
+  .ga-archive-body {
+    @apply h-full min-h-0 flex flex-col p-5 sm:p-6;
+  }
+
+  .ga-section-head {
+    @apply mb-2.5 flex flex-wrap items-baseline justify-between gap-2.5;
+  }
 }

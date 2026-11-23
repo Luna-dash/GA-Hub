@@ -213,8 +213,8 @@ export default function GoalHive() {
         </div>
       }
     >
-      <div className="grid h-full min-h-0 grid-cols-1 gap-3 p-3 md:grid-cols-[minmax(19rem,23.5rem)_minmax(0,1fr)] lg:gap-4 lg:p-4">
-        <section className="ga-paper-card flex flex-col min-h-0 overflow-hidden">
+      <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[minmax(19rem,23.5rem)_minmax(0,1fr)]">
+        <section className="flex flex-col min-h-0 overflow-hidden border-b border-line/55 bg-bg-card/65 md:border-b-0 md:border-r">
           <form onSubmit={submit} className="flex flex-1 min-h-0 flex-col">
             <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3.5">
               <div className="flex items-center justify-between gap-2">
@@ -300,8 +300,8 @@ export default function GoalHive() {
           </form>
         </section>
 
-        <section className="ga-paper-card flex flex-col min-h-0 overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-line/45 bg-bg-soft/35 flex items-center justify-between">
+        <section className="flex flex-col min-h-0 overflow-hidden bg-bg-soft/35">
+          <div className="px-5 py-3.5 border-b border-line/55 bg-bg-card/45 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-semibold text-ink">执行输出</h2>
               <span className="text-xs text-ink-faint">· 实时日志</span>

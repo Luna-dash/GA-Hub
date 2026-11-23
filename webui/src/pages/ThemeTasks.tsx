@@ -317,10 +317,20 @@ export default function ThemeTasks() {
     })
     return () => { offRuntime(); offState() }
   }, [client])
-  return <PageShell title="主题任务" actions={<button type="button" className="ga-btn-sm-primary" onClick={() => setPicking(true)}><Plus className="h-3.5 w-3.5" aria-hidden="true" /><span>从会话转入</span></button>}>
-    <div className="mx-auto max-w-7xl p-4 sm:p-6">
+  return <PageShell
+    title="主题任务"
+    titleExtra={
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium" aria-label="主题任务概览">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-line/65 bg-bg-soft/90 px-2.5 py-0.5 tabular-nums text-ink-muted">
+          <span>主题 {tasks.length} 项</span>
+        </span>
+      </div>
+    }
+    actions={<button type="button" className="ga-btn-sm-primary" onClick={() => setPicking(true)}><Plus className="h-3.5 w-3.5" aria-hidden="true" /><span>从会话转入</span></button>}
+  >
+    <div className="ga-page-board">
       {sessionsQuery.isError && <p role="alert" className="text-status-danger">加载失败。<button className={button} onClick={() => void sessionsQuery.refetch()}><RefreshIcon size={12} /><span>重试</span></button></p>}
-      {sessionsQuery.isLoading ? <p>正在加载…</p> : tasks.length === 0 ? <div className="rounded-xl border border-dashed border-line p-8 text-center"><p className="mb-4 text-sm text-ink-faint">暂无主题任务</p><button className={button} onClick={() => setPicking(true)}>选择已有会话</button></div> : <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{orderedTasks.map(s => <ThemeCard key={s.id} expanded={expandedId === s.id} onExpandedChange={setExpandedId} session={s} onSettings={() => setSetting(s)} refresh={refresh} autoOpen={openId === s.id} onAutoOpened={clearOpen} />)}</div>}
+      {sessionsQuery.isLoading ? <p className="text-sm text-ink-faint">正在加载…</p> : tasks.length === 0 ? <div className="ga-paper-card border-dashed bg-bg-card/55 p-8 text-center"><p className="mb-4 text-sm text-ink-faint">暂无主题任务</p><button className={button} onClick={() => setPicking(true)}>选择已有会话</button></div> : <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">{orderedTasks.map(s => <ThemeCard key={s.id} expanded={expandedId === s.id} onExpandedChange={setExpandedId} session={s} onSettings={() => setSetting(s)} refresh={refresh} autoOpen={openId === s.id} onAutoOpened={clearOpen} />)}</div>}
     </div>
     {picking && (
       <ModalOverlay onClose={() => setPicking(false)} labelledBy="theme-pick-title" panelClassName="w-[min(560px,94vw)] rounded-2xl border border-line bg-bg p-6">

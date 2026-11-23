@@ -219,8 +219,8 @@ export default function MyKey() {
         </div>
       }
     >
-      <div className="p-6 max-w-5xl mx-auto h-full flex flex-col">
-        <section aria-label="云端自动同步" className="ga-paper-card mb-4 p-4 text-sm">
+      <div className="ga-page-board min-h-full flex flex-col">
+        <section aria-label="云端自动同步" className="ga-paper-card p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-ink">云端自动同步</h2>
@@ -240,7 +240,7 @@ export default function MyKey() {
         </section>
         {isLoading && <div className="text-ink-faint text-sm">载入中…</div>}
         {isError && (
-          <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-status-danger-line bg-status-danger-soft px-4 py-3 text-sm text-status-danger">
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-status-danger-line bg-status-danger-soft px-4 py-3 text-sm text-status-danger">
             <span>读取 mykey.py 失败：{errorMessageFromError(error)}</span>
             <button type="button" onClick={() => void refetch()} className="ga-btn shrink-0"><RefreshIcon size={14} /><span>重试</span></button>
           </div>

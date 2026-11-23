@@ -115,4 +115,35 @@ describe('Autonomous schedule dialog & report drawer', () => {
     await act(async () => { button('重试', dlg).click(); await new Promise((r) => setTimeout(r, 20)) })
     expect(dlg.textContent).toContain('报告正文')
   })
+
+  it('shows compact header status pills, resolves schedule names, and paginates run history', async () => {
+    apiMock.runs.mockResolvedValue({
+      runs: Array.from({ length: 12 }, (_, idx) => ({
+        id: `run-${idx + 1}`,
+        schedule_id: 'sch-1',
+        fired_at: 1_700_000_000 - idx * 60,
+        prompt_preview: `进化提示 ${idx + 1}`,
+        report_paths: [],
+      })),
+    })
+
+    await renderPage()
+    const summary = host.querySelector('[aria-label="自主进化概览"]')
+    expect(summary?.textContent).toContain('已启用 0/1')
+    expect(summary?.textContent).toContain('触发 0 次')
+    expect(summary?.textContent).toContain('报告 1 份')
+    expect(host.querySelector('[aria-label="运行概览"]')).toBeNull()
+
+    const rows = host.querySelectorAll('tbody tr')
+    expect(rows).toHaveLength(10)
+    expect(rows[0].textContent).toContain('空闲反思')
+
+    const pager = host.querySelector('nav[aria-label="触发历史分页"]')
+    expect(pager?.textContent).toContain('第 1 / 2 页')
+    await act(async () => {
+      pager!.querySelector<HTMLButtonElement>('button[aria-label="下一页"]')!.click()
+    })
+    expect(host.querySelectorAll('tbody tr')).toHaveLength(2)
+    expect(pager?.textContent).toContain('第 2 / 2 页')
+  })
 })

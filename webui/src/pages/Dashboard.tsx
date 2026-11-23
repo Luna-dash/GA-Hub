@@ -60,7 +60,7 @@ export default function Dashboard() {
         </div>
       ) : undefined}
     >
-      <div className="p-5 sm:p-6 space-y-5 max-w-6xl mx-auto">
+      <div className="ga-page-board">
         {panel.isError ? <ErrorBox text="服务状态读取失败，暂时无法判断系统是否可用。" onRetry={() => { void panel.refetch() }} /> : (
           <section className={`ga-paper-card px-5 py-4 ${verdictTone[verdict.tone]}`}>
             <div className="flex flex-wrap items-center justify-between gap-4">

@@ -113,7 +113,7 @@ export default function Memory() {
       }
     >
       <div className="h-full flex flex-col overflow-hidden">
-        <div className="shrink-0 px-6 pt-3.5 pb-0 flex items-center gap-2 text-xs text-ink-muted">
+        <div className="shrink-0 border-b border-line/55 bg-bg-card/55 px-5 py-2 flex items-center gap-2 text-xs text-ink-muted">
           <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-bg-card text-accent shadow-xs ring-1 ring-line/45">
             <LayerIcon className="h-3.5 w-3.5" aria-hidden="true" />
           </span>
@@ -142,7 +142,7 @@ function memoryWriteError(error: unknown): void {
 
 function MemoryLoadingCard({ label }: { label: string }) {
   return (
-    <div className="p-6 h-full">
+    <div className="mx-auto w-full max-w-5xl p-5 sm:p-6 h-full">
       <div className="ga-paper-card h-full grid place-items-center text-sm text-ink-faint" role="status">
         正在载入 {label}…
       </div>
@@ -155,7 +155,7 @@ function GlobalMem({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void 
   const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.global, queryFn: api.globalMem })
   if (isLoading || !data) return <MemoryLoadingCard label="global_mem.txt" />
   return (
-    <div className="p-6 h-full min-h-0">
+    <div className="mx-auto w-full max-w-5xl p-5 sm:p-6 h-full min-h-0">
       <VersionedMemoryEditor
         label="memory/global_mem.txt"
         snapshot={data}
@@ -181,7 +181,7 @@ function Insight({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void })
   const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.insight, queryFn: api.insight })
   if (isLoading || !data) return <MemoryLoadingCard label="global_mem_insight.txt" />
   return (
-    <div className="p-6 h-full min-h-0">
+    <div className="mx-auto w-full max-w-5xl p-5 sm:p-6 h-full min-h-0">
       <VersionedMemoryEditor
         label="memory/global_mem_insight.txt"
         snapshot={data}
@@ -216,8 +216,8 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
   const { data: cur } = useQuery({ queryKey: queryKeys.memory.sop(active), queryFn: () => api.sop(active!), enabled: !!active })
 
   return (
-    <div className="h-full grid grid-cols-1 lg:grid-cols-[19rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
-      <div className="ga-paper-card overflow-hidden flex flex-col h-full">
+    <div className="ga-archive-split">
+      <div className="ga-archive-rail">
         <div className="px-3.5 py-2.5 bg-bg-soft/45 flex items-center justify-between gap-2">
           <span className="text-xs font-semibold text-ink">SOP 列表</span>
           <span className="rounded-full bg-bg-card px-2 py-0.5 text-[11px] tabular-nums text-ink-muted ring-1 ring-line/45">
@@ -274,7 +274,7 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
         </ul>
       </div>
 
-      <div className="h-full min-h-0">
+      <div className="ga-archive-body">
         {!active && (
           <div className="ga-paper-card h-full grid place-items-center border-dashed bg-bg-card/45 p-8 text-center">
             <div className="flex flex-col items-center gap-2.5 max-w-xs">
@@ -325,8 +325,8 @@ function SkillList() {
   }
 
   return (
-    <div className="h-full grid grid-cols-1 lg:grid-cols-[19rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
-      <div className="ga-paper-card overflow-hidden flex flex-col h-full">
+    <div className="ga-archive-split">
+      <div className="ga-archive-rail">
         <div className="px-3.5 py-2.5 border-b border-line/40 bg-bg-soft/45 flex items-center justify-between gap-2">
           <span className="text-xs font-semibold text-ink">Skill 脚本</span>
           <span className="rounded-full bg-bg-card px-2 py-0.5 text-[11px] tabular-nums text-ink-muted ring-1 ring-line/45">
@@ -359,7 +359,7 @@ function SkillList() {
         </ul>
       </div>
 
-      <div className="h-full min-h-0 flex flex-col">
+      <div className="ga-archive-body">
         {!active && (
           <div className="ga-paper-card h-full grid place-items-center border-dashed bg-bg-card/45 p-8 text-center">
             <div className="flex flex-col items-center gap-2.5 max-w-xs">

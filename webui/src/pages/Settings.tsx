@@ -156,9 +156,9 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
     <PageShell
       title={inSetup ? '初始设置' : '设置'}
     >
-      <div className={inSetup ? 'p-4 sm:p-5 max-w-3xl mx-auto' : 'grid grid-cols-[5.5rem_minmax(0,1fr)] sm:grid-cols-[11rem_minmax(0,1fr)] items-start gap-4 sm:gap-6 p-4 sm:p-5 max-w-5xl mx-auto'}>
+      <div className={inSetup ? 'ga-page-dossier-narrow' : 'ga-page-dossier grid grid-cols-[5.5rem_minmax(0,1fr)] sm:grid-cols-[12rem_minmax(0,1fr)] items-start gap-5 sm:gap-6'}>
         {!inSetup && (
-          <div role="tablist" aria-label="设置分类" aria-orientation="vertical" className="ga-paper-card sticky top-4 flex flex-col gap-0.5 p-1.5">
+          <div role="tablist" aria-label="设置分类" aria-orientation="vertical" className="ga-paper-card sticky top-5 flex flex-col gap-0.5 p-1.5">
             {SETTINGS_TABS.map(({ id, label, icon: Icon }, index) => (
               <button
                 key={id}

@@ -141,9 +141,9 @@ export function AntiAccountUsageButton({
         aria-label="检测反重力额度"
         aria-describedby={open ? tooltipId : undefined}
         aria-disabled={!running || usage.isPending}
-        className={clsx('inline-flex size-8 items-center justify-center rounded-lg border focus-visible:outline focus-visible:outline-2',
-          rows?.length ? 'border-line bg-bg-card text-ink' : 'border-line bg-bg-card text-ink-muted',
-          running && !usage.isPending ? 'hover:bg-bg-soft' : 'cursor-default opacity-65')}
+        className={clsx('ga-btn-icon',
+          rows?.length ? 'text-ink' : 'text-ink-muted',
+          running && !usage.isPending ? '' : 'cursor-default opacity-65')}
         onFocus={event => { setFocused(event.currentTarget.matches(':focus-visible')); setDismissed(false) }}
         onBlur={() => setFocused(false)}
         onKeyDown={event => { if (event.key === 'Escape') { setTapped(false); setDismissed(true) } }}
@@ -157,7 +157,7 @@ export function AntiAccountUsageButton({
       </button>
       {open && position && createPortal(
         <div ref={panel} className="fixed z-[60] w-[min(19.5rem,calc(100vw-16px))] pt-2" style={{ top: position.top, left: position.left }}>
-          <div id={tooltipId} role="tooltip" className="overflow-y-auto overscroll-contain rounded-xl border border-line bg-bg-card p-3 text-xs text-ink shadow-lg" style={{ maxHeight: position.maxHeight }}>
+          <div id={tooltipId} role="tooltip" className="ga-paper-popover overflow-y-auto overscroll-contain rounded-xl p-3 text-xs text-ink" style={{ maxHeight: position.maxHeight }}>
             <div className="flex items-center justify-between gap-2">
               <span className="font-semibold">反重力剩余额度</span>
               {!liveRows && fallbackRows?.length && cachedUsage?.checked_at ? (
@@ -167,7 +167,7 @@ export function AntiAccountUsageButton({
               ) : null}
             </div>
             {rows?.length ? (
-              <ul className="mt-1 divide-y divide-line">
+              <ul className="mt-1 divide-y divide-line/45">
                 {rows.map(row => (
                   <li key={`${row.model}-${row.limit}`} className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 py-1.5">
                     <span className="min-w-0 break-words font-medium">{row.model}</span>
@@ -186,7 +186,7 @@ export function AntiAccountUsageButton({
                 <div className="flex items-center justify-between gap-2">
                   <button
                     type="button"
-                    className="text-accent hover:underline"
+                    className="ga-btn-link px-0.5 py-0"
                     disabled={pools.isPending}
                     onClick={() => {
                       pools.mutate()
@@ -198,7 +198,7 @@ export function AntiAccountUsageButton({
                   {coolingPools.length > 0 && (
                     <button
                       type="button"
-                      className="text-status-danger hover:underline"
+                      className="ga-btn-link px-0.5 py-0 text-status-danger hover:bg-status-danger-soft hover:text-status-danger-strong"
                       disabled={resetBreaker.isPending}
                       onClick={() => resetBreaker.mutate(undefined)}
                     >
@@ -224,7 +224,7 @@ export function AntiAccountUsageButton({
                               </span>
                               <button
                                 type="button"
-                                className="text-[10px] text-accent hover:underline"
+                                className="ga-btn-link px-1 py-0 text-[11px]"
                                 aria-label={`校准 ${pool.display_name}`}
                                 onClick={() => {
                                   if (isCalibrating) {
@@ -241,7 +241,7 @@ export function AntiAccountUsageButton({
                               {view.cooling && (
                                 <button
                                   type="button"
-                                  className="text-[10px] text-accent hover:underline disabled:opacity-40"
+                                  className="ga-btn-link px-1 py-0 text-[11px] disabled:opacity-40"
                                   disabled={resetBreaker.isPending}
                                   aria-label={`重置 ${pool.display_name} 熔断`}
                                   onClick={() => resetBreaker.mutate(pool.model_group)}
@@ -252,20 +252,20 @@ export function AntiAccountUsageButton({
                             </div>
                           </div>
                           {(pool.window_5h_pct != null || pool.window_7d_pct != null) && (
-                            <div className="flex items-center justify-between gap-2 text-[10px] tabular-nums">
+                            <div className="flex items-center justify-between gap-2 text-[11px] tabular-nums">
                               <span>5h 窗口 {pool.window_5h_pct != null ? `${pool.window_5h_pct.toFixed(0)}%` : '—'}</span>
                               <span>7d 窗口 {pool.window_7d_pct != null ? `${pool.window_7d_pct.toFixed(0)}%` : '—'}</span>
                             </div>
                           )}
                           {(pool.calibrated_remaining_pct != null || (pool.estimated_cost_7d_usd ?? 0) > 0) && (
-                            <div className="flex items-center justify-between gap-2 text-[10px] tabular-nums">
+                            <div className="flex items-center justify-between gap-2 text-[11px] tabular-nums">
                               <span>{pool.calibrated_remaining_pct != null ? `已校准剩余 ${pool.calibrated_remaining_pct}%` : ''}</span>
                               {(pool.estimated_cost_7d_usd ?? 0) > 0 && <span>7d ~${pool.estimated_cost_7d_usd!.toFixed(2)}</span>}
                             </div>
                           )}
                           {isCalibrating && (
                             <form
-                              className="flex flex-wrap items-center gap-1 pt-1"
+                              className="flex flex-wrap items-center gap-1.5 pt-1"
                               onSubmit={e => {
                                 e.preventDefault()
                                 const pct = Number(calibratePct)
@@ -281,20 +281,20 @@ export function AntiAccountUsageButton({
                                 value={calibratePct}
                                 onChange={e => setCalibratePct(e.target.value)}
                                 aria-label={`${pool.display_name} 剩余百分比`}
-                                className="w-14 rounded border border-line bg-bg-card px-1.5 py-0.5 text-[11px] text-ink"
+                                className="w-14 rounded-md border border-line/80 bg-bg-card px-1.5 py-0.5 text-xs text-ink outline-none focus:border-accent"
                               />
-                              <span className="text-[10px]">%</span>
+                              <span className="text-[11px]">%</span>
                               <input
                                 type="text"
                                 value={calibrateNote}
                                 onChange={e => setCalibrateNote(e.target.value)}
                                 placeholder="备注"
                                 aria-label="校准备注"
-                                className="min-w-0 flex-1 rounded border border-line bg-bg-card px-1.5 py-0.5 text-[11px] text-ink"
+                                className="min-w-0 flex-1 rounded-md border border-line/80 bg-bg-card px-1.5 py-0.5 text-xs text-ink outline-none focus:border-accent"
                               />
                               <button
                                 type="submit"
-                                className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-white disabled:opacity-50"
+                                className="ga-btn-sm-primary px-2 py-0.5 text-[11px]"
                                 disabled={calibrate.isPending}
                               >
                                 {calibrate.isPending ? '保存中' : '保存'}
@@ -307,7 +307,7 @@ export function AntiAccountUsageButton({
                   </ul>
                 )}
                 {stats.data && (
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-t border-line/50 pt-1.5 text-[10px] text-ink-muted tabular-nums">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-t border-line/50 pt-1.5 text-[11px] text-ink-muted tabular-nums">
                     <span>24h {stats.data.total_runs} 次（成功 {stats.data.success_runs}）</span>
                     <span>
                       {stats.data.total_tokens.toLocaleString('en-US')} tok · 缓存 {(stats.data.cache_hit_ratio * 100).toFixed(0)}%

@@ -103,7 +103,7 @@ export default function Tasks() {
         </button>
       }
     >
-      <div className="mx-auto max-w-6xl space-y-5 p-5">
+      <div className="ga-page-board">
         <section>
           <div className="mb-2.5 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-ink">任务计划</h2>
