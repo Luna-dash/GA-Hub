@@ -63,7 +63,6 @@ class _RunEventBus:
 
     def __init__(self) -> None:
         self._cond = threading.Condition()
-        self._done: set[tuple[Path, str]] = set()
         self._ephemeral: dict[tuple[Path, str], list[dict[str, Any]]] = {}
 
     def notify(self, key: tuple[Path, str], *, finished: bool = False, ephemeral: dict[str, Any] | None = None) -> None:
@@ -71,7 +70,6 @@ class _RunEventBus:
             if ephemeral is not None:
                 self._ephemeral.setdefault(key, []).append(ephemeral)
             if finished:
-                self._done.add(key)
                 self._ephemeral.pop(key, None)
             self._cond.notify_all()
 
@@ -79,12 +77,11 @@ class _RunEventBus:
         with self._cond:
             return self._ephemeral.pop(key, [])
 
-    def wait(self, key: tuple[Path, str], timeout: float = 0.8) -> bool:
+    def wait(self, key: tuple[Path, str], timeout: float = 0.8) -> None:
         with self._cond:
-            if key in self._done or self._ephemeral.get(key):
-                return True
-            self._cond.wait(timeout)
-            return key in self._done
+            if not self._ephemeral.get(key):
+                # SQLite holds the terminal state. The timeout covers missed notifications.
+                self._cond.wait(timeout)
 
 
 _EVENT_BUS = _RunEventBus()
@@ -320,22 +317,33 @@ class AntiSessions:
         add_dirs = tuple(str(d) for d in staging_dirs)
         allowed_roots = [workspace, *staging_dirs, _paths.admin_uploads_dir()]
 
+        # submit() has initialized the schema; reuse one connection for the turn.
+        # ACP callbacks can arrive on either the reader or the turn thread.
+        event_lock = threading.Lock()
+        events_db: sqlite3.Connection | None = None
+        events_closed = False
+        write_failure_logged = False
+
         def on_event(evt: dict[str, Any]) -> None:
-            etype = evt.get("type")
-            if etype in ("message.delta", "step.update") and isinstance(evt.get("seq"), int) and evt["seq"] > 0:
-                try:
-                    with self.connect() as db, db:
-                        db.execute(
-                            "INSERT OR REPLACE INTO run_events (run_id, seq, payload_json) VALUES (?,?,?)",
-                            (rid, evt["seq"], json.dumps(evt, ensure_ascii=False)),
-                        )
-                except OSError:
-                    pass
-                _EVENT_BUS.notify(key, finished=False)
-            elif etype == "approval.requested":
-                _EVENT_BUS.notify(key, finished=False, ephemeral=evt)
-            else:
-                _EVENT_BUS.notify(key, finished=False)
+            nonlocal events_db, write_failure_logged
+            with event_lock:
+                if events_closed:
+                    return
+                etype = evt.get("type")
+                if etype in ("message.delta", "step.update") and isinstance(evt.get("seq"), int) and evt["seq"] > 0:
+                    try:
+                        if events_db is None:
+                            events_db = sqlite3.connect(self.db, timeout=15.0, check_same_thread=False)
+                        with events_db:
+                            events_db.execute(
+                                "INSERT OR REPLACE INTO run_events (run_id, seq, payload_json) VALUES (?,?,?)",
+                                (rid, evt["seq"], json.dumps(evt, ensure_ascii=False)),
+                            )
+                    except (OSError, sqlite3.Error):
+                        if not write_failure_logged:
+                            log.warning("Could not persist an Agy stream event for run %s", rid, exc_info=True)
+                            write_failure_logged = True
+                _EVENT_BUS.notify(key, ephemeral=evt if etype == "approval.requested" else None)
 
         result: dict[str, Any] = {}
         registered = False
@@ -363,6 +371,13 @@ class AntiSessions:
             log.exception("Unexpected Agy ACP run failure")
             result = {"status": "cli_error", "error": f"Agy 运行异常: {exc}", "usage": {}}
         finally:
+            with event_lock:
+                events_closed = True
+                if events_db is not None:
+                    try:
+                        events_db.close()
+                    except sqlite3.Error:
+                        log.warning("Could not close the Agy event writer for run %s", rid, exc_info=True)
             if registered:
                 self.runtime.unregister_turn(self._db_key, rid)
             for directory in staging_dirs:
@@ -396,6 +411,7 @@ class AntiSessions:
         finally:
             with self._local_lock:
                 self._local_runs.discard(key)
+            _EVENT_BUS.notify(key, finished=True)
 
         cooldown = 60 if status == "rate_limited" else 0
         self.ledger.record_run(
@@ -409,7 +425,6 @@ class AntiSessions:
             thinking_tokens=int(usage.get("thinking_tokens") or 0),
             cooldown_seconds=cooldown,
         )
-        _EVENT_BUS.notify(key, finished=True)
 
     def submit(
         self,

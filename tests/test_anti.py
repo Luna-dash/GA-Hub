@@ -439,7 +439,7 @@ def test_account_cooldown_blocks_submit_until_reset_or_switch(tmp_path, monkeypa
         # Switching to another profile does not inherit default's cooldown.
         sid_other = client.post("/api/anti/sessions", json={"project": "project"}).json()["id"]
         other_run = sessions.submit(sid_other, "op_other", "try other", profile_id="a" * 32)
-        assert other_run["status"] == "running"
+        assert other_run["status"] in {"running", "success"}  # the fake worker can finish before submit returns
 
         # Resetting breaker unblocks default profile too.
         assert client.post(

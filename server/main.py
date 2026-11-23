@@ -358,8 +358,8 @@ def create_app() -> FastAPI:
     async def _host_guard(request: Request, call_next):
         host_header = request.headers.get("host", "")
         allowed = _is_allowed_host(host_header)
-        log.info(f"[HOST-GUARD] Host={host_header!r} allowed={allowed}")
         if not allowed:
+            log.warning("[HOST-GUARD] Rejected Host=%r", host_header)
             return PlainTextResponse("Forbidden host", status_code=403)
         return await call_next(request)
 
