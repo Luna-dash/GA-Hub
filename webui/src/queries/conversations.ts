@@ -8,7 +8,8 @@ export const conversationKeys = {
   lists: () => [...conversationKeys.all, 'list'] as const,
   list: (q: string, offset: number, limit: number) =>
     [...conversationKeys.lists(), q, offset, limit] as const,
-  detail: (id: string) => [...conversationKeys.all, 'detail', id] as const,
+  details: () => [...conversationKeys.all, 'detail'] as const,
+  detail: (id: string) => [...conversationKeys.details(), id] as const,
 }
 
 /** Keep rendered summaries/details coherent, then revalidate list membership. */

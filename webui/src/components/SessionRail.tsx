@@ -563,8 +563,8 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                               type="button"
                               onClick={() => setConfirmDeleteId(session.id)}
                               disabled={activity === 'active' || deletingId === session.id}
-                              aria-label={`删除 ${sessionTitle(session)}`}
-                              title={activity === 'active' ? '请先停止任务再删除' : (deleteDetail ?? '删除会话')}
+                              aria-label={`${storageScope === 'anti' ? '删除' : '移除'} ${sessionTitle(session)}`}
+                              title={activity === 'active' ? '请先停止任务再删除' : (deleteDetail ?? '移除会话（保留原档）')}
                               className="flex h-6 w-6 items-center justify-center rounded text-status-danger transition-colors hover:bg-status-danger-soft disabled:cursor-not-allowed disabled:opacity-25"
                             >
                               <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -580,10 +580,10 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                       <div
                         ref={deleteConfirmRef}
                         role="alertdialog"
-                        aria-label={`确认删除 ${sessionTitle(session)}`}
+                        aria-label={`确认${storageScope === 'anti' ? '删除' : '移除'} ${sessionTitle(session)}`}
                         className="mx-2 mb-2 flex items-center justify-between gap-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-2 py-1.5 text-[11px] text-status-danger"
                       >
-                        <span className="whitespace-nowrap" title={deleteDetail}>{deleteDetail ? '删除会话？' : '删除索引？'}</span>
+                        <span className="min-w-0" title={deleteDetail}>{storageScope === 'anti' ? '删除会话？' : '移除会话？原档保留。'}</span>
                         <button
                           type="button"
                           disabled={deletingId === session.id}

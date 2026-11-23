@@ -9,6 +9,7 @@ import { FileLinkContext } from '@/components/FileCitation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { conversationKeys } from '@/queries/conversations'
 import { api } from '@/api/client'
 import { storageKeys } from '@/config/storageKeys'
 import type {
@@ -654,6 +655,7 @@ export default function LiveChat() {
   const deleteSession = useCallback(async (id: string) => {
     try {
       await api.deleteSession(id)
+      void queryClient.invalidateQueries({ queryKey: conversationKeys.details() })
       dropSessionView(id)
       useDraftStore.getState().clearDraft(`liveChat:${id}`)
       const remaining = sessions.filter((item) => item.id !== id)
@@ -678,7 +680,7 @@ export default function LiveChat() {
       const detail = error?.status === 409
         ? '会话仍在运行，请先停止任务。'
         : errorMessageFromError(error)
-      pushSystem(`_删除会话失败：${detail}_`)
+      pushSystem(`_移除会话失败：${detail}_`)
       throw error
     }
   }, [dropSessionView, nav, pushSystem, queryClient, sessions])

@@ -289,7 +289,7 @@ describe('conversation route selection', () => {
     await waitFor(() => expect(host.textContent).toContain('Detail alpha beta'))
 
     const deleteButton = [...host.querySelectorAll('button')]
-      .find((button) => button.textContent?.trim() === '删除')
+      .find((button) => button.textContent?.trim() === '永久删除原档')
     expect(deleteButton).toBeDefined()
     act(() => deleteButton?.click())
 

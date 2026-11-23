@@ -141,10 +141,10 @@ describe('SessionRail', () => {
     act(() => empty?.click())
     expect(onSelect).toHaveBeenCalledWith(sessions[1].id)
 
-    const runningDelete = host.querySelector('[aria-label="删除 研究任务"]') as HTMLButtonElement
+    const runningDelete = host.querySelector('[aria-label="移除 研究任务"]') as HTMLButtonElement
     expect(runningDelete.disabled).toBe(true)
 
-    const idleDelete = host.querySelector('[aria-label="删除 未命名会话 · bbbbbbbb"]') as HTMLButtonElement
+    const idleDelete = host.querySelector('[aria-label="移除 未命名会话 · bbbbbbbb"]') as HTMLButtonElement
     const actionGroup = idleDelete.parentElement!
     const titleRow = actionGroup.parentElement!
     expect(titleRow.classList.contains('relative')).toBe(true)
@@ -157,8 +157,8 @@ describe('SessionRail', () => {
     act(() => idleDelete.click())
     expect(host.querySelector('[role="alertdialog"]')?.parentElement).toBe(titleRow.parentElement)
     expect(titleRow.querySelector('[role="alertdialog"]')).toBeNull()
-    expect(host.querySelector('[role="alertdialog"]')?.getAttribute('aria-label')).toBe('确认删除 未命名会话 · bbbbbbbb')
-    expect(host.querySelector('[role="alertdialog"]')?.textContent).toContain('删除索引？')
+    expect(host.querySelector('[role="alertdialog"]')?.getAttribute('aria-label')).toBe('确认移除 未命名会话 · bbbbbbbb')
+    expect(host.querySelector('[role="alertdialog"]')?.textContent).toContain('移除会话？原档保留。')
     const confirm = Array.from(host.querySelectorAll('[role="alertdialog"] button'))
       .find((button) => button.textContent === '确认') as HTMLButtonElement
     // 只剩一个按钮：取消就是「点别处」
@@ -176,7 +176,7 @@ describe('SessionRail', () => {
       host.querySelector(`[aria-label="${label}"]`) as HTMLButtonElement
     ).parentElement!.className.split(/\s+/)
 
-    for (const label of ['删除 研究任务', '删除 未命名会话 · bbbbbbbb']) {
+    for (const label of ['移除 研究任务', '移除 未命名会话 · bbbbbbbb']) {
       const classes = classesOf(label)
       expect(classes).toContain('opacity-0')
       expect(classes).not.toContain('opacity-100')
@@ -193,7 +193,7 @@ describe('SessionRail', () => {
     ))
 
     const openConfirm = () => {
-      act(() => (host.querySelector('[aria-label="删除 未命名会话 · bbbbbbbb"]') as HTMLButtonElement).click())
+      act(() => (host.querySelector('[aria-label="移除 未命名会话 · bbbbbbbb"]') as HTMLButtonElement).click())
       expect(host.querySelector('[role="alertdialog"]')).not.toBeNull()
     }
 

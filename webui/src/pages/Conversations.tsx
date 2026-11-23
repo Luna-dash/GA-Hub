@@ -264,10 +264,12 @@ export default function Conversations() {
     }
   }
 
-  const handleDelete = async (id: string, title: string) => {
+  const handleDelete = async (id: string, title: string, isBound: boolean) => {
     const ok = await dialog.confirm(
-      `删除历史会话「${title || id}」？`,
-      '这将永久删除对应的原始会话文件，且无法撤销。',
+      `永久删除原档「${title || id}」？`,
+      isBound
+        ? '原始会话文件将永久删除，关联会话也会从聊天列表移除。此操作无法撤销。'
+        : '原始会话文件将永久删除，无法撤销。',
       { confirmText: '永久删除文件', tone: 'danger' },
     )
     if (!ok) return
@@ -278,7 +280,10 @@ export default function Conversations() {
         lastActiveRef.current = null
         writePageState('conversations.lastActive', null)
       }
-      await removeConversationFromCache(qc, id)
+      await Promise.all([
+        removeConversationFromCache(qc, id),
+        qc.invalidateQueries({ queryKey: queryKeys.sessions }),
+      ])
       toast.success('会话文件已删除')
     } catch (e: any) {
       await dialog.alert('删除失败', errorMessageFromError(e))
@@ -624,11 +629,11 @@ export default function Conversations() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDelete(detail.id, detail.title || '')}
+                          onClick={() => handleDelete(detail.id, detail.title || '', !!boundSessionId)}
                           className="ga-btn-group-item-danger"
                         >
                           <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                          <span>删除</span>
+                          <span>永久删除原档</span>
                         </button>
                       </div>
                       <div className="ga-btn-group">
