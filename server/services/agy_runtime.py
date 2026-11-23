@@ -211,6 +211,8 @@ class AgySessionWorker:
         self.add_dirs: tuple[str, ...] = ()
         self.last_used = time.monotonic()
         self._closed = False
+        self._retired = False
+        self._exit_pending: threading.Event | None = None
         self._reader_thread: threading.Thread | None = None
 
     def is_alive(self) -> bool:
@@ -408,12 +410,16 @@ class AgySessionWorker:
     def ensure_started(self, *, resume_conversation: str | None, add_dirs: tuple[str, ...]) -> str:
         """Start (or reuse) the persistent ACP process and return the native sessionId."""
         with self._lock:
+            if self._retired or self.exit_pending():
+                raise AgyProfileError(409, "Agy 正在关闭旧会话，请稍后重试")
             if self.is_alive() and set(add_dirs).issubset(set(self.add_dirs)):
                 self.last_used = time.monotonic()
                 assert self.acp_session_id is not None
                 return self.acp_session_id
             if self.proc is not None:
                 self._teardown_locked()
+                if self.exit_pending():
+                    raise AgyProfileError(409, "Agy 正在关闭旧会话，请稍后重试")
 
             agy_profile.claim_profile_lock(self.profile_id)
             self._profile_lock_held = True
@@ -709,6 +715,7 @@ class AgySessionWorker:
                     temp_dir = self.temp_dir
                     self._profile_lock_held = False
                     self.temp_dir = None
+                    exited = self._exit_pending = threading.Event()
 
                     def wait_for_exit() -> None:
                         proc.wait()
@@ -717,6 +724,7 @@ class AgySessionWorker:
                             shutil.rmtree(temp_dir, ignore_errors=True)
                         if held:
                             agy_profile.release_profile_lock(profile_id)
+                        exited.set()
 
                     try:
                         threading.Thread(target=wait_for_exit, name="agy-acp-exit", daemon=True).start()
@@ -739,6 +747,10 @@ class AgySessionWorker:
                 agy_profile.release_profile_lock(self.profile_id)
 
 
+    def exit_pending(self) -> bool:
+        exited = self._exit_pending
+        return exited is not None and not exited.is_set()
+
     def close(self) -> None:
         with self._lock:
             self._teardown_locked()
@@ -755,6 +767,9 @@ class AgyRuntimeManager:
     ) -> None:
         self._lock = threading.RLock()
         self._workers: dict[tuple[str, str, str], AgySessionWorker] = {}
+        # Keep detached sessions reserved until close() and any exit waiter finish.
+        self._retiring: dict[tuple[str, str, str], tuple[AgySessionWorker, threading.Event]] = {}
+        self._changing_profiles: set[str] = set()
         self._active_turns: dict[tuple[Path, str], AgySessionWorker] = {}
         self._stopped_manually = False
         self._draining_workers = False
@@ -884,11 +899,9 @@ class AgyRuntimeManager:
                 if self._active_turns:
                     raise AgyProfileError(409, "当前有正在运行的 Anti 任务，请先停止或等待任务结束")
                 self._draining_workers = True
-                workers = list(self._workers.values())
-                self._workers.clear()
+                workers = self._detach_workers_locked(list(self._workers))
             try:
-                for worker in workers:
-                    worker.close()
+                self._close_detached(workers)
             finally:
                 with self._lock:
                     self._stopped_manually = not restart
@@ -902,28 +915,52 @@ class AgyRuntimeManager:
             _append_log("Agy ACP runtime restarted" if restart else "Agy ACP runtime stopped")
         return self.status(verify_auth=restart)
 
-    def _close_all_workers_locked(self) -> None:
-        for worker in list(self._workers.values()):
-            worker.close()
-        self._workers.clear()
-        self._active_turns.clear()
+    def _prune_retiring_locked(self) -> None:
+        for key, (worker, closed) in list(self._retiring.items()):
+            if closed.is_set() and not worker.exit_pending():
+                del self._retiring[key]
+
+    def _detach_workers_locked(self, keys: list[tuple[str, str, str]]) -> list[tuple[AgySessionWorker, threading.Event]]:
+        detached = []
+        for key in keys:
+            worker = self._workers.pop(key)
+            # Do not acquire the worker lock here: startup may call back into us.
+            worker._retired = True
+            entry = self._retiring[key] = (worker, threading.Event())
+            detached.append(entry)
+        return detached
+
+    def _close_detached(self, workers: list[tuple[AgySessionWorker, threading.Event]]) -> None:
+        first_error = None
+        for worker, closed in workers:
+            try:
+                worker.close()
+            except Exception as exc:
+                # Fail closed for this key, but still attempt to close the rest.
+                log.exception("Failed to close Agy session %s", worker.session_id)
+                if first_error is None:
+                    first_error = exc
+            else:
+                closed.set()
+        with self._lock:
+            self._prune_retiring_locked()
+        if first_error is not None:
+            raise first_error
 
     def reap_idle_workers(self, *, now: float | None = None) -> int:
         """Close idle ACP child workers exceeding IDLE_SESSION_TTL while keeping SQLite resume IDs."""
         if self._idle_ttl <= 0:
             return 0
         current = time.monotonic() if now is None else now
-        stale: list[AgySessionWorker] = []
         with self._lock:
+            self._prune_retiring_locked()
             registered = set(self._active_turns.values())
-            for key, worker in list(self._workers.items()):
-                if worker in registered or worker.active_turn is not None:
-                    continue
-                if worker._closed or (current - worker.last_used) >= self._idle_ttl:
-                    self._workers.pop(key, None)
-                    stale.append(worker)
-        for worker in stale:
-            worker.close()
+            stale = self._detach_workers_locked([
+                key for key, worker in self._workers.items()
+                if worker not in registered and worker.active_turn is None
+                and (worker._closed or (current - worker.last_used) >= self._idle_ttl)
+            ])
+        self._close_detached(stale)
         if stale:
             _append_log(f"Reaped {len(stale)} idle Agy ACP worker(s)")
         return len(stale)
@@ -958,19 +995,29 @@ class AgyRuntimeManager:
     def _shutdown(self) -> None:
         self._shutdown_event.set()
         with self._lock:
-            self._close_all_workers_locked()
-            if self._code_login is not None:
-                self._code_login.cancel()
-                self._code_login = None
-            if self._login is not None and self._login.poll() is None:
-                child_job.terminate_tree(self._login.pid)
-                child_job.forget(self._login.pid)
-            self._login = None
+            self._draining_workers = True
+            workers = self._detach_workers_locked(list(self._workers))
+            self._active_turns.clear()
+            login, code_login = self._login, self._code_login
+            self._login = self._code_login = None
             self._login_profile = None
             reaper = self._reaper_thread
             self._reaper_thread = None
-        if reaper is not None and reaper.is_alive() and threading.current_thread() is not reaper:
-            reaper.join(timeout=1.0)
+        try:
+            try:
+                self._close_detached(workers)
+            finally:
+                if code_login is not None:
+                    code_login.cancel()
+                if login is not None and login.poll() is None:
+                    child_job.terminate_tree(login.pid)
+                    child_job.forget(login.pid)
+                if reaper is not None and reaper.is_alive() and threading.current_thread() is not reaper:
+                    reaper.join(timeout=1.0)
+        finally:
+            with self._lock:
+                self._stopped_manually = True
+                self._draining_workers = False
 
     @staticmethod
     def _log_path() -> Path:
@@ -988,6 +1035,8 @@ class AgyRuntimeManager:
 
     def _require_login_closed(self, *profiles: str) -> None:
         self._require_workers_available_locked()
+        if any(profile in self._changing_profiles for profile in profiles):
+            raise AgyProfileError(409, "Agy 账号正在更新，请稍后重试")
         # No profile filter when starting a new login: only one flow is tracked.
         if self._login is not None:
             if self._login.poll() is None:
@@ -1026,36 +1075,46 @@ class AgyRuntimeManager:
             agy_profile.agy_executable()
             yield profile_id
 
+    def _require_session_available_locked(self, db_key: str, profile_id: str, session_id: str) -> None:
+        self._require_login_closed(profile_id)
+        if self._stopped_manually:
+            raise AgyProfileError(409, "Agy 运行时已停止，请先在顶部状态栏重新启用")
+        self._prune_retiring_locked()
+        if any(key[0] == db_key and key[2] == session_id for key in self._retiring):
+            raise AgyProfileError(409, "Agy 正在关闭旧会话，请稍后重试")
+
     def get_worker(self, db_key: str, profile_id: str, session_id: str, workspace: Path) -> AgySessionWorker:
         key = (db_key, profile_id, session_id)
         with self._lock:
-            self._require_workers_available_locked()
+            self._require_session_available_locked(*key)
             worker = self._workers.get(key)
             if worker is not None and worker.workspace == workspace and not worker._closed:
                 return worker
         executable = agy_profile.agy_executable()
         version = self._probe_version_once(executable)
-        with self._lock:
-            self._require_workers_available_locked()
-            if self._stopped_manually:
-                raise AgyProfileError(409, "Agy 运行时已停止，请先在顶部状态栏重新启用")
-            worker = self._workers.get(key)
-            if worker is not None and worker.workspace == workspace and not worker._closed:
-                return worker
-            if worker is not None:
-                worker.close()
-            worker = AgySessionWorker(
-                profile_id=profile_id,
-                session_id=session_id,
-                workspace=workspace,
-                executable=executable,
-                version=version,
-                on_models=lambda models, pid=profile_id: self._record_models(pid, models),
-                on_commands=lambda cmds, pid=profile_id: self._record_commands(pid, cmds),
-            )
-            self._workers[key] = worker
-            self._ensure_reaper_locked()
-            return worker
+        while True:
+            with self._lock:
+                self._require_session_available_locked(*key)
+                worker = self._workers.get(key)
+                if worker is None:
+                    worker = AgySessionWorker(
+                        profile_id=profile_id,
+                        session_id=session_id,
+                        workspace=workspace,
+                        executable=executable,
+                        version=version,
+                        on_models=lambda models, pid=profile_id: self._record_models(pid, models),
+                        on_commands=lambda cmds, pid=profile_id: self._record_commands(pid, cmds),
+                    )
+                    self._workers[key] = worker
+                    self._ensure_reaper_locked()
+                    return worker
+                if worker.workspace == workspace and not worker._closed:
+                    return worker
+                if worker in self._active_turns.values():
+                    raise AgyProfileError(409, "Agy 会话仍有任务运行，请稍后重试")
+                detached = self._detach_workers_locked([key])
+            self._close_detached(detached)
 
     def _record_models(self, profile_id: str, items: list[dict[str, str]]) -> None:
         with self._lock:
@@ -1144,8 +1203,8 @@ class AgyRuntimeManager:
 
     def close_session(self, db_key: str, session_id: str) -> None:
         with self._lock:
-            for key in [k for k in self._workers if k[0] == db_key and k[2] == session_id]:
-                self._workers.pop(key).close()
+            workers = self._detach_workers_locked([k for k in self._workers if k[0] == db_key and k[2] == session_id])
+        self._close_detached(workers)
 
     @staticmethod
     def _parse_models_output(stdout: str) -> list[dict[str, str]]:
@@ -1239,25 +1298,38 @@ class AgyRuntimeManager:
         with self._lock:
             return agy_profile.rename(profile_id, name)
 
-    def delete_profile(self, profile_id: str) -> None:
+    @contextmanager
+    def _profile_change(self, profile_id: str):
         with self._lock:
             self._require_login_closed(profile_id)
-            for key in [k for k in self._workers if k[1] == profile_id]:
-                self._workers.pop(key).close()
-            self._cached_models.pop(profile_id, None)
-            self._cached_commands.pop(profile_id, None)
+            if any(key[1] == profile_id and worker in self._active_turns.values()
+                   for key, worker in self._workers.items()):
+                raise AgyProfileError(409, "请先等待该 Agy 账号的任务结束")
+            self._changing_profiles.add(profile_id)
+            workers = self._detach_workers_locked([k for k in self._workers if k[1] == profile_id])
+        try:
+            self._close_detached(workers)
+            with self._lock:
+                self._require_workers_available_locked()
+                self._require_profile_exited_locked(profile_id)
+                self._cached_models.pop(profile_id, None)
+                self._cached_commands.pop(profile_id, None)
+                yield
+        finally:
+            with self._lock:
+                self._changing_profiles.discard(profile_id)
+
+    def _require_profile_exited_locked(self, profile_id: str) -> None:
+        self._prune_retiring_locked()
+        if any(key[1] == profile_id for key in self._retiring):
+            raise AgyProfileError(409, "Agy 账号的旧进程仍在退出，请稍后重试")
+
+    def delete_profile(self, profile_id: str) -> None:
+        with self._profile_change(profile_id):
             agy_profile.delete(profile_id)
 
     def clear_profile_credentials(self, profile_id: str) -> dict[str, Any]:
-        with self._lock:
-            self._require_login_closed(profile_id)
-            active, _ = agy_profile.snapshot()
-            if active == profile_id and self._active_turn_count() > 0:
-                raise AgyProfileError(409, "请先等待当前任务结束后再清除凭据")
-            for key in [k for k in self._workers if k[1] == profile_id]:
-                self._workers.pop(key).close()
-            self._cached_models.pop(profile_id, None)
-            self._cached_commands.pop(profile_id, None)
+        with self._profile_change(profile_id):
             return agy_profile.clear_credentials(profile_id)
 
     def switch_profile(self, profile_id: str) -> None:
@@ -1270,12 +1342,12 @@ class AgyRuntimeManager:
             self._require_login_closed(active, profile_id)
             if self._active_turn_count() > 0:
                 raise AgyProfileError(409, "请等当前 Agy 任务全部结束后再切换账号")
-            # Close existing ACP sessions cleanly so the next turn binds to the newly selected profile.
-            self._close_all_workers_locked()
+            agy_profile.select(profile_id)
+            workers = self._detach_workers_locked(list(self._workers))
             self._cached_models.clear()
             self._cached_commands.clear()
-            agy_profile.select(profile_id)
-            _append_log(f"Switched active Agy profile to {profile_id}")
+        self._close_detached(workers)
+        _append_log(f"Switched active Agy profile to {profile_id}")
 
     @staticmethod
     def _watch_login_process(
@@ -1315,6 +1387,8 @@ class AgyRuntimeManager:
             if not any(p.id == profile_id for p in profiles):
                 raise AgyProfileError(404, "找不到 Agy 账号")
             self._require_login_closed()
+            self._require_login_closed(profile_id)
+            self._require_profile_exited_locked(profile_id)
             if self._active_turn_count() > 0:
                 raise AgyProfileError(409, "请等当前任务结束后再打开官方登录窗口")
             executable = agy_profile.agy_executable()
@@ -1349,6 +1423,8 @@ class AgyRuntimeManager:
             if active == profile_id and self._active_turn_count() > 0:
                 raise AgyProfileError(409, "请先等待当前任务结束后再重新登录当前账号")
             self._require_login_closed()
+            self._require_login_closed(profile_id)
+            self._require_profile_exited_locked(profile_id)
             executable = agy_profile.agy_executable()
             agy_profile.claim_profile_lock(profile_id)
             temp_dir = None

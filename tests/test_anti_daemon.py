@@ -346,6 +346,150 @@ def test_worker_drain_allows_manager_reads_but_rejects_new_work(tmp_path, monkey
     mgr.shutdown()
 
 
+@pytest.fixture
+def runtime_manager(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.2.3")
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=60, reaper_interval=3600)
+    try:
+        yield mgr
+    finally:
+        mgr.shutdown()
+
+
+@pytest.mark.parametrize("operation", ["close_session", "replace", "reap", "switch", "clear", "delete", "shutdown"])
+def test_slow_worker_close_does_not_hold_manager_lock(runtime_manager, tmp_path, monkeypatch, operation):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    mgr = runtime_manager
+    profile = agy_profile.DEFAULT
+    secondary = "secondary"
+    monkeypatch.setattr(agy_profile, "snapshot", lambda: (
+        profile, [SimpleNamespace(id=profile), SimpleNamespace(id=secondary)],
+    ))
+
+    def select(profile_id):
+        nonlocal profile
+        profile = profile_id
+
+    monkeypatch.setattr(agy_profile, "select", select)
+    changed = []
+    monkeypatch.setattr(agy_profile, "clear_credentials", lambda pid: changed.append(pid))
+    monkeypatch.setattr(agy_profile, "delete", lambda pid: changed.append(pid))
+    db = str(tmp_path / "sessions.db")
+    worker_profile = secondary if operation in {"clear", "delete"} else profile
+    worker = mgr.get_worker(db, worker_profile, "same", tmp_path)
+    new_workspace = tmp_path / "new"
+    started, release = Event(), Event()
+    close = worker.close
+
+    def slow_close():
+        started.set()
+        assert release.wait(5)
+        close()
+
+    def probe():
+        assert mgr.panel_status().active_count == 0
+        assert not mgr.session_connected(db, "same")
+        assert not changed
+        with pytest.raises(agy_profile.AgyProfileError) as blocked:
+            mgr.get_worker(db, profile if operation == "switch" else worker_profile, "same", tmp_path)
+        assert blocked.value.status == 409
+        if operation == "shutdown":
+            with pytest.raises(agy_profile.AgyProfileError) as blocked:
+                mgr.get_worker(db, profile, "unrelated", tmp_path)
+            assert blocked.value.status == 409
+        else:
+            if operation in {"clear", "delete"}:
+                with pytest.raises(agy_profile.AgyProfileError) as blocked:
+                    mgr.get_worker(db, worker_profile, "other-session", tmp_path)
+                assert blocked.value.status == 409
+            assert mgr.get_worker(db, profile, "unrelated", tmp_path) is not worker
+
+    monkeypatch.setattr(worker, "close", slow_close)
+    operations = {
+        "close_session": lambda: mgr.close_session(db, "same"),
+        "replace": lambda: mgr.get_worker(db, worker_profile, "same", new_workspace),
+        "reap": lambda: mgr.reap_idle_workers(now=worker.last_used + 61),
+        "switch": lambda: mgr.switch_profile(secondary),
+        "clear": lambda: mgr.clear_profile_credentials(worker_profile),
+        "delete": lambda: mgr.delete_profile(worker_profile),
+        "shutdown": mgr.shutdown,
+    }
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        closing = pool.submit(operations[operation])
+        try:
+            assert started.wait(2)
+            pool.submit(probe).result(timeout=2)
+        finally:
+            release.set()
+        result = closing.result(timeout=5)
+
+    with pytest.raises(agy_profile.AgyProfileError) as retired:
+        worker.ensure_started(resume_conversation=None, add_dirs=[])
+    assert retired.value.status == 409
+    if operation in {"clear", "delete"}:
+        assert changed == [worker_profile]
+    if operation not in {"delete", "shutdown"}:
+        replacement = mgr.get_worker(db, profile, "same", new_workspace)
+        assert replacement is not worker
+        if operation == "replace":
+            assert result is replacement
+
+
+def test_detached_session_stays_reserved_until_child_actually_exits(runtime_manager, tmp_path, monkeypatch):
+    from threading import Event
+
+    mgr = runtime_manager
+    profile = agy_profile.DEFAULT
+    worker = mgr.get_worker("db", profile, "same", tmp_path)
+    allow_exit = Event()
+    cleaned = Event()
+
+    class SlowProcess:
+        pid = 123
+        stdin = stdout = None
+
+        def poll(self):
+            return 0 if allow_exit.is_set() else None
+
+        def wait(self):
+            return 0 if allow_exit.wait(5) else pytest.fail("fake child did not exit")
+
+    worker.proc = SlowProcess()
+    monkeypatch.setattr(agy_runtime.child_job, "terminate_tree", lambda pid: None)
+    monkeypatch.setattr(agy_runtime.child_job, "forget", lambda pid: None)
+    original_waiter = agy_runtime.threading.Thread
+
+    def capture_waiter(*args, **kwargs):
+        if kwargs.get("name") == "agy-acp-exit":
+            target = kwargs["target"]
+
+            def notify():
+                try:
+                    target()
+                finally:
+                    cleaned.set()
+
+            kwargs["target"] = notify
+        return original_waiter(*args, **kwargs)
+
+    monkeypatch.setattr(agy_runtime.threading, "Thread", capture_waiter)
+    try:
+        mgr.close_session("db", "same")
+        assert worker.exit_pending()
+        assert mgr.get_worker("db", profile, "unrelated", tmp_path) is not worker
+        with pytest.raises(agy_profile.AgyProfileError) as blocked:
+            mgr.get_worker("db", profile, "same", tmp_path)
+        assert blocked.value.status == 409
+    finally:
+        allow_exit.set()
+        assert cleaned.wait(2)
+    assert mgr.get_worker("db", profile, "same", tmp_path) is not worker
+
+
 def test_models_endpoint_works_even_when_runtime_manually_stopped(tmp_path, monkeypatch):
     import json
     from types import SimpleNamespace
