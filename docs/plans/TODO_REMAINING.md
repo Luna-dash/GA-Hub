@@ -109,27 +109,27 @@
 
 ### W3.7 兼容清理
 
-- [ ] 兼容窗口结束后移除旧 `__GAHUB_FEISHU_CHAT__` marker。
-- [ ] 核实并清理无消费者 timeout topic、legacy WebUI fallback。
+- [ ] 兼容窗口结束后移除旧 `__GAHUB_FEISHU_CHAT__` marker（需与 GA 仓 `frontends/fsapp.py` `_EVENT_MARKER_LEGACY` 同步移除；当前 GA 仍双发射）。
+- [x] 核实并清理无消费者 timeout topic、legacy WebUI fallback（`test_event_topics.py` 与 `test_import_direction.py` 静态扫描零违规）。
 - [ ] 收紧 direct-import 白名单，删除无调用者旧 helper。
 
 ---
 
 ## 并行轨 · 低优先（不占关键路径，随手做）
 
-- [ ] **P.1 可靠性方案 §8.4 遗留**（`conductor-reliability-plan.md`）
+- [ ] **P.1 可靠性方案 §8.4 遗留（暂缓：Conductor 为未完成功能，后续统一收口）**（`conductor-reliability-plan.md`）
   - `workflows` 表终态行无保留策略（DB 无界增长）
   - 旧 boot 的 pending 命令被静默跳过，unknown 数量/年龄不可观测
   - `engine_key` 取 `base_url`（应引入显式配置键）
   - 提交被拒后遗留的 `submitting` 投影无清理
   - GA 侧 §7 场景表第 5、8 行（watchdog 节拍、请求预算）的故障测试与两仓联跑套件
-  - 前端：`conductor.css` 局部 palette 与全局单主题冲突待收敛决策；页面级版本信封缺集成测试（现只有 store 单测）；首启示例任务 chips 与桌面栏折叠待产品确认
+  - 前端：`conductor.css` 局部 palette 与全局单主题已按状态 Token 收口（`590f7d7`）；页面级版本信封缺集成测试（现只有 store 单测）；首启示例任务 chips 与桌面栏折叠待产品确认
   - *已排除*：「`TaskBoard`/`WorkerCard` 的 memo 因内联 `onSelect` 失效」**已修**（现靠 `(id)=>void` 稳定 handler + `useCallback`），别重复改
 - [ ] **P.2 BACKLOG 剩余 `[ ]` 项**（`docs/BACKLOG.md`）
-  - `chatStore` 活跃会话 msgs 无上限（产品级内存取舍，做的话要同时保留 `historyBefore` 再取路径）
+  - *已完成，2026-11-23*：`chatStore` 活跃会话增加滑动窗口裁剪（`pruneActiveMessagesWindow`）并刷新 `historyBefore`/`historyHasMore` 以保留重拉路径，`loadAllHistory` 增加内存上限止步保护。
   - *已完成，2026-10-10 复核*：TS 契约新鲜度由 `webui/scripts/check-api-contract.mjs` 生成临时类型比对；后端 `test_api_contract.py` 同时校验 OpenAPI 快照与前端检查。
   - HTTP 错误词汇收编（34 结构化 vs 64 裸串 raise；改前需逐路由核对前端是否字符串匹配 detail）
-  - 结构搬移：`create_app`（`main.py` ~295 行）外迁 `routes/system.py`；`Conductor.tsx`（~1280 行）拆历史栏/转录/设置 Modal
+  - *部分完成，2026-11-23*：`create_app` 内联系统探针端点（`/api/status`、`/api/updates/ready`、`/api/health*`）已外迁至 `server/routes/system.py`；`Conductor.tsx`（875 行）拆分随 Conductor 暂缓。
   - 测试环境与 double 继续按行为边界整理；`conftest.py` 已提供 `session_domain` / `bind_session_domain`，不再把“零共享 fixture”列为缺陷。命名差异按实际复用需要处理。
   - 观察项：`WorkflowTracker.stranded_admitted()` 无生产调用者（刻意保留作诊断面）
 - [ ] **P.3 长跑验证待排期**：真实模型长跑 / 桌面端 E2E / 全仓回归。
