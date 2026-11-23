@@ -277,6 +277,7 @@ def delete(profile_id: str) -> None:
         raise AgyProfileError(409, "请先切换到其他账号后再删除当前账号")
     next_profiles = [p for p in profiles if p.id != profile_id]
     meta.pop(profile_id, None)
+    ensure_no_external_lock(profile_id)
     _save(active, next_profiles, meta)
     target = _root() / profile_id
     if target.exists():
@@ -352,6 +353,7 @@ def clear_credentials(profile_id: str) -> dict[str, Any]:
     target_profile = next((p for p in profiles if p.id == profile_id), None)
     if target_profile is None:
         raise AgyProfileError(404, "找不到 Agy 账号")
+    ensure_no_external_lock(profile_id)
     gemini_dir = profile_gemini_dir(profile_id)
     try:
         for sub in (APP_DATA_DIR_NAME, "antigravity-acp"):
@@ -368,6 +370,8 @@ def clear_credentials(profile_id: str) -> dict[str, Any]:
                     candidate.unlink(missing_ok=True)
     except OSError as exc:
         raise AgyProfileError(503, "无法清除 Agy 账号凭据") from exc
+    release_profile_lock(profile_id)
+    retire_runtime_temp_dirs(profile_runtime_temp_root(profile_id))
     meta.pop(profile_id, None)
     _save(active, profiles, meta)
     return {
@@ -506,6 +510,87 @@ def make_runtime_temp_dir(profile_id: str) -> Path:
     root = profile_runtime_temp_root(profile_id)
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     return Path(mkdtemp(prefix="run-", dir=root))
+
+
+def _is_pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, int(pid))
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return code.value == 259  # STILL_ACTIVE
+            return True
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _profile_lock_file(profile_id: str) -> Path:
+    return profile_runtime_temp_root(profile_id) / "runtime.pid"
+
+
+def _read_live_lock_pid(profile_id: str) -> int | None:
+    if profile_id == DEFAULT or not re.fullmatch(PROFILE_ID, profile_id):
+        return None
+    lock_file = _profile_lock_file(profile_id)
+    try:
+        if not lock_file.is_file() or lock_file.is_symlink():
+            return None
+        raw = lock_file.read_text(encoding="utf-8").strip()
+        pid = int(json.loads(raw)["pid"]) if raw.startswith("{") else int(raw)
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+    if _is_pid_alive(pid):
+        return pid
+    lock_file.unlink(missing_ok=True)
+    return None
+
+
+def ensure_no_external_lock(profile_id: str) -> None:
+    pid = _read_live_lock_pid(profile_id)
+    if pid is not None and pid != os.getpid():
+        raise AgyProfileError(409, f"当前隔离账号正被另一个 GA-Hub 进程（PID {pid}）占用，请先停止该进程后再操作")
+
+
+def claim_profile_lock(profile_id: str) -> None:
+    if profile_id == DEFAULT:
+        return
+    ensure_no_external_lock(profile_id)
+    lock_file = _profile_lock_file(profile_id)
+    try:
+        lock_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        lock_file.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    except OSError:
+        log.debug("Failed to write profile lock file for %s", profile_id, exc_info=True)
+
+
+def release_profile_lock(profile_id: str) -> None:
+    if profile_id == DEFAULT:
+        return
+    lock_file = _profile_lock_file(profile_id)
+    try:
+        if not lock_file.is_file() or lock_file.is_symlink():
+            return
+        raw = lock_file.read_text(encoding="utf-8").strip()
+        pid = int(json.loads(raw)["pid"]) if raw.startswith("{") else int(raw)
+        if pid == os.getpid() or not _is_pid_alive(pid):
+            lock_file.unlink(missing_ok=True)
+    except (OSError, ValueError, TypeError, KeyError):
+        lock_file.unlink(missing_ok=True)
 
 
 def sync_user_customizations(profile_id: str) -> None:

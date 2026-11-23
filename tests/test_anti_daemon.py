@@ -309,3 +309,60 @@ def test_models_parses_agy_tsv_without_json_flag_and_default_env_preserves_keyri
         {"id": "gemini-4-neon-high", "display_name": "Gemini 4 Neon (High)"},
         {"id": "claude-opus-5-5-high", "display_name": "Claude Opus 5.5 (High)"},
     ]
+
+
+def test_isolated_profile_lock_and_clear_credentials_temp_cleanup(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    p = agy_profile.add("isolated-work")
+    temp_dir = agy_profile.make_runtime_temp_dir(p.id)
+    (temp_dir / "unpack.tmp").write_text("junk", encoding="utf-8")
+    cred_dir = agy_profile.profile_app_data_dir(p.id)
+    cred_dir.mkdir(parents=True, exist_ok=True)
+    (cred_dir / "antigravity-oauth-token").write_text("tok", encoding="utf-8")
+
+    # Simulate an active external live PID holding the isolated profile lock
+    lock_file = agy_profile._profile_lock_file(p.id)
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    lock_file.write_text('{"pid": 999999}', encoding="utf-8")
+    monkeypatch.setattr(agy_profile, "_is_pid_alive", lambda pid: pid == 999999)
+    with pytest.raises(agy_profile.AgyProfileError) as blocked:
+        agy_profile.claim_profile_lock(p.id)
+    assert blocked.value.status == 409
+    with pytest.raises(agy_profile.AgyProfileError):
+        agy_profile.clear_credentials(p.id)
+
+    # Once the external PID exits, claiming/clearing works and removes temp artifacts
+    monkeypatch.setattr(agy_profile, "_is_pid_alive", lambda pid: False)
+    agy_profile.claim_profile_lock(p.id)
+    assert lock_file.is_file()
+    res = agy_profile.clear_credentials(p.id)
+    assert res["has_credentials"] is False
+    assert not temp_dir.exists()
+    assert not lock_file.exists()
+
+
+def test_active_cooldown_by_profile_exposed_in_profiles_endpoint(tmp_path, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from server.routes import anti as anti_routes
+    from server.services.agy_usage import AgyLedger
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(anti_routes, "anti_profiles", agy_profile)
+    p = agy_profile.add("cooldown-acc")
+    ledger = AgyLedger(db=tmp_path / "anti_sessions.sqlite3")
+    ledger.record_run("r1", "gemini-4-hydrogen-high", "rate_limited", profile_id=p.id, cooldown_seconds=90)
+
+    cooldowns = ledger.active_cooldown_by_profile()
+    assert 1 <= cooldowns[p.id] <= 90
+
+    monkeypatch.setattr(anti_routes, "AntiSessions", lambda: type("S", (), {"ledger": ledger})())
+    monkeypatch.setattr(anti_routes.daemon, "active_login_profile", lambda: None)
+    app = FastAPI()
+    app.include_router(anti_routes.router)
+    with TestClient(app) as client:
+        resp = client.get("/api/anti/profiles")
+        assert resp.status_code == 200
+        rows = {row["id"]: row for row in resp.json()["profiles"]}
+        assert rows[p.id]["cooldown_seconds"] >= 1
+        assert "cooldown_seconds" not in rows["default"]

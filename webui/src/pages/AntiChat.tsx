@@ -225,7 +225,8 @@ export default function AntiChat() {
         )}
         <Errors items={[sessions.error, rename.error, remove.error]} />
         {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions}
-          profileId={profiles.data?.active} profileName={selectedProfile?.name} /> :
+          profileId={profiles.data?.active} profileName={selectedProfile?.name}
+          onOpenProfiles={() => setProfilesOpen(true)} /> :
           <div className="relative flex flex-1">
             <ChatUtilityDock fileTransfer={{ canInsert: false, onInsert: () => { } }} />
             <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
@@ -266,8 +267,8 @@ export default function AntiChat() {
   </PageShell>
 }
 
-function Conversation({ session, headerActions, profileId, profileName }: {
-  session: Session; headerActions: HTMLDivElement | null; profileId?: string; profileName?: string
+function Conversation({ session, headerActions, profileId, profileName, onOpenProfiles }: {
+  session: Session; headerActions: HTMLDivElement | null; profileId?: string; profileName?: string; onOpenProfiles: () => void
 }) {
   const { id: sid, project, workspace } = session
   const cache = useQueryClient()
@@ -555,6 +556,14 @@ function Conversation({ session, headerActions, profileId, profileName }: {
             </article>
           })}
           <Errors items={[history.error, live.error, send.error, cancel.error, approve.error, resetAcp.error]} />
+          {send.error instanceof HttpError && send.error.status === 429 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-status-warning-line bg-status-warning-soft px-3 py-2 text-xs text-status-warning">
+              <span>当前账号处于风控冷却或配额保护中，可切换至其他可用账号继续对话。</span>
+              <button type="button" className="ga-btn-warning-sm shrink-0" onClick={onOpenProfiles}>
+                切换可用账号
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

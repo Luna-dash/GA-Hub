@@ -651,6 +651,22 @@ class AgyLedger:
         with self._connect() as db, db:
             db.execute("DELETE FROM quota_state WHERE profile_id=?", (profile_id,))
 
+    def active_cooldown_by_profile(self) -> dict[str, int]:
+        """Return max remaining cooldown seconds keyed by profile_id for active risk-control locks."""
+        now = datetime.now(timezone.utc)
+        out: dict[str, int] = {}
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT profile_id, cooldown_until FROM quota_state WHERE cooldown_until IS NOT NULL"
+            )
+            for row in rows:
+                dt = _parse_iso(row["cooldown_until"])
+                if dt and dt > now:
+                    rem = max(1, int((dt - now).total_seconds()))
+                    pid = row["profile_id"] or agy_profile.DEFAULT
+                    out[pid] = max(out.get(pid, 0), rem)
+        return out
+
     def delete_profile(self, profile_id: str) -> None:
         if not profile_id:
             return

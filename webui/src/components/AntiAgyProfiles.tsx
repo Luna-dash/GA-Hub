@@ -270,11 +270,17 @@ export function AntiAgyProfiles({
     const badge = authBadge(profile, loginProfile === profile.id)
     const usage = profile.usage
     const pct = usage?.min_remaining_pct
+    const cooldownSec = profile.cooldown_seconds ?? 0
     return (
       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
         <span className={clsx('inline-flex items-center rounded-md border px-1.5 py-0.5 font-medium', badge.tone)}>
           {badge.label}
         </span>
+        {cooldownSec > 0 && (
+          <span className="inline-flex items-center rounded-md border border-status-warning-line bg-status-warning-soft px-1.5 py-0.5 font-medium tabular-nums text-status-warning">
+            风控冷却 {cooldownSec}s
+          </span>
+        )}
         {typeof pct === 'number' && (
           <span className={clsx('font-semibold tabular-nums', quotaTone(pct))} title={usage?.checked_at ? `上次检测：${resetTimeFormat.format(new Date(usage.checked_at))}` : undefined}>
             最低剩余 {pct}%
@@ -296,7 +302,7 @@ export function AntiAgyProfiles({
     <button
       type="button"
       className={clsx(
-        'relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-bg-card transition hover:bg-bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+        'ga-btn-icon relative',
         customActive ? 'text-accent' : 'text-ink-muted hover:text-ink',
       )}
       aria-label={triggerLabel}

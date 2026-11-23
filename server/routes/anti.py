@@ -269,6 +269,7 @@ class AgyProfile(BaseModel):
     has_credentials: bool | None = None
     auth_state: str | None = None
     usage: AgyProfileUsageSnapshot | None = None
+    cooldown_seconds: int | None = None
 
 
 class AgyProfiles(BaseModel):
@@ -352,6 +353,11 @@ def _profile_action(request: Request) -> None:
 def agy_profiles():
     try:
         active, profiles = anti_profiles.snapshot_details()
+        cooldowns = AntiSessions().ledger.active_cooldown_by_profile()
+        for item in profiles:
+            rem = cooldowns.get(item["id"])
+            if rem:
+                item["cooldown_seconds"] = rem
         return {
             "active": active,
             "profiles": profiles,

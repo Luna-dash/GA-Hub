@@ -413,6 +413,7 @@ class AgySessionWorker:
                 self._teardown_locked()
 
             agy_profile.prepare_profile(self.profile_id)
+            agy_profile.claim_profile_lock(self.profile_id)
             self.temp_dir = agy_profile.make_runtime_temp_dir(self.profile_id)
             self.add_dirs = tuple(dict.fromkeys(add_dirs))
             cmd = agy_profile.acp_spawn_command(
@@ -837,11 +838,18 @@ class AgyRuntimeManager:
             _append_log("Agy ACP runtime restarted")
             return self.status(verify_auth=True)
 
+    def _release_profile_lock_if_idle_locked(self, profile_id: str) -> None:
+        if not any(k[1] == profile_id for k in self._workers):
+            agy_profile.release_profile_lock(profile_id)
+
     def _close_all_workers_locked(self) -> None:
+        profiles = {k[1] for k in self._workers}
         for worker in list(self._workers.values()):
             worker.close()
         self._workers.clear()
         self._active_turns.clear()
+        for profile_id in profiles:
+            agy_profile.release_profile_lock(profile_id)
 
     def reap_idle_workers(self, *, now: float | None = None) -> int:
         """Close idle ACP child workers exceeding IDLE_SESSION_TTL while keeping SQLite resume IDs."""
@@ -849,13 +857,17 @@ class AgyRuntimeManager:
             return 0
         current = time.monotonic() if now is None else now
         stale: list[AgySessionWorker] = []
+        affected_profiles: set[str] = set()
         with self._lock:
             for key, worker in list(self._workers.items()):
                 if worker.active_turn is not None:
                     continue
                 if worker._closed or (current - worker.last_used) >= self._idle_ttl:
                     self._workers.pop(key, None)
+                    affected_profiles.add(key[1])
                     stale.append(worker)
+            for pid in affected_profiles:
+                self._release_profile_lock_if_idle_locked(pid)
         for worker in stale:
             worker.close()
         if stale:
@@ -1062,8 +1074,11 @@ class AgyRuntimeManager:
 
     def close_session(self, db_key: str, session_id: str) -> None:
         with self._lock:
+            affected = {k[1] for k in self._workers if k[0] == db_key and k[2] == session_id}
             for key in [k for k in self._workers if k[0] == db_key and k[2] == session_id]:
                 self._workers.pop(key).close()
+            for pid in affected:
+                self._release_profile_lock_if_idle_locked(pid)
 
     @staticmethod
     def _parse_models_output(stdout: str) -> list[dict[str, str]]:
@@ -1162,6 +1177,7 @@ class AgyRuntimeManager:
             self._require_login_closed(profile_id)
             for key in [k for k in self._workers if k[1] == profile_id]:
                 self._workers.pop(key).close()
+            self._release_profile_lock_if_idle_locked(profile_id)
             self._cached_models.pop(profile_id, None)
             self._cached_commands.pop(profile_id, None)
             agy_profile.delete(profile_id)
@@ -1174,6 +1190,7 @@ class AgyRuntimeManager:
                 raise AgyProfileError(409, "请先等待当前任务结束后再清除凭据")
             for key in [k for k in self._workers if k[1] == profile_id]:
                 self._workers.pop(key).close()
+            self._release_profile_lock_if_idle_locked(profile_id)
             self._cached_models.pop(profile_id, None)
             self._cached_commands.pop(profile_id, None)
             return agy_profile.clear_credentials(profile_id)

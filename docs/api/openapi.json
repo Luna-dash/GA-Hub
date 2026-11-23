@@ -6885,6 +6885,17 @@
                 "type": "null"
               }
             ]
+          },
+          "cooldown_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cooldown Seconds"
           }
         },
         "type": "object",

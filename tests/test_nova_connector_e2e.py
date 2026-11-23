@@ -97,26 +97,45 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
             if resource == 'sessions/a1' and r.method == 'PATCH':
                 agy_session.update(await r.json())
                 return web.json_response(agy_session)
+            if resource == 'sessions/a1/reset' and r.method == 'POST':
+                agy_session.update(acp_connected=False, has_conversation=True)
+                return web.json_response(agy_session)
             if resource == 'sessions/a1' and r.method == 'DELETE':
                 agy_session.clear()
                 return web.Response(status=204)
+            if resource == 'profiles' and r.method == 'GET':
+                return web.json_response({
+                    'active': 'p1',
+                    'profiles': [{'id': 'p1', 'name': 'Work', 'has_credentials': True,
+                                  'auth_state': 'authenticated', 'cooldown_seconds': 30,
+                                  'usage': {'checked_at': '2026-11-23T00:00:00Z', 'min_remaining_pct': 65.0, 'rows': []}}],
+                })
+            if resource == 'quota' and r.method == 'GET':
+                return web.json_response([{'model_group': 'gemini-4', 'display_name': 'Gemini 4',
+                                           'status': 'normal', 'cooldown_remaining_seconds': 0}])
             if resource == 'sessions/a1/runs' and r.method == 'POST':
                 body = await r.json()
                 self.assertEqual((body['model'], body['effort']), ('model-1', 'high'))
                 self.assertEqual(body['attachments'], [{'path': str(report), 'name': 'note.txt',
                                                         'size': 4, 'source': 'managed_upload'}])
                 self.assertEqual(body['mode'], 'accept-edits')
+                self.assertEqual(body.get('permission_mode'), 'auto-accept-edits')
                 run = {'id': 'run-1', 'status': 'running', 'prompt': body['prompt'],
-                       'mode': body['mode'], 'approval': approval}
+                       'mode': body['mode'], 'permission_mode': body['permission_mode'], 'approval': approval}
                 agy_runs.append(run)
                 return web.json_response(run)
             if resource == 'sessions/a1/runs/run-1':
                 return web.json_response(agy_runs[0])
+            if resource == 'sessions/a1/runs/run-1/events':
+                return web.json_response([{'seq': 1, 'type': 'step.update',
+                                           'step': {'index': 0, 'kind': 'tool_call', 'tool': 'read_file', 'state': 'DONE'}},
+                                          {'seq': 2, 'type': 'message.delta', 'text': 'hi'}])
             if resource == 'sessions/a1/runs/run-1/approval':
                 self.assertEqual(r.method, 'POST')
                 self.assertEqual(r.headers['Origin'], str(backend.make_url('/')).rstrip('/'))
                 self.assertEqual(r.headers['X-GA-Hub-Action'], 'approve-agy')
-                self.assertEqual(await r.json(), {'approval_id': approval['id'], 'decision': 'reject'})
+                payload = await r.json()
+                self.assertEqual(payload, {'approval_id': approval['id'], 'decision': 'allow_always', 'option_id': 'opt-1'})
                 run = agy_runs[0]
                 if run.pop('approval', None) is None:
                     return web.json_response({'detail': 'stale'}, status=409)
@@ -221,7 +240,7 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(r.status, 200, await r.text())
                     body = {'text': 'Summarize', 'request_id': str(uuid.uuid4()),
                             'upload_ids': [(await r.json())['upload_id']], 'model': 'model-1', 'effort': 'high',
-                            'mode': 'accept-edits'}
+                            'mode': 'accept-edits', 'permission_mode': 'auto-accept-edits'}
                     r = await client.post(agy + '/sessions/other/runs', json=body, headers=auth)
                     self.assertEqual(r.status, 400, await r.text())
                     r = await client.post(agy + '/sessions/a1/runs', json=body, headers=auth)
@@ -229,15 +248,28 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                     run_path = agy + '/sessions/a1/runs/run-1'
                     r = await client.get(run_path, headers=auth)
                     self.assertEqual((await r.json())['approval'], approval)
+                    r = await client.get(run_path + '/events?after=0', headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    evts = await r.json()
+                    self.assertEqual(evts[0]['step']['tool'], 'read_file')
                     r = await client.get(agy + '/sessions/a1/runs', headers=auth)
                     self.assertNotIn('approval', (await r.json())[0])
-                    decision = {'approval_id': approval['id'], 'decision': 'reject'}
-                    r = await client.post(run_path + '/approval', json={**decision, 'decision': 'allow_always'}, headers=auth)
+                    decision = {'approval_id': approval['id'], 'decision': 'allow_always', 'option_id': 'opt-1'}
+                    r = await client.post(run_path + '/approval', json={**decision, 'decision': 'bogus'}, headers=auth)
                     self.assertEqual(r.status, 400, await r.text())
                     r = await client.post(run_path + '/approval', json=decision, headers=auth)
                     self.assertEqual((await r.json())['status'], 'success')
                     r = await client.post(run_path + '/approval', json=decision, headers=auth)
                     self.assertEqual(r.status, 409, await r.text())
+                    r = await client.post(agy + '/sessions/a1/reset', headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    self.assertTrue((await r.json())['has_conversation'])
+                    r = await client.get(agy + '/profiles', headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    self.assertEqual((await r.json())['profiles'][0]['cooldown_seconds'], 30)
+                    r = await client.get(agy + '/quota', headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    self.assertEqual((await r.json())[0]['model_group'], 'gemini-4')
                     history = '/api/agy/sessions/a1/runs?view=compact&limit=40'
                     for path in ('/api/agy/sessions', history):
                         r = await client.get('/d/' + device + path, headers=auth)

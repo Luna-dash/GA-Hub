@@ -27,6 +27,37 @@ CRED_PREFIX = 'GAHub.Nova.'
 ARTIFACT_ROOTS = None  # Set by the desktop host; standalone keeps legacy roots.
 
 
+_STEP_KEYS = ('index', 'kind', 'state', 'tool', 'duration_seconds', 'text_delta', 'detail', 'command', 'exit_code', 'diff')
+_USAGE_KEYS = ('input_tokens', 'output_tokens', 'cache_read_tokens', 'thinking_tokens')
+_SESSION_KEYS = ('id', 'project', 'title', 'updated_at', 'active_run_id', 'acp_connected', 'has_conversation')
+_APPROVAL_KEYS = ('id', 'title', 'details', 'diff', 'prompt_type', 'allow_always', 'security_warning', 'question')
+_QUOTA_KEYS = ('model_group', 'display_name', 'status', 'cooldown_remaining_seconds',
+               'window_5h_pct', 'window_7d_pct', 'calibrated_remaining_pct')
+
+
+def _public_dict(raw, keys):
+    return {k: raw[k] for k in keys if k in raw} if isinstance(raw, dict) else None
+
+
+def _public_session(row):
+    return {k: row.get(k) for k in _SESSION_KEYS if k in row or k in ('id', 'project', 'title', 'updated_at', 'active_run_id')}
+
+
+def _public_profile(row):
+    usage = row.get('usage') if isinstance(row.get('usage'), dict) else {}
+    out = {
+        'id': row.get('id'),
+        'name': row.get('name'),
+        'has_credentials': bool(row.get('has_credentials')),
+        'auth_state': row.get('auth_state'),
+    }
+    if isinstance(row.get('cooldown_seconds'), int) and row['cooldown_seconds'] > 0:
+        out['cooldown_seconds'] = row['cooldown_seconds']
+    if isinstance(usage.get('min_remaining_pct'), (int, float)):
+        out['min_remaining_pct'] = usage['min_remaining_pct']
+    return out
+
+
 class LocalGateway(gateway.Gateway):
     def __init__(self):
         # Intentionally bypass legacy gateway password/CredRead and reuse only its
@@ -102,6 +133,15 @@ class LocalGateway(gateway.Gateway):
         if method == 'GET' and path == '/models':
             result = await self.anti_json('GET', path)
             return web.json_response({'items': [{k: row[k] for k in ('id', 'display_name')} for row in result['items']]})
+        if method == 'GET' and path == '/profiles':
+            result = await self.anti_json('GET', '/profiles')
+            return web.json_response({
+                'active': result.get('active'),
+                'profiles': [_public_profile(row) for row in result.get('profiles', []) if isinstance(row, dict)],
+            })
+        if method == 'GET' and path == '/quota':
+            rows = await self.anti_json('GET', '/quota')
+            return web.json_response([_public_dict(row, _QUOTA_KEYS) for row in rows if isinstance(row, dict)])
         if method == 'GET' and path == '/projects':
             try:
                 catalog = await self.project_catalog()
@@ -110,7 +150,7 @@ class LocalGateway(gateway.Gateway):
             return web.json_response({'items': [{'id': k, 'name': v['label']} for k, v in catalog.items()]})
         if path == '/sessions' and method == 'GET':
             rows = await self.anti_json('GET', path)
-            return web.json_response([{k: row.get(k) for k in ('id', 'project', 'title', 'updated_at', 'active_run_id')} for row in rows])
+            return web.json_response([_public_session(row) for row in rows])
         if method == 'POST' and path == '/sessions':
             body = await self.agy_body(request, {'project_id', 'request_id'})
             catalog = await self.project_catalog()
@@ -129,19 +169,24 @@ class LocalGateway(gateway.Gateway):
                 raise web.HTTPConflict(text='创建请求与原项目不一致')
             row = await asyncio.shield(task)
             return web.json_response({'id': row['id']})
-        session = re.fullmatch(r'/sessions/([A-Za-z0-9_-]{1,128})(/upload)?', path)
+        session = re.fullmatch(r'/sessions/([A-Za-z0-9_-]{1,128})(/upload|/reset)?', path)
         if session:
-            sid, upload = session.groups()
-            if upload and method == 'POST':
+            sid, suffix = session.groups()
+            if suffix == '/upload' and method == 'POST':
                 return await self.upload(request, scope=('agy', sid))
-            if not upload and method == 'PATCH':
+            if suffix == '/reset' and method == 'POST':
+                if request.can_read_body:
+                    raise web.HTTPBadRequest(text='Agy 重连接口不接受请求正文')
+                row = await self.anti_json('POST', path)
+                return web.json_response(_public_session(row))
+            if not suffix and method == 'PATCH':
                 body = await self.agy_body(request, {'title'})
                 title = body['title']
                 if not isinstance(title, str) or not 1 <= len(title.strip()) <= 160:
                     raise web.HTTPBadRequest(text='请输入 1–160 字的会话名称')
                 await self.anti_json('PATCH', path, {'title': title.strip()})
                 return web.json_response({'title': title.strip()})
-            if not upload and method == 'DELETE':
+            if not suffix and method == 'DELETE':
                 await self.anti_json('DELETE', path)
                 return web.Response(status=204)
             raise web.HTTPForbidden()
@@ -151,7 +196,7 @@ class LocalGateway(gateway.Gateway):
         sid, rid, action = match.groups()
         payload = None
         if method == 'POST' and not rid:
-            body = await self.agy_body(request, {'text', 'request_id'}, {'upload_ids', 'model', 'effort', 'mode'})
+            body = await self.agy_body(request, {'text', 'request_id'}, {'upload_ids', 'model', 'effort', 'mode', 'permission_mode'})
             text, ids = body['text'], body.get('upload_ids', [])
             if not isinstance(ids, list) or len(ids) > 8 or any(not isinstance(x, str) for x in ids) or len(set(ids)) != len(ids):
                 raise web.HTTPBadRequest(text='附件列表无效')
@@ -162,6 +207,10 @@ class LocalGateway(gateway.Gateway):
                 if body['mode'] not in ('plan', 'accept-edits'):
                     raise web.HTTPBadRequest(text='Agy 模式无效')
                 payload['mode'] = body['mode']
+            if 'permission_mode' in body:
+                if body['permission_mode'] not in ('approval-required', 'auto-accept-edits', 'auto', 'full-access'):
+                    raise web.HTTPBadRequest(text='Agy 权限策略无效')
+                payload['permission_mode'] = body['permission_mode']
             if 'model' in body:
                 model = body['model']
                 if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,127}', model):
@@ -182,17 +231,38 @@ class LocalGateway(gateway.Gateway):
                     refs.append(entry[2])
                 payload['attachments'] = refs
         elif method == 'POST' and action == '/approval':
-            payload = await self.agy_body(request, {'approval_id', 'decision'})
-            if (not isinstance(payload['approval_id'], str) or not re.fullmatch(r'[a-f0-9]{32}', payload['approval_id'])
-                    or payload['decision'] not in ('allow', 'reject')):
+            body = await self.agy_body(request, {'approval_id', 'decision'}, {'option_id'})
+            if (not isinstance(body['approval_id'], str) or not re.fullmatch(r'[a-f0-9]{32}', body['approval_id'])
+                    or body['decision'] not in ('allow', 'allow_always', 'reject')):
                 raise web.HTTPBadRequest(text='审批参数无效')
+            payload = {'approval_id': body['approval_id'], 'decision': body['decision']}
+            if 'option_id' in body:
+                opt = body['option_id']
+                if not isinstance(opt, str) or not 1 <= len(opt) <= 256 or any(ord(c) < 32 for c in opt):
+                    raise web.HTTPBadRequest(text='审批选项无效')
+                payload['option_id'] = opt
         elif not (method == 'GET' and action not in ('/cancel', '/approval') or method == 'POST' and action == '/cancel'):
             raise web.HTTPForbidden()
         upstream = path + '?' + request.query_string if event_query else path
         data = await self.anti_json(method, upstream, payload, **({"action": "approve-agy"} if action == "/approval" else {}))
-        keys = (('seq', 'type', 'text') if action == '/events'
-                else ('id', 'status', 'prompt', 'answer', 'error', 'created_at', 'mode') + (('approval',) if rid else ()))
-        public = lambda row: {k: row[k] for k in keys if k in row}
+
+        def public_event(row):
+            out = {k: row[k] for k in ('seq', 'type', 'text') if k in row}
+            step = _public_dict(row.get('step'), _STEP_KEYS)
+            if step:
+                out['step'] = step
+            return out
+
+        def public_run(row):
+            out = {k: row[k] for k in ('id', 'status', 'prompt', 'answer', 'error', 'created_at', 'mode', 'permission_mode') if k in row}
+            usage = _public_dict(row.get('usage'), _USAGE_KEYS)
+            if usage:
+                out['usage'] = usage
+            if rid and isinstance(row.get('approval'), dict):
+                out['approval'] = _public_dict(row['approval'], _APPROVAL_KEYS)
+            return out
+
+        public = public_event if action == '/events' else public_run
         if compact:
             offset = max(0, len(data) - 40)
             return web.json_response({'items': [public(row) for row in data[offset:]], 'offset': offset})

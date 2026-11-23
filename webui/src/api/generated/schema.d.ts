@@ -3012,6 +3012,8 @@ export interface components {
             /** Auth State */
             auth_state?: string | null;
             usage?: components["schemas"]["AgyProfileUsageSnapshot"] | null;
+            /** Cooldown Seconds */
+            cooldown_seconds?: number | null;
         };
         /** AgyProfileCreate */
         AgyProfileCreate: {

@@ -1077,3 +1077,57 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     vi.unstubAllGlobals()
   }
 })
+
+it('shows cooldown badge on profiles and offers account switch CTA when submit hits 429', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const session = { id: 's-429', title: 'Cooldown test', project: 'demo', workspace: 'D:/demo' }
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    const reply = (data: unknown, status = 200) =>
+      ({ ok: status < 400, status, json: async () => JSON.parse(JSON.stringify(data)) })
+    if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply({
+      active: 'default',
+      profiles: [
+        { id: 'default', name: '系统默认', has_credentials: true, auth_state: 'authenticated', cooldown_seconds: 45 },
+        { id: 'backup', name: '备用账号', has_credentials: true, auth_state: 'authenticated' },
+      ],
+    })
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path === '/api/anti/sessions') return reply([session])
+    if (path === '/api/anti/sessions/s-429/runs' && !init?.body) return reply([])
+    if (path === '/api/anti/sessions/s-429/runs' && init?.method === 'POST') {
+      return reply({ detail: '当前账号处于风控冷却期（剩余 45 秒）' }, 429)
+    }
+    if (path.startsWith('/api/file-transfer')) return reply([])
+    return reply({})
+  }))
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await flush()
+    const textarea = host.querySelector('textarea')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'hello')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const sendBtn = host.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!
+    await act(async () => { sendBtn.click() })
+    await flush()
+    expect(host.textContent).toContain('切换可用账号')
+    const switchCta = [...host.querySelectorAll('button')].find(b => b.textContent === '切换可用账号') as HTMLButtonElement
+    await act(async () => { switchCta.click() })
+    await flush()
+    expect(document.body.textContent).toContain('风控冷却 45s')
+    expect(document.body.textContent).toContain('备用账号')
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})

@@ -197,3 +197,116 @@ class EmbeddedSettingsTest(unittest.TestCase):
                 module.STATE=state
                 ids.append(module.identity())
             self.assertEqual(ids[0],ids[1]); self.assertEqual(len(ids[0]),24)
+
+
+class ConnectorAgyParityTest(unittest.IsolatedAsyncioTestCase):
+    async def test_agy_gateway_supports_acp_parity_and_read_only_profiles_quota(self):
+        from aiohttp import web
+        from aiohttp.test_utils import make_mocked_request
+
+        connector_dir = str(Path(__file__).resolve().parents[1] / 'assets' / 'nova')
+        remote_dir = str(Path(__file__).resolve().parents[1] / 'assets' / 'remote_access')
+        sys.path.insert(0, connector_dir)
+        sys.path.insert(0, remote_dir)
+        try:
+            import connector
+        finally:
+            if connector_dir in sys.path:
+                sys.path.remove(connector_dir)
+            if remote_dir in sys.path:
+                sys.path.remove(remote_dir)
+
+        gw = connector.LocalGateway()
+        calls = []
+
+        async def fake_anti(method, path, payload=None, *, action=None):
+            calls.append((method, path, payload, action))
+            if path == '/profiles':
+                return {
+                    'active': 'p1',
+                    'profiles': [{
+                        'id': 'p1',
+                        'name': 'Work',
+                        'has_credentials': True,
+                        'auth_state': 'authenticated',
+                        'cooldown_seconds': 25,
+                        'secret_path': 'C:/should-not-leak',
+                        'usage': {'min_remaining_pct': 70.0},
+                    }],
+                }
+            if path == '/quota':
+                return [{'model_group': 'gemini-4', 'display_name': 'Gemini 4',
+                         'status': 'cooling_down', 'cooldown_remaining_seconds': 25, 'internal': 'hidden'}]
+            if path == '/sessions/s1/reset':
+                return {'id': 's1', 'project': 'demo', 'title': 'Demo',
+                        'acp_connected': False, 'has_conversation': True, 'workspace': 'C:/secret'}
+            if path == '/sessions/s1/runs' and method == 'POST':
+                return {'id': 'r1', 'status': 'running', 'prompt': 'hi', 'mode': 'accept-edits',
+                        'permission_mode': payload.get('permission_mode')}
+            if path == '/sessions/s1/runs/r1/approval':
+                return {'id': 'r1', 'status': 'running', 'prompt': 'hi'}
+            if path.startswith('/sessions/s1/runs/r1/events'):
+                return [{'seq': 1, 'type': 'step.update',
+                         'step': {'index': 0, 'kind': 'tool_call', 'tool': 'read_file', 'state': 'DONE', 'cwd': 'C:/secret'}}]
+            raise AssertionError((method, path))
+
+        gw.anti_json = fake_anti
+        headers = {'Origin': 'https://' + connector.gateway.PUBLIC}
+
+        r_prof = await gw.handle_agy(make_mocked_request('GET', '/api/agy/profiles', headers=headers))
+        prof_body = json.loads(r_prof.text)
+        self.assertEqual(prof_body['profiles'][0]['cooldown_seconds'], 25)
+        self.assertEqual(prof_body['profiles'][0]['min_remaining_pct'], 70.0)
+        self.assertNotIn('secret_path', prof_body['profiles'][0])
+
+        r_quota = await gw.handle_agy(make_mocked_request('GET', '/api/agy/quota', headers=headers))
+        quota_body = json.loads(r_quota.text)
+        self.assertEqual(quota_body[0]['cooldown_remaining_seconds'], 25)
+        self.assertNotIn('internal', quota_body[0])
+
+        r_reset = await gw.handle_agy(make_mocked_request('POST', '/api/agy/sessions/s1/reset', headers=headers))
+        reset_body = json.loads(r_reset.text)
+        self.assertTrue(reset_body['has_conversation'])
+        self.assertNotIn('workspace', reset_body)
+
+        # Feed request JSON via StreamReader to exercise agy_body parsing directly
+        from aiohttp import streams
+
+        def stream_req(method, path, body):
+            raw = json.dumps(body).encode()
+            protocol = type('Proto', (), {'_reading_paused': False, 'pause_reading': lambda self: None, 'resume_reading': lambda self: None})()
+            reader = streams.StreamReader(protocol, 2**16, loop=asyncio.get_running_loop())
+            reader.feed_data(raw)
+            reader.feed_eof()
+            return make_mocked_request(
+                method,
+                path,
+                headers={**headers, 'Content-Type': 'application/json', 'Content-Length': str(len(raw))},
+                payload=reader,
+            )
+
+        r_run = await gw.handle_agy(stream_req('POST', '/api/agy/sessions/s1/runs', {
+            'text': 'go',
+            'request_id': '11111111-1111-1111-1111-111111111111',
+            'mode': 'accept-edits',
+            'permission_mode': 'auto',
+        }))
+        self.assertEqual(json.loads(r_run.text)['permission_mode'], 'auto')
+
+        with self.assertRaises(web.HTTPBadRequest):
+            await gw.handle_agy(stream_req('POST', '/api/agy/sessions/s1/runs', {
+                'text': 'go',
+                'request_id': '22222222-2222-2222-2222-222222222222',
+                'permission_mode': 'invalid-perm',
+            }))
+
+        await gw.handle_agy(stream_req('POST', '/api/agy/sessions/s1/runs/r1/approval', {
+            'approval_id': 'a' * 32,
+            'decision': 'allow_always',
+            'option_id': 'opt-dev',
+        }))
+        self.assertEqual(calls[-1][2], {'approval_id': 'a' * 32, 'decision': 'allow_always', 'option_id': 'opt-dev'})
+
+        r_evt = await gw.handle_agy(make_mocked_request('GET', '/api/agy/sessions/s1/runs/r1/events?after=0', headers=headers))
+        evts = json.loads(r_evt.text)
+        self.assertEqual(evts[0]['step'], {'index': 0, 'kind': 'tool_call', 'state': 'DONE', 'tool': 'read_file'})
