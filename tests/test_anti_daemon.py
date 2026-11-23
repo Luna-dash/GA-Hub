@@ -1,4 +1,6 @@
 """Standalone Agy runtime, profile isolation, login, and CloudCode usage ledger tests."""
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -237,6 +239,43 @@ def test_sync_user_customizations_preserves_isolated_overrides(tmp_path, monkeyp
     assert dst.read_text(encoding="utf-8") == "custom isolated rules"
 
 
+def test_worker_holds_profile_lock_until_child_exits(tmp_path, monkeypatch):
+    from threading import Event
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    profile = agy_profile.add("Isolated")
+    exited, released = Event(), Event()
+    release = agy_profile.release_profile_lock
+
+    def release_and_signal(profile_id):
+        release(profile_id)
+        released.set()
+
+    monkeypatch.setattr(agy_profile, "release_profile_lock", release_and_signal)
+    monkeypatch.setattr(agy_runtime.child_job, "terminate_tree", lambda pid: False)
+    monkeypatch.setattr(agy_runtime.child_job, "forget", lambda pid: None)
+    worker = agy_runtime.AgySessionWorker(
+        profile_id=profile.id, session_id="s1", workspace=tmp_path,
+        executable="agy", version=None,
+    )
+    agy_profile.claim_profile_lock(profile.id)
+    worker._profile_lock_held = True
+    worker.proc = SimpleNamespace(
+        pid=123, stdin=None, stdout=None,
+        poll=lambda: 0 if exited.is_set() else None,
+        wait=exited.wait,
+    )
+    temp_dir = worker.temp_dir = agy_profile.make_runtime_temp_dir(profile.id)
+    try:
+        worker.close()
+        assert not released.is_set()
+        assert temp_dir.is_dir()
+    finally:
+        exited.set()
+    assert released.wait(3)
+    assert not temp_dir.exists()
+
+
 def test_idle_session_reaper_closes_stale_workers(tmp_path, monkeypatch):
     import time as pytime
 
@@ -335,10 +374,54 @@ def test_isolated_profile_lock_and_clear_credentials_temp_cleanup(tmp_path, monk
     monkeypatch.setattr(agy_profile, "_is_pid_alive", lambda pid: False)
     agy_profile.claim_profile_lock(p.id)
     assert lock_file.is_file()
+    agy_profile.release_profile_lock(p.id)
     res = agy_profile.clear_credentials(p.id)
     assert res["has_credentials"] is False
     assert not temp_dir.exists()
     assert not lock_file.exists()
+
+
+def test_isolated_profile_lock_contention_between_processes(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    profile = agy_profile.add("isolated-contention")
+    child_code = """
+import sys
+from pathlib import Path
+from server.services import agy_profile as p
+p._paths.ADMIN_DATA = Path(sys.argv[1])
+try:
+    p.claim_profile_lock(sys.argv[2])
+except p.AgyProfileError as exc:
+    print(exc.status, flush=True)
+    sys.exit(0)
+print('acquired', flush=True)
+sys.stdin.readline()
+p.release_profile_lock(sys.argv[2])
+"""
+    cmd = [sys.executable, "-c", child_code, str(tmp_path), profile.id]
+    child = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert child.stdout.readline().strip() == "acquired"
+        # Remove only the test's compatibility marker: the kernel alone must
+        # still reject both a new process and a conflicting profile mutation.
+        agy_profile._profile_lock_file(profile.id).unlink()
+        peer = subprocess.run(cmd, input="stop\n", capture_output=True, text=True, timeout=10, check=True)
+        assert peer.stdout.strip() == "409"
+        with pytest.raises(agy_profile.AgyProfileError) as blocked:
+            agy_profile.clear_credentials(profile.id)
+        assert blocked.value.status == 409
+    finally:
+        if child.poll() is None:
+            child.terminate()
+        child.communicate(timeout=10)
+    # Process termination must release the OS lock even without Python cleanup.
+    with agy_profile.profile_lock(profile.id):
+        with agy_profile.profile_lock(profile.id):
+            pass
+        peer = subprocess.run(cmd, input="stop\n", capture_output=True, text=True, timeout=10, check=True)
+        assert peer.stdout.strip() == "409"
+    peer = subprocess.run(cmd, input="stop\n", capture_output=True, text=True, timeout=10, check=True)
+    assert peer.stdout.strip() == "acquired"
 
 
 def test_active_cooldown_by_profile_exposed_in_profiles_endpoint(tmp_path, monkeypatch):

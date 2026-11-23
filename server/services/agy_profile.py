@@ -5,6 +5,7 @@ inside GA-Hub without requiring an external AntiCLI HTTP daemon.
 """
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
@@ -13,11 +14,12 @@ import shutil
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile, mkdtemp
-from typing import Any
+from typing import Any, BinaryIO, Iterator
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -277,16 +279,16 @@ def delete(profile_id: str) -> None:
         raise AgyProfileError(409, "请先切换到其他账号后再删除当前账号")
     next_profiles = [p for p in profiles if p.id != profile_id]
     meta.pop(profile_id, None)
-    ensure_no_external_lock(profile_id)
-    _save(active, next_profiles, meta)
-    target = _root() / profile_id
-    if target.exists():
-        try:
-            if target.resolve() != target:
-                raise AgyProfileError(409, "Agy 账号目录不得重定向")
-            shutil.rmtree(target, ignore_errors=True)
-        except OSError as exc:
-            raise AgyProfileError(503, "无法删除 Agy 账号目录") from exc
+    with profile_lock(profile_id):
+        _save(active, next_profiles, meta)
+        target = _root() / profile_id
+        if target.exists():
+            try:
+                if target.resolve() != target:
+                    raise AgyProfileError(409, "Agy 账号目录不得重定向")
+                shutil.rmtree(target, ignore_errors=True)
+            except OSError as exc:
+                raise AgyProfileError(503, "无法删除 Agy 账号目录") from exc
 
 
 def capture_default(name: str) -> Profile:
@@ -353,32 +355,31 @@ def clear_credentials(profile_id: str) -> dict[str, Any]:
     target_profile = next((p for p in profiles if p.id == profile_id), None)
     if target_profile is None:
         raise AgyProfileError(404, "找不到 Agy 账号")
-    ensure_no_external_lock(profile_id)
-    gemini_dir = profile_gemini_dir(profile_id)
-    try:
-        for sub in (APP_DATA_DIR_NAME, "antigravity-acp"):
-            cli_dir = gemini_dir / sub
-            if not cli_dir.exists():
-                continue
-            if cli_dir.resolve() != cli_dir:
-                raise AgyProfileError(409, "Agy 账号目录不得重定向")
-            for fname in _CLI_CREDENTIAL_FILES:
-                candidate = cli_dir / fname
-                if candidate.is_symlink():
-                    raise AgyProfileError(409, "Agy 账号凭据文件不得重定向")
-                if candidate.is_file():
-                    candidate.unlink(missing_ok=True)
-    except OSError as exc:
-        raise AgyProfileError(503, "无法清除 Agy 账号凭据") from exc
-    release_profile_lock(profile_id)
-    retire_runtime_temp_dirs(profile_runtime_temp_root(profile_id))
-    meta.pop(profile_id, None)
-    _save(active, profiles, meta)
-    return {
-        "id": target_profile.id,
-        "name": target_profile.name,
-        "has_credentials": has_local_credentials(profile_id),
-    }
+    with profile_lock(profile_id):
+        gemini_dir = profile_gemini_dir(profile_id)
+        try:
+            for sub in (APP_DATA_DIR_NAME, "antigravity-acp"):
+                cli_dir = gemini_dir / sub
+                if not cli_dir.exists():
+                    continue
+                if cli_dir.resolve() != cli_dir:
+                    raise AgyProfileError(409, "Agy 账号目录不得重定向")
+                for fname in _CLI_CREDENTIAL_FILES:
+                    candidate = cli_dir / fname
+                    if candidate.is_symlink():
+                        raise AgyProfileError(409, "Agy 账号凭据文件不得重定向")
+                    if candidate.is_file():
+                        candidate.unlink(missing_ok=True)
+        except OSError as exc:
+            raise AgyProfileError(503, "无法清除 Agy 账号凭据") from exc
+        retire_runtime_temp_dirs(profile_runtime_temp_root(profile_id))
+        meta.pop(profile_id, None)
+        _save(active, profiles, meta)
+        return {
+            "id": target_profile.id,
+            "name": target_profile.name,
+            "has_credentials": has_local_credentials(profile_id),
+        }
 
 
 def record_usage(profile_id: str, auth_state: str, rows: list[dict[str, Any]]) -> None:
@@ -556,41 +557,90 @@ def _read_live_lock_pid(profile_id: str) -> int | None:
         return None
     if _is_pid_alive(pid):
         return pid
-    lock_file.unlink(missing_ok=True)
     return None
 
 
-def ensure_no_external_lock(profile_id: str) -> None:
-    pid = _read_live_lock_pid(profile_id)
-    if pid is not None and pid != os.getpid():
-        raise AgyProfileError(409, f"当前隔离账号正被另一个 GA-Hub 进程（PID {pid}）占用，请先停止该进程后再操作")
+_profile_locks_guard = threading.Lock()
+_profile_locks: dict[Path, tuple[BinaryIO, int]] = {}
+
+
+def _profile_guard_file(profile_id: str) -> Path:
+    # Never unlink this file: waiters must always contend on the same inode.
+    return _root() / ".locks" / f"{profile_id}.lock"
 
 
 def claim_profile_lock(profile_id: str) -> None:
     if profile_id == DEFAULT:
         return
-    ensure_no_external_lock(profile_id)
-    lock_file = _profile_lock_file(profile_id)
-    try:
-        lock_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        lock_file.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
-    except OSError:
-        log.debug("Failed to write profile lock file for %s", profile_id, exc_info=True)
+    legacy = _profile_lock_file(profile_id)
+    path = _profile_guard_file(profile_id)
+    with _profile_locks_guard:
+        held = _profile_locks.get(path)
+        if held is not None:
+            _profile_locks[path] = (held[0], held[1] + 1)
+            return
+        stream = None
+        try:
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            stream = path.open("a+b")
+            stream.seek(0)
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                    raise AgyProfileError(409, "当前隔离账号正被另一个 GA-Hub 进程占用") from exc
+                raise
+            pid = _read_live_lock_pid(profile_id)
+            if pid is not None and pid != os.getpid():
+                raise AgyProfileError(409, f"当前隔离账号正被另一个 GA-Hub 进程（PID {pid}）占用")
+            # Keep the PID marker for older Hub builds. Only the OS lock
+            # arbitrates concurrent claims by upgraded builds.
+            legacy.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            legacy.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+            _profile_locks[path] = (stream, 1)
+            stream = None
+        except OSError as exc:
+            raise AgyProfileError(503, "无法锁定 Agy 隔离账号") from exc
+        finally:
+            if stream is not None:
+                stream.close()
 
 
 def release_profile_lock(profile_id: str) -> None:
     if profile_id == DEFAULT:
         return
-    lock_file = _profile_lock_file(profile_id)
-    try:
-        if not lock_file.is_file() or lock_file.is_symlink():
+    path = _profile_guard_file(profile_id)
+    with _profile_locks_guard:
+        held = _profile_locks.get(path)
+        if held is None:
             return
-        raw = lock_file.read_text(encoding="utf-8").strip()
-        pid = int(json.loads(raw)["pid"]) if raw.startswith("{") else int(raw)
-        if pid == os.getpid() or not _is_pid_alive(pid):
-            lock_file.unlink(missing_ok=True)
-    except (OSError, ValueError, TypeError, KeyError):
-        lock_file.unlink(missing_ok=True)
+        stream, count = held
+        if count > 1:
+            _profile_locks[path] = (stream, count - 1)
+            return
+        try:
+            _profile_lock_file(profile_id).unlink(missing_ok=True)
+        except OSError:
+            log.warning("Failed to remove legacy agy PID marker for %s", profile_id, exc_info=True)
+        finally:
+            del _profile_locks[path]
+            stream.close()
+
+
+@contextmanager
+def profile_lock(profile_id: str) -> Iterator[None]:
+    claim_profile_lock(profile_id)
+    try:
+        yield
+    finally:
+        release_profile_lock(profile_id)
 
 
 def sync_user_customizations(profile_id: str) -> None:

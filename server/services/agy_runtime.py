@@ -202,6 +202,7 @@ class AgySessionWorker:
 
         self.proc: subprocess.Popen | None = None
         self.temp_dir: Path | None = None
+        self._profile_lock_held = False
         self.acp_session_id: str | None = None
         self.init_result: dict[str, Any] = {}
         self.setup_result: dict[str, Any] = {}
@@ -412,59 +413,60 @@ class AgySessionWorker:
             if self.proc is not None:
                 self._teardown_locked()
 
-            agy_profile.prepare_profile(self.profile_id)
             agy_profile.claim_profile_lock(self.profile_id)
-            self.temp_dir = agy_profile.make_runtime_temp_dir(self.profile_id)
-            self.add_dirs = tuple(dict.fromkeys(add_dirs))
-            cmd = agy_profile.acp_spawn_command(
-                self.executable,
-                self.profile_id,
-                add_dirs=self.add_dirs,
-                sandbox=False,
-            )
-            env = agy_profile.clean_agy_env(self.profile_id, temp_dir=self.temp_dir)
-            _append_log(f"spawn acp profile={self.profile_id} session={self.session_id} cwd={self.workspace}")
-
-            log_fp = None
+            self._profile_lock_held = True
             try:
-                log_path = _log_path()
-                log_path.parent.mkdir(parents=True, exist_ok=True)
-                log_fp = log_path.open("ab")
-            except OSError:
-                log_fp = None
-
-            try:
-                self.proc = child_job.spawn(
-                    cmd,
-                    kind="agy-acp",
-                    marker=self.executable,
-                    cwd=str(self.workspace),
-                    env=env,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=log_fp if log_fp is not None else subprocess.DEVNULL,
-                    encoding="utf-8",
-                    errors="replace",
-                    bufsize=1,
-                    **hidden_process_kwargs(),
+                agy_profile.prepare_profile(self.profile_id)
+                self.temp_dir = agy_profile.make_runtime_temp_dir(self.profile_id)
+                self.add_dirs = tuple(dict.fromkeys(add_dirs))
+                cmd = agy_profile.acp_spawn_command(
+                    self.executable,
+                    self.profile_id,
+                    add_dirs=self.add_dirs,
+                    sandbox=False,
                 )
-            except OSError as exc:
-                if self.temp_dir:
-                    shutil.rmtree(self.temp_dir, ignore_errors=True)
-                    self.temp_dir = None
-                raise AgyProfileError(503, f"无法启动 agy acp 进程: {exc}") from exc
-            finally:
-                if log_fp is not None:
-                    try:
-                        log_fp.close()
-                    except OSError:
-                        pass
+                env = agy_profile.clean_agy_env(self.profile_id, temp_dir=self.temp_dir)
+                _append_log(f"spawn acp profile={self.profile_id} session={self.session_id} cwd={self.workspace}")
 
-            self._closed = False
-            self._reader_thread = threading.Thread(target=self._read_loop, args=(self.proc,), daemon=True)
-            self._reader_thread.start()
+                log_fp = None
+                try:
+                    log_path = _log_path()
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+                    log_fp = log_path.open("ab")
+                except OSError:
+                    log_fp = None
 
-            try:
+                try:
+                    self.proc = child_job.spawn(
+                        cmd,
+                        kind="agy-acp",
+                        marker=self.executable,
+                        cwd=str(self.workspace),
+                        env=env,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=log_fp if log_fp is not None else subprocess.DEVNULL,
+                        encoding="utf-8",
+                        errors="replace",
+                        bufsize=1,
+                        **hidden_process_kwargs(),
+                    )
+                except OSError as exc:
+                    if self.temp_dir:
+                        shutil.rmtree(self.temp_dir, ignore_errors=True)
+                        self.temp_dir = None
+                    raise AgyProfileError(503, f"无法启动 agy acp 进程: {exc}") from exc
+                finally:
+                    if log_fp is not None:
+                        try:
+                            log_fp.close()
+                        except OSError:
+                            pass
+
+                self._closed = False
+                self._reader_thread = threading.Thread(target=self._read_loop, args=(self.proc,), daemon=True)
+                self._reader_thread.start()
+
                 self.init_result = self._rpc(
                     "initialize",
                     {
@@ -522,9 +524,10 @@ class AgySessionWorker:
                     self._on_models(models)
                 self.last_used = time.monotonic()
                 return sid
-            except Exception:
+            except BaseException:
                 self._teardown_locked()
                 raise
+
 
     def run_turn(
         self,
@@ -673,38 +676,66 @@ class AgySessionWorker:
                 pass
 
     def _teardown_locked(self) -> None:
-        self._closed = True
-        turn = self.active_turn
-        if turn is not None:
-            turn.cancel_pending()
-        proc = self.proc
-        self.proc = None
-        sid = self.acp_session_id
-        self.acp_session_id = None
-        if proc is not None:
-            if sid and proc.stdin and proc.poll() is None:
-                try:
-                    proc.stdin.write(json.dumps({
-                        "jsonrpc": "2.0",
-                        "id": 999999,
-                        "method": "session/close",
-                        "params": {"sessionId": sid},
-                    }) + "\n")
-                    proc.stdin.flush()
-                except OSError:
-                    pass
-            for stream in (proc.stdin, proc.stdout):
-                if stream:
+        try:
+            self._closed = True
+            turn = self.active_turn
+            if turn is not None:
+                turn.cancel_pending()
+            proc = self.proc
+            self.proc = None
+            sid = self.acp_session_id
+            self.acp_session_id = None
+            if proc is not None:
+                if sid and proc.stdin and proc.poll() is None:
                     try:
-                        stream.close()
+                        proc.stdin.write(json.dumps({
+                            "jsonrpc": "2.0",
+                            "id": 999999,
+                            "method": "session/close",
+                            "params": {"sessionId": sid},
+                        }) + "\n")
+                        proc.stdin.flush()
                     except OSError:
                         pass
-            if proc.poll() is None:
-                child_job.terminate_tree(proc.pid)
-            child_job.forget(proc.pid)
-        if self.temp_dir is not None:
-            shutil.rmtree(self.temp_dir, ignore_errors=True)
-            self.temp_dir = None
+                if proc.poll() is None:
+                    child_job.terminate_tree(proc.pid)
+                if proc.poll() is None:
+                    # The worker may already have been evicted. Transfer its
+                    # lock reference and temp directory to the exit waiter.
+                    profile_id = self.profile_id
+                    held = self._profile_lock_held
+                    temp_dir = self.temp_dir
+                    self._profile_lock_held = False
+                    self.temp_dir = None
+
+                    def wait_for_exit() -> None:
+                        proc.wait()
+                        child_job.forget(proc.pid)
+                        if temp_dir is not None:
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+                        if held:
+                            agy_profile.release_profile_lock(profile_id)
+
+                    try:
+                        threading.Thread(target=wait_for_exit, name="agy-acp-exit", daemon=True).start()
+                    except RuntimeError:
+                        log.error("Cannot monitor Agy worker exit; retaining profile lock for %s", profile_id)
+                    return
+                for stream in (proc.stdin, proc.stdout):
+                    if stream:
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass
+                child_job.forget(proc.pid)
+            if self.temp_dir is not None:
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
+                self.temp_dir = None
+        finally:
+            if self._profile_lock_held:
+                self._profile_lock_held = False
+                agy_profile.release_profile_lock(self.profile_id)
+
 
     def close(self) -> None:
         with self._lock:
@@ -838,18 +869,11 @@ class AgyRuntimeManager:
             _append_log("Agy ACP runtime restarted")
             return self.status(verify_auth=True)
 
-    def _release_profile_lock_if_idle_locked(self, profile_id: str) -> None:
-        if not any(k[1] == profile_id for k in self._workers):
-            agy_profile.release_profile_lock(profile_id)
-
     def _close_all_workers_locked(self) -> None:
-        profiles = {k[1] for k in self._workers}
         for worker in list(self._workers.values()):
             worker.close()
         self._workers.clear()
         self._active_turns.clear()
-        for profile_id in profiles:
-            agy_profile.release_profile_lock(profile_id)
 
     def reap_idle_workers(self, *, now: float | None = None) -> int:
         """Close idle ACP child workers exceeding IDLE_SESSION_TTL while keeping SQLite resume IDs."""
@@ -857,17 +881,13 @@ class AgyRuntimeManager:
             return 0
         current = time.monotonic() if now is None else now
         stale: list[AgySessionWorker] = []
-        affected_profiles: set[str] = set()
         with self._lock:
             for key, worker in list(self._workers.items()):
                 if worker.active_turn is not None:
                     continue
                 if worker._closed or (current - worker.last_used) >= self._idle_ttl:
                     self._workers.pop(key, None)
-                    affected_profiles.add(key[1])
                     stale.append(worker)
-            for pid in affected_profiles:
-                self._release_profile_lock_if_idle_locked(pid)
         for worker in stale:
             worker.close()
         if stale:
@@ -1074,11 +1094,8 @@ class AgyRuntimeManager:
 
     def close_session(self, db_key: str, session_id: str) -> None:
         with self._lock:
-            affected = {k[1] for k in self._workers if k[0] == db_key and k[2] == session_id}
             for key in [k for k in self._workers if k[0] == db_key and k[2] == session_id]:
                 self._workers.pop(key).close()
-            for pid in affected:
-                self._release_profile_lock_if_idle_locked(pid)
 
     @staticmethod
     def _parse_models_output(stdout: str) -> list[dict[str, str]]:
@@ -1177,7 +1194,6 @@ class AgyRuntimeManager:
             self._require_login_closed(profile_id)
             for key in [k for k in self._workers if k[1] == profile_id]:
                 self._workers.pop(key).close()
-            self._release_profile_lock_if_idle_locked(profile_id)
             self._cached_models.pop(profile_id, None)
             self._cached_commands.pop(profile_id, None)
             agy_profile.delete(profile_id)
@@ -1190,7 +1206,6 @@ class AgyRuntimeManager:
                 raise AgyProfileError(409, "请先等待当前任务结束后再清除凭据")
             for key in [k for k in self._workers if k[1] == profile_id]:
                 self._workers.pop(key).close()
-            self._release_profile_lock_if_idle_locked(profile_id)
             self._cached_models.pop(profile_id, None)
             self._cached_commands.pop(profile_id, None)
             return agy_profile.clear_credentials(profile_id)
@@ -1212,6 +1227,36 @@ class AgyRuntimeManager:
             agy_profile.select(profile_id)
             _append_log(f"Switched active Agy profile to {profile_id}")
 
+    @staticmethod
+    def _watch_login_process(
+        profile_id: str, proc: subprocess.Popen, flow: CodeLoginFlow | None = None,
+    ) -> None:
+        # Do not tie lock ownership to manager bookkeeping: cancellation and
+        # shutdown may clear their references before the child actually exits.
+        def watch() -> None:
+            try:
+                if flow is not None:
+                    flow.watch()
+            finally:
+                proc.wait()
+                child_job.forget(proc.pid)
+                agy_profile.release_profile_lock(profile_id)
+
+        try:
+            threading.Thread(target=watch, daemon=True).start()
+        except RuntimeError:
+            child_job.terminate_tree(proc.pid)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                log.error("Agy login did not exit; retaining profile lock for %s", profile_id)
+            else:
+                child_job.forget(proc.pid)
+                if flow is not None and flow.temp_dir is not None:
+                    shutil.rmtree(flow.temp_dir, ignore_errors=True)
+                agy_profile.release_profile_lock(profile_id)
+            raise
+
     def login_profile(self, profile_id: str) -> None:
         with self._lock:
             if os.name != "nt":
@@ -1228,11 +1273,12 @@ class AgyRuntimeManager:
             if self._active_turn_count() > 0:
                 raise AgyProfileError(409, "请等当前任务结束后再打开官方登录窗口")
             executable = agy_profile.agy_executable()
-            agy_profile.prepare_profile(profile_id)
-            env = agy_profile.clean_agy_env(profile_id)
-            cwd = agy_profile.profile_home(profile_id)
+            agy_profile.claim_profile_lock(profile_id)
             try:
-                self._login = child_job.spawn(
+                agy_profile.prepare_profile(profile_id)
+                env = agy_profile.clean_agy_env(profile_id)
+                cwd = agy_profile.profile_home(profile_id)
+                proc = child_job.spawn(
                     [executable],
                     kind="agy-login",
                     marker=executable,
@@ -1240,9 +1286,14 @@ class AgyRuntimeManager:
                     env=env,
                     creationflags=subprocess.CREATE_NEW_CONSOLE,
                 )
-                self._login_profile = profile_id
-            except OSError as exc:
-                raise AgyProfileError(503, "无法打开官方 agy 登录窗口") from exc
+            except BaseException as exc:
+                agy_profile.release_profile_lock(profile_id)
+                if isinstance(exc, OSError):
+                    raise AgyProfileError(503, "无法打开官方 agy 登录窗口") from exc
+                raise
+            self._watch_login_process(profile_id, proc)
+            self._login = proc
+            self._login_profile = profile_id
 
     def start_code_login(self, profile_id: str) -> dict[str, Any]:
         """Start T3 Code's cross-platform `agy acp --login` flow."""
@@ -1257,11 +1308,13 @@ class AgyRuntimeManager:
                 self._code_login = None
             self._require_login_closed(*(p.id for p in profiles))
             executable = agy_profile.agy_executable()
-            agy_profile.prepare_profile(profile_id)
-            temp_dir = agy_profile.make_runtime_temp_dir(profile_id)
-            env = agy_profile.clean_agy_env(profile_id, temp_dir=temp_dir, headless_login=True)
-            cmd = agy_profile.acp_spawn_command(executable, profile_id, login=True)
+            agy_profile.claim_profile_lock(profile_id)
+            temp_dir = None
             try:
+                agy_profile.prepare_profile(profile_id)
+                temp_dir = agy_profile.make_runtime_temp_dir(profile_id)
+                env = agy_profile.clean_agy_env(profile_id, temp_dir=temp_dir, headless_login=True)
+                cmd = agy_profile.acp_spawn_command(executable, profile_id, login=True)
                 proc = child_job.spawn(
                     cmd,
                     kind="agy-code-login",
@@ -1276,12 +1329,16 @@ class AgyRuntimeManager:
                     bufsize=1,
                     **hidden_process_kwargs(),
                 )
-            except OSError as exc:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                raise AgyProfileError(503, "无法启动 agy 登录流程") from exc
+            except BaseException as exc:
+                if temp_dir is not None:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                agy_profile.release_profile_lock(profile_id)
+                if isinstance(exc, OSError):
+                    raise AgyProfileError(503, "无法启动 agy 登录流程") from exc
+                raise
             flow = CodeLoginFlow(flow_id=uuid4().hex, profile_id=profile_id, process=proc, temp_dir=temp_dir)
+            self._watch_login_process(profile_id, proc, flow)
             self._code_login = flow
-            threading.Thread(target=flow.watch, daemon=True).start()
 
         deadline = time.monotonic() + 20.0
         while time.monotonic() < deadline:
