@@ -678,8 +678,47 @@ fn restartable(phase: &SidecarPhase) -> bool {
 struct SidecarIdentity(Mutex<Option<(u16, String)>>);
 
 #[tauri::command]
-fn save_text_export(target: String, contents: String) -> Result<(), String> {
-    fs::write(&target, contents).map_err(|e| format!("export write failed: {e}"))
+async fn save_text_export(
+    app: tauri::AppHandle,
+    filename: String,
+    contents: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let leaf = Path::new(&filename)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+        .unwrap_or("export.txt")
+        .to_string();
+    let ext = Path::new(&leaf)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut builder = app.dialog().file().set_file_name(&leaf);
+        if !ext.is_empty() {
+            let filter_name = match ext.as_str() {
+                "md" => "Markdown",
+                "json" => "JSON",
+                _ => "Files",
+            };
+            builder = builder.add_filter(filter_name, &[ext.as_str()]);
+        }
+        let Some(selected) = builder.blocking_save_file() else {
+            return Ok(None);
+        };
+        let target = selected
+            .into_path()
+            .map_err(|e| format!("invalid export path: {e}"))?;
+        fs::write(&target, contents).map_err(|e| format!("export write failed: {e}"))?;
+        Ok(Some(target.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|e| format!("export task failed: {e}"))?
 }
 
 /// Report sidecar readiness to the SPA.
@@ -1097,14 +1136,20 @@ const BRIDGE_CONNECT_DELAY: Duration = Duration::from_millis(200);
 const BRIDGE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Resolve the debug bridge port from `GA_HUB_BRIDGE_PORT`:
-/// unset/empty → default, "0" → disabled, valid → that port, garbage → disabled.
-fn parse_debug_bridge_port(value: Option<String>) -> Option<u16> {
+/// unset/empty → default (8765 in debug builds, disabled in release builds),
+/// "0" → disabled, valid → that port, garbage → disabled.
+fn parse_debug_bridge_port_with_default(value: Option<String>, default_enabled: bool) -> Option<u16> {
+    let default_port = if default_enabled {
+        Some(DEBUG_BRIDGE_DEFAULT_PORT)
+    } else {
+        None
+    };
     let Some(raw) = value else {
-        return Some(DEBUG_BRIDGE_DEFAULT_PORT);
+        return default_port;
     };
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Some(DEBUG_BRIDGE_DEFAULT_PORT);
+        return default_port;
     }
     if trimmed == "0" {
         return None;
@@ -1122,7 +1167,7 @@ fn parse_debug_bridge_port(value: Option<String>) -> Option<u16> {
 }
 
 fn configured_debug_bridge_port() -> Option<u16> {
-    parse_debug_bridge_port(env::var("GA_HUB_BRIDGE_PORT").ok())
+    parse_debug_bridge_port_with_default(env::var("GA_HUB_BRIDGE_PORT").ok(), cfg!(debug_assertions))
 }
 
 fn spawn_debug_bridge(exit: ExitCoordinator, sidecar_port: u16, bridge_port: u16) {
@@ -1721,13 +1766,15 @@ mod tests {
 
     #[test]
     fn debug_bridge_port_parsing_covers_disable_and_garbage() {
-        assert_eq!(parse_debug_bridge_port(None), Some(8765));
-        assert_eq!(parse_debug_bridge_port(Some(String::new())), Some(8765));
-        assert_eq!(parse_debug_bridge_port(Some(" 8765 ".into())), Some(8765));
-        assert_eq!(parse_debug_bridge_port(Some("9000".into())), Some(9000));
-        assert_eq!(parse_debug_bridge_port(Some("0".into())), None);
-        assert_eq!(parse_debug_bridge_port(Some("abc".into())), None);
-        assert_eq!(parse_debug_bridge_port(Some("99999".into())), None);
+        assert_eq!(parse_debug_bridge_port_with_default(None, true), Some(8765));
+        assert_eq!(parse_debug_bridge_port_with_default(Some(String::new()), true), Some(8765));
+        assert_eq!(parse_debug_bridge_port_with_default(None, false), None);
+        assert_eq!(parse_debug_bridge_port_with_default(Some(String::new()), false), None);
+        assert_eq!(parse_debug_bridge_port_with_default(Some(" 8765 ".into()), false), Some(8765));
+        assert_eq!(parse_debug_bridge_port_with_default(Some("9000".into()), false), Some(9000));
+        assert_eq!(parse_debug_bridge_port_with_default(Some("0".into()), true), None);
+        assert_eq!(parse_debug_bridge_port_with_default(Some("abc".into()), true), None);
+        assert_eq!(parse_debug_bridge_port_with_default(Some("99999".into()), true), None);
     }
 
     #[test]

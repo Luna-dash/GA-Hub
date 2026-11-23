@@ -365,6 +365,48 @@ class DesktopSidecarTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("loopback", result.stderr)
 
+    def test_admin_data_mutex_blocks_concurrent_sidecar_and_cli_launcher(self) -> None:
+        from server import run as server_run
+        from server.instance_lock import acquire_admin_data_lock, release_admin_data_lock
+
+        with tempfile.TemporaryDirectory() as td:
+            admin_dir = Path(td) / "shared-admin"
+            held = acquire_admin_data_lock(admin_dir)
+            try:
+                # 1. CLI launcher (server.run) refuses to share the locked ADMIN_DATA.
+                with self.assertRaises(SystemExit) as exited:
+                    server_run._ensure_single_instance(admin_dir)
+                self.assertEqual(exited.exception.code, 1)
+
+                # 2. Desktop sidecar refuses to share the locked ADMIN_DATA and emits structured failure.
+                res = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "server.desktop_sidecar",
+                        "--port",
+                        "0",
+                        "--admin-data",
+                        str(admin_dir),
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                )
+                self.assertEqual(res.returncode, 4)
+                events = [json.loads(line) for line in res.stdout.splitlines() if line.startswith("{")]
+                self.assertTrue(
+                    any(e.get("event") == "failed" and e.get("reason") == "admin_data_locked" and e.get("holder_pid") == os.getpid() for e in events),
+                    f"expected admin_data_locked event with holder_pid, got {events!r}",
+                )
+            finally:
+                release_admin_data_lock(held)
+
+            # Once released, acquiring again succeeds immediately.
+            reacquired = acquire_admin_data_lock(admin_dir)
+            release_admin_data_lock(reacquired)
+
     def test_setup_mode_boot_without_ga_sources_on_pythonpath(self) -> None:
         """W3.4 regression: setup-mode boot must not need the optional GA checkout.
 

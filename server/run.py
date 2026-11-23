@@ -23,7 +23,14 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
-from server.constants import DEFAULT_WEBUI_PORT, SINGLETON_LOCK_PORT_OFFSET
+from pathlib import Path
+
+from server.constants import DEFAULT_WEBUI_PORT
+from server.instance_lock import (
+    AdminDataLockBusyError,
+    acquire_admin_data_lock,
+    release_admin_data_lock,
+)
 
 
 def _read_config() -> tuple[str, int]:
@@ -37,25 +44,15 @@ def _read_config() -> tuple[str, int]:
     return host, port
 
 
-def _ensure_single_instance(port: int) -> None:
-    """Bind a tiny lock socket on port+1 to prevent two backends fighting over the agent."""
-    lock_port = port + SINGLETON_LOCK_PORT_OFFSET
-    lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    lock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+def _ensure_single_instance(admin_data: Path):
+    """Acquire an OS file lock on ADMIN_DATA so CLI and desktop modes never collide."""
     try:
-        lock.bind(("127.0.0.1", lock_port))
-        lock.listen(1)
-    except OSError as e:
-        print(
-            f"[server] another GenericAgent backend appears to hold lock port {lock_port}: {e}\n"
-            f"         If this is a stale process, find & kill it:\n"
-            f"         macOS/Linux:  lsof -iTCP:{lock_port} -sTCP:LISTEN  →  kill -9 <PID>\n"
-            f"         Windows:      netstat -ano | findstr :{lock_port}  →  taskkill /PID <PID> /F",
-            file=sys.stderr,
-        )
+        handle = acquire_admin_data_lock(admin_data)
+    except AdminDataLockBusyError as exc:
+        print(f"[server] {exc}", file=sys.stderr)
         sys.exit(1)
-    # keep ref alive
-    globals()["_lock_sock"] = lock
+    globals()["_lock_handle"] = handle
+    return handle
 
 
 def main():
@@ -65,28 +62,32 @@ def main():
     log_path = configure_application_logging(_paths.ADMIN_DATA / "logs")
     logging.getLogger(__name__).info("backend log file: %s", log_path)
     host, port = _read_config()
-    _ensure_single_instance(port)
+    lock_handle = _ensure_single_instance(_paths.ADMIN_DATA)
     from server.runtime_endpoint import configure_runtime_endpoint
     configure_runtime_endpoint(host, port)
 
     try:
         import uvicorn  # noqa
     except ImportError:
+        release_admin_data_lock(lock_handle)
         print("[server] uvicorn not installed. Run: pip install -r requirements.txt", file=sys.stderr)
         sys.exit(1)
 
     print(f"[server] starting GenericAgent admin API on http://{host}:{port}")
     print(f"[server]   docs: http://{host}:{port}/docs")
     import uvicorn
-    uvicorn.run(
-        "server.main:app",
-        host=host,
-        port=port,
-        reload=False,
-        log_level="info",
-        ws_ping_interval=20,
-        ws_ping_timeout=20,
-    )
+    try:
+        uvicorn.run(
+            "server.main:app",
+            host=host,
+            port=port,
+            reload=False,
+            log_level="info",
+            ws_ping_interval=20,
+            ws_ping_timeout=20,
+        )
+    finally:
+        release_admin_data_lock(lock_handle)
 
 
 if __name__ == "__main__":

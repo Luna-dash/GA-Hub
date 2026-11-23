@@ -48,6 +48,8 @@ class FakeWorker:
             "mode": mode,
             "permission_mode": permission_mode,
             "add_dirs": list(add_dirs),
+            "allowed_roots": [Path(p).resolve() for p in allowed_roots],
+            "attachments": list(attachments),
         })
         on_event({"seq": 1, "type": "step.update", "step": {"index": 0, "kind": "thought", "state": "ACTIVE", "text_delta": "分析中"}})
         on_event({"seq": 2, "type": "step.update", "step": {"index": 1, "kind": "tool_call", "state": "ACTIVE", "tool": "view_file"}})
@@ -333,6 +335,8 @@ def test_selected_references_and_attachments_stage_properly(tmp_path, monkeypatc
         done = _wait_terminal(client, f"{url}/{run['id']}")
         assert done["status"] == "success"
         assert len(runtime.calls[0]["add_dirs"]) == 1
+        assert uploads.resolve() not in runtime.calls[0]["allowed_roots"]
+        assert Path(runtime.calls[0]["attachments"][0]["path"]).resolve().is_relative_to(artifacts.resolve())
         assert local.as_posix() in runtime.calls[0]["prompt"]
 
 

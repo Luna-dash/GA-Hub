@@ -66,18 +66,13 @@ export async function saveTextExport(
   content: string,
 ): Promise<DesktopExportResult> {
   if (isTauriDesktop()) {
-    const extension = filename.split('.').at(-1)?.toLowerCase() ?? ''
-    const filterName = extension === 'md' ? 'Markdown' : extension === 'json' ? 'JSON' : 'All files'
-    const filters = extension
-      ? [{ name: filterName, extensions: [extension] }]
-      : undefined
-    const { save } = await import('@tauri-apps/plugin-dialog')
-    const target = await save({ defaultPath: filename, filters })
-    if (!target) return { ok: false, cancelled: true }
-
     const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('save_text_export', { target, contents: content })
-    return { ok: true, path: target }
+    const savedPath = await invoke<string | null>('save_text_export', {
+      filename,
+      contents: content,
+    })
+    if (!savedPath) return { ok: false, cancelled: true }
+    return { ok: true, path: savedPath }
   }
 
   fallbackDownload(filename, content)

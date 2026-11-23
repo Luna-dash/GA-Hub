@@ -351,7 +351,9 @@ class AntiSessions:
     ) -> None:
         key = (self._db_key, rid)
         add_dirs = tuple(str(d) for d in staging_dirs)
-        allowed_roots = [workspace, *staging_dirs, _paths.admin_uploads_dir()]
+        # Never expose the shared admin_uploads_dir() across sessions: all external
+        # and managed_upload inputs are already copied into per-run staging_dirs.
+        allowed_roots = [workspace, *staging_dirs]
 
         # submit() has initialized the schema; reuse one connection for the turn.
         # ACP callbacks can arrive on either the reader or the turn thread.
@@ -492,6 +494,7 @@ class AntiSessions:
         _, artifacts = project(session["project"])
         staged: list[Path] = []
         staging_dirs: list[Path] = []
+        staged_attachments: list[dict] = []
 
         with self._local_lock:
             with self.connect() as db, db:
@@ -519,11 +522,11 @@ class AntiSessions:
                 rid = f"run_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_{uuid4().hex}"
                 staging = artifacts / "references" / rid
                 try:
-                    staged, staging_dirs = prepare_inputs(references, attachments, workspace_dir, staging)
+                    staged, staging_dirs, staged_attachments = prepare_inputs(references, attachments, workspace_dir, staging)
                 except ReferenceError as exc:
                     raise AntiError(422, str(exc)) from exc
 
-                cli_prompt = self._build_cli_prompt(prompt, attachments, staged, workspace_dir)
+                cli_prompt = self._build_cli_prompt(prompt, staged_attachments, staged, workspace_dir)
                 conv_row = db.execute(
                     "SELECT conversation FROM profile_conversations WHERE session_id=? AND profile_id=?",
                     (sid, profile_id),
@@ -580,7 +583,7 @@ class AntiSessions:
                     "permission_mode": resolved_permission,
                     "staged": staged,
                     "staging_dirs": staging_dirs,
-                    "attachments": attachments,
+                    "attachments": staged_attachments,
                 },
                 daemon=True,
             ).start()

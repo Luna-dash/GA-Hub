@@ -238,76 +238,91 @@ def main(argv: list[str] | None = None) -> int:
     import logging
 
     from server import _paths
+    from server.instance_lock import (
+        AdminDataLockBusyError,
+        acquire_admin_data_lock,
+        release_admin_data_lock,
+    )
     from server.logging_config import configure_application_logging
 
-    log_path = configure_application_logging(_paths.ADMIN_DATA / "logs")
-    logging.getLogger(__name__).info("backend log file: %s", log_path)
-
-    # Resolve and publish the listener before importing the app. Services such
-    # as Conductor run outside request scope and need this exact random port to
-    # call back into the owning Hub instance.
-    port = args.port or _available_port(args.host)
-    from server.runtime_endpoint import configure_runtime_endpoint
-    configure_runtime_endpoint(args.host, port)
-
-    # Import only after isolation paths and the runtime endpoint are applied.
-    import uvicorn
-    from fastapi.routing import APIRoute
-    from server.main import app
-
-    token = args.instance_token or secrets.token_urlsafe(24)
-
-    async def desktop_ready() -> dict[str, object]:
-        return {"ok": True, "instance_token": token, "pid": os.getpid(), "port": port}
-
-    # server.main ends with an SPA catch-all when webui/dist exists.  Insert the
-    # shell identity route first so production builds cannot shadow it.
-    app.router.routes.insert(
-        0,
-        APIRoute(
-            "/api/desktop/ready",
-            desktop_ready,
-            methods=["GET"],
-            include_in_schema=False,
-        ),
-    )
-    config = uvicorn.Config(
-        app, host=args.host, port=port, log_level="info", ws_ping_interval=20,
-        ws_ping_timeout=20, access_log=False,
-    )
-    server = uvicorn.Server(config)
-    stop_thread = (
-        threading.Thread(
-            target=_stdin_shutdown,
-            args=(server, owner_stdin_fd, _start_owner_exit_watchdog),
-            daemon=True,
-            name="desktop-owner-stdin",
-        )
-        if owner_stdin_fd is not None
-        else None
-    )
-
-    def request_stop(signum: int, _frame: object) -> None:
-        server.should_exit = True
-        _emit("shutdown_requested", reason=f"signal_{signum}")
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            signal.signal(sig, request_stop)
-        except (ValueError, OSError):
-            pass
-
-    _emit("starting", host=args.host, port=port, instance_token=token, pid=os.getpid())
-    if stop_thread is not None:
-        stop_thread.start()
     try:
-        asyncio.run(server.serve())
-    except OSError as exc:
-        _emit("failed", reason="bind", detail=str(exc), port=port)
+        admin_lock = acquire_admin_data_lock(_paths.ADMIN_DATA)
+    except AdminDataLockBusyError as exc:
+        _diagnostic(str(exc))
+        _emit("failed", reason="admin_data_locked", detail=str(exc), holder_pid=exc.holder_pid)
         return 4
-    code = 0 if server.started else 4
-    _emit("stopped", graceful=True, code=code, port=port)
-    return code
+
+    try:
+        log_path = configure_application_logging(_paths.ADMIN_DATA / "logs")
+        logging.getLogger(__name__).info("backend log file: %s", log_path)
+
+        # Resolve and publish the listener before importing the app. Services such
+        # as Conductor run outside request scope and need this exact random port to
+        # call back into the owning Hub instance.
+        port = args.port or _available_port(args.host)
+        from server.runtime_endpoint import configure_runtime_endpoint
+        configure_runtime_endpoint(args.host, port)
+
+        # Import only after isolation paths and the runtime endpoint are applied.
+        import uvicorn
+        from fastapi.routing import APIRoute
+        from server.main import app
+
+        token = args.instance_token or secrets.token_urlsafe(24)
+
+        async def desktop_ready() -> dict[str, object]:
+            return {"ok": True, "instance_token": token, "pid": os.getpid(), "port": port}
+
+        # server.main ends with an SPA catch-all when webui/dist exists.  Insert the
+        # shell identity route first so production builds cannot shadow it.
+        app.router.routes.insert(
+            0,
+            APIRoute(
+                "/api/desktop/ready",
+                desktop_ready,
+                methods=["GET"],
+                include_in_schema=False,
+            ),
+        )
+        config = uvicorn.Config(
+            app, host=args.host, port=port, log_level="info", ws_ping_interval=20,
+            ws_ping_timeout=20, access_log=False,
+        )
+        server = uvicorn.Server(config)
+        stop_thread = (
+            threading.Thread(
+                target=_stdin_shutdown,
+                args=(server, owner_stdin_fd, _start_owner_exit_watchdog),
+                daemon=True,
+                name="desktop-owner-stdin",
+            )
+            if owner_stdin_fd is not None
+            else None
+        )
+
+        def request_stop(signum: int, _frame: object) -> None:
+            server.should_exit = True
+            _emit("shutdown_requested", reason=f"signal_{signum}")
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(sig, request_stop)
+            except (ValueError, OSError):
+                pass
+
+        _emit("starting", host=args.host, port=port, instance_token=token, pid=os.getpid())
+        if stop_thread is not None:
+            stop_thread.start()
+        try:
+            asyncio.run(server.serve())
+        except OSError as exc:
+            _emit("failed", reason="bind", detail=str(exc), port=port)
+            return 4
+        code = 0 if server.started else 4
+        _emit("stopped", graceful=True, code=code, port=port)
+        return code
+    finally:
+        release_admin_data_lock(admin_lock)
 
 
 if __name__ == "__main__":

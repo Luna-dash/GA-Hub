@@ -79,7 +79,8 @@ def _ensure_staging_dir(directory: Path, created: bool) -> bool:
 
 def prepare_references(references: list[tuple[int, str]], workspace: Path,
                        directory: Path) -> tuple[list[Path], list[Path]]:
-    return prepare_inputs(references, [], workspace, directory)
+    paths, dirs, _ = prepare_inputs(references, [], workspace, directory)
+    return paths, dirs
 
 
 def prepare_inputs(
@@ -87,14 +88,16 @@ def prepare_inputs(
     attachments: list[dict],
     workspace: Path,
     directory: Path,
-) -> tuple[list[Path], list[Path]]:
+) -> tuple[list[Path], list[Path], list[dict]]:
     if len(references) > 8:
         raise ReferenceError("每条消息最多引用 8 个文件")
     if len(attachments) > 256:
         raise ReferenceError("一次最多添加256个附件")
     created = False
     paths: list[Path] = []
+    staged_attachments: list[dict] = []
     seen: set[Path] = set()
+    staged_by_source: dict[Path, Path] = {}
     remaining = MAX_EXTERNAL_BYTES
     try:
         if references:
@@ -110,12 +113,14 @@ def prepare_inputs(
                     if source not in seen:
                         paths.append(source)
                         seen.add(source)
+                        staged_by_source[source] = source
                     continue
                 created = _ensure_staging_dir(directory, created)
                 target = staged_path(directory, index, raw)
                 remaining = _stage_external_file(source, target, remaining, require_unredirected=True)
                 paths.append(target)
                 seen.add(source)
+                staged_by_source[source] = target
 
         uploads_root = _paths.admin_uploads_dir().resolve() if attachments else None
         for index, attachment in enumerate(attachments, 1):
@@ -129,10 +134,14 @@ def prepare_inputs(
             else:
                 source = _validate_local_source(raw, require_unredirected=True)
             if source in seen:
+                mapped = staged_by_source.get(source, source)
+                staged_attachments.append({**attachment, "path": str(mapped)})
                 continue
             if kind != "managed_upload" and source.is_relative_to(workspace):
                 paths.append(source)
                 seen.add(source)
+                staged_by_source[source] = source
+                staged_attachments.append({**attachment, "path": str(source)})
                 continue
             created = _ensure_staging_dir(directory, created)
             fallback = f"attachment-{index}"
@@ -145,8 +154,10 @@ def prepare_inputs(
             )
             paths.append(target)
             seen.add(source)
+            staged_by_source[source] = target
+            staged_attachments.append({**attachment, "path": str(target)})
 
-        return paths, [directory] if created else []
+        return paths, ([directory] if created else []), staged_attachments
     except (OSError, RuntimeError, ValueError) as exc:
         if created:
             shutil.rmtree(directory, ignore_errors=True)
