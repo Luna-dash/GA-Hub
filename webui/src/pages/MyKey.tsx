@@ -565,155 +565,155 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
 
   return (
     <ModalOverlay onClose={() => { if (!saving) onClose() }} closeOnBackdrop={false} panelClassName="p-6 w-[40rem] max-w-[92vw] max-h-[88vh] overflow-y-auto">
-        <div className="flex items-baseline justify-between mb-4">
-          <h3 className="text-base font-semibold">
-            {mode === 'create' ? '新增链路' : mode === 'duplicate' ? '复制链路' : '编辑链路'}
-            <span className="ml-2 text-xs text-ink-faint">{sessionMeta(s.type).label}</span>
-          </h3>
-          <CloseIconButton
-            label="关闭弹窗"
-            variant="ghost"
-            iconSize={16}
-            disabled={saving}
-            onClick={onClose}
-            className="text-ink-muted hover:text-ink disabled:opacity-40"
-          />
+      <div className="flex items-baseline justify-between mb-4">
+        <h3 className="text-base font-semibold">
+          {mode === 'create' ? '新增链路' : mode === 'duplicate' ? '复制链路' : '编辑链路'}
+          <span className="ml-2 text-xs text-ink-faint">{sessionMeta(s.type).label}</span>
+        </h3>
+        <CloseIconButton
+          label="关闭弹窗"
+          variant="ghost"
+          iconSize={16}
+          disabled={saving}
+          onClick={onClose}
+          className="text-ink-muted hover:text-ink disabled:opacity-40"
+        />
+      </div>
+
+      <Field label="变量名（mykey.py 里的 Python 变量）" hint="必须包含 api/config/cookie 之一及所选渠道关键字（oai、claude、mixin；原生渠道另需 native）。">
+        <input value={s.var} onChange={(e) => setS({ ...s, var: e.target.value })}
+          className={inp + ' font-mono'} placeholder="native_claude_xxx_config" />
+      </Field>
+
+      {s.type !== 'mixin' && (
+        <>
+          <Field label="name（链路展示名 & mixin 引用名）">
+            <input value={s.fields.name ?? ''} onChange={(e) => setField('name', e.target.value)}
+              className={inp} placeholder="如 claude / glm / gpt" />
+          </Field>
+          <Field label="apikey" hint={mode === 'create' ? undefined : '留空保留源配置的密钥'}>
+            <div className="flex gap-2 items-stretch">
+              <input
+                value={s.fields.apikey ?? ''}
+                onChange={(e) => setField('apikey', e.target.value)}
+                type={showKey ? 'text' : 'password'}
+                className={inp + ' font-mono flex-1'}
+                placeholder={mode === 'edit' ? `当前: ${s.fields.apikey || '—'}` : 'sk-...'}
+                autoComplete="off"
+              />
+              <button onClick={() => setShowKey(!showKey)} type="button" className="ga-btn shrink-0">
+                {showKey ? (
+                  <>
+                    <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>隐藏</span>
+                  </>
+                ) : (
+                  <>
+                    <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>显示</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </Field>
+          <Field label="apibase">
+            <input value={s.fields.apibase ?? ''} onChange={(e) => setField('apibase', e.target.value)}
+              className={inp + ' font-mono'} placeholder="https://api.anthropic.com" />
+          </Field>
+          <Field label="model">
+            <input value={s.fields.model ?? ''} onChange={(e) => setField('model', e.target.value)}
+              className={inp + ' font-mono'} placeholder="claude-opus-4-7[1m]" />
+          </Field>
+        </>
+      )}
+
+      {/* type-specific */}
+      {(s.type === 'native_claude' || s.type === 'claude') && (
+        <>
+          <Field label="thinking_type">
+            <select value={s.fields.thinking_type ?? ''} onChange={(e) => setField('thinking_type', e.target.value || undefined)} className={inp}>
+              <option value="">（不设置）</option>
+              <option value="adaptive">adaptive（推荐）</option>
+              <option value="enabled">enabled（需配 thinking_budget_tokens）</option>
+              <option value="disabled">disabled</option>
+            </select>
+          </Field>
+          {s.fields.thinking_type === 'enabled' && (
+            <Field label="thinking_budget_tokens">
+              <input
+                type="number"
+                min={1024}
+                value={s.fields.thinking_budget_tokens ?? 32768}
+                onChange={(e) => {
+                  if (e.target.value === '') { setField('thinking_budget_tokens', undefined); return }
+                  const parsed = parseInt(e.target.value, 10)
+                  if (Number.isFinite(parsed)) setField('thinking_budget_tokens', parsed)
+                }}
+                className={inp}
+              />
+            </Field>
+          )}
+          <Field label="fake_cc_system_prompt">
+            <label className="inline-flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!s.fields.fake_cc_system_prompt}
+                onChange={(e) => setField('fake_cc_system_prompt', e.target.checked || undefined)} />
+              <span className="text-ink">CC switch / 反代渠道必须勾选</span>
+            </label>
+          </Field>
+        </>
+      )}
+
+      {(s.type === 'native_oai' || s.type === 'oai') && (
+        <>
+          <Field label="api_mode">
+            <select value={s.fields.api_mode ?? 'chat_completions'} onChange={(e) => setField('api_mode', e.target.value)} className={inp}>
+              <option value="chat_completions">chat_completions（默认）</option>
+              <option value="responses">responses（OpenAI Responses API）</option>
+            </select>
+          </Field>
+          <Field label="reasoning_effort">
+            <select value={s.fields.reasoning_effort ?? ''} onChange={(e) => setField('reasoning_effort', e.target.value || undefined)} className={inp}>
+              <option value="">（不设置）</option>
+              {['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </Field>
+        </>
+      )}
+
+      {s.type === 'mixin' && <MixinFields s={s} setS={setS} allSessions={allSessions} />}
+
+      <details className="mt-3">
+        <summary className="text-xs text-ink-muted cursor-pointer">高级（max_retries / read_timeout / temperature / max_tokens / context_win / proxy）</summary>
+        <div className="pt-2 grid grid-cols-2 gap-2">
+          <NumField label="max_retries" v={s.fields.max_retries} onChange={(v) => setField('max_retries', v)} />
+          <NumField label="connect_timeout" v={s.fields.connect_timeout} onChange={(v) => setField('connect_timeout', v)} />
+          <NumField label="read_timeout" v={s.fields.read_timeout} onChange={(v) => setField('read_timeout', v)} />
+          <NumField label="context_win" v={s.fields.context_win} onChange={(v) => setField('context_win', v)} />
+          <NumField label="temperature" v={s.fields.temperature} onChange={(v) => setField('temperature', v)} step={0.1} />
+          <NumField label="max_tokens" v={s.fields.max_tokens} onChange={(v) => setField('max_tokens', v)} />
+          <Field label="proxy" >
+            <input value={s.fields.proxy ?? ''} onChange={(e) => setField('proxy', e.target.value || undefined)}
+              className={inp + ' font-mono'} placeholder="http://127.0.0.1:7890（可空）" />
+          </Field>
+          <Field label="stream">
+            <label className="inline-flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={s.fields.stream !== false}
+                onChange={(e) => setField('stream', e.target.checked ? undefined : false)} />
+              <span className="text-ink">默认开启；遇 SSE 截断关掉保命</span>
+            </label>
+          </Field>
         </div>
+      </details>
 
-        <Field label="变量名（mykey.py 里的 Python 变量）" hint="必须包含 api/config/cookie 之一及所选渠道关键字（oai、claude、mixin；原生渠道另需 native）。">
-          <input value={s.var} onChange={(e) => setS({ ...s, var: e.target.value })}
-            className={inp + ' font-mono'} placeholder="native_claude_xxx_config" />
-        </Field>
+      {err && <div className="mt-3 text-xs text-status-danger bg-status-danger-soft border border-status-danger-line rounded p-2 break-words">{err}</div>}
 
-        {s.type !== 'mixin' && (
-          <>
-            <Field label="name（链路展示名 & mixin 引用名）">
-              <input value={s.fields.name ?? ''} onChange={(e) => setField('name', e.target.value)}
-                className={inp} placeholder="如 claude / glm / gpt" />
-            </Field>
-            <Field label="apikey" hint={mode === 'create' ? undefined : '留空保留源配置的密钥'}>
-              <div className="flex gap-2 items-stretch">
-                <input
-                  value={s.fields.apikey ?? ''}
-                  onChange={(e) => setField('apikey', e.target.value)}
-                  type={showKey ? 'text' : 'password'}
-                  className={inp + ' font-mono flex-1'}
-                  placeholder={mode === 'edit' ? `当前: ${s.fields.apikey || '—'}` : 'sk-...'}
-                  autoComplete="off"
-                />
-                <button onClick={() => setShowKey(!showKey)} type="button" className="ga-btn shrink-0">
-                  {showKey ? (
-                    <>
-                      <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>隐藏</span>
-                    </>
-                  ) : (
-                    <>
-                      <Eye className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>显示</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </Field>
-            <Field label="apibase">
-              <input value={s.fields.apibase ?? ''} onChange={(e) => setField('apibase', e.target.value)}
-                className={inp + ' font-mono'} placeholder="https://api.anthropic.com" />
-            </Field>
-            <Field label="model">
-              <input value={s.fields.model ?? ''} onChange={(e) => setField('model', e.target.value)}
-                className={inp + ' font-mono'} placeholder="claude-opus-4-7[1m]" />
-            </Field>
-          </>
-        )}
-
-        {/* type-specific */}
-        {(s.type === 'native_claude' || s.type === 'claude') && (
-          <>
-            <Field label="thinking_type">
-              <select value={s.fields.thinking_type ?? ''} onChange={(e) => setField('thinking_type', e.target.value || undefined)} className={inp}>
-                <option value="">（不设置）</option>
-                <option value="adaptive">adaptive（推荐）</option>
-                <option value="enabled">enabled（需配 thinking_budget_tokens）</option>
-                <option value="disabled">disabled</option>
-              </select>
-            </Field>
-            {s.fields.thinking_type === 'enabled' && (
-              <Field label="thinking_budget_tokens">
-                <input
-                  type="number"
-                  min={1024}
-                  value={s.fields.thinking_budget_tokens ?? 32768}
-                  onChange={(e) => {
-                    if (e.target.value === '') { setField('thinking_budget_tokens', undefined); return }
-                    const parsed = parseInt(e.target.value, 10)
-                    if (Number.isFinite(parsed)) setField('thinking_budget_tokens', parsed)
-                  }}
-                  className={inp}
-                />
-              </Field>
-            )}
-            <Field label="fake_cc_system_prompt">
-              <label className="inline-flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={!!s.fields.fake_cc_system_prompt}
-                  onChange={(e) => setField('fake_cc_system_prompt', e.target.checked || undefined)} />
-                <span className="text-ink">CC switch / 反代渠道必须勾选</span>
-              </label>
-            </Field>
-          </>
-        )}
-
-        {(s.type === 'native_oai' || s.type === 'oai') && (
-          <>
-            <Field label="api_mode">
-              <select value={s.fields.api_mode ?? 'chat_completions'} onChange={(e) => setField('api_mode', e.target.value)} className={inp}>
-                <option value="chat_completions">chat_completions（默认）</option>
-                <option value="responses">responses（OpenAI Responses API）</option>
-              </select>
-            </Field>
-            <Field label="reasoning_effort">
-              <select value={s.fields.reasoning_effort ?? ''} onChange={(e) => setField('reasoning_effort', e.target.value || undefined)} className={inp}>
-                <option value="">（不设置）</option>
-                {['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((v) => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </Field>
-          </>
-        )}
-
-        {s.type === 'mixin' && <MixinFields s={s} setS={setS} allSessions={allSessions} />}
-
-        <details className="mt-3">
-          <summary className="text-xs text-ink-muted cursor-pointer">高级（max_retries / read_timeout / temperature / max_tokens / context_win / proxy）</summary>
-          <div className="pt-2 grid grid-cols-2 gap-2">
-            <NumField label="max_retries" v={s.fields.max_retries} onChange={(v) => setField('max_retries', v)} />
-            <NumField label="connect_timeout" v={s.fields.connect_timeout} onChange={(v) => setField('connect_timeout', v)} />
-            <NumField label="read_timeout" v={s.fields.read_timeout} onChange={(v) => setField('read_timeout', v)} />
-            <NumField label="context_win" v={s.fields.context_win} onChange={(v) => setField('context_win', v)} />
-            <NumField label="temperature" v={s.fields.temperature} onChange={(v) => setField('temperature', v)} step={0.1} />
-            <NumField label="max_tokens" v={s.fields.max_tokens} onChange={(v) => setField('max_tokens', v)} />
-            <Field label="proxy" >
-              <input value={s.fields.proxy ?? ''} onChange={(e) => setField('proxy', e.target.value || undefined)}
-                className={inp + ' font-mono'} placeholder="http://127.0.0.1:7890（可空）" />
-            </Field>
-            <Field label="stream">
-              <label className="inline-flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={s.fields.stream !== false}
-                  onChange={(e) => setField('stream', e.target.checked ? undefined : false)} />
-                <span className="text-ink">默认开启；遇 SSE 截断关掉保命</span>
-              </label>
-            </Field>
-          </div>
-        </details>
-
-        {err && <div className="mt-3 text-xs text-status-danger bg-status-danger-soft border border-status-danger-line rounded p-2 break-words">{err}</div>}
-
-        <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={saving} className="ga-btn">取消</button>
-          <button type="button" onClick={save} disabled={saving} className="ga-btn-primary">
-            <Save className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>{saving ? '保存中…' : '保存并应用'}</span>
-          </button>
-        </div>
+      <div className="mt-5 flex justify-end gap-2">
+        <button type="button" onClick={onClose} disabled={saving} className="ga-btn">取消</button>
+        <button type="button" onClick={save} disabled={saving} className="ga-btn-primary">
+          <Save className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>{saving ? '保存中…' : '保存并应用'}</span>
+        </button>
+      </div>
     </ModalOverlay>
   )
 }
@@ -731,7 +731,7 @@ function MixinFields({ s, setS, allSessions }: { s: MyKeySession; setS: (v: MyKe
     const next = [...llmNos]
     const j = i + dir
     if (j < 0 || j >= next.length) return
-    ;[next[i], next[j]] = [next[j], next[i]]
+      ;[next[i], next[j]] = [next[j], next[i]]
     setNos(next)
   }
   return (
@@ -916,9 +916,9 @@ function NumField({ label, v, onChange, step }: { label: string; v: any; onChang
 function defaultVarName(type: MyKeySessionType, existing: MyKeySession[]): string {
   const base =
     type === 'native_claude' ? 'native_claude_config' :
-    type === 'native_oai'    ? 'native_oai_config'    :
-    type === 'mixin'         ? 'mixin_config'          :
-    type === 'claude'        ? 'oai_claude_config'     :
+      type === 'native_oai' ? 'native_oai_config' :
+        type === 'mixin' ? 'mixin_config' :
+          type === 'claude' ? 'oai_claude_config' :
     /* oai */                  'oai_config'
   const taken = new Set(existing.map((s) => s.var))
   if (!taken.has(base)) return base
