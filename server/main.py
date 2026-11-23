@@ -34,7 +34,7 @@ from . import _paths
 from .constants import ENV_GAHUB_ALLOWED_HOSTS
 from .origin_policy import LOOPBACK_HTTP_ORIGIN_REGEX, TAURI_UI_ORIGINS
 from .routes import events as event_routes  # safe to import in setup mode
-from .schemas import AppStatusResp, SetupReq, SetupStatusResp
+from .schemas import SetupReq, SetupStatusResp
 from .services.app_services import AppServices
 from .services.event_bus import bus
 from .services.core_contract import ContractReport, require_core_contract
@@ -321,6 +321,7 @@ def create_app() -> FastAPI:
         version="1.1.6",
         lifespan=_lifespan,
     )
+    app.state.setup_mode = setup_mode
     app.state.services = services
     app.state.service_registry = app_registry
     app.state.core_contract = None
@@ -546,77 +547,11 @@ def create_app() -> FastAPI:
     app.include_router(_setup_router())
     from .routes.updates import router as updates_router
     from .routes.appearance import router as appearance_router
+    from .routes.system import router as system_router
     app.include_router(updates_router)
     app.include_router(appearance_router)
     app.include_router(event_routes.router)
-
-    @app.get("/api/status", response_model=AppStatusResp, response_model_exclude_unset=True)
-    def status():
-        out: dict[str, Any] = {
-            "configured": _paths.GA_ROOT is not None,
-            "ga_root": str(_paths.GA_ROOT) if _paths.GA_ROOT else None,
-            **_paths.python_status(),
-        }
-        if setup_mode:
-            out["mode"] = "setup"
-            return out
-
-        out.update(services.status_snapshot())
-        return out
-
-    @app.get("/api/updates/ready", include_in_schema=False)
-    def update_ready(request: Request):
-        import secrets
-        import sys
-        nonce = os.environ.get("GA_HUB_UPDATE_NONCE", "")
-        provided = request.headers.get("x-update-nonce", "")
-        if not nonce or not secrets.compare_digest(nonce, provided):
-            return PlainTextResponse("Not found", status_code=404)
-        return {
-            "ready": bool(getattr(app.state, "update_ready", False)),
-            "nonce": nonce, "pid": os.getpid(),
-            "executable": str(Path(sys.executable).resolve()),
-            "admin_data": str(_paths.ADMIN_DATA.resolve()),
-        }
-
-    @app.get("/api/health")
-    def health_summary():
-        """Stable process/service health vocabulary for diagnostics."""
-        report = getattr(app.state, "core_contract", None)
-        if setup_mode:
-            return {
-                "status": "unavailable",
-                "services": [{
-                    "id": "core_contract",
-                    "status": "unavailable",
-                    "summary": "GA core 尚未配置",
-                }],
-                "timestamp": int(time.time()),
-            }
-        if report is None or not report.ok:
-            return {
-                "status": "unavailable",
-                "services": [{
-                    "id": "core_contract",
-                    "status": "unknown" if report is None else "unavailable",
-                    "summary": "GA core 尚未探测" if report is None else "GA core 契约不兼容",
-                }],
-                "timestamp": int(time.time()),
-            }
-        return app_registry.health_summary()
-
-    @app.get("/api/health/core-contract")
-    async def core_contract_health():
-        """P0: surface the GA core contract probe result.
-
-        Returns ``ga_root``, ``core_commit``, per-item capability bits and
-        error list — no secrets. In setup mode (no GA_ROOT) or if the probe
-        has not run (e.g. crashed), reports that explicitly rather than 500.
-        """
-        report = getattr(app.state, "core_contract", None)
-        if report is None:
-            return {"ok": False, "status": "not_probed", "ga_root": None}
-        return report.to_dict()
+    app.include_router(system_router)
 
     if not setup_mode:
         try:
