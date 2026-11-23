@@ -20,7 +20,7 @@ type CreatedSession = Awaited<ReturnType<typeof api.createSession>>
 
 vi.mock('@/api/client', () => ({ api: {
   sessions: vi.fn(), llms: vi.fn(), projects: vi.fn(), sessionRuntimes: vi.fn(), sessionRuntime: vi.fn(),
-  scheduledChats: vi.fn(), createSession: vi.fn(), sessionRun: vi.fn(), createProject: vi.fn(), bindProject: vi.fn(),
+  scheduledChats: vi.fn(), createScheduledChat: vi.fn(), createSession: vi.fn(), sessionRun: vi.fn(), createProject: vi.fn(), bindProject: vi.fn(),
   deleteSession: vi.fn(), rewindSession: vi.fn(),
 } }))
 vi.mock('@/hooks/useHubEvent', () => ({ useHubEvent: vi.fn() }))
@@ -35,16 +35,18 @@ vi.mock('@/components/SessionRail', () => ({ SessionRail: ({ onCreate, onDelete 
 vi.mock('@/components/ModelSelect', () => ({ MainModelSelect: () => null }))
 vi.mock('@/components/LiveChatTranscript', () => ({ LiveChatTranscript: forwardRef(() => null) }))
 vi.mock('@/components/LiveChatComposer', () => ({
-  LiveChatComposer: ({ draftKey, onSubmit, onSlashCommand }: {
+  LiveChatComposer: ({ draftKey, onSubmit, onSlashCommand, onSchedule }: {
     draftKey: string
+    onSchedule: () => void
     onSubmit: (draft: { draftKey: string; text: string; attachments: [] }) => void
     onSlashCommand: (command: '/new' | '/rewind', draft: { draftKey: string; text: string; attachments: [] }) => void
   }) => <>
+    <button data-schedule onClick={onSchedule}>Schedule</button>
     <button data-submit onClick={() => onSubmit({ draftKey, text: 'hello', attachments: [] })}>Send</button>
     <button data-submit-rewind onClick={() => onSubmit({ draftKey, text: '/rewind', attachments: [] })}>SubmitRewind</button>
     <button data-slash onClick={() => onSlashCommand('/new', { draftKey, text: '/new', attachments: [] })}>New</button>
   </>,
-  readLiveChatDraftSnapshot: vi.fn(),
+  readLiveChatDraftSnapshot: (draftKey: string) => ({ draftKey, text: useDraftStore.getState().texts[draftKey] ?? "", attachments: [] }),
 }))
 
 function row(id: string): CreatedSession {
@@ -116,6 +118,22 @@ describe('LiveChat creation ownership', () => {
   async function click(selector: string) {
     await act(async () => (host.querySelector(selector) as HTMLButtonElement).click())
   }
+
+  it('restores a rejected scheduled send into the first session without moving newer edits', async () => {
+    await mount(true)
+    useDraftStore.getState().setText('liveChat:pending', 'scheduled draft')
+    vi.mocked(api.createScheduledChat).mockRejectedValue(new Error('schedule rejected'))
+    await click('[data-schedule]')
+    const confirm = Array.from(document.querySelectorAll('button')).find((button) => button.textContent === '确认定时')!
+    await act(async () => confirm.click())
+    expect(api.createSession).toHaveBeenCalledOnce()
+    useDraftStore.getState().setText('liveChat:pending', 'newer draft')
+    await act(async () => finish(row('new')))
+    expect(api.createScheduledChat).toHaveBeenCalledWith('new', 'scheduled draft', [], expect.any(Number), [])
+    expect(host.querySelector('output')?.textContent).toBe('/chat?session=new')
+    expect(useDraftStore.getState().texts['liveChat:new']).toBe('scheduled draft')
+    expect(useDraftStore.getState().texts['liveChat:pending']).toBe('newer draft')
+  })
 
   it('still selects a completed creation while the page owns the request', async () => {
     await mount()

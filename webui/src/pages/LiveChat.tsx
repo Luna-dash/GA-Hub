@@ -462,6 +462,9 @@ export default function LiveChat() {
       return
     }
 
+    // The sent snapshot follows a newly created session; newer edits stay put.
+    const transaction = session ? null : useDraftStore.getState().beginSubmission(draft.draftKey, sourceText, sourceAtts)
+    if (!session && !transaction) return
     setScheduleSaving(true)
     setScheduleError('')
     try {
@@ -472,6 +475,7 @@ export default function LiveChat() {
         if (!defaultLlmKey) throw new Error('当前没有可用模型，请先配置模型')
         const created = await api.createSession({ title: '', llm_key: defaultLlmKey })
         sid = created.id
+        if (transaction) useDraftStore.getState().moveSubmission(transaction.id, `liveChat:${sid}`)
         queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
           total: (cached?.total ?? 0) + 1,
           items: [created, ...(cached?.items ?? [])],
@@ -484,11 +488,13 @@ export default function LiveChat() {
       }
       const promptText = buildSessionPromptText(t, sourceAtts)
       await api.createScheduledChat(sid, promptText, [], scheduledFor / 1000, sourceAtts.map(({ path, name, source, size }) => ({ path, name, source, size })))
-      useDraftStore.getState().clearDraftIfMatch(draft.draftKey, sourceText, sourceAtts)
+      if (transaction) useDraftStore.getState().finishSubmission(transaction.id)
+      else useDraftStore.getState().clearDraftIfMatch(draft.draftKey, sourceText, sourceAtts)
       await queryClient.invalidateQueries({ queryKey: queryKeys.scheduledChats(sid) })
       setScheduleNow(Date.now())
       setScheduleOpen(false)
     } catch (e: any) {
+      if (transaction) useDraftStore.getState().failSubmission(transaction.id)
       setScheduleError(errorMessageFromError(e))
     } finally {
       setScheduleSaving(false)

@@ -270,6 +270,8 @@ export function AntiAgyProfiles({
     const badge = authBadge(profile, loginProfile === profile.id)
     const usage = profile.usage
     const pct = usage?.min_remaining_pct
+    const checkedAt = usage?.checked_at ? new Date(usage.checked_at).getTime() : NaN
+    const checkedLabel = Number.isFinite(checkedAt) ? resetTimeFormat.format(checkedAt) : null
     const cooldownSec = profile.cooldown_seconds ?? 0
     return (
       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
@@ -282,13 +284,13 @@ export function AntiAgyProfiles({
           </span>
         )}
         {typeof pct === 'number' && (
-          <span className={clsx('font-semibold tabular-nums', quotaTone(pct))} title={usage?.checked_at ? `上次检测：${resetTimeFormat.format(new Date(usage.checked_at))}` : undefined}>
+          <span className={clsx('font-semibold tabular-nums', quotaTone(pct))} title={checkedLabel ? `上次检测：${checkedLabel}` : undefined}>
             最低剩余 {pct}%
           </span>
         )}
-        {usage?.checked_at && (
+        {checkedLabel && (
           <span className="tabular-nums">
-            检测于 {resetTimeFormat.format(new Date(usage.checked_at))}
+            检测于 {checkedLabel}
           </span>
         )}
       </div>

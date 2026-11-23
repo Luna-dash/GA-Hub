@@ -543,7 +543,10 @@ function ChatRetryPanel() {
     setCfg((current) => ({ ...current, ...patch }))
   }
 
+  const hasBlankNumber = Object.values(cfg).some(Number.isNaN)
+
   const save = async () => {
+    if (hasBlankNumber) return
     setSaving(true)
     setMsg('')
     try {
@@ -555,7 +558,7 @@ function ChatRetryPanel() {
         backoff_factor: Math.max(1, Math.min(10, Number(cfg.backoff_factor) || 2)),
         backoff_max_seconds: Math.max(0, Math.min(600, Number(cfg.backoff_max_seconds) || 0)),
         scheduled_backoff_base_seconds: Math.max(0, Math.min(600, Number(cfg.scheduled_backoff_base_seconds) || 0)),
-        scheduled_backoff_max_seconds: Math.max(0, Math.min(600, Number(cfg.scheduled_backoff_max_seconds ?? 600) || 600)),
+        scheduled_backoff_max_seconds: Math.max(0, Math.min(600, cfg.scheduled_backoff_max_seconds ?? 600)),
       })
       setCfg(saved)
       retryDirtyRef.current = false
@@ -589,7 +592,7 @@ function ChatRetryPanel() {
           <button
             type="button"
             onClick={save}
-            disabled={saving || isLoading}
+            disabled={saving || isLoading || hasBlankNumber}
             className="ga-btn-primary"
           >
             <Save className="h-3.5 w-3.5" aria-hidden="true" />
@@ -608,23 +611,23 @@ function ChatRetryPanel() {
                 type="number"
                 min={0}
                 max={5}
-                value={cfg.max_attempts}
-                onChange={(e) => updateCfg({ max_attempts: Number(e.target.value) })}
+                value={Number.isNaN(cfg.max_attempts) ? '' : (cfg.max_attempts)}
+                onChange={(e) => updateCfg({ max_attempts: e.currentTarget.valueAsNumber })}
                 disabled={isLoading || saving || !cfg.enabled}
                 className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
               />
             </label>
             <label className="block text-xs text-ink-faint">
               <span>基础间隔（秒）</span>
-              <input type="number" min={0} max={600} step="1" value={cfg.backoff_base_seconds ?? 2} onChange={(e) => updateCfg({ backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+              <input type="number" min={0} max={600} step="1" value={Number.isNaN(cfg.backoff_base_seconds) ? '' : (cfg.backoff_base_seconds ?? 2)} onChange={(e) => updateCfg({ backoff_base_seconds: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
             </label>
             <label className="block text-xs text-ink-faint">
               <span>退避倍率</span>
-              <input type="number" min={1} max={10} step="0.5" value={cfg.backoff_factor ?? 2} onChange={(e) => updateCfg({ backoff_factor: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+              <input type="number" min={1} max={10} step="0.5" value={Number.isNaN(cfg.backoff_factor) ? '' : (cfg.backoff_factor ?? 2)} onChange={(e) => updateCfg({ backoff_factor: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
             </label>
             <label className="block text-xs text-ink-faint">
               <span>最长等待（秒）</span>
-              <input type="number" min={0} max={600} step="1" value={cfg.backoff_max_seconds ?? 60} onChange={(e) => updateCfg({ backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+              <input type="number" min={0} max={600} step="1" value={Number.isNaN(cfg.backoff_max_seconds) ? '' : (cfg.backoff_max_seconds ?? 60)} onChange={(e) => updateCfg({ backoff_max_seconds: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
             </label>
           </div>
         </div>
@@ -638,19 +641,19 @@ function ChatRetryPanel() {
                 type="number"
                 min={0}
                 max={10}
-                value={cfg.scheduled_max_attempts ?? 6}
-                onChange={(e) => updateCfg({ scheduled_max_attempts: Number(e.target.value) })}
+                value={Number.isNaN(cfg.scheduled_max_attempts) ? '' : (cfg.scheduled_max_attempts ?? 6)}
+                onChange={(e) => updateCfg({ scheduled_max_attempts: e.currentTarget.valueAsNumber })}
                 disabled={isLoading || saving || !cfg.enabled}
                 className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
               />
             </label>
             <label className="block text-xs text-ink-faint" title="无人值守任务的起始重试间隔">
               <span>基础间隔（秒）</span>
-              <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_base_seconds ?? 5} onChange={(e) => updateCfg({ scheduled_backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+              <input type="number" min={0} max={600} step="1" value={Number.isNaN(cfg.scheduled_backoff_base_seconds) ? '' : (cfg.scheduled_backoff_base_seconds ?? 5)} onChange={(e) => updateCfg({ scheduled_backoff_base_seconds: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
             </label>
             <label className="block text-xs text-ink-faint col-span-2 sm:col-span-1" title="无人值守任务的单次最长等待，默认 10 分钟">
               <span>最长等待（秒）</span>
-              <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_max_seconds ?? 600} onChange={(e) => updateCfg({ scheduled_backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+              <input type="number" min={0} max={600} step="1" value={Number.isNaN(cfg.scheduled_backoff_max_seconds) ? '' : (cfg.scheduled_backoff_max_seconds ?? 600)} onChange={(e) => updateCfg({ scheduled_backoff_max_seconds: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
             </label>
           </div>
         </div>

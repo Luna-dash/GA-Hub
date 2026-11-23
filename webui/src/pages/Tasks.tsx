@@ -383,7 +383,10 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
     }
     setSaving(true)
     try {
-      await api.upsertTaskSchedule({ ...s, type })
+      await api.upsertTaskSchedule({
+        ...s, type,
+        interval_minutes: Number.isNaN(s.interval_minutes) ? undefined : s.interval_minutes,
+      })
       qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
       onClose()
     } catch (e: any) {
@@ -415,8 +418,8 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
       )}
       {s.type === 'interval' && (
         <Field label="间隔分钟">
-          <input type="number" min={1} value={s.interval_minutes ?? 60}
-            onChange={(e) => setS({ ...s, interval_minutes: +e.target.value })} className={inp} />
+          <input type="number" min={1} value={Number.isNaN(s.interval_minutes) ? '' : s.interval_minutes ?? 60}
+            onChange={(e) => setS({ ...s, interval_minutes: e.currentTarget.valueAsNumber })} className={inp} />
         </Field>
       )}
       <Field label="任务 Prompt">

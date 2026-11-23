@@ -429,7 +429,11 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
     }
     setSaving(true)
     try {
-      await api.upsertSchedule({ ...s, type })
+      await api.upsertSchedule({
+        ...s, type,
+        interval_minutes: Number.isNaN(s.interval_minutes) ? undefined : s.interval_minutes,
+        idle_minutes: Number.isNaN(s.idle_minutes) ? undefined : s.idle_minutes,
+      })
       void qc.invalidateQueries({ queryKey: queryKeys.schedules })
       onClose()
     } catch (e: any) {
@@ -456,8 +460,8 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
         </Field>
         {s.type === 'idle' && (
           <Field label="空闲分钟">
-            <input type="number" min={1} value={s.idle_minutes ?? 30}
-                   onChange={(e) => setS({ ...s, idle_minutes: +e.target.value })} className={inp} />
+            <input type="number" min={1} value={Number.isNaN(s.idle_minutes) ? '' : s.idle_minutes ?? 30}
+                   onChange={(e) => setS({ ...s, idle_minutes: e.currentTarget.valueAsNumber })} className={inp} />
           </Field>
         )}
         {s.type === 'cron' && (
@@ -468,8 +472,8 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
         )}
         {s.type === 'interval' && (
           <Field label="间隔分钟">
-            <input type="number" min={1} value={s.interval_minutes ?? 60}
-                   onChange={(e) => setS({ ...s, interval_minutes: +e.target.value })} className={inp} />
+            <input type="number" min={1} value={Number.isNaN(s.interval_minutes) ? '' : s.interval_minutes ?? 60}
+                   onChange={(e) => setS({ ...s, interval_minutes: e.currentTarget.valueAsNumber })} className={inp} />
           </Field>
         )}
         <Field label="触发 Prompt（留空使用默认 [AUTO] 提示）">
