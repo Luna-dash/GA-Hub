@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { api } from '@/api/client'
 import type { TaskRun } from '@/api/types'
 import { queryKeys } from '@/queries/queryKeys'
 import { dialog } from '@/stores/dialogStore'
@@ -13,6 +14,7 @@ vi.mock('@/api/client', () => ({
   api: {
     taskSchedules: vi.fn(),
     taskRuns: vi.fn(),
+    taskRunResult: vi.fn(),
     triggerTaskSchedule: vi.fn(),
     upsertTaskSchedule: vi.fn(),
     deleteTaskSchedule: vi.fn(),
@@ -43,7 +45,7 @@ function setRuns(count: number) {
   const runs: TaskRun[] = Array.from({ length: count }, (_, i) => ({
     id: `run-${i + 1}`, task_id: 'task-1', task_name: `Run ${i + 1}`,
     fired_at: 1700000000 - i * 60, finished_at: 0, stream_id: '', status: 'done',
-    prompt_preview: '', result_preview: '', note: '',
+    prompt_preview: '', result_preview: '', note: '', has_result: false,
   }))
   client.setQueryData(queryKeys.tasks.runs, { runs })
 }
@@ -148,7 +150,8 @@ it('renders Chinese status labels and surfaces errors when schedule actions fail
   alertSpy.mockRestore()
 })
 
-it('strips legacy Turn-1 protocol tags while preserving clean conclusion previews', () => {
+it('hides legacy progress and loads the full conclusion only on demand', async () => {
+  vi.mocked(api.taskRunResult).mockResolvedValue({ result_text: '**归档通过**\n\n' + '完整结论。'.repeat(130) + '正文末尾' })
   client.setQueryData(queryKeys.tasks.runs, {
     runs: [
       {
@@ -161,15 +164,25 @@ it('strips legacy Turn-1 protocol tags while preserving clean conclusion preview
         id: 'clean-2', task_id: 'task-1', task_name: '归档任务', fired_at: 1700000100,
         finished_at: 0, stream_id: 's2', status: 'done', prompt_preview: '',
         result_preview: '归档完成：已压缩 3 个归档包，0 项错误。',
-        note: '',
+        has_result: true, note: '',
       },
     ],
   })
   act(() => root.render(<QueryClientProvider client={client}><Tasks /></QueryClientProvider>))
   const resultCells = Array.from(host.querySelectorAll('tbody tr')).map((tr) => tr.children[3]?.textContent?.trim())
-  expect(resultCells[0]).toContain('开始读取配置并跑 dry-run。')
+  expect(resultCells[0]).not.toContain('开始读取配置并跑 dry-run。')
+  expect(vi.mocked(api.taskRunResult)).not.toHaveBeenCalled()
   expect(resultCells[0]).not.toContain('LLM Running')
   expect(resultCells[0]).not.toContain('<summary>')
   expect(resultCells[0]).not.toContain('code_run')
   expect(resultCells[1]).toContain('归档完成：已压缩 3 个归档包，0 项错误。')
+  const details = Array.from(host.querySelectorAll('button')).filter((b) => b.textContent?.includes('详情'))
+  expect(details).toHaveLength(1)
+  await act(async () => { details[0].click() })
+  await vi.waitFor(async () => {
+    await act(async () => {})
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('正文末尾')
+  })
+  expect(api.taskRunResult).toHaveBeenCalledWith('clean-2')
+  expect(document.querySelector('[role=dialog] strong')?.textContent).toBe('归档通过')
 })

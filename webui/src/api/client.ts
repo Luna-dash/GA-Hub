@@ -49,6 +49,7 @@ import type {
   SessionMessagesResponse,
   SessionRuntime,
   TaskRunListResponse,
+  TaskRunResultResponse,
   TaskSchedule,
   TaskScheduleListResponse,
   TaskMutationResponse,
@@ -374,6 +375,7 @@ export const api = {
   deleteTaskSchedule: (id: string) => http<TaskMutationResponse>('DELETE', `/api/tasks/schedules/${id}`),
   triggerTaskSchedule: (id: string) => http<TaskTriggerResponse>('POST', `/api/tasks/schedules/${id}/trigger`),
   taskRuns: (limit = 100) => http<TaskRunListResponse>('GET', `/api/tasks/runs?limit=${limit}`),
+  taskRunResult: (id: string) => http<TaskRunResultResponse>('GET', `/api/tasks/runs/${encodeURIComponent(id)}/result`),
 
   // ── upload ───────────────────────────────────────────
   upload: async (file: File, init?: Pick<HttpOptions, 'signal' | 'timeoutMs'>): Promise<UploadResult> => {

@@ -8,11 +8,13 @@ watcher semantics.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -63,9 +65,11 @@ class TaskRun:
     prompt_preview: str = ""
     result_preview: str = ""
     note: str = ""
+    has_result: bool = False
+    result_text: str = ""
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {key: value for key, value in vars(self).items() if key != "result_text"}
 
 
 class TaskScheduler(SchedulerDomainBase):
@@ -99,6 +103,26 @@ class TaskScheduler(SchedulerDomainBase):
     def _runs_file(self) -> str:
         return str(_paths.tasks_runs_file())
 
+    def _result_file(self, run_id: str) -> Path:
+        return Path(self._runs_file()).with_suffix("") / f"{run_id}.txt"
+
+    def _record_run(self, run: TaskRun) -> None:
+        if run.result_text:
+            path = self._result_file(run.id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(run.result_text, encoding="utf-8", newline="")
+            os.replace(tmp, path)
+        super()._record_run(run)
+
+    def get_run_result(self, run_id: str) -> str | None:
+        if not re.fullmatch(r"[a-f0-9]{32}", run_id):
+            return None
+        try:
+            return self._result_file(run_id).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+
     def _new_runtime(self) -> BackgroundScheduler:
         return BackgroundScheduler(timezone=self._tz) if self._tz else BackgroundScheduler()
 
@@ -127,25 +151,24 @@ class TaskScheduler(SchedulerDomainBase):
             return True
         return False
 
+    def _run_finished(self, handle: Any) -> bool:
+        return getattr(handle, "run_finished", handle.finished)
+
     def _finalize_run(self, s: TaskSchedule, run: TaskRun, handle: Any, context: Any) -> None:
-        raw_final = (
-            getattr(handle, "run_final_text", "")
-            or getattr(handle, "final_text", "")
-            or getattr(handle, "last_chunk", "")
-            or ""
-        )
-        raw_partial = getattr(handle, "last_chunk", "") or ""
-        if handle.finished:
-            run.status = "done"
-            run.finished_at = int(time.time())
-            run.result_preview = extract_task_result_preview(raw_final)
-        else:
-            run.finished_at = int(time.time())
-            run.result_preview = extract_task_result_preview(raw_partial)
+        run.finished_at = int(time.time())
+        if self._run_finished(handle):
+            outcome = getattr(handle, "run_outcome", "completed")
+            run.status = {"completed": "done", "cancelled": "cancelled"}.get(outcome, "error")
+            if run.status == "done":
+                # An empty final retry is meaningful: never fall back to an earlier attempt.
+                raw = getattr(handle, "run_final_text", getattr(handle, "final_text", ""))
+                run.result_text = extract_task_result(raw)
+                run.has_result = bool(run.result_text)
+                run.result_preview = run.result_text[:500]
 
         def commit_done() -> None:
             self._record_run(run)
-            bus.publish(TASK_DONE, run.to_dict())
+            bus.publish(TASK_ERROR if run.status == "error" else TASK_DONE, run.to_dict())
 
         self._watchers.run_if_active(commit_done)
 
@@ -172,7 +195,10 @@ _FINAL_MARKER_RE = re.compile(
     r"\n*(?:`{3,5}[^\r\n]*\r?\n?)?\[Info\]\s*Final response to user\.\s*(?:\r?\n?`{3,5})?\s*$",
     re.IGNORECASE,
 )
-_TURN_MARKER_RE = re.compile(r"(?:\*\*)?LLM Running \(Turn \d+\) \.\.\.(?:\*\*)?", re.IGNORECASE)
+_TURN_MARKER_RE = re.compile(
+    r"^[ \t]*(?:\*\*)?(?:LLM Running \(Turn \d+\)|Turn \d+) \.\.\.(?:\*\*)?[ \t]*\r?$",
+    re.IGNORECASE | re.MULTILINE,
+)
 _META_TAG_RE = re.compile(r"<(summary|thinking|think|analysis)>", re.IGNORECASE)
 _TOOL_HEADER_RE = re.compile(r"🛠️?\s*Tool\s*[:：]\s*`([\w.-]+)`(?:[ \t]*📥[ \t]*args:)?", re.IGNORECASE)
 _COMPACT_TOOL_RE = re.compile(r"🛠️?\s*([\w.-]+)\s*\(")
@@ -282,9 +308,8 @@ def _split_top_level_turns(source: str) -> list[str]:
             pos = m_meta.end() + close.end() if close else n
             continue
         pos += 1
-    tail = source[cur_start:].strip()
-    if tail:
-        turns.append(tail)
+    # An empty final turn must not resurrect the previous turn’s progress.
+    turns.append(source[cur_start:].strip())
     return turns
 
 
@@ -375,36 +400,13 @@ def _extract_turn_conclusion(turn_text: str) -> tuple[str, list[str]]:
     return raw_conclusion, summaries
 
 
-def extract_task_result_preview(raw: str, *, limit: int = 500) -> str:
-    """Extract the final conclusion preview from a GA multi-turn transcript.
-
-    Prefers the last turn's conclusion prose after any tool dumps; when no turn
-    carries trailing prose (e.g. tool-only/interrupted runs), falls back to the
-    last ``<summary>`` instead of slicing Turn 1's opening process summary.
-    """
-    text = _FINAL_MARKER_RE.sub("", (raw or "")).strip()
-    if not text:
-        return ""
+def extract_task_result(raw: str) -> str:
+    """Identify final answer prose, not earlier turns, tool output or progress summaries."""
+    raw = (raw or "").strip()
+    marker = _FINAL_MARKER_RE.search(raw)
+    text = raw[:marker.start()].strip() if marker else raw
     turns = _split_top_level_turns(text)
-    if not turns:
-        turns = [text]
-
-    parsed = [_extract_turn_conclusion(turn) for turn in turns]
-    chosen = ""
-    for conclusion, _summaries in reversed(parsed):
-        if conclusion:
-            chosen = conclusion
-            break
-    if not chosen:
-        all_summaries = [s for _c, sums in parsed for s in sums if s]
-        if all_summaries:
-            chosen = all_summaries[-1]
-    if not chosen:
-        cleaned = _TURN_MARKER_RE.sub(" ", text)
-        cleaned = _THINKING_BLOCK_RE.sub("", cleaned)
-        cleaned = _SUMMARY_BLOCK_RE.sub(" ", cleaned)
-        cleaned = _OPEN_SUMMARY_RE.sub("", cleaned)
-        chosen = cleaned.strip()
-
-    chosen = re.sub(r"\n{3,}", "\n\n", chosen).strip()
-    return chosen[:limit]
+    # The caller already verified successful logical completion. The legacy
+    # marker is optional; it is not emitted by current engines.
+    conclusion, _ = _extract_turn_conclusion(turns[-1] if turns else text)
+    return conclusion

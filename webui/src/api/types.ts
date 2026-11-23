@@ -101,6 +101,7 @@ export type TaskScheduleListResponse = ApiSchemas['TaskScheduleListResp']
 export type TaskMutationResponse = ApiSchemas['TaskMutationResp']
 export type TaskTriggerResponse = ApiSchemas['TaskTriggerResp']
 export type TaskRun = ApiSchemas['TaskRunResp']
+export type TaskRunResultResponse = ApiSchemas['TaskRunResultResp']
 export type TaskRunListResponse = ApiSchemas['TaskRunListResp']
 
 // ── Upload ────────────────────────────────────────────────

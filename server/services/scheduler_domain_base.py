@@ -135,6 +135,9 @@ class SchedulerDomainBase:
     def _fired_payload(self, s: Any, run: Any, handle: Any, now: int) -> dict:
         raise NotImplementedError
 
+    def _run_finished(self, handle: Any) -> bool:
+        return handle.finished
+
     def _watch_deadline_reached(self, run: Any) -> bool:
         raise NotImplementedError
 
@@ -343,7 +346,7 @@ class SchedulerDomainBase:
             # Register before releasing admission so shutdown cannot miss it.
             def _watch(stop_event: threading.Event) -> None:
                 try:
-                    while not handle.finished:
+                    while not self._run_finished(handle):
                         if stop_event.wait(2):
                             return
                         if self._watch_deadline_reached(run):

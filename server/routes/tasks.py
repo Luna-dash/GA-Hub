@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from ..schemas import (
     TaskMutationResp,
     TaskRunListResp,
+    TaskRunResultResp,
     TaskScheduleListResp,
     TaskScheduleResp,
     TaskScheduleUpsert,
@@ -75,3 +76,11 @@ async def list_runs(
 ):
     runs = await asyncio.to_thread(lambda: svc(lifecycle).list_runs(limit))
     return {"runs": runs}
+
+
+@router.get("/runs/{run_id}/result", response_model=TaskRunResultResp)
+async def get_run_result(lifecycle: SessionDomain, run_id: str):
+    result = await asyncio.to_thread(lambda: svc(lifecycle).get_run_result(run_id))
+    if result is None:
+        raise HTTPException(404, "task run result not found")
+    return {"result_text": result}

@@ -315,8 +315,8 @@ def test_upsert_rejects_invalid_cron_before_persisting(tmp_path):
     assert all(row["name"] != "bad" for row in sched.list())
 
 
-def test_task_finalize_run_extracts_final_conclusion_over_opening_summary() -> None:
-    from server.services.task_scheduler import extract_task_result_preview
+def test_task_finalize_run_extracts_final_conclusion_over_opening_summary(tmp_path) -> None:
+    from server.services.task_scheduler import extract_task_result
 
     raw = (
         "\n**LLM Running (Turn 1) ...**\n\n"
@@ -328,11 +328,16 @@ def test_task_finalize_run_extracts_final_conclusion_over_opening_summary() -> N
         "### 最终结论\n归档已核验完成，释放 12 MB。\n"
         "````\n[Info] Final response to user.\n````\n"
     )
-    preview = extract_task_result_preview(raw)
+    preview = extract_task_result(raw)
     assert "开头步骤" not in preview
     assert "LLM Running" not in preview
     assert "### 最终结论" in preview
     assert "归档已核验完成，释放 12 MB。" in preview
+
+    short_turns = "\nTurn 1 ...\n\n正在核验\n\nTurn 2 ...\n\n**核验完成**"
+    assert extract_task_result(short_turns) == "**核验完成**"
+    assert extract_task_result(short_turns + "\n\n**Turn 3 ...**\n\n") == ""
+    assert extract_task_result("说明：Turn 4 ... 不是轮次标题。") == "说明：Turn 4 ... 不是轮次标题。"
 
     dangling_raw = (
         "**LLM Running (Turn 1) ...**\n"
@@ -342,22 +347,35 @@ def test_task_finalize_run_extracts_final_conclusion_over_opening_summary() -> N
         "<summary>第 2 步：已找出异常并准备重试。</summary>\n"
         "🛠️ Tool: `update_plan`  📥 args:\n````text\n{}\n````\n"
     )
-    assert extract_task_result_preview(dangling_raw) == "第 2 步：已找出异常并准备重试。"
+    assert extract_task_result(dangling_raw) == ""
 
     handle = _Handle(finished=True)
     handle.final_text = "**LLM Running (Turn 1) ...**\n<summary>中间截断</summary>\n[!!! Response truncated: max_tokens"
-    handle.run_final_text = raw
+    heading = "### 最终结论\n归档已核验完成，释放 12 MB。"
+    expected = heading + "\n\n" + "核验通过。" * 150 + "\n\n**全部完成**"
+    handle.run_final_text = raw[:raw.index(heading)] + expected  # Current engines omit the old final marker.
     service = _task_scheduler(handle)
-    recorded = []
+    with mock.patch.object(service, "_runs_file", return_value=str(tmp_path / "runs.jsonl")):
+        _assert_task_result_saved(service, expected)
+
+
+def _assert_task_result_saved(service, expected):
     with (
         mock.patch.object(service, "_persist"),
-        mock.patch.object(service, "_record_run", side_effect=recorded.append),
         mock.patch("server.services.task_scheduler.bus.publish"),
     ):
-        service.trigger_now("task-1")
-        deadline = time.monotonic() + 1
-        while not recorded and time.monotonic() < deadline:
+        run_id = service.trigger_now("task-1")["run_id"]
+        deadline = time.monotonic() + 2
+        rows = service.list_runs()
+        while not rows and time.monotonic() < deadline:
             time.sleep(0.01)
-    assert len(recorded) == 1
-    assert "归档已核验完成，释放 12 MB。" in recorded[0].result_preview
-    assert "开头步骤" not in recorded[0].result_preview
+            rows = service.list_runs()
+    [row] = rows
+    assert row["id"] == run_id
+    assert row["status"] == "done"
+    assert row["has_result"] is True
+    assert row["result_preview"] == expected[:500]
+    assert "result_text" not in row
+    assert service.get_run_result(run_id) == expected
+    assert service.get_run_result("0" * 32) is None
+    assert service.get_run_result("../runs") is None

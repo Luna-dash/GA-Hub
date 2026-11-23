@@ -5010,6 +5010,48 @@
         }
       }
     },
+    "/api/tasks/runs/{run_id}/result": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Get Run Result",
+        "operationId": "get_run_result_api_tasks_runs__run_id__result_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskRunResultResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tokens/stats": {
       "get": {
         "tags": [
@@ -14194,6 +14236,11 @@
           "note": {
             "type": "string",
             "title": "Note"
+          },
+          "has_result": {
+            "type": "boolean",
+            "title": "Has Result",
+            "default": false
           }
         },
         "type": "object",
@@ -14210,6 +14257,19 @@
           "note"
         ],
         "title": "TaskRunResp"
+      },
+      "TaskRunResultResp": {
+        "properties": {
+          "result_text": {
+            "type": "string",
+            "title": "Result Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "result_text"
+        ],
+        "title": "TaskRunResultResp"
       },
       "TaskScheduleListResp": {
         "properties": {

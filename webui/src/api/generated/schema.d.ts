@@ -2219,6 +2219,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/runs/{run_id}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run Result */
+        get: operations["get_run_result_api_tasks_runs__run_id__result_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tokens/stats": {
         parameters: {
             query?: never;
@@ -5555,6 +5572,16 @@ export interface components {
             result_preview: string;
             /** Note */
             note: string;
+            /**
+             * Has Result
+             * @default false
+             */
+            has_result: boolean;
+        };
+        /** TaskRunResultResp */
+        TaskRunResultResp: {
+            /** Result Text */
+            result_text: string;
         };
         /** TaskScheduleListResp */
         TaskScheduleListResp: {
@@ -10023,6 +10050,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskRunListResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_result_api_tasks_runs__run_id__result_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskRunResultResp"];
                 };
             };
             /** @description Validation Error */

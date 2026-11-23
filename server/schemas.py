@@ -669,6 +669,11 @@ class TaskRunResp(BaseModel):
     prompt_preview: str
     result_preview: str
     note: str
+    has_result: bool = False
+
+
+class TaskRunResultResp(BaseModel):
+    result_text: str
 
 
 class TaskRunListResp(BaseModel):

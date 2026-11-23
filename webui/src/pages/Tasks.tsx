@@ -12,7 +12,7 @@ import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronExpressionParser } from 'cron-parser'
 import { CronCardLine, CronPreview } from '@/components/CronPreview'
-import { parseAssistantTranscript, stripAssistantTranscriptTags } from '@/utils/assistantTranscript'
+import { MarkdownView } from '@/components/MarkdownView'
 import { Calendar, ChevronLeft, ChevronRight, Clock, CloseIconButton, History, Pencil, Play, Plus, Power, Save, Trash2 } from '@/components/ActionIcons'
 
 const RUNS_PER_PAGE = 10
@@ -38,6 +38,7 @@ export default function Tasks() {
     }
   })
   const [editor, setEditor] = useState<Partial<TaskSchedule> | null>(null)
+  const [selectedRun, setSelectedRun] = useState<TaskRun | null>(null)
   const [runPage, setRunPage] = useState(0)
 
   const schedules = schData?.schedules ?? []
@@ -168,7 +169,7 @@ export default function Tasks() {
                 </thead>
                 <tbody className="divide-y divide-line/35">
                   {pageRuns.map((r: TaskRun) => {
-                    const preview = formatTaskResultPreview(r.result_preview, r.prompt_preview)
+                    const preview = r.has_result ? r.result_preview : '未记录最终结论'
                     const inlinePreview = preview.replace(/^[#>*\-\s]+/gm, '').replace(/\s+/g, ' ').trim()
                     return (
                     <tr key={r.id} className="align-middle transition-colors hover:bg-bg-soft/55">
@@ -180,6 +181,11 @@ export default function Tasks() {
                           <span className="truncate" title={preview || undefined}>
                             {inlinePreview || preview || '—'}
                           </span>
+                          {r.has_result && (
+                            <button type="button" className="shrink-0 rounded border border-line px-2 py-0.5 text-[11px] text-ink hover:bg-bg-soft" onClick={() => setSelectedRun(r)}>
+                              详情
+                            </button>
+                          )}
                           {r.stream_id && (
                             <span className="shrink-0 rounded bg-bg-soft px-1.5 py-0.5 font-mono text-[10px] leading-none text-ink-faint">
                               {r.stream_id}
@@ -199,6 +205,7 @@ export default function Tasks() {
       </div>
 
       {editor && <TaskDialog initial={editor} onClose={() => setEditor(null)} />}
+      {selectedRun && <TaskResultDialog run={selectedRun} onClose={() => setSelectedRun(null)} />}
     </PageShell>
   )
 }
@@ -433,17 +440,30 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
   )
 }
 
-function formatTaskResultPreview(raw?: string, fallbackPrompt?: string): string {
-  const source = (raw || '').trim()
-  if (!source) return (fallbackPrompt || '').trim()
-  const hasProtocol = /LLM Running \(Turn \d+\)|<\/?(?:summary|thinking|think|analysis)>|🛠️/i.test(source)
-  if (!hasProtocol) return source
-  const transcript = parseAssistantTranscript(source)
-  const finalBody = stripAssistantTranscriptTags(transcript.finalBody || '')
-  if (finalBody && !/^🛠️/.test(finalBody)) return finalBody
-  const lastSummary = [...transcript.turns].reverse().find((turn) => turn.summary)?.summary
-  if (lastSummary) return lastSummary
-  return stripAssistantTranscriptTags(source) || source
+function TaskResultDialog({ run, onClose }: { run: TaskRun; onClose: () => void }) {
+  const result = useQuery({
+    queryKey: ['tasks.runResult', run.id],
+    queryFn: () => api.taskRunResult(run.id),
+    staleTime: Infinity,
+  })
+  return (
+    <ModalOverlay onClose={onClose} labelledBy="task-result-title" panelClassName="flex flex-col w-[48rem] max-w-[92vw] max-h-[85vh] p-5">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 id="task-result-title" className="text-base font-semibold text-ink">运行结论</h2>
+          <p className="text-xs text-ink-muted">{run.task_name || run.task_id} · {formatRelativeTime(run.fired_at)}</p>
+        </div>
+        <button type="button" className="shrink-0 rounded border border-line px-2 py-1 text-xs text-ink" onClick={onClose}>关闭</button>
+      </div>
+      <div className="min-h-0 min-w-0 overflow-auto text-sm text-ink">
+        {result.isPending ? <p role="status">正在加载结论…</p> : result.isError ? (
+          <div role="alert">
+            无法加载完整结论。<button type="button" className="ml-2 underline" onClick={() => { void result.refetch() }}>重试</button>
+          </div>
+        ) : <MarkdownView>{result.data.result_text}</MarkdownView>}
+      </div>
+    </ModalOverlay>
+  )
 }
 
 const TASK_RUN_STATUS_LABELS: Record<string, string> = {
@@ -451,6 +471,8 @@ const TASK_RUN_STATUS_LABELS: Record<string, string> = {
   running: '运行中',
   error: '失败',
   failed: '失败',
+  cancelled: '已取消',
+  timeout: '超时',
 }
 
 function StatusBadge({ status }: { status: string }) {
