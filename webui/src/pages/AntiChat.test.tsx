@@ -1170,3 +1170,56 @@ it('shows cooldown badge on profiles and offers account switch CTA when submit h
     vi.unstubAllGlobals()
   }
 })
+
+it('shows iconic right-side transcript navigation dock in AntiChat when scrolled away from bottom', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const session = { id: 's-nav', title: 'Nav test', project: 'demo', workspace: 'D:/demo' }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
+    if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path === '/api/anti/sessions') return reply([session])
+    if (path === '/api/anti/sessions/s-nav/runs') {
+      return reply([
+        { id: 'r1', operation: 'op1', prompt: 'First turn', status: 'success', answer: 'First answer', mode: 'plan', permission_mode: 'approval-required' },
+        { id: 'r2', operation: 'op2', prompt: 'Second turn', status: 'success', answer: 'Second answer', mode: 'plan', permission_mode: 'approval-required' },
+      ])
+    }
+    if (path.endsWith('/events')) return reply([])
+    if (path.startsWith('/api/file-transfer')) return reply([])
+    return reply({})
+  }))
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.textContent).toContain('Second turn')
+    })
+    expect(host.querySelector('[aria-label="对话位置导航"]')).toBeNull()
+    expect(host.querySelector('[aria-label="多轮会话选择器"]')).not.toBeNull()
+    expect(host.querySelectorAll('[aria-label="多轮会话选择器"] button')).toHaveLength(2)
+    const scroller = host.querySelector('[data-anti-chat-scroll]') as HTMLDivElement
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 2000 },
+      clientHeight: { configurable: true, value: 500 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    })
+    await act(async () => { scroller.dispatchEvent(new Event('scroll')) })
+    expect(host.querySelector('[aria-label="对话位置导航"]')).not.toBeNull()
+    expect(host.querySelector('button[aria-label="跳到底部"]')?.textContent?.trim()).toBe('')
+    expect(host.querySelector('button[aria-label="上一节"]')?.textContent?.trim()).toBe('')
+    expect(host.querySelector('button[aria-label="下一节"]')?.textContent?.trim()).toBe('')
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})

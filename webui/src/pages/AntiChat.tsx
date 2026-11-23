@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type { TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -6,6 +6,8 @@ import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
 import { Brain, Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, Slash, UserCheck } from 'lucide-react'
 import { CloseIconButton, RotateCw } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/components/ChatLayout'
+import { ConversationTurnMinimap } from '@/components/ConversationTurnMinimap'
+import { TranscriptNavDock } from '@/components/TranscriptNavDock'
 import { bubbleTone } from '@/components/bubbleTone'
 import { Z_LAYERS } from '@/config/zLayers'
 import { ImagePasteInput } from '@/components/ImagePasteInput'
@@ -385,6 +387,10 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
   } as CSSProperties
   const transcript = useRef<HTMLDivElement>(null)
   const followTranscript = useRef(true)
+  const [stuckBottom, setStuckBottom] = useState(true)
+  const [activeTurn, setActiveTurn] = useState(0)
+  const [unreadRuns, setUnreadRuns] = useState(0)
+  const seenRunCountRef = useRef(0)
   const models = useQuery({
     queryKey: ['anti-models', profileId],
     enabled: Boolean(profileId),
@@ -494,10 +500,105 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
     requestAnimationFrame(() => composerWrapRef.current?.querySelector('textarea')?.focus())
   }
 
+  const runs = history.data ?? []
+
+  const syncTranscriptNav = useCallback(() => {
+    const el = transcript.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 64
+    followTranscript.current = atBottom
+    setStuckBottom(atBottom)
+    if (atBottom) {
+      setUnreadRuns(0)
+      seenRunCountRef.current = runs.length
+    }
+    const nodes = el.querySelectorAll<HTMLElement>('[data-anti-turn]')
+    if (nodes.length === 0) {
+      setActiveTurn(0)
+      return
+    }
+    const anchorY = el.scrollTop + 48
+    let currentTurn = 0
+    nodes.forEach((node, idx) => {
+      if (node.offsetTop <= anchorY) currentTurn = idx
+    })
+    setActiveTurn(currentTurn)
+  }, [runs.length])
+
+  const jumpToBottom = useCallback(() => {
+    const el = transcript.current
+    if (!el) return
+    followTranscript.current = true
+    setStuckBottom(true)
+    setUnreadRuns(0)
+    seenRunCountRef.current = runs.length
+    setActiveTurn(Math.max(0, runs.length - 1))
+    if (typeof el.scrollTo === 'function') {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    } else {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [runs.length])
+
+  const jumpToTurnIndex = useCallback((targetIndex: number) => {
+    const el = transcript.current
+    if (!el || runs.length === 0) return
+    const next = Math.max(0, Math.min(runs.length - 1, targetIndex))
+    const target = el.querySelector<HTMLElement>(`[data-anti-turn="${next}"]`)
+    if (!target) return
+    followTranscript.current = false
+    setStuckBottom(false)
+    setActiveTurn(next)
+    const top = Math.max(0, target.offsetTop - 16)
+    if (typeof el.scrollTo === 'function') {
+      el.scrollTo({ top, behavior: 'smooth' })
+    } else {
+      el.scrollTop = top
+    }
+  }, [runs.length])
+
+  const jumpToTurn = useCallback((delta: -1 | 1) => {
+    jumpToTurnIndex(activeTurn + delta)
+  }, [activeTurn, jumpToTurnIndex])
+
+  const minimapTurns = useMemo(
+    () => runs.map((run, idx) => {
+      const raw = (run.prompt || '').replace(/\s+/g, ' ').trim()
+      const snippet = raw.length > 120 ? `${raw.slice(0, 119)}…` : raw
+      return {
+        id: run.id,
+        index: idx + 1,
+        label: snippet || (run.attachments?.length ? '（附件消息）' : `第 ${idx + 1} 轮`),
+      }
+    }),
+    [runs],
+  )
+
+  const initializedRunsRef = useRef(false)
   const scrollToLatest = useCallback(() => {
-    if (transcript.current && followTranscript.current) transcript.current.scrollTop = transcript.current.scrollHeight
-  }, [])
-  useEffect(scrollToLatest, [history.data, scrollToLatest])
+    const el = transcript.current
+    if (!el || !history.isSuccess) return
+    if (!initializedRunsRef.current) {
+      initializedRunsRef.current = true
+      seenRunCountRef.current = runs.length
+      setUnreadRuns(0)
+      el.scrollTop = el.scrollHeight
+      followTranscript.current = true
+      setStuckBottom(true)
+      setActiveTurn(Math.max(0, runs.length - 1))
+      return
+    }
+    if (followTranscript.current) {
+      el.scrollTop = el.scrollHeight
+      seenRunCountRef.current = runs.length
+      setUnreadRuns(0)
+      setStuckBottom(true)
+      setActiveTurn(Math.max(0, runs.length - 1))
+    } else if (runs.length > seenRunCountRef.current) {
+      setUnreadRuns(runs.length - seenRunCountRef.current)
+    }
+  }, [history.isSuccess, runs.length])
+  useEffect(scrollToLatest, [history.isSuccess, runs.length, scrollToLatest])
   const submit = () => {
     const trimmedPrompt = prompt.trim()
     if (current || send.isPending || !history.isSuccess || (!trimmedPrompt && !attachments.length && !references.length)) return
@@ -546,21 +647,41 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
       <ChatUtilityDock fileTransfer={{
         canInsert: !current && !pending && !send.isPending && references.length < 8,
         onInsert: file => setReferences(old => old.some(item => item.path === file.path) ? old : [...old, file]),
-      }} />
-      <div ref={transcript} onScroll={event => {
-        const el = event.currentTarget
-        followTranscript.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-      }} className={chatTranscriptClass} data-anti-chat-scroll>
+      }}>
+        {runs.length > 0 && (
+          <aside className="pointer-events-auto flex min-h-0 w-14 flex-1 flex-col items-center gap-2" aria-label="对话功能区">
+            {runs.length > 1 && (
+              <div className="pointer-events-none flex min-h-0 w-full flex-1 items-center justify-center">
+                <ConversationTurnMinimap
+                  items={minimapTurns}
+                  activeIndex={activeTurn}
+                  onSelect={jumpToTurnIndex}
+                />
+              </div>
+            )}
+            <TranscriptNavDock
+              stuckBottom={stuckBottom}
+              canPrev={activeTurn > 0}
+              canNext={activeTurn < runs.length - 1}
+              unread={unreadRuns}
+              onJumpToBottom={jumpToBottom}
+              onPrev={() => jumpToTurn(-1)}
+              onNext={() => jumpToTurn(1)}
+            />
+          </aside>
+        )}
+      </ChatUtilityDock>
+      <div ref={transcript} onScroll={syncTranscriptNav} className={chatTranscriptClass} data-anti-chat-scroll>
         {!history.data?.length && !history.error && <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-ink-muted">
           <AntiIcon className="h-11 w-11 text-accent" />
           {history.isPending ? '正在加载会话…' : '想让 Anti 为这个项目做什么？'}
         </div>}
         <div className="space-y-5">
-          {history.data?.map(run => {
+          {history.data?.map((run, runIndex) => {
             const userAttachments = toUserAttachments(run.id, run.attachments)
             const liveRun = current?.id === run.id ? live.data : undefined
             const approval: AntiApprovalPrompt | null | undefined = liveRun?.approval ?? run.approval
-            return <article className="space-y-3" key={run.id}>
+            return <article className="space-y-3" key={run.id} data-anti-turn={runIndex}>
               <div className="flex flex-col items-start gap-2">
                 {userAttachments.length > 0 && <UserAttachments atts={userAttachments} />}
                 {run.prompt && (

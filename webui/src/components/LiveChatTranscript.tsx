@@ -23,7 +23,8 @@ import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { useChatPerformanceProbe } from '@/utils/useChatPerformanceProbe'
 import { MessageBubble } from './MessageBubble'
 import { ConversationCollapseProvider, ConversationCollapseControl } from './ConversationCollapse'
-import { ArrowDown, ArrowUp } from './ActionIcons'
+import { ConversationTurnMinimap } from './ConversationTurnMinimap'
+import { TranscriptNavDock } from './TranscriptNavDock'
 import { VirtualMessageList, type VirtualMessageListHandle } from './VirtualMessageList'
 import { Z_LAYERS } from '@/config/zLayers'
 
@@ -197,6 +198,19 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     )
     const turnMessageIndexesRef = useRef<number[]>(turnMessageIndexes)
     turnMessageIndexesRef.current = turnMessageIndexes
+    const minimapTurns = useMemo(
+      () => turnMessageIndexes.map((msgIdx, idx) => {
+        const msg = msgs[msgIdx]
+        const raw = (msg?.content || '').replace(/\s+/g, ' ').trim()
+        const snippet = raw.length > 120 ? `${raw.slice(0, 119)}…` : raw
+        return {
+          id: msg ? chatMessageKey(msg) : `turn-${idx}`,
+          index: idx + 1,
+          label: snippet || (msg?.attachments?.length ? '（图片或附件消息）' : `第 ${idx + 1} 轮`),
+        }
+      }),
+      [msgs, turnMessageIndexes],
+    )
 
     useChatPerformanceProbe({
       rootRef: scrollRef,
@@ -459,18 +473,25 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       el.scrollTop = el.scrollHeight
     }, [followTail])
 
+    const jumpToTurnIndex = (turnIndex: number) => {
+      const el = scrollRef.current
+      if (!el || turnCount === 0) return
+      const clamped = Math.max(0, Math.min(turnCount - 1, turnIndex))
+      navigationTargetRef.current = clamped
+      setActiveTurn(clamped)
+      const targetIndex = turnMessageIndexesRef.current[clamped]
+      if (targetIndex == null) return
+      commitNavigation(targetIndex, false)
+      virtualListRef.current?.scrollToIndex(targetIndex, { behavior: 'smooth', align: 'start' })
+    }
+
     const jumpToTurn = (direction: -1 | 1) => {
       const el = scrollRef.current
       if (!el || turnCount === 0) return
       const current = activeTurn < 0 ? (stuckBottom ? turnCount - 1 : 0) : activeTurn
       const next = Math.max(0, Math.min(turnCount - 1, current + direction))
       if (next === current) return
-      navigationTargetRef.current = next
-      setActiveTurn(next)
-      const targetIndex = turnMessageIndexesRef.current[next]
-      if (targetIndex == null) return
-      commitNavigation(targetIndex, false)
-      virtualListRef.current?.scrollToIndex(targetIndex, { behavior: 'smooth', align: 'start' })
+      jumpToTurnIndex(next)
     }
 
     const renderChatMessage = useCallback((message: ChatMsg, index: number) => {
@@ -591,12 +612,12 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           {(scheduledChats.length > 0 || turnCount > 0) && (
             <aside
               ref={utilityRailRef}
-              className="pointer-events-auto flex min-h-0 w-14 flex-1 flex-col gap-2"
+              className="pointer-events-auto flex min-h-0 w-14 flex-1 flex-col items-center gap-2"
               aria-label="对话功能区"
               onPointerDown={(event) => focusChatScrollFromUtilityRail(event, scrollRef.current)}
             >
               {scheduledChats.length > 0 && (
-                <div data-chat-wheel-independent className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5" aria-label="待发送定时消息">
+                <div data-chat-wheel-independent className="min-h-0 max-h-[42%] w-full space-y-1.5 overflow-y-auto overscroll-contain pr-0.5" aria-label="待发送定时消息">
                   {scheduledChats.map((task) => {
                     const countdown = formatCompactScheduleCountdown(task.scheduled_for, scheduleNow)
                     return (
@@ -628,38 +649,29 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
                 </div>
               )}
 
+              {turnCount > 1 && (
+                <div className="pointer-events-none flex min-h-0 w-full flex-1 items-center justify-center">
+                  <ConversationTurnMinimap
+                    items={minimapTurns}
+                    activeIndex={activeTurn >= 0 ? activeTurn : (stuckBottom ? Math.max(0, turnCount - 1) : 0)}
+                    onSelect={jumpToTurnIndex}
+                  />
+                </div>
+              )}
+
               {/* 底部导航组：仅在离开底部时渲染，保证 上节/下节 在可见期间
                   屏幕位置恒定（底部按钮置于其上方，不随 stuckBottom 翻转挤动），
                   到达最底后整组隐藏，避免角落误触。 */}
-              {turnCount > 0 && !stuckBottom && (
-                <div className="mt-auto flex shrink-0 flex-col gap-1.5 text-xs text-ink">
-                  <button
-                    onClick={jumpToBottom}
-                    className="inline-flex min-h-9 items-center justify-center gap-1 rounded-lg border border-line bg-bg-soft/95 px-2 py-1 leading-tight shadow-md backdrop-blur hover:bg-bg-card"
-                    title={unread > 0 ? `${unread} 条新消息，跳到最新` : '跳到最新消息'}
-                  >
-                    <ArrowDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    <span>{unread > 0 ? unread : '底部'}</span>
-                  </button>
-                  <button
-                    onClick={() => jumpToTurn(-1)}
-                    disabled={activeTurn <= 0}
-                    className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-line bg-bg-soft/95 px-2 shadow-md backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
-                    title="定位到上一轮问答"
-                  >
-                    <ArrowUp className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    <span>上节</span>
-                  </button>
-                  <button
-                    onClick={() => jumpToTurn(1)}
-                    disabled={activeTurn < 0 || activeTurn >= turnCount - 1}
-                    className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-line bg-bg-soft/95 px-2 shadow-md backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
-                    title="定位到下一轮问答"
-                  >
-                    <ArrowDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    <span>下节</span>
-                  </button>
-                </div>
+              {turnCount > 0 && (
+                <TranscriptNavDock
+                  stuckBottom={stuckBottom}
+                  canPrev={activeTurn > 0}
+                  canNext={activeTurn >= 0 && activeTurn < turnCount - 1}
+                  unread={unread}
+                  onJumpToBottom={jumpToBottom}
+                  onPrev={() => jumpToTurn(-1)}
+                  onNext={() => jumpToTurn(1)}
+                />
               )}
             </aside>
           )}

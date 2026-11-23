@@ -1,5 +1,5 @@
 import { QueryLoadState } from '@/components/QueryLoadState'
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
@@ -10,7 +10,9 @@ import { MessageContent } from '@/components/MessageContent'
 import { ReplyActions } from '@/components/ReplyActions'
 import { bubbleTone } from '@/components/bubbleTone'
 import { ConversationIndexRail } from '@/components/ConversationIndexRail'
-import { VirtualMessageList } from '@/components/VirtualMessageList'
+import { ConversationTurnMinimap } from '@/components/ConversationTurnMinimap'
+import { TranscriptNavDock } from '@/components/TranscriptNavDock'
+import { VirtualMessageList, type VirtualMessageListHandle } from '@/components/VirtualMessageList'
 import { parseAssistantTranscript, stripAssistantTranscriptTags } from '@/utils/assistantTranscript'
 import { previewText } from '@/utils/foldTurns'
 import { formatRelativeTime } from '@/utils/timeFormat'
@@ -30,9 +32,7 @@ import { queryKeys } from '@/queries/queryKeys'
 import { conversationCountsText, CONVERSATION_COUNTS_HELP } from '@/utils/conversationCounts'
 import {
   AlertTriangle,
-  ArrowDown,
   ArrowLeft,
-  ArrowUp,
   ChevronDisclosureIcon,
   ChevronLeft,
   ChevronRight,
@@ -147,7 +147,6 @@ export default function Conversations() {
     queryKey: conversationKeys.list(debouncedQ, page * limit, limit),
     queryFn: () => api.conversations(debouncedQ || undefined, page * limit, limit),
   })
-
   const { data, isLoading: listLoading } = listQuery
 
   const {
@@ -203,6 +202,87 @@ export default function Conversations() {
   const detailScrollPositionsRef = useRef<Record<string, number>>(
     readPageState('conversations.detailScroll', {}),
   )
+  const detailListRef = useRef<VirtualMessageListHandle>(null)
+  const [detailStuckBottom, setDetailStuckBottom] = useState(false)
+  const [detailActiveTurn, setDetailActiveTurn] = useState(0)
+
+  const rounds = useMemo(() => buildRounds(detail?.messages || []), [detail])
+  // Non-empty only for a real chat session: the backend excludes title-only
+  // archive rows from `bound_session_id`, so this drives the primary action.
+  const boundSessionId = detail?.bound_session_id || null
+
+  const navTargets = useMemo(() => {
+    if (!detail) return []
+    if (viewMode === 'round') {
+      return rounds.map((r, idx) => ({
+        id: `round:${r.index}`,
+        index: r.index,
+        scrollIndex: idx,
+        label: r.preview || `第 ${r.index} 轮`,
+      }))
+    }
+    const msgs = detail.messages || []
+    const userStarts = msgs
+      .map((m, idx) => ({ m, idx }))
+      .filter(({ m }) => (m.role || '').toLowerCase() === 'user')
+    if (userStarts.length > 0) {
+      return userStarts.map(({ m, idx }, turnIdx) => ({
+        id: `flat:${idx}`,
+        index: turnIdx + 1,
+        scrollIndex: idx,
+        label: previewText(cleanArchiveUserText(m.content || ''), 120) || `第 ${turnIdx + 1} 轮`,
+      }))
+    }
+    return msgs.map((m, idx) => ({
+      id: `flat:${idx}`,
+      index: idx + 1,
+      scrollIndex: idx,
+      label: previewText(m.content || '', 120) || `第 ${idx + 1} 条`,
+    }))
+  }, [detail, rounds, viewMode])
+
+  const syncDetailNav = useCallback(() => {
+    const el = detailScrollRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 64
+    setDetailStuckBottom(atBottom)
+    if (navTargets.length === 0) {
+      setDetailActiveTurn(0)
+      return
+    }
+    const firstVisible = detailListRef.current?.getFirstVisibleIndex(48) ?? 0
+    let currentTurn = 0
+    for (let i = 0; i < navTargets.length; i += 1) {
+      if (navTargets[i].scrollIndex <= firstVisible) currentTurn = i
+      else break
+    }
+    setDetailActiveTurn(currentTurn)
+  }, [navTargets])
+
+  const jumpToDetailBottom = useCallback(() => {
+    const el = detailScrollRef.current
+    if (!el) return
+    setDetailStuckBottom(true)
+    if (navTargets.length > 0) setDetailActiveTurn(navTargets.length - 1)
+    if (typeof el.scrollTo === 'function') {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    } else {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [navTargets.length])
+
+  const jumpToDetailTurn = useCallback((turnIndex: number) => {
+    if (navTargets.length === 0) return
+    const clamped = Math.max(0, Math.min(navTargets.length - 1, turnIndex))
+    const target = navTargets[clamped]
+    setDetailActiveTurn(clamped)
+    setDetailStuckBottom(false)
+    if (detailListRef.current) {
+      detailListRef.current.scrollToIndex(target.scrollIndex, { behavior: 'smooth', align: 'start' })
+    } else if (detailScrollRef.current) {
+      detailScrollRef.current.scrollTop = 0
+    }
+  }, [navTargets])
 
   useEffect(() => {
     // A deep-link change reuses the same page component. Restore the saved
@@ -212,9 +292,10 @@ export default function Conversations() {
     const saved = detailScrollPositionsRef.current[active] ?? 0
     const frame = requestAnimationFrame(() => {
       if (detailScrollRef.current) detailScrollRef.current.scrollTop = saved
+      syncDetailNav()
     })
     return () => cancelAnimationFrame(frame)
-  }, [active, viewMode, detail])
+  }, [active, viewMode, detail, syncDetailNav])
 
   useEffect(() => {
     const el = detailScrollRef.current
@@ -222,17 +303,14 @@ export default function Conversations() {
     const capture = () => {
       detailScrollPositionsRef.current[active] = el.scrollTop
       writePageState('conversations.detailScroll', trimDetailScrollPositions(detailScrollPositionsRef.current))
+      syncDetailNav()
     }
     el.addEventListener('scroll', capture, { passive: true })
     return () => {
       el.removeEventListener('scroll', capture)
       capture()
     }
-  }, [active])
-  const rounds = useMemo(() => buildRounds(detail?.messages || []), [detail])
-  // Non-empty only for a real chat session: the backend excludes title-only
-  // archive rows from `bound_session_id`, so this drives the primary action.
-  const boundSessionId = detail?.bound_session_id || null
+  }, [active, syncDetailNav])
 
   const handleExport = async (id: string, fmt: 'md' | 'json') => {
     try {
@@ -397,130 +475,107 @@ export default function Conversations() {
         </div>
       }
     >
-      <div className="mx-auto flex h-full w-full max-w-[96rem] gap-5 px-4 py-4 sm:gap-6 sm:px-6 sm:py-6">
-        <ConversationIndexRail>
-          {(collapsed) => (
-            <>
-              {!collapsed && (
-                <div className="sticky top-0 z-10 border-b border-line/50 bg-bg-card/95 px-3.5 py-3 backdrop-blur-[4px]">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {SOURCE_FILTERS.map((f) => {
-                      const activeFilter = sourceFilter === f.value
-                      return (
-                        <button
-                          key={f.value}
-                          type="button"
-                          aria-pressed={activeFilter}
-                          onClick={() => setSourceFilter(f.value)}
-                          className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
-                            activeFilter
-                              ? 'bg-accent-soft text-accent-deep ring-1 ring-accent/35'
-                              : 'text-ink-muted hover:bg-bg-soft/75 hover:text-ink'
-                          }`}
-                        >
-                          {f.label}
-                        </button>
-                      )
-                    })}
-                  </div>
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-[96rem] flex-col gap-5 lg:flex-row px-4 py-4 sm:gap-6 sm:px-6 sm:py-6">
+        <ConversationIndexRail collapsible={false}>
+          <div className="sticky top-0 z-10 border-b border-line/50 bg-bg-card/95 px-3 py-2.5 backdrop-blur-[4px]">
+            <div className="flex flex-wrap items-center gap-1">
+              {SOURCE_FILTERS.map((f) => {
+                const activeFilter = sourceFilter === f.value
+                return (
+                  <button
+                    key={f.value}
+                    type="button"
+                    aria-pressed={activeFilter}
+                    onClick={() => setSourceFilter(f.value)}
+                    className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+                      activeFilter
+                        ? 'bg-accent-soft text-accent-deep ring-1 ring-accent/35'
+                        : 'text-ink-muted hover:bg-bg-soft/75 hover:text-ink'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <div className="space-y-1.5 p-2">
+            {listLoading && items.length === 0 && (
+              Array.from({ length: 4 }, (_, idx) => (
+                <div key={`skeleton-${idx}`} className="rounded-lg bg-bg-card/60 px-2.5 py-2.5 animate-pulse space-y-2">
+                  <div className="h-3.5 w-3/4 rounded bg-ink/8" />
+                  <div className="h-2.5 w-1/2 rounded bg-ink/6" />
                 </div>
-              )}
-              <div className={collapsed ? 'space-y-1.5 px-1.5 py-2.5' : 'space-y-2 p-2.5'}>
-                {listLoading && items.length === 0 && !collapsed && (
-                  Array.from({ length: 4 }, (_, idx) => (
-                    <div key={`skeleton-${idx}`} className="rounded-lg bg-bg-card/60 px-2.5 py-2.5 animate-pulse space-y-2">
-                      <div className="h-3.5 w-3/4 rounded bg-ink/8" />
-                      <div className="h-2.5 w-full rounded bg-ink/6" />
-                      <div className="h-2.5 w-1/2 rounded bg-ink/6" />
-                    </div>
-                  ))
-                )}
-                {visibleItems.map((c, index) => (
-                  <ConvRow
-                    key={c.id}
-                    c={c}
-                    index={page * limit + index + 1}
-                    collapsed={collapsed}
-                    active={active === c.id}
-                    titleStyle={titleStyle}
-                    onClick={() => nav(`/conversations/${encodeURIComponent(c.id)}`)}
-                  />
-                ))}
-                {listQuery.isError && !data && !collapsed && <QueryLoadState query={listQuery} label="历史对话" />}
-                {!listLoading && (!listQuery.isError || data) && visibleItems.length === 0 && !collapsed && (
-                  <div className="px-3 py-8 text-center">
-                    <Inbox size={18} strokeWidth={1.75} aria-hidden="true" className="mx-auto mb-2 text-ink-faint/70" />
-                    <div className="text-xs text-ink-muted">
-                      {items.length > 0
-                        ? `本页没有「${filterLabel}」会话`
-                        : debouncedQ
-                          ? '未找到匹配的归档会话'
-                          : '暂无历史对话归档'}
-                    </div>
-                    {items.length > 0 && sourceFilter !== 'all' && (
-                      <button
-                        type="button"
-                        onClick={() => setSourceFilter('all')}
-                        className="mt-2 text-[11px] font-medium text-accent hover:underline"
-                      >
-                        查看全部来源
-                      </button>
-                    )}
-                  </div>
+              ))
+            )}
+            {visibleItems.map((c) => (
+              <ConvRow
+                key={c.id}
+                c={c}
+                active={active === c.id}
+                titleStyle={titleStyle}
+                onClick={() => nav(`/conversations/${encodeURIComponent(c.id)}`)}
+              />
+            ))}
+            {listQuery.isError && !data && <QueryLoadState query={listQuery} label="历史对话" />}
+            {!listLoading && (!listQuery.isError || data) && visibleItems.length === 0 && (
+              <div className="px-3 py-8 text-center">
+                <Inbox size={18} strokeWidth={1.75} aria-hidden="true" className="mx-auto mb-2 text-ink-faint/70" />
+                <div className="text-xs text-ink-muted">
+                  {items.length > 0
+                    ? `本页没有「${filterLabel}」会话`
+                    : debouncedQ
+                      ? '未找到匹配的归档会话'
+                      : '暂无历史对话归档'}
+                </div>
+                {items.length > 0 && sourceFilter !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => setSourceFilter('all')}
+                    className="mt-2 text-[11px] font-medium text-accent hover:underline"
+                  >
+                    查看全部来源
+                  </button>
                 )}
               </div>
-              {total > limit && (
-                <div className={collapsed
-                  ? 'sticky bottom-0 z-10 flex flex-col items-center gap-1 border-t border-line/50 bg-bg-card/95 py-2.5 text-xs text-ink-muted backdrop-blur-[4px]'
-                  : 'sticky bottom-0 z-10 flex items-center justify-between gap-2 border-t border-line/50 bg-bg-card/95 px-3.5 py-2.5 text-xs text-ink-muted backdrop-blur-[4px]'}
-                >
-                  <button
-                    type="button"
-                    aria-label="上一页"
-                    title="上一页"
-                    disabled={page === 0}
-                    onClick={() => setPage(page - 1)}
-                    className={collapsed ? 'ga-btn-icon-sm' : 'ga-btn h-7 px-2 text-[11px]'}
-                  >
-                    {collapsed ? (
-                      <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
-                    ) : (
-                      <>
-                        <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
-                        <span>上页</span>
-                      </>
-                    )}
-                  </button>
-                  <span
-                    className="tabular-nums text-[11px]"
-                    title={`共 ${total} 条归档，当前第 ${page + 1} / ${Math.max(1, Math.ceil(total / limit))} 页`}
-                  >
-                    {collapsed ? page + 1 : `第 ${page + 1} / ${Math.max(1, Math.ceil(total / limit))} 页`}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="下一页"
-                    title="下一页"
-                    disabled={(page + 1) * limit >= total}
-                    onClick={() => setPage(page + 1)}
-                    className={collapsed ? 'ga-btn-icon-sm' : 'ga-btn h-7 px-2 text-[11px]'}
-                  >
-                    {collapsed ? (
-                      <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
-                    ) : (
-                      <>
-                        <span>下页</span>
-                        <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-            </>
+            )}
+          </div>
+          {total > limit && (
+            <div className="sticky bottom-0 z-10 flex items-center justify-between gap-2 border-t border-line/50 bg-bg-card/95 px-3 py-2 text-xs text-ink-muted backdrop-blur-[4px]">
+              <button
+                type="button"
+                aria-label="上一页"
+                title="上一页"
+                disabled={page === 0}
+                onClick={() => setPage(page - 1)}
+                className="ga-btn h-7 px-2 text-[11px]"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>上页</span>
+              </button>
+              <span
+                className="tabular-nums text-[11px]"
+                title={`共 ${total} 条归档，当前第 ${page + 1} / ${Math.max(1, Math.ceil(total / limit))} 页`}
+              >
+                第 {page + 1} / {Math.max(1, Math.ceil(total / limit))} 页
+              </span>
+              <button
+                type="button"
+                aria-label="下一页"
+                title="下一页"
+                disabled={(page + 1) * limit >= total}
+                onClick={() => setPage(page + 1)}
+                className="ga-btn h-7 px-2 text-[11px]"
+              >
+                <span>下页</span>
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </div>
           )}
         </ConversationIndexRail>
 
-        <div ref={detailScrollRef} className="min-w-0 flex-1 overflow-y-auto pr-1 [overflow-anchor:none]">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <div ref={detailScrollRef} onScroll={syncDetailNav} className="min-h-0 flex-1 overflow-y-auto pr-12 [overflow-anchor:none]">
           {!active && (
             <div className="flex h-full items-center justify-center p-2">
               <div className="ga-paper-card max-w-sm px-8 py-9 text-center">
@@ -576,35 +631,32 @@ export default function Conversations() {
             const lastActivityText = matchedSummary ? formatRelativeTime(matchedSummary.mtime) : ''
             return (
               <div className="mx-auto max-w-4xl pb-8">
-                <header className="ga-paper-card mb-6 px-5 py-4 sm:px-6 sm:py-5">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <h2 className="text-base font-semibold leading-snug text-ink break-words" title={conversationDisplayTitle(detail)}>
-                        {conversationDisplayTitle(detail)}
-                      </h2>
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
-                        <span className={`rounded-md border px-2 py-0.5 font-medium leading-4 ${detailMeta.chipClass}`}>
-                          {detailMeta.label}
+                <header className="ga-paper-card mb-4 px-4 py-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <h2 className="min-w-0 flex-1 truncate text-sm font-semibold leading-snug text-ink" title={conversationDisplayTitle(detail)}>
+                      {conversationDisplayTitle(detail)}
+                    </h2>
+                    <div className="flex shrink-0 flex-wrap items-center gap-1.5 text-[11px]">
+                      <span className={`rounded-md border px-1.5 py-0.5 font-medium leading-none ${detailMeta.chipClass}`}>
+                        {detailMeta.label}
+                      </span>
+                      <span className="rounded-md border border-line/55 bg-bg-soft/85 px-1.5 py-0.5 tabular-nums leading-none text-ink-muted">
+                        {detail.messages?.length || 0} 条 · {rounds.length} 轮
+                      </span>
+                      {lastActivityText && (
+                        <span className="inline-flex items-center gap-1 rounded-md border border-line/55 bg-bg-soft/85 px-1.5 py-0.5 tabular-nums leading-none text-ink-faint">
+                          <Clock size={10} strokeWidth={1.85} aria-hidden="true" />
+                          <span>{lastActivityText}</span>
                         </span>
-                        <span className="rounded-md border border-line/55 bg-bg-soft/85 px-2 py-0.5 tabular-nums text-ink-muted">
-                          {detail.messages?.length || 0} 条消息 · {rounds.length} 轮
-                        </span>
-                        {lastActivityText && (
-                          <span className="inline-flex items-center gap-1 rounded-md border border-line/55 bg-bg-soft/85 px-2 py-0.5 tabular-nums text-ink-faint">
-                            <Clock size={11} strokeWidth={1.85} aria-hidden="true" />
-                            <span>{lastActivityText}</span>
-                          </span>
-                        )}
-                      </div>
+                      )}
                     </div>
                   </div>
-                  <div className="my-3.5 h-px bg-line/55" />
-                  <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                     {boundSessionId ? (
                       <button
                         type="button"
                         onClick={() => { void openSession(boundSessionId) }}
-                        className="ga-btn-primary shrink-0"
+                        className="ga-btn-sm-primary shrink-0"
                         title="打开对应会话继续对话"
                       >
                         <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
@@ -615,14 +667,14 @@ export default function Conversations() {
                         type="button"
                         onClick={() => { void handleImport(detail.id) }}
                         disabled={importing === detail.id}
-                        className="ga-btn-primary shrink-0"
+                        className="ga-btn-sm-primary shrink-0"
                         title="导入为新会话继续对话"
                       >
                         <FolderDown className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>{importing === detail.id ? '导入中…' : '导入为会话'}</span>
                       </button>
                     )}
-                    <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                    <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
                       <div className="ga-btn-group">
                         <button
                           type="button"
@@ -670,6 +722,7 @@ export default function Conversations() {
                       convId={detail.id}
                       rounds={rounds}
                       scrollRef={detailScrollRef}
+                      listRef={detailListRef}
                       openConclusion={openConclusion}
                       setOpenConclusion={setOpenConclusion}
                       messageFontStyle={messageFontStyle}
@@ -680,12 +733,33 @@ export default function Conversations() {
                       key={`flat:${detail.id}`}
                       messages={detail.messages || []}
                       scrollRef={detailScrollRef}
+                      listRef={detailListRef}
                       messageFontStyle={messageFontStyle}
                     />
                   )}
               </div>
             )
           })()}
+        </div>
+        {active && detail && navTargets.length > 0 && (
+          <div className="pointer-events-none absolute inset-y-2 right-1.5 z-10 flex w-10 flex-col items-center gap-2">
+            <div className="flex min-h-0 flex-1 items-center justify-center">
+              <ConversationTurnMinimap
+                items={navTargets}
+                activeIndex={detailActiveTurn}
+                onSelect={jumpToDetailTurn}
+              />
+            </div>
+            <TranscriptNavDock
+              stuckBottom={detailStuckBottom}
+              canPrev={detailActiveTurn > 0}
+              canNext={detailActiveTurn < navTargets.length - 1}
+              onJumpToBottom={jumpToDetailBottom}
+              onPrev={() => jumpToDetailTurn(detailActiveTurn - 1)}
+              onNext={() => jumpToDetailTurn(detailActiveTurn + 1)}
+            />
+          </div>
+        )}
         </div>
       </div>
     </PageShell>
@@ -706,6 +780,7 @@ function RoundView({
   convId,
   rounds,
   scrollRef,
+  listRef,
   openConclusion,
   setOpenConclusion,
   messageFontStyle,
@@ -713,6 +788,7 @@ function RoundView({
   convId: string
   rounds: Round[]
   scrollRef: RefObject<HTMLDivElement>
+  listRef?: RefObject<VirtualMessageListHandle>
   openConclusion: Record<string, boolean>
   setOpenConclusion: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
   messageFontStyle?: CSSProperties
@@ -727,6 +803,7 @@ function RoundView({
 
   return (
     <VirtualMessageList
+      ref={listRef}
       items={rounds}
       scrollRef={scrollRef}
       virtualizationThreshold={12}
@@ -752,9 +829,9 @@ function RoundView({
 
             <div className="space-y-3.5">
               {r.user && (
-                <div className="flex justify-end">
+                <div className="flex justify-start">
                   <div
-                    className={`group/msg relative max-w-[82%] rounded-lg px-3.5 py-2.5 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.16)] ${bubbleTone('user').surfaceClass}`}
+                    className={`group/msg relative max-w-[88%] rounded-lg px-3.5 py-2.5 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.16)] ${bubbleTone('user').surfaceClass}`}
                     style={messageFontStyle}
                   >
                     <MessageContent content={cleanArchiveUserText(r.user.content || '')} format="text" />
@@ -764,7 +841,7 @@ function RoundView({
 
               <div className="flex justify-start">
                 <div
-                  className={`group/msg relative min-w-0 max-w-[90%] rounded-lg px-4 py-3 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.12)] ${bubbleTone('assistant').surfaceClass}`}
+                  className={`group/msg relative min-w-0 max-w-[92%] rounded-lg px-4 py-3 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.12)] ${bubbleTone('assistant').surfaceClass}`}
                   style={messageFontStyle}
                 >
                   <div className="mb-2 flex min-h-6 items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
@@ -845,10 +922,12 @@ function RoundView({
 function FlatView({
   messages,
   scrollRef,
+  listRef,
   messageFontStyle,
 }: {
   messages: Msg[]
   scrollRef: RefObject<HTMLDivElement>
+  listRef?: RefObject<VirtualMessageListHandle>
   messageFontStyle?: CSSProperties
 }) {
   if (messages.length === 0) {
@@ -861,6 +940,7 @@ function FlatView({
 
   return (
     <VirtualMessageList
+      ref={listRef}
       items={messages}
       scrollRef={scrollRef}
       virtualizationThreshold={12}
@@ -873,8 +953,8 @@ function FlatView({
         const label = isUser ? '你' : isAssistant ? 'GA Agent' : (m.role || `消息 ${i + 1}`)
         return (
           <div className="pb-3">
-            <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-              <div className={`w-fit max-w-[85%] ${isUser ? 'ml-12' : 'mr-12'}`}>
+            <div className="flex justify-start">
+              <div className="w-fit max-w-[90%]">
                 <MessageBlock
                   m={m}
                   label={label}
@@ -1061,14 +1141,12 @@ function conversationDisplayTitle(detail: { title?: string; messages?: Msg[] }):
 
 function summaryDisplayTitle(conversation: ConversationSummary): string {
   return conversation.title.trim()
-    || previewText(conversation.original_user_preview || '')
+    || previewText(cleanArchiveUserText(conversation.original_user_preview || ''))
     || '未命名会话'
 }
 
-function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
+function ConvRow({ c, active, titleStyle, onClick }: {
   c: ConversationSummary
-  index: number
-  collapsed: boolean
   active: boolean
   titleStyle?: CSSProperties
   onClick: () => void
@@ -1076,26 +1154,6 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
   const title = summaryDisplayTitle(c)
   const meta = sourceMeta(c.source)
   const lastActive = formatRelativeTime(c.mtime)
-  const excerpt = previewText(cleanArchiveUserText(c.last_user_preview || ''))
-
-  if (collapsed) {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        aria-label={`第 ${index} 条：${title}`}
-        aria-current={active ? 'page' : undefined}
-        title={`${index}. ${title}${excerpt ? `\n${excerpt}` : ''}\n来源：${meta.label}${lastActive ? `\n最后活动：${lastActive}` : ''}`}
-        className={`mx-auto flex h-8 w-8 items-center justify-center rounded-lg text-[11px] font-medium tabular-nums transition-colors ${
-          active
-            ? 'bg-accent-soft font-semibold text-accent-deep shadow-xs ring-1 ring-accent/40'
-            : 'text-ink-muted hover:bg-bg-soft/85 hover:text-ink'
-        }`}
-      >
-        {index}
-      </button>
-    )
-  }
 
   return (
     <button
@@ -1113,7 +1171,7 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
       )}
       <div className="flex items-start justify-between gap-2">
         <div
-          className={`min-w-0 flex-1 truncate text-sm leading-snug ${active ? 'font-semibold text-ink' : 'font-medium text-ink/90'}`}
+          className={`min-w-0 flex-1 line-clamp-2 break-words text-[13px] leading-snug ${active ? 'font-semibold text-ink' : 'font-medium text-ink/90'}`}
           style={titleStyle}
           title={title}
         >
@@ -1126,11 +1184,6 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
           {meta.label}
         </span>
       </div>
-      {excerpt && (
-        <div className="mt-1 truncate text-[11px] leading-4 text-ink-muted">
-          {excerpt}
-        </div>
-      )}
       <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] tabular-nums text-ink-faint">
         <span className="truncate" title={CONVERSATION_COUNTS_HELP}>
           {conversationCountsText(c)}

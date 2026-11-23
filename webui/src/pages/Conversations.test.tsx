@@ -35,8 +35,8 @@ vi.mock('@/components/PageShell', () => ({
   ),
 }))
 vi.mock('@/components/ConversationIndexRail', () => ({
-  ConversationIndexRail: ({ children }: { children: (collapsed: boolean) => ReactNode }) => (
-    <div>{children(false)}</div>
+  ConversationIndexRail: ({ children }: { children: ReactNode | ((collapsed: boolean) => ReactNode) }) => (
+    <div>{typeof children === 'function' ? children(false) : children}</div>
   ),
 }))
 vi.mock('@/components/MarkdownView', () => ({
@@ -456,5 +456,42 @@ describe('conversation route selection', () => {
       expect(host.querySelector('[data-route-path]')?.textContent).toBe('/conversations')
       expect(host.textContent).toContain('选择左侧会话查看详情')
     })
+  })
+
+  it('hides reply excerpts in the index, left-aligns messages, and renders the multi-turn minimap selector', async () => {
+    apiMock.conversations.mockResolvedValue({
+      total: 1,
+      offset: 0,
+      limit: 50,
+      items: [{
+        id: 'thread-nav',
+        title: '',
+        message_count: 4,
+        dialogue_count: 2,
+        turn_count: 4,
+        mtime: 0,
+        last_user_preview: '这是回答的第一句不应该显示',
+        original_user_preview: '用户最初的真实提问',
+      }],
+    })
+    apiMock.conversation.mockResolvedValue({
+      id: 'thread-nav',
+      title: '',
+      messages: [
+        { role: 'user', content: '第一个问题' },
+        { role: 'assistant', content: '第一个回答' },
+        { role: 'user', content: '第二个问题' },
+        { role: 'assistant', content: '第二个回答' },
+      ],
+    })
+
+    await renderAt('/conversations/thread-nav')
+    await waitFor(() => expect(host.textContent).toContain('第一个问题'))
+
+    expect(host.textContent).toContain('用户最初的真实提问')
+    expect(host.textContent).not.toContain('这是回答的第一句不应该显示')
+    expect(host.querySelector('[aria-label="多轮会话选择器"]')).not.toBeNull()
+    expect(host.querySelectorAll('[aria-label="多轮会话选择器"] button')).toHaveLength(2)
+    expect(host.querySelector('.justify-end > div > .whitespace-pre-wrap')).toBeNull()
   })
 })

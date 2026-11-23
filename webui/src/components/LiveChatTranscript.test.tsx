@@ -64,9 +64,11 @@ describe('LiveChatTranscript reading intent', () => {
     el.scrollTo = vi.fn()
     return el
   }
-  function click(text: string) {
-    const button = [...host.querySelectorAll('button')].find((b) => b.textContent?.includes(text))!
+  function click(label: string) {
+    const button = [...host.querySelectorAll('button')].find((b) =>
+      b.getAttribute('aria-label')?.includes(label) || b.textContent?.includes(label))!
     expect(button).toBeTruthy()
+    expect(button.textContent?.trim()).toBe('')
     act(() => button.click())
   }
   beforeEach(() => {
@@ -121,7 +123,7 @@ describe('LiveChatTranscript reading intent', () => {
 
   it('saves button-to-tail immediately and restores the bottom after switching mid-scroll', () => {
     mount()
-    click('底部')
+    click('跳到底部')
     expect(saved().A).toEqual({ key: key(7), stuck: true })
     mount('B')
     mount('A')
@@ -142,7 +144,7 @@ describe('LiveChatTranscript reading intent', () => {
 
   it('saves section navigation synchronously and cancels old restoration', () => {
     mount()
-    click('上节')
+    click('上一节')
     const destination = saved().A
     expect(destination.stuck).toBe(false)
     expect(destination.key).not.toBe(key(2))
@@ -201,5 +203,14 @@ describe('LiveChatTranscript reading intent', () => {
     })
     expect(host.textContent).toContain('会话初始化失败：network error')
     expect(host.textContent).not.toContain('开始一段对话')
+  })
+
+  it('renders the multi-turn minimap selector and jumps to the clicked round', () => {
+    mount()
+    const minimapButtons = host.querySelectorAll<HTMLButtonElement>('[aria-label="多轮会话选择器"] button')
+    expect(minimapButtons).toHaveLength(4)
+    act(() => minimapButtons[0].click())
+    expect(layout.scrollToIndex).toHaveBeenLastCalledWith(0, { behavior: 'smooth', align: 'start' })
+    expect(saved().A).toEqual({ key: key(0), stuck: false })
   })
 })
