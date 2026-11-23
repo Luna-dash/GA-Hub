@@ -14,7 +14,7 @@ import type { SessionListData } from '@/queries/sessions'
 
 const api = vi.hoisted(() => ({
   llms: vi.fn(), schedules: vi.fn(), sops: vi.fn(), conversations: vi.fn(),
-  sessions: vi.fn(), createSession: vi.fn(),
+  sessions: vi.fn(), createSession: vi.fn(), updateSessionModel: vi.fn(), switchLLM: vi.fn(),
   agentNew: vi.fn(), // regression tripwire for the removed legacy endpoint
 }))
 const dialog = vi.hoisted(() => ({ alert: vi.fn(), confirm: vi.fn() }))
@@ -222,5 +222,23 @@ describe('command palette new conversation', () => {
     const antiBtn = Array.from(dlg.querySelectorAll('button')).find((b) => b.textContent?.includes('Agy 会话'))!
     await act(async () => antiBtn.click())
     expect(host.querySelector('output')?.textContent).toBe('/anti')
+  })
+
+  it('switches the active session model via updateSessionModel rather than global switchLLM', async () => {
+    api.updateSessionModel.mockResolvedValue({ ...row('old'), llm_key: 'global-model' })
+    await act(async () => { window.dispatchEvent(new Event('gahub:command-palette')) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)) })
+
+    const dlg = host.querySelector<HTMLElement>('[role="dialog"]')!
+    // Current session uses 'session-model', so '[0] Global' is offered while '[1] Session' is hidden.
+    expect(dlg.textContent).toContain('[0] Global')
+    expect(dlg.textContent).not.toContain('[1] Session')
+
+    const llmBtn = Array.from(dlg.querySelectorAll('button')).find((b) => b.textContent?.includes('[0] Global'))!
+    await act(async () => llmBtn.click())
+
+    expect(api.updateSessionModel).toHaveBeenCalledWith('old', 'global-model')
+    expect(api.switchLLM).not.toHaveBeenCalled()
+    expect(client.getQueryData<SessionListData>(queryKeys.sessions)?.items.find((s) => s.id === 'old')?.llm_key).toBe('global-model')
   })
 })

@@ -23,7 +23,7 @@ import { api } from '@/api/client'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
 import { dialog } from '@/stores/dialogStore'
 import { conversationKeys } from '@/queries/conversations'
-import { createAndOpenSession } from '@/queries/sessions'
+import { createAndOpenSession, upsertSessionInList, type SessionListData } from '@/queries/sessions'
 import { useSessionSelectionGuard } from '@/hooks/useSessionSelectionGuard'
 import { queryKeys } from '@/queries/queryKeys'
 import { errorMessageFromError } from '@/utils/sessionUi'
@@ -122,6 +122,12 @@ export function CommandPalette() {
     enabled: open,
     staleTime: 30_000,
   })
+  const { data: sessionsData } = useQuery({
+    queryKey: queryKeys.sessions,
+    queryFn: api.sessions,
+    enabled: open && Boolean(sessionId),
+    staleTime: 30_000,
+  })
   const { data: schedules } = useQuery({
     queryKey: queryKeys.schedules,
     queryFn: api.schedules,
@@ -189,13 +195,26 @@ export function CommandPalette() {
       },
     })
 
-    // LLM switching
+    // LLM switching (binds to the active chat session when present)
+    const activeSession = sessionId
+      ? sessionsData?.items.find((item) => item.id === sessionId)
+      : undefined
+    const activeLlmKey = sessionId
+      ? resolveSessionLlmKey(llms?.llms ?? [], activeSession?.llm_key)
+      : undefined
     for (const l of llms?.llms ?? []) {
-      if (l.current) continue
+      const isCurrent = sessionId ? l.key === activeLlmKey : Boolean(l.current)
+      if (isCurrent) continue
       acts.push({
         id: `llm:${l.index}`, group: '切换 LLM', icon: '⚡',
         label: `[${l.index}] ${l.name}`,
         run: async () => {
+          if (sessionId) {
+            const updated = await api.updateSessionModel(sessionId, l.key)
+            qc.setQueryData<SessionListData>(queryKeys.sessions, (prev) => upsertSessionInList(prev, updated))
+            pushSystem(`_已切换到 [${l.index}] ${l.name}_`, noticeKeys.llmSwitch)
+            return
+          }
           await api.switchLLM(l.index)
           qc.invalidateQueries({ queryKey: queryKeys.llms })
           qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
@@ -242,7 +261,7 @@ export function CommandPalette() {
     }
 
     return acts
-  }, [llms, schedules, sops, convs, nav, qc, sessionId, pushSystem, captureSelection])
+  }, [llms, sessionsData, schedules, sops, convs, nav, qc, sessionId, pushSystem, captureSelection])
 
   const filtered = useMemo(() => {
     if (!q.trim()) return actions

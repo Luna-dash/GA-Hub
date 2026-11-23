@@ -13,6 +13,7 @@ import logging
 import os
 import sqlite3
 import subprocess
+import threading
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -381,8 +382,12 @@ def probe_account_usage(profile_id: str, *, allow_cli_fallback: bool = True) -> 
 class AgyLedger:
     """Built-in SQLite per-profile quota pool, rate-limit breaker, and usage ledger."""
 
+    _schema_lock = threading.Lock()
+    _initialized_dbs: dict[Path, int] = {}
+
     def __init__(self, db: Path | None = None):
         self.db = db or (_paths.ADMIN_DATA / "anti_sessions.sqlite3")
+        self._db_key = self.db.resolve()
 
     def ensure_schema(self, conn: sqlite3.Connection) -> None:
         conn.executescript("""
@@ -442,9 +447,21 @@ class AgyLedger:
 
     def _connect(self):
         self.db.parent.mkdir(parents=True, exist_ok=True)
+        existed = self.db.exists()
+        ctime = self.db.stat().st_ctime_ns if existed else None
         conn = sqlite3.connect(self.db, timeout=15.0)
         conn.row_factory = sqlite3.Row
-        self.ensure_schema(conn)
+        if not existed or self._initialized_dbs.get(self._db_key) != ctime:
+            with self._schema_lock:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+                self.ensure_schema(conn)
+                try:
+                    self._initialized_dbs[self._db_key] = self.db.stat().st_ctime_ns
+                except OSError:
+                    pass
+        else:
+            conn.execute("PRAGMA synchronous=NORMAL")
         return closing(conn)
 
     def record_run(

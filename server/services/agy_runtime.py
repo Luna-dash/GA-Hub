@@ -900,12 +900,19 @@ class AgyRuntimeManager:
                     raise AgyProfileError(409, "当前有正在运行的 Anti 任务，请先停止或等待任务结束")
                 self._draining_workers = True
                 workers = self._detach_workers_locked(list(self._workers))
+                code_login = self._code_login
+                self._code_login = None
             try:
-                self._close_detached(workers)
+                try:
+                    self._close_detached(workers)
+                finally:
+                    if code_login is not None:
+                        code_login.cancel()
             finally:
                 with self._lock:
                     self._stopped_manually = not restart
                     if restart:
+                        self._shutdown_event.clear()
                         self._cached_models.clear()
                         self._cached_commands.clear()
                         self._cached_version = None
@@ -1485,6 +1492,15 @@ class AgyRuntimeManager:
             if state["phase"] in ("completed", "failed", "cancelled"):
                 return state
             time.sleep(0.15)
+        return flow.public_state()
+
+    def cancel_code_login(self, flow_id: str) -> dict[str, Any]:
+        with self._lock:
+            flow = self._code_login
+            if flow is None or flow.flow_id != flow_id:
+                raise AgyProfileError(404, "登录流程不存在或已失效")
+            self._code_login = None
+        flow.cancel(reason="已取消 Google 授权码登录")
         return flow.public_state()
 
 

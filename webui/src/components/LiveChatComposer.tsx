@@ -105,7 +105,7 @@ export function LiveChatComposer({
         <span role="status" className="sr-only">发送中…</span>
       )}
       {recovery.map((item) => (
-        <div key={item.id} role="status" className="flex items-center gap-2 px-3 pb-2 text-xs text-ink-muted">
+        <div key={item.id} role="status" className="flex flex-wrap items-center gap-2 px-3 pb-2 text-xs text-ink-muted">
           <span>{item.status === 'uncertain'
             ? '发送状态未确认，请先核对对话，避免重复发送。'
             : '未发送内容已保留；当前草稿不会被覆盖。'}</span>
@@ -119,6 +119,17 @@ export function LiveChatComposer({
               }
             }}
           >恢复未发送内容</button>
+          <button
+            type="button"
+            className="shrink-0 text-ink-muted hover:text-ink disabled:opacity-40"
+            disabled={disabled}
+            onClick={() => {
+              const dismissed = useDraftStore.getState().dismissSubmission(item.id)
+              if (dismissed?.stageId) {
+                useChatStore.getState().rollbackWebui(dismissed.stageId)
+              }
+            }}
+          >{item.status === 'uncertain' ? '放弃等待' : '丢弃备份'}</button>
         </div>
       ))}
     </ChatComposerFrame>

@@ -5601,6 +5601,48 @@
         }
       }
     },
+    "/api/anti/profiles/login/cancel/{flow_id}": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Cancel Code Login",
+        "operationId": "cancel_code_login_api_anti_profiles_login_cancel__flow_id__post",
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Flow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyCodeLoginState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/anti/profiles/{profile_id}/logout": {
       "post": {
         "tags": [

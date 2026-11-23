@@ -218,6 +218,8 @@ export function AntiAgyProfiles({
           setAuthCode('')
           void cache.invalidateQueries({ queryKey: key, exact: true })
           refresh()
+        } else if (next.phase === 'cancelled' || next.phase === 'failed') {
+          void cache.invalidateQueries({ queryKey: key, exact: true })
         }
       } catch {
         // Ignore transient poll errors while waiting for user input.
@@ -232,8 +234,15 @@ export function AntiAgyProfiles({
   const selected = profiles.data?.profiles.find(item => item.id === profiles.data?.active)
   const others = profiles.data?.profiles.filter(item => item.id !== profiles.data?.active) ?? []
   const loginProfile = profiles.data?.login_profile
+  const cancelActiveCodeLogin = (flow: AgyCodeLoginState | null) => {
+    if (!flow || (flow.phase !== 'starting' && flow.phase !== 'waiting_code')) return
+    void antiApi.cancelCodeLogin(flow.flow_id).catch(() => undefined).finally(() => {
+      void cache.invalidateQueries({ queryKey: key, exact: true })
+    })
+  }
   const close = () => {
     if (action.isPending || codeLoginStart.isPending || codeLoginSubmit.isPending) return
+    cancelActiveCodeLogin(codeLogin)
     setOpen(false)
     setEditing(null)
     setConfirmDeleteId(null)
@@ -440,7 +449,15 @@ export function AntiAgyProfiles({
                 >
                   刷新状态
                 </button>
-                <button type="button" className={secondary} onClick={() => setCodeLogin(null)}>取消</button>
+                <button
+                  type="button"
+                  className={secondary}
+                  onClick={() => {
+                    cancelActiveCodeLogin(codeLogin)
+                    setCodeLogin(null)
+                    setAuthCode('')
+                  }}
+                >取消</button>
               </form>
             </>
           ) : (

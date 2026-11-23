@@ -452,3 +452,37 @@ def test_account_cooldown_blocks_submit_until_reset_or_switch(tmp_path, monkeypa
             json={"operation": "op_ok", "prompt": "retry after reset"},
         )
         assert unblocked.status_code == 200
+
+
+def test_connect_initializes_schema_once_with_wal_and_ephemeral_is_non_destructive(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine, "project", lambda name: (tmp_path, tmp_path / "artifacts"))
+    db = tmp_path / "wal_once.sqlite"
+    sessions = engine.AntiSessions(db, FakeRuntime())
+    init_calls = 0
+    real_init = engine.AntiSessions._initialize_schema
+
+    def counted_init(self, conn):
+        nonlocal init_calls
+        init_calls += 1
+        return real_init(self, conn)
+
+    monkeypatch.setattr(engine.AntiSessions, "_initialize_schema", counted_init)
+    with sessions.connect() as conn:
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    with sessions.connect() as _conn2:
+        pass
+    with engine.AntiSessions(db, FakeRuntime()).connect() as _conn3:
+        pass
+    assert init_calls == 1
+    assert mode.lower() == "wal"
+
+    # Ephemeral approval events must remain observable to multiple SSE consumers until finished.
+    key = (db.resolve(), "run-eph")
+    engine._EVENT_BUS.notify(key, ephemeral={"seq": 0, "type": "approval.requested"})
+    cur_a, seen_a = engine._EVENT_BUS.ephemeral_after(key, 0)
+    cur_b, seen_b = engine._EVENT_BUS.ephemeral_after(key, 0)
+    assert cur_a == 1 and len(seen_a) == 1
+    assert cur_b == 1 and len(seen_b) == 1
+    assert engine._EVENT_BUS.ephemeral_after(key, cur_a) == (1, [])
+    engine._EVENT_BUS.notify(key, finished=True)
+    assert engine._EVENT_BUS.ephemeral_after(key, 0) == (0, [])

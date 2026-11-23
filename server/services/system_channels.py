@@ -19,8 +19,12 @@ hub never executes its tasks (GA-Hub must not modify the GA repo).
 """
 from __future__ import annotations
 
+from datetime import datetime
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Callable
+
+from .session_metadata import is_archive_metadata_id
 
 # Under TYPE_CHECKING not for a cycle but so this lightweight module
 # never pulls the agent_service GA-bootstrap chain into its importers.
@@ -59,13 +63,16 @@ class SystemChannel:
         coordinator: Callable[[], "SessionCoordinator"],
         store: "SessionMetadataStore",
         llm_key_resolver: Callable[[dict], str | None],
+        peek_coordinator: Callable[[], "SessionCoordinator | None"] | None = None,
     ) -> None:
         if channel not in SYSTEM_CHANNEL_TITLES:
             raise ValueError(f"unknown system channel: {channel}")
         self.channel = channel
         self._coordinator_factory = coordinator
+        self._peek_coordinator = peek_coordinator
         self._store = store
         self._llm_key_resolver = llm_key_resolver
+        self._booted_at = time.time()
 
     @property
     def session_id(self) -> str:
@@ -119,10 +126,39 @@ class SystemChannel:
     def agent(self):
         """The channel runtime's GA agent (creates the runtime on first touch).
 
-        Background producers introspect it for LLM listing/switching and idle
-        checks, exactly like they did against the global singleton.
+        Background producers introspect it for LLM listing/switching,
+        ensuring the backing system session row exists first.
         """
+        self._ensure_row()
         return self._coordinator().ensure_runtime(self.session_id).agent
+
+    def user_idle_snapshot(self) -> tuple[bool, int]:
+        """Observe global user session activity without cold-starting any runtime.
+
+        Returns ``(is_busy, last_active_epoch_seconds)`` where ``is_busy`` is
+        True whenever any session run (user or system) is active, and
+        ``last_active_epoch_seconds`` reflects the most recent user session
+        activity (bounded below by channel creation time so startup never
+        immediately looks idle since epoch 0).
+        """
+        busy = False
+        latest = self._booted_at
+        if self._peek_coordinator is not None:
+            coord = self._peek_coordinator()
+            if coord is not None:
+                busy = bool(coord.active_runs())
+                latest = max(latest, coord.last_user_activity_at)
+        for row in self._store.list():
+            sid = row.get("id")
+            if row.get("kind", "user") == "system" or is_archive_metadata_id(sid):
+                continue
+            raw_ts = row.get("updated_at")
+            if isinstance(raw_ts, str) and raw_ts:
+                try:
+                    latest = max(latest, datetime.fromisoformat(raw_ts).timestamp())
+                except ValueError:
+                    continue
+        return busy, int(latest)
 
     def runtime(self):
         """Return the channel runtime if it exists, never creating one."""
@@ -148,8 +184,10 @@ class SystemChannels:
         coordinator: Callable[[], "SessionCoordinator"],
         store: "SessionMetadataStore",
         llm_key_resolver: Callable[[dict], str | None],
+        peek_coordinator: Callable[[], "SessionCoordinator | None"] | None = None,
     ) -> None:
         self._coordinator = coordinator
+        self._peek_coordinator = peek_coordinator
         self._store = store
         self._llm_key_resolver = llm_key_resolver
         self._channels: dict[str, SystemChannel] = {}
@@ -163,6 +201,7 @@ class SystemChannels:
             self._channels[channel] = SystemChannel(
                 channel,
                 coordinator=self._coordinator,
+                peek_coordinator=self._peek_coordinator,
                 store=self._store,
                 llm_key_resolver=self._llm_key_resolver,
             )

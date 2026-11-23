@@ -129,6 +129,7 @@ class SessionLifecycle:
         # "rebind when the store identity changed" branch.
         self._system_channels = SystemChannels(
             coordinator=self.coordinator,
+            peek_coordinator=self.peek_coordinator,
             store=self._store,
             llm_key_resolver=self.effective_llm_key,
         )

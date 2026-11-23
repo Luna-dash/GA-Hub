@@ -159,6 +159,40 @@ class ScheduledChatServiceTests(unittest.TestCase):
         self.assertEqual(recovered["retry_at"], 1_060)
         self.assertEqual(recovered["last_error"], "服务重启后重新调度")
 
+    def test_deleted_target_session_cancels_task_instead_of_retrying(self):
+        from server.services.session_metadata import SessionNotFoundError
+
+        attempts = []
+
+        def submit(task):
+            attempts.append(task.id)
+            raise SessionNotFoundError(task.session_id)
+
+        service = self.service(submit)
+        task = service.create(session_id="gone", text="never resend", images=[], scheduled_for=1_010)
+        self.clock.value = 1_010
+
+        self.assertEqual(service.run_due_once(), 0)
+        self.assertEqual(service.list("gone"), [])
+        finished = service.list("gone", include_finished=True)[0]
+        self.assertEqual(finished["status"], "cancelled")
+        self.assertIsNone(finished["retry_at"])
+
+        # Advancing past retry_seconds must NOT re-trigger disk writes or dispatch.
+        self.clock.value = 2_000
+        self.assertEqual(service.run_due_once(), 0)
+        self.assertEqual(attempts, [task["id"]])
+
+    def test_cancel_for_session_cancels_only_target_pending_tasks(self):
+        service = self.service()
+        service.create(session_id="alpha", text="one", images=[], scheduled_for=1_050)
+        service.create(session_id="alpha", text="two", images=[], scheduled_for=1_100)
+        keep = service.create(session_id="beta", text="keep", images=[], scheduled_for=1_050)
+
+        self.assertEqual(service.cancel_for_session("alpha"), 2)
+        self.assertEqual(service.list("alpha"), [])
+        self.assertEqual([row["id"] for row in service.list("beta")], [keep["id"]])
+
 
 if __name__ == "__main__":
     unittest.main()

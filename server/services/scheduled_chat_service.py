@@ -12,6 +12,7 @@ from typing import Callable
 
 from .._paths import ADMIN_DATA
 from .attachment_refs import validate_attachments
+from .session_metadata import SessionNotFoundError
 
 log = logging.getLogger(__name__)
 
@@ -120,6 +121,23 @@ class ScheduledChatService:
         self._wake.set()
         return result
 
+    def cancel_for_session(self, session_id: str, *, reason: str = "会话已删除") -> int:
+        now = self._clock()
+        cancelled = 0
+        with self._lock:
+            for task in self._tasks.values():
+                if task.session_id == session_id and task.status == "pending":
+                    task.status = "cancelled"
+                    task.cancelled_at = now
+                    task.retry_at = None
+                    task.last_error = reason
+                    cancelled += 1
+            if cancelled:
+                self._save_locked()
+        if cancelled:
+            self._wake.set()
+        return cancelled
+
     def run_due_once(self) -> int:
         """Dispatch due work once. Public to keep scheduling behavior deterministic in tests."""
         now = self._clock()
@@ -139,6 +157,17 @@ class ScheduledChatService:
             try:
                 validate_attachments(task.attachments)
                 self._submit(task)
+            except SessionNotFoundError:
+                log.info("scheduled chat cancelled because target session is gone task_id=%s session_id=%s", task_id, task.session_id)
+                with self._lock:
+                    current = self._tasks.get(task_id)
+                    if current is not None and current.status == "dispatching":
+                        current.status = "cancelled"
+                        current.cancelled_at = self._clock()
+                        current.retry_at = None
+                        current.last_error = "目标会话已不存在"
+                        self._save_locked()
+                continue
             except Exception as exc:
                 log.warning("scheduled chat dispatch deferred task_id=%s: %s", task_id, exc)
                 with self._lock:

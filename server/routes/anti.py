@@ -4,6 +4,7 @@ Project workspaces and artifact directories reuse GA's registered workspace
 table, while all Agy ACP sessions, approvals, profiles, and quota tracking run
 directly inside GA-Hub without an external AntiCLI daemon.
 """
+import asyncio
 from dataclasses import asdict
 import json
 from typing import Annotated, Literal
@@ -14,7 +15,7 @@ from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, Validat
 
 from ..origin_policy import is_allowed_ui_origin
 from ..schemas import AttachmentRef
-from ..services import agy_usage, anti_profiles
+from ..services import agy_usage, anti_engine, anti_profiles
 from ..services.anti_daemon import AntiAuthState, AntiDaemonState, daemon
 from ..services.anti_engine import DEFAULT_EFFORT, DEFAULT_MODEL, AntiError, AntiSessions
 from ..services.agy_usage import AgyLedger
@@ -451,6 +452,15 @@ def submit_code_login(flow_id: str, body: AgyCodeLoginSubmit, request: Request):
         raise HTTPException(exc.status, str(exc)) from exc
 
 
+@router.post("/profiles/login/cancel/{flow_id}", response_model=AgyCodeLoginState)
+def cancel_code_login(flow_id: str, request: Request):
+    _profile_action(request)
+    try:
+        return daemon.cancel_code_login(flow_id)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
 @router.post("/profiles/{profile_id}/logout", response_model=AgyProfile, response_model_exclude_none=True)
 def logout_agy_profile(profile_id: str, request: Request):
     _profile_action(request)
@@ -600,20 +610,38 @@ def events(sid: str, rid: str, after: int = Query(default=0, ge=0)) -> list[Anti
 
 
 @router.get("/sessions/{sid}/runs/{rid}/events/stream")
-def events_stream(sid: str, rid: str):
+async def events_stream(sid: str, rid: str, request: Request):
+    sessions_svc = AntiSessions()
     try:
-        gen = AntiSessions().stream_events(sid, rid)
-        first = next(gen, None)
+        cursor, eph_cursor, initial_chunks, done = await asyncio.to_thread(
+            sessions_svc.poll_stream_step, sid, rid, 0, 0
+        )
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
-    def iter_sse():
-        if first is not None:
-            yield first
-        try:
-            yield from gen
-        except AntiError:
+    async def iter_sse():
+        cur, eph_cur = cursor, eph_cursor
+        for chunk in initial_chunks:
+            yield chunk
+        if done:
             return
+        key = (sessions_svc._db_key, rid)
+        while not await request.is_disconnected():
+            await asyncio.to_thread(
+                anti_engine._EVENT_BUS.wait, key, 0.6, after_eph_seq=eph_cur
+            )
+            if await request.is_disconnected():
+                return
+            try:
+                cur, eph_cur, chunks, finished = await asyncio.to_thread(
+                    sessions_svc.poll_stream_step, sid, rid, cur, eph_cur
+                )
+            except AntiError:
+                return
+            for chunk in chunks:
+                yield chunk
+            if finished:
+                return
 
     return StreamingResponse(iter_sse(), media_type="text/event-stream")
 

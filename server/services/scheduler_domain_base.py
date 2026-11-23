@@ -136,7 +136,7 @@ class SchedulerDomainBase:
         raise NotImplementedError
 
     def _run_finished(self, handle: Any) -> bool:
-        return handle.finished
+        return bool(getattr(handle, "run_finished", handle.finished))
 
     def _watch_deadline_reached(self, run: Any) -> bool:
         raise NotImplementedError

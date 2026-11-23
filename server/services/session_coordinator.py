@@ -166,6 +166,7 @@ class SessionCoordinator:
         # not cross an in-flight BTW snapshot.
         self._exclusive_controls: dict[str, str] = {}
         self._side_questions: dict[str, int] = {}
+        self._last_user_activity_at: float = 0.0
         self._shutdown_requested = False
         self._watchers: dict[str, threading.Thread] = {}
         self._shutdown_workers: dict[str, tuple[threading.Thread, dict[str, Any]]] = {}
@@ -204,6 +205,11 @@ class SessionCoordinator:
         """Backward-compatible first active run (capacity defaults to one)."""
         runs = self.active_runs()
         return runs[0] if runs else None
+
+    @property
+    def last_user_activity_at(self) -> float:
+        with self._lock:
+            return self._last_user_activity_at
 
     def configure_if_idle(
         self,
@@ -246,6 +252,8 @@ class SessionCoordinator:
             self._raise_if_shutdown()
             self._raise_if_control_busy(session_id)
             self._side_questions[session_id] = self._side_questions.get(session_id, 0) + 1
+            if not session_id.startswith("system-"):
+                self._last_user_activity_at = time.time()
         try:
             return self._runtime_for_session(session_id).btw(question)
         finally:
@@ -433,6 +441,8 @@ class SessionCoordinator:
             starting = RuntimeState(session_id, STATUS_STARTING, run_id)
             self._active_by_session[session_id] = starting
             self._states[session_id] = starting
+            if not session_id.startswith("system-"):
+                self._last_user_activity_at = time.time()
 
         try:
             runtime = self._runtime_for_session(session_id)
@@ -1059,6 +1069,8 @@ class SessionCoordinator:
                 self._abort_started.pop(run_id, None)
                 self._active_by_session.pop(session_id, None)
                 self._states[session_id] = completed
+                if not session_id.startswith("system-"):
+                    self._last_user_activity_at = time.time()
                 notification = replace(completed)
             self._emit_state_change(notification)
         finally:

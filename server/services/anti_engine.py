@@ -63,23 +63,40 @@ class _RunEventBus:
 
     def __init__(self) -> None:
         self._cond = threading.Condition()
-        self._ephemeral: dict[tuple[Path, str], list[dict[str, Any]]] = {}
+        self._ephemeral: dict[tuple[Path, str], list[tuple[int, dict[str, Any]]]] = {}
+        self._next_seq: dict[tuple[Path, str], int] = {}
 
     def notify(self, key: tuple[Path, str], *, finished: bool = False, ephemeral: dict[str, Any] | None = None) -> None:
         with self._cond:
             if ephemeral is not None:
-                self._ephemeral.setdefault(key, []).append(ephemeral)
+                seq = self._next_seq.get(key, 0) + 1
+                self._next_seq[key] = seq
+                self._ephemeral.setdefault(key, []).append((seq, ephemeral))
             if finished:
                 self._ephemeral.pop(key, None)
+                self._next_seq.pop(key, None)
             self._cond.notify_all()
 
-    def pop_ephemeral(self, key: tuple[Path, str]) -> list[dict[str, Any]]:
+    def ephemeral_after(self, key: tuple[Path, str], after_seq: int = 0) -> tuple[int, list[dict[str, Any]]]:
         with self._cond:
-            return self._ephemeral.pop(key, [])
+            entries = self._ephemeral.get(key, [])
+            unseen = [payload for seq, payload in entries if seq > after_seq]
+            latest = entries[-1][0] if entries else after_seq
+            return max(after_seq, latest), unseen
 
-    def wait(self, key: tuple[Path, str], timeout: float = 0.8) -> None:
+    def has_ephemeral_after(self, key: tuple[Path, str], after_seq: int = 0) -> bool:
         with self._cond:
-            if not self._ephemeral.get(key):
+            entries = self._ephemeral.get(key, [])
+            return bool(entries and entries[-1][0] > after_seq)
+
+    def wait(self, key: tuple[Path, str], timeout: float = 0.8, *, after_eph_seq: int | None = None) -> None:
+        with self._cond:
+            has_unseen = (
+                bool(self._ephemeral.get(key))
+                if after_eph_seq is None
+                else bool(self._ephemeral.get(key) and self._ephemeral[key][-1][0] > after_eph_seq)
+            )
+            if not has_unseen:
                 # SQLite holds the terminal state. The timeout covers missed notifications.
                 self._cond.wait(timeout)
 
@@ -90,6 +107,8 @@ _EVENT_BUS = _RunEventBus()
 class AntiSessions:
     _local_runs: set[tuple[Path, str]] = set()
     _local_lock = threading.RLock()
+    _schema_lock = threading.Lock()
+    _initialized_dbs: dict[Path, int] = {}
 
     def __init__(self, db: Path | None = None, runtime: AgyRuntimeManager | None = None):
         self.db = db or (_paths.ADMIN_DATA / "anti_sessions.sqlite3")
@@ -97,10 +116,9 @@ class AntiSessions:
         self._db_key = self.db.resolve()
         self.ledger = AgyLedger(self.db)
 
-    def connect(self):
-        self.db.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.db, timeout=15.0)
-        conn.row_factory = sqlite3.Row
+    def _initialize_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY, project TEXT NOT NULL, workspace TEXT NOT NULL,
@@ -152,6 +170,24 @@ class AntiSessions:
                     """).fetchall():
                         conn.execute("UPDATE sessions SET title=? WHERE id=?", (_prompt_title(first_prompt or ""), sid))
         self.ledger.ensure_schema(conn)
+
+    def connect(self):
+        self.db.parent.mkdir(parents=True, exist_ok=True)
+        existed = self.db.exists()
+        ctime = self.db.stat().st_ctime_ns if existed else None
+        conn = sqlite3.connect(self.db, timeout=15.0)
+        conn.row_factory = sqlite3.Row
+        if not existed or self._initialized_dbs.get(self._db_key) != ctime:
+            with self._schema_lock:
+                self._initialize_schema(conn)
+                try:
+                    new_ctime = self.db.stat().st_ctime_ns
+                    self._initialized_dbs[self._db_key] = new_ctime
+                    AgyLedger._initialized_dbs[self._db_key] = new_ctime
+                except OSError:
+                    pass
+        else:
+            conn.execute("PRAGMA synchronous=NORMAL")
         return closing(conn)
 
     def models(self, allow_fallback: bool = True) -> dict:  # noqa: ARG002
@@ -613,36 +649,40 @@ class AntiSessions:
     def _sse(event: dict) -> str:
         return f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-    def stream_events(self, sid: str, rid: str):
-        run = self.run(sid, rid)
-        cursor = 0
+    def poll_stream_step(
+        self, sid: str, rid: str, cursor: int = 0, eph_cursor: int = 0,
+    ) -> tuple[int, int, list[str], bool]:
         key = (self._db_key, rid)
-
-        def _flush():
-            nonlocal cursor
-            batch = self.events(sid, rid, after=cursor)
-            chunks = []
-            for evt in batch:
+        batch = self.events(sid, rid, after=cursor)
+        chunks: list[str] = []
+        for evt in batch:
+            cursor = max(cursor, int(evt["seq"]))
+            chunks.append(self._sse(evt))
+        eph_cursor, ephemerals = _EVENT_BUS.ephemeral_after(key, eph_cursor)
+        for eph in ephemerals:
+            chunks.append(self._sse(eph))
+        current = self.run(sid, rid)
+        done = current["status"] in TERMINAL
+        if done:
+            tail = self.events(sid, rid, after=cursor)
+            for evt in tail:
                 cursor = max(cursor, int(evt["seq"]))
                 chunks.append(self._sse(evt))
-            for eph in _EVENT_BUS.pop_ephemeral(key):
-                chunks.append(self._sse(eph))
-            return chunks
+        return cursor, eph_cursor, chunks, done
 
-        for chunk in _flush():
+    def stream_events(self, sid: str, rid: str):
+        key = (self._db_key, rid)
+        cursor, eph_cursor, chunks, done = self.poll_stream_step(sid, rid, 0, 0)
+        for chunk in chunks:
             yield chunk
-
-        if run["status"] in TERMINAL:
+        if done:
             return
-
         while True:
-            _EVENT_BUS.wait(key, timeout=0.6)
-            for chunk in _flush():
+            _EVENT_BUS.wait(key, timeout=0.6, after_eph_seq=eph_cursor)
+            cursor, eph_cursor, chunks, done = self.poll_stream_step(sid, rid, cursor, eph_cursor)
+            for chunk in chunks:
                 yield chunk
-            current = self.run(sid, rid)
-            if current["status"] in TERMINAL:
-                for chunk in _flush():
-                    yield chunk
+            if done:
                 return
 
     def cancel(self, sid: str, rid: str) -> dict:

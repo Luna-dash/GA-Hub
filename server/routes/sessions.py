@@ -724,6 +724,7 @@ async def delete_session(lifecycle: SessionDomain, session_id: str):
 
     def _delete() -> None:
         lifecycle.store.delete(session_id)
+        lifecycle.scheduled_chats().cancel_for_session(session_id)
         from ..services import theme_task_runs
         theme_task_runs.discard(session_id)
 

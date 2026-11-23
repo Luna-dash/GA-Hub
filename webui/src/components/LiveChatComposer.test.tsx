@@ -230,4 +230,26 @@ describe('LiveChatComposer draft boundary', () => {
     expect(host.textContent).not.toContain('恢复未发送内容')
   })
 
+  it('allows explicitly dismissing an uncertain submission to unlock sending while preserving new draft text', () => {
+    useDraftStore.getState().setText(DRAFT_KEY, 'first message')
+    const item = useDraftStore.getState().beginSubmission(DRAFT_KEY, 'first message', [])!
+    useDraftStore.getState().bindSubmissionStage(item.id, 'stage-uncertain-1')
+    useDraftStore.getState().setText(DRAFT_KEY, 'follow-up draft')
+    useDraftStore.getState().failSubmission(item.id, true)
+
+    act(() => root.render(<LiveChatComposer draftKey={DRAFT_KEY} onSubmit={vi.fn()} onSchedule={vi.fn()} />))
+    const send = host.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!
+    const restoreBtn = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent === '恢复未发送内容')!
+    const dismissBtn = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent === '放弃等待')!
+
+    expect(send.disabled).toBe(true)
+    expect(restoreBtn.disabled).toBe(true)
+    expect(dismissBtn.disabled).toBe(false)
+
+    act(() => dismissBtn.click())
+    expect(send.disabled).toBe(false)
+    expect(host.querySelector('textarea')!.value).toBe('follow-up draft')
+    expect(host.textContent).not.toContain('发送状态未确认')
+  })
+
 })

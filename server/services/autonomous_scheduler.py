@@ -153,37 +153,53 @@ class AutonomousScheduler(SchedulerDomainBase):
             return True
         return False
 
+    def _observe_user_idle(self, now: int) -> tuple[bool, int] | None:
+        snapshot = getattr(self.channel, "user_idle_snapshot", None)
+        if callable(snapshot):
+            try:
+                return snapshot()
+            except Exception:
+                log.debug("autonomous idle check: activity snapshot unavailable", exc_info=True)
+                return None
+        try:
+            agent = self.channel.agent
+        except Exception:
+            log.debug("autonomous idle check: runtime unavailable", exc_info=True)
+            return None
+        lr = int(getattr(agent, "last_reply_time", 0)) or now
+        return bool(getattr(agent, "is_running", False)), lr
+
     def _idle_loop(self) -> None:
         while not self._stop_event.wait(30):
-            now = int(time.time())
-            for s in list(self.schedules.values()):
-                if s.type != "idle" or not s.enabled:
-                    continue
-                # Same introspection surface the global singleton used to
-                # provide: the channel's own agent (created on first touch).
-                try:
-                    agent = self.channel.agent
-                except Exception:
-                    log.debug("autonomous idle check: runtime unavailable", exc_info=True)
-                    continue
-                lr = int(getattr(agent, "last_reply_time", 0)) or now
-                idle = now - lr
-                if idle < s.idle_minutes * 60:
-                    continue
-                # don't double-fire: respect last_fired_at vs idle window
-                if (now - (s.last_fired_at or 0)) < s.idle_minutes * 60:
-                    continue
-                # don't fire while agent is busy
-                if getattr(agent, "is_running", False):
-                    continue
-                try:
-                    self._fire(s.id)
-                except Exception:
-                    # The loop outlives individual schedules: a refused or
-                    # crashing fire (admission busy, runtime gone mid-check)
-                    # must skip this schedule now, not kill idle firing for
-                    # every remaining schedule until restart.
-                    log.exception("autonomous idle fire failed for %s", s.id)
+            self._run_idle_tick()
+
+    def _run_idle_tick(self, *, now: int | None = None) -> None:
+        current = int(time.time()) if now is None else now
+        observed: tuple[bool, int] | None = None
+        for s in list(self.schedules.values()):
+            if s.type != "idle" or not s.enabled:
+                continue
+            if observed is None:
+                observed = self._observe_user_idle(current)
+                if observed is None:
+                    return
+            is_busy, lr = observed
+            if is_busy:
+                return
+            idle = current - lr
+            if idle < s.idle_minutes * 60:
+                continue
+            # don't double-fire: respect last_fired_at vs idle window
+            if (current - (s.last_fired_at or 0)) < s.idle_minutes * 60:
+                continue
+            try:
+                self._fire(s.id)
+            except Exception:
+                # The loop outlives individual schedules: a refused or
+                # crashing fire (admission busy, runtime gone mid-check)
+                # must skip this schedule now, not kill idle firing for
+                # every remaining schedule until restart.
+                log.exception("autonomous idle fire failed for %s", s.id)
 
     # ── fire hooks ───────────────────────────────────────────────
     def _before_submit(self) -> set[str]:

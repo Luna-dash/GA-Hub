@@ -172,6 +172,47 @@ def test_fire_succeeds_and_counts_once_the_gate_frees(gate) -> None:
         assert service.schedules["task-1"].last_fired_at is not None
 
 
+def test_autonomous_idle_tracks_user_sessions_without_cold_starting_system_agent(gate) -> None:
+    """Idle trigger observes real user session activity without creating system-autonomous first."""
+    from server.services.autonomous_scheduler import AutonomousScheduler, Schedule
+
+    channel = gate.channels.channel("autonomous")
+    channel._peek_coordinator = lambda: gate.coordinator
+    channel._booted_at = 1_000.0
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(AutonomousScheduler, "_load", lambda self: None)
+        service = AutonomousScheduler(channel, scheduler_runtime=SimpleNamespace(running=True))
+    schedule = Schedule(id="auto-idle", type="idle", enabled=True, idle_minutes=10)
+    service.schedules["auto-idle"] = schedule
+    service._persist = lambda: None
+
+    # Before idle window elapses: does NOT fire and does NOT cold-start system-autonomous runtime.
+    service._run_idle_tick(now=1_300)
+    assert schedule.fire_count == 0
+    assert "system-autonomous" not in gate.runtimes
+
+    # A user session row updated at t=1_500 resets the idle window.
+    store = gate.channels.store
+    user = store.create(title="User Chat")
+    with store._lock:
+        doc = store._read()
+        for row in doc["sessions"]:
+            if row["id"] == user["id"]:
+                row["updated_at"] = "1970-01-01T00:25:00+00:00"  # epoch 1500
+        store._write(doc)
+
+    service._run_idle_tick(now=1_900)  # 400s < 600s
+    assert schedule.fire_count == 0
+    assert "system-autonomous" not in gate.runtimes
+
+    # Once 600s pass since the user session activity and no session is running, it fires!
+    with mock_noop_watchers(service):
+        service._run_idle_tick(now=2_200)
+    assert schedule.fire_count == 1
+    assert "system-autonomous" in gate.runtimes
+    gate.runtimes["system-autonomous"].handle.finished = True
+
+
 def mock_noop_watchers(service):
     """Keep the run's follow-up watcher from racing the test teardown."""
     from unittest import mock

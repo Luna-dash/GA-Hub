@@ -772,4 +772,8 @@ export const antiApi = {
     antiHttp<AgyCodeLoginState>('POST', `/api/anti/profiles/login/submit/${encodeURIComponent(flowId)}`, { code }, {
       headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' },
     }),
+  cancelCodeLogin: (flowId: string) =>
+    antiHttp<AgyCodeLoginState>('POST', `/api/anti/profiles/login/cancel/${encodeURIComponent(flowId)}`, undefined, {
+      headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' },
+    }),
 }

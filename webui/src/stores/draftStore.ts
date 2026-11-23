@@ -27,6 +27,7 @@ interface DraftState {
   finishSubmission: (id: number) => void
   failSubmission: (id: number, uncertain?: boolean) => boolean
   restoreSubmission: (id: number) => boolean
+  dismissSubmission: (id: number) => DraftSubmission | null
 }
 
 let submissionSequence = 0
@@ -132,5 +133,15 @@ export const useDraftStore = create<DraftState>((set, get) => ({
       }
     })
     return true
+  },
+  dismissSubmission: (id) => {
+    const item = get().submissions[id]
+    if (!item || item.status === 'sending') return null
+    set((current) => {
+      const submissions = { ...current.submissions }
+      delete submissions[id]
+      return { submissions }
+    })
+    return item
   },
 }))

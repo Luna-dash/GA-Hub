@@ -151,9 +151,6 @@ class TaskScheduler(SchedulerDomainBase):
             return True
         return False
 
-    def _run_finished(self, handle: Any) -> bool:
-        return getattr(handle, "run_finished", handle.finished)
-
     def _finalize_run(self, s: TaskSchedule, run: TaskRun, handle: Any, context: Any) -> None:
         run.finished_at = int(time.time())
         if self._run_finished(handle):

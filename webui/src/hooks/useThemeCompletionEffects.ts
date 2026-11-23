@@ -36,11 +36,25 @@ export function useThemeCompletionEffects() {
     })
     void refresh()
     const offRuntime = hubEventClient.subscribe('session:runtime', (event) => {
-      const runtime = event.payload?.runtime
-      const sessionId = event.payload?.session_id
-      if (typeof sessionId !== 'string' || !runtime || typeof runtime !== 'object') return
-      const state = runtime as { completed_run_id?: string; running?: boolean; status?: string }
-      if (!state.completed_run_id || state.running || state.status === 'running' || state.status === 'aborting' || state.status === 'waiting_user') return
+      const payload = event.payload as {
+        session_id?: unknown
+        completed_run_id?: string | null
+        running?: boolean
+        status?: string
+        runtime?: { completed_run_id?: string | null; running?: boolean; status?: string }
+      } | undefined
+      const sessionId = payload?.session_id
+      const state = (payload?.runtime && typeof payload.runtime === 'object') ? payload.runtime : payload
+      if (typeof sessionId !== 'string' || !state || typeof state !== 'object') return
+      if (
+        !state.completed_run_id
+        || state.running
+        || state.status === 'starting'
+        || state.status === 'running'
+        || state.status === 'aborting'
+        || state.status === 'recovering'
+        || state.status === 'waiting_user'
+      ) return
       void sessions().then(data => {
         if (alive && data.items.some(s => s.id === sessionId && s.theme_task)) void inspect(sessionId, true)
       }).catch(() => {})

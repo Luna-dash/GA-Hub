@@ -842,7 +842,14 @@ class CodeLoginFlow:
     expires_at: float = field(default_factory=lambda: time.monotonic() + 300.0)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
+    def check_expired(self, *, now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        if current < self.expires_at:
+            return False
+        return self.cancel(reason="授权码登录已超时，请重新发起")
+
     def public_state(self) -> dict[str, Any]:
+        self.check_expired()
         with self._lock:
             return {
                 "flow_id": self.flow_id,
@@ -855,6 +862,7 @@ class CodeLoginFlow:
     def watch(self) -> None:
         stdout = self.process.stdout
         stderr_lines: list[str] = []
+        done = threading.Event()
 
         def _drain_stderr() -> None:
             if self.process.stderr is None:
@@ -869,8 +877,15 @@ class CodeLoginFlow:
             except OSError:
                 pass
 
+        def _expire_watchdog() -> None:
+            remaining = max(0.0, self.expires_at - time.monotonic())
+            if not done.wait(remaining):
+                self.check_expired()
+
         t_err = threading.Thread(target=_drain_stderr, daemon=True)
+        t_exp = threading.Thread(target=_expire_watchdog, daemon=True)
         t_err.start()
+        t_exp.start()
         try:
             if stdout is not None:
                 for raw in stdout:
@@ -884,6 +899,7 @@ class CodeLoginFlow:
         except Exception:
             code = self.process.poll()
         finally:
+            done.set()
             child_job.forget(self.process.pid)
             if self.temp_dir is not None:
                 shutil.rmtree(self.temp_dir, ignore_errors=True)
@@ -899,9 +915,10 @@ class CodeLoginFlow:
         value = response.strip()
         if not value or "\n" in value or "\r" in value:
             raise AgyProfileError(400, "请输入有效的授权码或回调链接")
+        self.check_expired()
         with self._lock:
             if self.phase in ("completed", "failed", "cancelled"):
-                raise AgyProfileError(409, "登录流程已结束，请重新发起")
+                raise AgyProfileError(409, self.error or "登录流程已结束，请重新发起")
         stdin = self.process.stdin
         if stdin is None:
             raise AgyProfileError(503, "登录进程输入通道已关闭")
@@ -911,12 +928,15 @@ class CodeLoginFlow:
         except OSError as exc:
             raise AgyProfileError(503, "无法向登录进程提交授权码") from exc
 
-    def cancel(self) -> None:
+    def cancel(self, *, reason: str | None = None) -> bool:
         with self._lock:
             if self.phase in ("completed", "failed", "cancelled"):
-                return
+                return False
             self.phase = "cancelled"
+            if reason:
+                self.error = reason
         child_job.terminate_tree(self.process.pid)
         child_job.forget(self.process.pid)
         if self.temp_dir is not None:
             shutil.rmtree(self.temp_dir, ignore_errors=True)
+        return True

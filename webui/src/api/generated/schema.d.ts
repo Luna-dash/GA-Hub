@@ -2476,6 +2476,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/anti/profiles/login/cancel/{flow_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Code Login */
+        post: operations["cancel_code_login_api_anti_profiles_login_cancel__flow_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/anti/profiles/{profile_id}/logout": {
         parameters: {
             query?: never;
@@ -10513,6 +10530,37 @@ export interface operations {
                 "application/json": components["schemas"]["AgyCodeLoginSubmit"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyCodeLoginState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_code_login_api_anti_profiles_login_cancel__flow_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

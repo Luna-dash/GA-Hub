@@ -702,7 +702,7 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
                         streamUrl={active(run) ? resolveApiUrl(`/api/anti/sessions/${sid}/runs/${run.id}/events/stream`) : undefined}
                         runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}
                         onApprovalRequested={() => { void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] }) }}>
-                        {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
+                        {partial => <MessageContent format="markdown" content={run.answer ?? partial} cache={!active(run)} />}
                       </AntiTaskProgress>
                     </div>
                     {active(run) && approval && (

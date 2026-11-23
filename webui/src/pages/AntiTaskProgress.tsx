@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import type { components } from '@/api/generated/schema'
 import { ChevronRight } from 'lucide-react'
@@ -90,6 +90,10 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
   const [startedLive] = useState(active)
   const [streamEvents, setStreamEvents] = useState<AntiEvent[]>([])
   const [streamConnected, setStreamConnected] = useState(false)
+  const onEventsChangedRef = useRef(onEventsChanged)
+  const onApprovalRequestedRef = useRef(onApprovalRequested)
+  onEventsChangedRef.current = onEventsChanged
+  onApprovalRequestedRef.current = onApprovalRequested
 
   useEffect(() => {
     setStreamEvents([])
@@ -111,7 +115,7 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
     source.onmessage = handleEvent
     source.addEventListener('message.delta', handleEvent as EventListener)
     source.addEventListener('step.update', handleEvent as EventListener)
-    source.addEventListener('approval.requested', (() => onApprovalRequested?.()) as EventListener)
+    source.addEventListener('approval.requested', (() => onApprovalRequestedRef.current?.()) as EventListener)
     source.onerror = () => {
       setStreamConnected(false)
       source.close()
@@ -120,7 +124,7 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
       setStreamConnected(false)
       source.close()
     }
-  }, [active, runKey, streamUrl, onApprovalRequested])
+  }, [active, runKey, streamUrl])
 
   const { data, isPending, isError, refetch } = useQuery({
     queryKey: ['anti-run-events', runKey, active ? 'active' : 'terminal'],
@@ -133,8 +137,8 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
   })
   const events = streamEvents.length >= (data?.length ?? 0) && streamEvents.length > 0 ? streamEvents : data
   useEffect(() => {
-    if (active || startedLive) onEventsChanged()
-  }, [events, active, startedLive, onEventsChanged])
+    if (active || startedLive) onEventsChangedRef.current()
+  }, [events, active, startedLive])
   const { steps, partial } = useMemo(() => collectEvents(events), [events])
   const latest = steps.at(-1)
 

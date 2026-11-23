@@ -6,6 +6,20 @@ import { queryKeys } from './queryKeys'
 
 export type SessionListData = { total: number; items: HubSession[] }
 
+export function upsertSessionInList(
+  current: SessionListData | undefined,
+  session: HubSession,
+): SessionListData {
+  if (!current) return { total: 1, items: [session] }
+  const exists = current.items.some((item) => item.id === session.id)
+  return {
+    total: current.total + (exists ? 0 : 1),
+    items: exists
+      ? current.items.map((item) => (item.id === session.id ? session : item))
+      : [session, ...current.items],
+  }
+}
+
 /** One new-chat action for the rail, slash commands and command palette.
  * Keep the old conversation intact; select only if the caller still owns the
  * view when creation finishes. A created session always belongs in the list.

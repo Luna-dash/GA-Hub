@@ -699,3 +699,83 @@ def test_session_worker_records_each_available_commands_snapshot_once(tmp_path, 
     assert captured == [items, []]
     assert runtime.commands("default") == []
     assert runtime.commands("other-profile") == fallback
+
+
+def test_code_login_expiration_explicit_cancel_and_reaper_restart(tmp_path, monkeypatch):
+    import time
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: sys.executable)
+
+    # 1. Explicit cancel route terminates active code login and clears login_profile.
+    mgr = agy_runtime.AgyRuntimeManager()
+    monkeypatch.setattr(anti, "daemon", mgr)
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import sys, time; print('https://accounts.google.com/o/oauth2/auth', flush=True); time.sleep(30)"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    try:
+        agy_profile.claim_profile_lock("default")
+        flow = agy_profile.CodeLoginFlow(flow_id="flow-cancel", profile_id="default", process=proc)
+        mgr._watch_login_process("default", proc, flow)
+        mgr._code_login = flow
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and flow.public_state()["phase"] != "waiting_code":
+            time.sleep(0.05)
+        assert mgr.active_login_profile() == "default"
+
+        app = FastAPI()
+        app.include_router(anti.router)
+        client = TestClient(app)
+        resp = client.post(
+            "/api/anti/profiles/login/cancel/flow-cancel",
+            headers={"X-GA-Hub-Action": "manage-agy-profiles"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["phase"] == "cancelled"
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and (tmp_path / "agy-profiles" / "default" / ".profile.lock").exists():
+            time.sleep(0.05)
+        assert mgr.active_login_profile() is None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+
+    # 2. Expired code login self-cancels via watchdog and releases profile lock without polling.
+    proc2 = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    try:
+        agy_profile.claim_profile_lock("default")
+        expired_flow = agy_profile.CodeLoginFlow(
+            flow_id="flow-exp",
+            profile_id="default",
+            process=proc2,
+            expires_at=time.monotonic() + 0.15,
+        )
+        mgr._watch_login_process("default", proc2, expired_flow)
+        mgr._code_login = expired_flow
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and expired_flow.phase not in ("cancelled", "failed"):
+            time.sleep(0.05)
+        assert expired_flow.public_state()["phase"] == "cancelled"
+        assert mgr.active_login_profile() is None
+    finally:
+        if proc2.poll() is None:
+            proc2.kill()
+            proc2.wait(timeout=5)
+
+    # 3. restart() after shutdown() clears _shutdown_event so _ensure_reaper_locked resumes.
+    mgr.shutdown()
+    assert mgr._shutdown_event.is_set()
+    mgr.restart()
+    assert not mgr._shutdown_event.is_set()
