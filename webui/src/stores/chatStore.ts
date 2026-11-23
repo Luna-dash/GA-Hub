@@ -69,6 +69,9 @@ interface ChatState {
   loadingAllHistory: boolean
   /** Approximate count of messages added by the full-history sweep. */
   allHistoryLoadedItems: number
+  allHistoryNotice: string | null
+  readingOlderHistory: boolean
+  setReadingOlderHistory: (sessionId: string, reading: boolean) => void
   sock: ChatSocket | null
   sessionId: string | null
   /** Per-session in-memory projections make switching instant; WS replay catches them up. */
@@ -180,6 +183,63 @@ const HISTORY_PAGE_MAX_CHARS = 400_000
 const HISTORY_PAGE_TURNS = 20
 const MAX_CACHED_SESSION_VIEWS = 3
 const MAX_CACHED_SESSION_CHARS = 3_000_000
+export const MAX_ACTIVE_SESSION_MSGS = 300
+export const MAX_ACTIVE_SESSION_CHARS = 2_000_000
+const MAX_LOAD_ALL_CHARS = 2_500_000
+
+/**
+ * Bound active-session `msgs` to prevent unbounded growth in long-running chats
+ * while keeping `historyBefore`/`historyHasMore` pointed at the exact eviction
+ * boundary so older turns remain re-fetchable via `loadOlderHistory`.
+ */
+export function pruneActiveMessagesWindow(
+  msgs: ChatMsg[],
+  historyHasMore: boolean,
+  historyBefore: number | null,
+  limits: { maxMsgs?: number; maxChars?: number } = {},
+): { msgs: ChatMsg[]; historyHasMore: boolean; historyBefore: number | null } {
+  const maxMsgs = limits.maxMsgs ?? MAX_ACTIVE_SESSION_MSGS
+  const maxChars = limits.maxChars ?? MAX_ACTIVE_SESSION_CHARS
+  let totalChars = msgs.reduce((sum, message) => sum + message.content.length, 0)
+  if (msgs.length <= maxMsgs && totalChars <= maxChars) {
+    return { msgs, historyHasMore, historyBefore }
+  }
+
+  let dropCount = 0
+  let lastEvictedHistoryOrdinal: number | null = null
+  while (
+    dropCount < msgs.length
+    && msgs[dropCount]?.source === 'history'
+    && ((msgs.length - dropCount) > maxMsgs || totalChars > maxChars)
+  ) {
+    const evicted = msgs[dropCount]
+    if (typeof evicted.ordinal === 'number') {
+      lastEvictedHistoryOrdinal = evicted.ordinal
+    }
+    totalChars -= evicted.content.length
+    dropCount += 1
+  }
+
+  if (dropCount === 0) {
+    return { msgs, historyHasMore, historyBefore }
+  }
+
+  const kept = msgs.slice(dropCount)
+  const firstRemainingHistory = kept.find((message) => message.source === 'history' && typeof message.ordinal === 'number')
+  let nextBefore = historyBefore
+  let nextHasMore = historyHasMore
+  if (typeof firstRemainingHistory?.ordinal === 'number') {
+    nextBefore = historyBefore == null
+      ? firstRemainingHistory.ordinal
+      : Math.max(historyBefore, firstRemainingHistory.ordinal)
+    nextHasMore = true
+  } else if (lastEvictedHistoryOrdinal !== null) {
+    const exclusiveBoundary = lastEvictedHistoryOrdinal + 1
+    nextBefore = historyBefore == null ? exclusiveBoundary : Math.max(historyBefore, exclusiveBoundary)
+    nextHasMore = true
+  }
+  return { msgs: kept, historyHasMore: nextHasMore, historyBefore: nextBefore }
+}
 
 function sessionViewChars(view: SessionView): number {
   return view.msgs.reduce((total, message) => total + message.content.length, 0)
@@ -218,6 +278,13 @@ export function prependUniqueHistory(older: ChatMsg[], current: ChatMsg[]): Chat
   return mergeLive(coalesceArchiveRuns(archive), current.filter((m) => m.source !== 'history'))
 }
 
+function windowAfterLiveUpdate(state: ChatState, msgs: ChatMsg[]) {
+  if (state.readingOlderHistory || state.loadingAllHistory || state.olderHistoryStatus === 'loading') {
+    return { msgs, historyHasMore: state.historyHasMore, historyBefore: state.historyBefore }
+  }
+  return pruneActiveMessagesWindow(msgs, state.historyHasMore, state.historyBefore)
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => { setTimeout(resolve, ms) })
 }
@@ -238,7 +305,12 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
   olderHistoryError: null,
   loadingAllHistory: false,
   allHistoryLoadedItems: 0,
+  allHistoryNotice: null,
+  readingOlderHistory: false,
   sock: null,
+  setReadingOlderHistory: (sessionId, reading) => set((st) => (
+    st.sessionId === sessionId && st.readingOlderHistory !== reading ? { readingOlderHistory: reading } : st
+  )),
   sessionId: null,
   sessionViews: {},
 
@@ -295,6 +367,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       olderHistoryError: resumeCachedView ? cached.olderHistoryError : null,
       loadingAllHistory: false,
       allHistoryLoadedItems: 0,
+      allHistoryNotice: null,
+      readingOlderHistory: false,
       sessionViews: pruneSessionViews(sessionViews),
       // Like the Tauri desktop, switching only rebinds the already-live
       // per-session projection.  The cursor WebSocket catches up events that
@@ -365,7 +439,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
         if (st.sessionId !== sessionId) return st
         let msgs = st.msgs
         for (const e of evts) msgs = applyEvent(msgs, e)
-        return { msgs, streaming: anyStreaming(msgs) }
+        const windowed = windowAfterLiveUpdate(st, msgs)
+        return { ...windowed, streaming: anyStreaming(windowed.msgs) }
       })
       for (const e of evts) commitCursor(sessionId, e)
     }
@@ -396,9 +471,10 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
           set((st) => {
             if (st.sessionId !== sessionId) return st
             const msgs = mergeSessionSnapshot(st.msgs, m)
+            const windowed = windowAfterLiveUpdate(st, msgs)
             return {
-              msgs,
-              streaming: anyStreaming(msgs),
+              ...windowed,
+              streaming: anyStreaming(windowed.msgs),
             }
           })
           commitCursor(sessionId, m)
@@ -467,12 +543,13 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       if (pendingNext.size > 0) flushNext()
       set((st) => {
         const msgs = applyEvent(st.msgs, m)
+        const windowed = windowAfterLiveUpdate(st, msgs)
         // Track the server-side error-retry backoff so the UI can keep the
         // stop action available while the coordinator reports the run idle.
         let retryPending = st.retryPending
         if (m.type === 'retry_scheduled') retryPending = true
         else if (m.type === 'retry' || m.type === 'retry_exhausted' || m.type === 'done' || m.type === 'aborted' || m.type === 'started') retryPending = false
-        return { msgs, streaming: anyStreaming(msgs), retryPending }
+        return { ...windowed, streaming: anyStreaming(windowed.msgs), retryPending }
       })
       commitCursor(sessionId, m)
     }
@@ -498,14 +575,13 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       const queued = bufferedEvents.splice(0)
       set((st) => {
         const msgs = mergeLive(historyToMessages(history.items), st.msgs.filter((m) => m.source !== 'history'))
+        const windowed = pruneActiveMessagesWindow(msgs, history.has_more ?? false, history.next_before ?? null)
         return {
-          msgs,
-          streaming: anyStreaming(msgs),
+          ...windowed,
+          streaming: anyStreaming(windowed.msgs),
           historyStatus: 'ready',
           historyError: null,
           historyRevision: history.revision ?? null,
-          historyHasMore: history.has_more ?? false,
-          historyBefore: history.next_before ?? null,
           olderHistoryStatus: 'idle',
           olderHistoryError: null,
         }
@@ -618,12 +694,19 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     const sessionId = current.sessionId
     const deadline = Date.now() + 5 * 60_000
     let stalled = 0
-    set({ loadingAllHistory: true, allHistoryLoadedItems: 0, olderHistoryError: null })
+    set({ loadingAllHistory: true, allHistoryLoadedItems: 0, allHistoryNotice: null, olderHistoryError: null })
+    const reportPartial = () => {
+      const state = get()
+      if (state.sessionId === sessionId && state.historyHasMore) {
+        set({ allHistoryNotice: '本次未加载全部历史，仍可点击「加载更早消息」继续查看。' })
+      }
+    }
 
     try {
       for (let step = 0; step < 600; step += 1) {
         const state = get()
-        if (state.sessionId !== sessionId || Date.now() > deadline) return
+        if (state.sessionId !== sessionId) return
+        if (Date.now() > deadline) { reportPartial(); return }
         if (state.historyStatus === 'history_error') return
         if (state.historyStatus !== 'ready') {
           // A newer revision raced a page and restarted hydration — wait it out.
@@ -631,6 +714,11 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
           continue
         }
         if (!state.historyHasMore || state.historyBefore == null) return
+        const totalChars = state.msgs.reduce((sum, message) => sum + message.content.length, 0)
+        if (state.msgs.length >= MAX_ACTIVE_SESSION_MSGS * 2 || totalChars >= MAX_LOAD_ALL_CHARS) {
+          reportPartial()
+          return
+        }
 
         const beforeCount = state.msgs.length
         const revisionBefore = state.historyRevision
@@ -640,20 +728,20 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
         if (after.sessionId !== sessionId) return
         if (after.olderHistoryStatus === 'error' || after.historyStatus === 'history_error') {
           stalled += 1
-          if (stalled >= 3) return
+          if (stalled >= 3) { reportPartial(); return }
           await delay(750)
           continue
         }
         if (after.historyRevision !== revisionBefore) {
           stalled += 1
-          if (stalled >= 3) return
+          if (stalled >= 3) { reportPartial(); return }
           await delay(900)
           continue
         }
         const added = Math.max(0, after.msgs.length - beforeCount)
         if (added === 0 && after.historyHasMore && after.historyBefore != null) {
           stalled += 1
-          if (stalled >= 3) return
+          if (stalled >= 3) { reportPartial(); return }
           await delay(400)
           continue
         }
@@ -664,6 +752,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
             : {}
         ))
       }
+      reportPartial()
     } finally {
       if (get().sessionId === sessionId) set({ loadingAllHistory: false })
     }
@@ -700,6 +789,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       olderHistoryError: null,
       loadingAllHistory: false,
       allHistoryLoadedItems: 0,
+      allHistoryNotice: null,
+      readingOlderHistory: false,
       sock: null,
       sessionId: null,
       sessionViews,
@@ -733,6 +824,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       olderHistoryError: null,
       loadingAllHistory: false,
       allHistoryLoadedItems: 0,
+      allHistoryNotice: null,
+      readingOlderHistory: false,
     })
   },
 
@@ -775,6 +868,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     olderHistoryError: null,
     loadingAllHistory: false,
     allHistoryLoadedItems: 0,
+    allHistoryNotice: null,
+    readingOlderHistory: false,
   }),
   pushSystem: (content, stableKey) =>
     set((st) => {
@@ -806,6 +901,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     olderHistoryError: null,
     loadingAllHistory: false,
     allHistoryLoadedItems: 0,
+    allHistoryNotice: null,
+    readingOlderHistory: false,
   }),
 })))
 

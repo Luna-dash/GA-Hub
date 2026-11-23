@@ -80,6 +80,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     const loadOlderHistory = useChatStore((state) => state.loadOlderHistory)
     const loadingAllHistory = useChatStore((state) => state.loadingAllHistory)
     const allHistoryLoadedItems = useChatStore((state) => state.allHistoryLoadedItems)
+    const allHistoryNotice = useChatStore((state) => state.allHistoryNotice)
     const loadAllHistory = useChatStore((state) => state.loadAllHistory)
 
     // Smart auto-scroll state. Pin only while the user is already near the
@@ -157,6 +158,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         stuck,
       }
       writePageState('liveChat.scrollPositions', trimScrollPositions(scrollPositionsRef.current))
+      useChatStore.getState().setReadingOlderHistory(sessionId, !stuck)
       setStuckBottom(stuck)
       setUnread(0)
     }, [sessionId])
@@ -213,6 +215,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       if (!el) return
       const dist = el.scrollHeight - el.scrollTop - el.clientHeight
       const at = dist < 80
+      if (sessionId) useChatStore.getState().setReadingOlderHistory(sessionId, !at)
       setStuckBottom(at)
       if (at) setUnread(0)
 
@@ -400,6 +403,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         const index = msgs.findIndex((message) => chatMessageKey(message) === saved.key)
         if (index >= 0) {
           aimAtAnchor(saved.key, index, 0, sessionId, version)
+          useChatStore.getState().setReadingOlderHistory(sessionId, true)
           setStuckBottom(false)
           return
         }
@@ -411,7 +415,11 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           if (useChatStore.getState().sessionId !== sessionId || viewportIntentVersionRef.current !== version) return
           aimAtAnchor(null, index, 0, sessionId, version)
           const el = scrollRef.current
-          if (el) setStuckBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
+          if (el) {
+            const at = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+            useChatStore.getState().setReadingOlderHistory(sessionId, !at)
+            setStuckBottom(at)
+          }
         }))
         return
       }
@@ -546,6 +554,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
                   {loadingAllHistory ? `正在加载全部历史…（已加载 ${allHistoryLoadedItems} 条）` : '加载全部历史'}
                 </button>
               </div>
+              {allHistoryNotice && <span role="status" className="text-xs text-muted-foreground">{allHistoryNotice}</span>}
               {olderHistoryStatus === 'error' && (
                 <span className="text-xs text-status-danger">{olderHistoryError || '加载失败，请重试'}</span>
               )}

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import type { ConversationMessage, SessionMessagesResponse } from '@/api/types'
-import { noticeKeys, useChatStore, applyEvent, historyToMessages } from './chatStore'
+import { noticeKeys, useChatStore, applyEvent, historyToMessages, pruneActiveMessagesWindow } from './chatStore'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -600,6 +600,28 @@ describe('chatStore lifecycle', () => {
     })
   })
 
+  it('reports a partial history sweep at the cap without dropping the older-page cursor', async () => {
+    const getHistory = vi.spyOn(api, 'getSessionMessages')
+    useChatStore.setState({
+      sessionId: 'session-a',
+      historyStatus: 'ready',
+      historyHasMore: true,
+      historyBefore: 100,
+      msgs: Array.from({ length: 600 }, (_, index) => ({ role: 'user' as const, content: `q${index}` })),
+    })
+
+    await useChatStore.getState().loadAllHistory()
+
+    expect(getHistory).not.toHaveBeenCalled()
+    expect(useChatStore.getState()).toMatchObject({
+      loadingAllHistory: false,
+      historyHasMore: true,
+      historyBefore: 100,
+      allHistoryNotice: expect.stringContaining('加载更早消息'),
+    })
+    expect(useChatStore.getState().msgs).toHaveLength(600)
+  })
+
   it('bounds inactive session projections and never caches the active session', async () => {
     vi.spyOn(api, 'getSessionMessages').mockImplementation(async (sessionId) => ({
       session_id: sessionId, archive_bound: true, revision: `${sessionId}-revision`,
@@ -619,6 +641,26 @@ describe('chatStore lifecycle', () => {
     expect(cachedIds).toHaveLength(3)
     expect(cachedIds).not.toContain('session-e')
     expect(cachedIds).not.toContain('session-a')
+  })
+
+  it('trims excess archived prefix when active window overflows while preserving historyBefore cursor', () => {
+    const history = historyToMessages([
+      { id: 'h0', role: 'user', content: 'u0', ordinal: 0 },
+      { id: 'h1', role: 'assistant', content: 'a1', ordinal: 1 },
+      { id: 'h2', role: 'user', content: 'u2', ordinal: 2 },
+      { id: 'h3', role: 'assistant', content: 'a3', ordinal: 3 },
+    ])
+    const liveTail = [{ role: 'user' as const, content: 'live', source: 'webui', streamId: 's-live' }]
+    const trimmed = pruneActiveMessagesWindow([...history, ...liveTail], false, null, { maxMsgs: 3, maxChars: 100_000 })
+
+    expect(trimmed.msgs.map((m) => m.content)).toEqual(['u2', 'a3', 'live'])
+    expect(trimmed.historyHasMore).toBe(true)
+    expect(trimmed.historyBefore).toBe(2)
+
+    const fullyEvicted = pruneActiveMessagesWindow([...history, ...liveTail], false, null, { maxMsgs: 1, maxChars: 100_000 })
+    expect(fullyEvicted.msgs.map((m) => m.content)).toEqual(['live'])
+    expect(fullyEvicted.historyHasMore).toBe(true)
+    expect(fullyEvicted.historyBefore).toBe(4)
   })
 
   it('drops a deleted current session before another switch can cache it again', async () => {

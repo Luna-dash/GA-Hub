@@ -9,6 +9,8 @@ export interface ChatMsg {
   content: string
   /** Archive-only internal turns, separate from physical reply segments. */
   turnSegments?: string[]
+  /** Archive message ordinal when hydrated from paginated history; used to preserve `historyBefore` when windowing. */
+  ordinal?: number
   /** Hub recovery streams share one logical answer; GA turns remain untouched. */
   logicalId?: string
   runId?: string
@@ -157,6 +159,7 @@ export function historyToMessages(items: SessionMessageProjection[]): ChatMsg[] 
     .map((item) => ({
       role: item.role,
       content: item.content,
+      ordinal: item.ordinal,
       turnSegments: item.role === 'assistant' ? validTurnSegments(item.turn_segs, item.content) : undefined,
       // The archive id is the stable identity for deduplication on rehydrate.
       streamId: `history:${item.id}`,
@@ -187,7 +190,10 @@ export function coalesceArchiveRuns(projected: ChatMsg[]): ChatMsg[] {
             seen.add(part.streamId)
             return true
           })
-        out[index] = { ...previous, segments, content: replySegmentsContent(segments), turnSegments: replySegmentsTurns(segments) }
+        const ordinal = previous.ordinal !== undefined && msg.ordinal !== undefined
+          ? Math.min(previous.ordinal, msg.ordinal)
+          : (previous.ordinal ?? msg.ordinal)
+        out[index] = { ...previous, ordinal, segments, content: replySegmentsContent(segments), turnSegments: replySegmentsTurns(segments) }
       }
       // Continuation prompts belong to the same run, not a new user question.
       continue
