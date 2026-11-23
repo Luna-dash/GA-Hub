@@ -34,6 +34,7 @@ ENV_SIDECAR_PYTHON = "GA_HUB_PYTHON"
 # Build-only MSVC override and private cmd subprocess path transfer.
 ENV_BUILD_VCVARSALL = "GA_HUB_VCVARSALL"
 ENV_BUILD_VCVARS_SCRIPT = "GA_HUB_VCVARS_SCRIPT"
+ENV_NODE_LICENSE = "GA_HUB_NODE_LICENSE"
 # Desktop shell: dev-mode sidecar override and debug bridge port
 # (src-tauri/src/main.rs).
 ENV_SIDECAR = "GA_HUB_SIDECAR"

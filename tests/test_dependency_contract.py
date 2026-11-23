@@ -24,9 +24,22 @@ def _dep_name(requirement: str) -> str:
     return _canonical(re.split(r"[<>=!~\[; ]", requirement.strip(), maxsplit=1)[0])
 
 
+EXTRA_PACKAGES = {
+    ("requests", "socks"): {"pysocks"},
+}
+
+
 def _pyproject_runtime_deps() -> set[str]:
     data = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))
-    return {_dep_name(dep) for dep in data["project"]["dependencies"]}
+    deps: set[str] = set()
+    for raw in data["project"]["dependencies"]:
+        name = _dep_name(raw)
+        deps.add(name)
+        match = re.search(r"\[([^\]]+)\]", raw)
+        if match:
+            for extra in (part.strip().lower() for part in match.group(1).split(",") if part.strip()):
+                deps.update(EXTRA_PACKAGES.get((name, extra), set()))
+    return deps
 
 
 def _requirements_names() -> set[str]:

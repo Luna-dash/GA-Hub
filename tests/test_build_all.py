@@ -23,7 +23,7 @@ assert spec and spec.loader
 build_all = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build_all)
 
-ARTIFACTS = ("sidecar 中间产物", "sidecar 交付副本", "主程序产物")
+ARTIFACTS = ("sidecar 中间产物", "sidecar 交付副本", "主程序产物", "独立更新助手")
 
 
 def _touch(path: Path, payload: bytes = b"old") -> tuple[Path, tuple[int, int]]:
@@ -74,11 +74,13 @@ class PathTests(unittest.TestCase):
             / "binaries"
             / "ga-hub-sidecar-x86_64-pc-windows-msvc.exe",
         )
-        # 交付副本必须与主程序同目录（应用从主 exe 旁边解析 sidecar）
+        # 交付副本与独立更新助手必须与主程序同目录
         self.assertEqual(paths["sidecar 交付副本"].parent, paths["主程序产物"].parent)
+        self.assertEqual(paths["独立更新助手"], paths["主程序产物"].parent / "ga-hub-update.exe")
 
     def test_non_windows_target_drops_the_exe_suffix(self):
         paths = build_all.artifact_paths("aarch64-apple-darwin")
+        self.assertNotIn("独立更新助手", paths)
         self.assertEqual(paths["主程序产物"].name, "ga-hub-desktop")
         self.assertEqual(paths["sidecar 中间产物"].name, "ga-hub-sidecar-aarch64-apple-darwin")
 
@@ -428,7 +430,8 @@ class MainFlowTests(unittest.TestCase):
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              mock.patch.object(build_all, "run_stage", side_effect=lambda title, *a: events.append(("stage", title))), \
              mock.patch.object(build_all, "check_artifact", side_effect=lambda *a: events.append(("guard",)) or 0), \
-             mock.patch.object(build_all, "check_sidecar_runtime", return_value=0):
+             mock.patch.object(build_all, "check_sidecar_runtime", return_value=0), \
+             mock.patch.object(build_all, "check_update_helper_runtime", return_value=0):
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(build_all.main([]), 0)
         paths = build_all.artifact_paths(build_all.DEFAULT_TARGET)
@@ -453,22 +456,41 @@ class MainFlowTests(unittest.TestCase):
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              mock.patch.object(build_all, "run_stage") as stage, \
              mock.patch.object(build_all, "check_artifact", return_value=0) as guard, \
-             mock.patch.object(build_all, "check_sidecar_runtime", return_value=0) as runtime:
+             mock.patch.object(build_all, "check_sidecar_runtime", return_value=0) as runtime, \
+             mock.patch.object(build_all, "check_update_helper_runtime", return_value=0) as helper_runtime:
             stream = io.StringIO()
             with redirect_stdout(stream):
                 code = build_all.main([])
         self.assertEqual(code, 0)
         self.assertEqual(stage.call_count, 4)  # 前端 / sidecar / tauri / helper
         paths = build_all.artifact_paths(build_all.DEFAULT_TARGET)
+        helper_built = Path(tempfile.gettempdir()) / "gahub-update-helper-build" / "dist" / "ga-hub-update.exe"
         self.copy_helper.assert_has_calls([
             mock.call(paths["sidecar 中间产物"], paths["sidecar 交付副本"]),
-            mock.call(build_all.ROOT / "temp" / "release-updater-helper" / "dist" / "ga-hub-update.exe",
-                      paths["主程序产物"].parent / "ga-hub-update.exe"),
+            mock.call(helper_built, paths["独立更新助手"]),
         ])
         self.assertEqual(self.copy_helper.call_count, 2)
-        self.assertEqual(guard.call_count, 3)
+        self.assertEqual(guard.call_count, 4)
         runtime.assert_called_once()
+        helper_runtime.assert_called_once_with(paths["独立更新助手"])
         self.assertIn("构建链全部通过", stream.getvalue())
+
+    def test_helper_copy_failure_reports_consistency_and_fails_stage(self):
+        patches = self._patched()
+        calls = {"n": 0}
+        def fail_second_copy(src, dst):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise PermissionError("helper locked")
+        self.copy_helper.side_effect = fail_second_copy
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             mock.patch.object(build_all, "run_stage"), \
+             mock.patch.object(build_all, "report_consistency") as report, \
+             mock.patch.object(build_all, "check_artifact") as guard:
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(build_all.main([]), build_all.EXIT_STAGE_FAILED)
+        report.assert_called_once()
+        guard.assert_not_called()
 
     def test_unrunnable_sidecar_fails_the_chain(self):
         """产物刷新全过但跑不起来 → 仍是 5（PyInstaller 漏 DLL 只发 WARNING）。"""
@@ -484,12 +506,27 @@ class MainFlowTests(unittest.TestCase):
         self.assertEqual(code, build_all.EXIT_ARTIFACT_GUARD)
         self.assertNotIn("构建链全部通过", stream.getvalue())
 
+    def test_unrunnable_update_helper_fails_the_chain(self):
+        patches = self._patched()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             mock.patch.object(build_all, "run_stage"), \
+             mock.patch.object(build_all, "check_artifact", return_value=0), \
+             mock.patch.object(build_all, "check_sidecar_runtime", return_value=0), \
+             mock.patch.object(build_all, "check_update_helper_runtime",
+                               return_value=build_all.EXIT_ARTIFACT_GUARD):
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                code = build_all.main([])
+        self.assertEqual(code, build_all.EXIT_ARTIFACT_GUARD)
+        self.assertNotIn("构建链全部通过", stream.getvalue())
+
     def test_full_chain_adds_the_two_test_stages(self):
         patches = self._patched()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              mock.patch.object(build_all, "run_stage") as stage, \
              mock.patch.object(build_all, "check_artifact", return_value=0), \
              mock.patch.object(build_all, "check_sidecar_runtime", return_value=0), \
+             mock.patch.object(build_all, "check_update_helper_runtime", return_value=0), \
              mock.patch.object(Path, "is_dir", return_value=True):
             with redirect_stdout(io.StringIO()):
                 code = build_all.main(["--full"])
@@ -511,6 +548,7 @@ class MainFlowTests(unittest.TestCase):
              mock.patch.object(build_all, "run_stage") as stage, \
              mock.patch.object(build_all, "check_artifact", return_value=0), \
              mock.patch.object(build_all, "check_sidecar_runtime", return_value=0), \
+             mock.patch.object(build_all, "check_update_helper_runtime", return_value=0), \
              mock.patch.object(Path, "is_dir", return_value=True):
             with redirect_stdout(io.StringIO()):
                 code = build_all.main(["--full"])

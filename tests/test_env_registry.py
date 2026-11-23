@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCAN_TARGETS = [
     ROOT / "server",
     ROOT / "scripts",
+    ROOT / "desktop",
     ROOT / "src-tauri" / "src",
 ]
 
@@ -36,6 +37,7 @@ def _registered_names() -> set[str]:
         constants.ENV_SIDECAR_PYTHON,
         constants.ENV_BUILD_VCVARSALL,
         constants.ENV_BUILD_VCVARS_SCRIPT,
+        constants.ENV_NODE_LICENSE,
         constants.ENV_SIDECAR,
         constants.ENV_BRIDGE_PORT,
         constants.ENV_UPDATE_PREFLIGHT,

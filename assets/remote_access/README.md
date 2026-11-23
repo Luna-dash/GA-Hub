@@ -108,7 +108,7 @@ Python 依赖：aiohttp、psutil、pywin32。cloudflared 位于 `%LOCALAPPDATA%\
 ## 手机轻量视图
 
 - 首页筛选激活态使用透明背景、强调文字和下划线，与 Logo 按钮区分；会话页标题区只保留会话标题，运行状态放入工具面板。
-- 远程页面历史请求使用 `view=compact`。网关在本机读取完整记录后，借助持久 Node 子进程 `compact-worker.cjs` 复用 WebUI 转录解析器，向浏览器返回正文以及 `progress` 内的逐轮编号、摘要和轻量响应。剔除工具参数、结果及思考，移除原始 turn_segs，保留 ordinal/分页字段；问询的问题和选项保留。Markdown 代码块中的协议字面量保留。
+- 远程页面历史请求使用 `view=compact`。本机 Hub 在读取完整记录后，借助持久 Node 子进程 `message-presentation-worker.cjs` 复用 WebUI 转录解析器，向网关与浏览器返回正文以及 `progress` 内的逐轮编号、摘要和轻量响应。剔除工具参数、结果及思考，移除原始 turn_segs，保留 ordinal/分页字段；问询的问题和选项保留。Markdown 代码块中的协议字面量保留。
 - 当前活动另用鉴权 GET `/api/sessions/{id}/progress`：网关通过回环 WebSocket 读取初始快照，将同一 run 的物理分段合并后做轻量投影。手机每轮并行读取历史与活动，不再只等任务结束落档。活动与归档按运行/逻辑身份去重，已有未完成分段不会遮住当前进度。
 - 本机原始记录和不带 compact 参数的接口不变；这是公网传输/手机解析减载，不减少后端原始历史读取，也不是增量推送。页面可见时每 3 秒尝试同步，前次请求未结束则跳过，恢复可见时立即同步；网络与浏览器后台节流仍可能使实际间隔变长。轮数优先依据校验过的原生分段（包含最终响应轮），无可信分段时才回退文本解析。
 - 部署需 Node 在网关进程 PATH 内；运行 `node assets/remote_access/build-remote.cjs` 同时生成页面及 worker bundle。更新 worker 后需重启投影子进程或网关。投影失败返回 502，不回退传输完整工具记录。

@@ -87,9 +87,9 @@ build_all.bat
 - **成功判定以退出码 + 守卫输出为准**，不要用「命令没报错」当成功：
   - `0` = 成功；`2` = 预检失败（缺工具/依赖/应用未退出/并发构建）；`3` = 某阶段失败；
     `5` = 产物守卫失败。
-  - 守卫**三重校验**语义一致（主 exe / sidecar 中间产物 / sidecar 交付副本）：
+  - 守卫**多重校验**语义一致（主 exe / sidecar 中间产物 / sidecar 交付副本，Windows 另含独立更新助手 `ga-hub-update.exe`）：
     缺失、为空、**未被本次构建重写** → 失败。没有合法的增量复用——前端每次重写
-    `webui/dist` 使 cargo 必然重链，sidecar 先 unlink 再打包。
+    `webui/dist`（并同步重编 `message-presentation-worker.cjs` 与 `remote.js`）使 cargo 必然重链，sidecar 与更新助手均先 unlink 再打包。
   - `3`（阶段失败）时守卫覆盖不到，脚本退出前会补一次**产物体检**：逐件报告
     本次已重写 / 仍是构建前的版本 / 不存在，出现「只刷新了一部分」会警告不要把
     这几件当交付物；退出码保持 `3`（与 `5` 是两条排查方向）。
@@ -111,10 +111,10 @@ build_all.bat
 - **发布前验证**：`python scripts\build_all.py --full` 会先跑后端 pytest（限定 `tests/`，
   自动注入 `GA_ROOT`/`PYTHONPATH`）与前端 vitest，再进入构建阶段；缺 GA 仓库或
   `webui/node_modules` 会在预检阶段（exit 2）就说清楚。
-- 正式产物只有两处（必须同目录）：`src-tauri\target\x86_64-pc-windows-msvc\release\`
-  下的 `ga-hub-desktop.exe` 与 `ga-hub-sidecar.exe`。Tauri 阶段**恒传 `--no-bundle`**：
-  交付物就是这两个便携版 exe，安装包不在本链职责内。同目录下的 `ga_hub_desktop.pdb`、
-  `resources/` 是构建副产物，不是交付内容。
+- 正式产物同目录交付：`src-tauri\target\x86_64-pc-windows-msvc\release\`
+  下的 `ga-hub-desktop.exe`、`ga-hub-sidecar.exe` 与 `ga-hub-update.exe`。Tauri 阶段**恒传 `--no-bundle`**：
+  交付物仅为便携版可执行文件，安装包不在本链职责内。同目录下的 `ga_hub_desktop.pdb`
+  是构建副产物，不是交付内容。
 - **平台与 CI 口径**：只有 `x86_64-pc-windows-msvc` 端到端验证过（`--target` 与
   `build_all.command` 的其它平台分支未实测）。Actions 有两个 workflow：
   `desktop-build` 是**便捷构建通道**（任何机器 push 后到 Actions 页面下载 exe），
@@ -149,26 +149,9 @@ build_all.bat
   首次运行时指一下本机的 GA 仓库路径。
 
 
-### 可选的 AntiCLI 桌面组件
+### Agy ACP 运行时与冻结 sidecar 的 GA 运行依赖（rich / durable rewind）
 
-默认构建不包含 AntiCLI。要随桌面版打包，传入通过版本和源码摘要校验的 AntiCLI 0.1.0 checkout：
-
-```powershell
-python scripts/build_all.py --full --anticli-source D:\study\anticli
-```
-
-可以用 `--anticli-python <解释器路径>` 指定独立的 AntiCLI 构建环境。该环境只需装
-AntiCLI checkout 的 `[project.dependencies]` 与 `requirements.txt` 钉住的 PyInstaller，
-无需安装测试依赖。省略该参数时，沿用 sidecar 的解释器，并在其中安装 AntiCLI 的运行依赖。
-
-要精简随包依赖，建议使用隔离的 CPython 虚拟环境，通过 `GA_HUB_PYTHON` 指定 sidecar
-解释器，只装 `requirements.txt` 的运行与打包依赖。`pytest` 和 `httpx` 用于测试，
-可在另一个装齐 `requirements.txt` 的环境中运行后端测试。`--full` 会在 sidecar
-解释器中运行测试，使用精简环境冻结时，请单独跑测试，再用普通构建入口打包。
-
-打包的是 AntiCLI 网关，不包含官方 `agy`，也不会代为登录。运行时先复用已运行的本地网关；否则从 Anti 页面手动启动，优先使用随包组件，未随包时查找 `PATH` 上的 `anticli`。随包组件的数据独立保存在 GA-Hub 管理数据目录。AntiChat 始终以 `plan` 模式提交；选择项目外的引用文件时，仅把所选文件的副本所在目录授予该次运行，不开放源文件的父目录。
-
-### 冻结 sidecar 的 GA 运行依赖（rich / durable rewind）
+Agy 会话直接由 GA-Hub 内置 ACP 运行时驱动本机已安装的官方 `agy` CLI（无需任何外部网关组件）；选择项目外引用或上传附件时，仅将所选文件副本所在的单次运行暂存目录授予该轮任务。
 
 sidecar 冻结包显式打包 `rich` 和 `rich.cells`（GA `frontends.worldline` 的
 第三方依赖），并在正式构建的 `--selftest` 中检查两者，避免跨机器依赖外部

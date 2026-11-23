@@ -728,7 +728,7 @@ function stripFinalResponseMarker(text) {
   return (text || "").replace(FINAL_MARKER_RE, "").trim();
 }
 function extractSummary(text) {
-  const node = scanTranscript(text).find((node2) => node2.kind === "summary" && node2.complete);
+  const node = scanTranscript(text).filter((node2) => node2.kind === "summary" && node2.complete).at(-1);
   return (node?.raw.replace(/^<summary>\s*|\s*<\/summary>$/gi, "") || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).join(" \xB7 ");
 }
 function stripTraceMeta(text) {

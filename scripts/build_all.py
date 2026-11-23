@@ -23,6 +23,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -33,11 +34,12 @@ EXIT_PREFLIGHT = 2
 EXIT_STAGE_FAILED = 3
 EXIT_ARTIFACT_GUARD = 5
 
-# 三件交付产物；顺序即守卫与产物体检的报告顺序。值是守卫失败时的排查提示。
+# 交付产物；顺序即守卫与产物体检的报告顺序。值是守卫失败时的排查提示。
 ARTIFACT_HINTS = {
     "sidecar 中间产物": "PyInstaller 没有产出新文件（build_sidecar.py 先 unlink 再打包）。",
     "sidecar 交付副本": "便携 sidecar 复制失败——产物目录与应用不配套。",
     "主程序产物": "Tauri/cargo 可能跳过了链接，或产物写到了别的 target 目录。",
+    "独立更新助手": "build_update_helper.py 未产出新文件，或更新助手交付复制失败。",
 }
 
 
@@ -322,14 +324,17 @@ def tauri_stage_command(tauri: str, target: str) -> list[str]:
 
 
 def artifact_paths(target: str) -> dict[str, Path]:
-    """三件交付产物：label -> 路径。"""
+    """交付产物：label -> 路径（Windows 含独立更新助手）。"""
     suffix = ".exe" if "windows" in target else ""
     release = ROOT / "src-tauri" / "target" / target / "release"
-    return {
+    paths = {
         "sidecar 中间产物": ROOT / "src-tauri" / "binaries" / f"ga-hub-sidecar-{target}{suffix}",
         "sidecar 交付副本": release / f"ga-hub-sidecar{suffix}",
         "主程序产物": release / f"ga-hub-desktop{suffix}",
     }
+    if "windows" in target:
+        paths["独立更新助手"] = release / "ga-hub-update.exe"
+    return paths
 
 
 def artifact_blocker(path: Path) -> str:
@@ -419,6 +424,29 @@ def check_sidecar_runtime(path: Path) -> int:
         _log("  常见原因：conda Library\\bin 不在 PATH，PyInstaller 漏收 ffi/lzma/bz2/expat/sqlite3。")
         return EXIT_ARTIFACT_GUARD
     _log("  ✓ sidecar 可启动（运行期关键模块全部加载成功）")
+    return 0
+
+
+def check_update_helper_runtime(path: Path) -> int:
+    """运行期守卫：验证独立更新助手 exe 能加载 DLL 并完成入口参数解析。"""
+    _log(f"  运行期自检：{path.name} --help")
+    try:
+        result = subprocess.run(
+            [str(path), "--help"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _log(f"✗ 独立更新助手运行期自检无法完成：{exc}")
+        return EXIT_ARTIFACT_GUARD
+    output = (result.stderr or result.stdout or b"").decode("utf-8", "replace").strip()
+    if result.returncode:
+        _log(f"✗ 独立更新助手运行期自检失败（exit {result.returncode}）——这个产物启动就会崩")
+        for line in output.splitlines()[-12:]:
+            _log(f"  {line}")
+        return EXIT_ARTIFACT_GUARD
+    _log("  ✓ 独立更新助手可启动")
     return 0
 
 
@@ -512,7 +540,6 @@ def main(argv: list[str] | None = None) -> int:
         help="先跑后端 pytest（tests/）与前端 vitest，再进入构建阶段",
     )
     args = parser.parse_args(argv)
-    sidecar_options: list[str] = []
     started = time.monotonic()
 
     handle, lock_desc = acquire_build_lock()
@@ -553,7 +580,7 @@ def main(argv: list[str] | None = None) -> int:
             run_stage("前端测试", [npm, "--prefix", "webui", "test", "--", "--run"])
         run_stage(
             "Python sidecar",
-            [sidecar_python, "desktop/build_sidecar.py", "--target", args.target, *sidecar_options],
+            [sidecar_python, "desktop/build_sidecar.py", "--target", args.target],
         )
         run_stage("Tauri 桌面壳", tauri_stage_command(tauri, args.target))
         # Portable --no-bundle builds must not depend on implicit externalBin copies.
@@ -563,11 +590,14 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as exc:
             _log(f"✗ sidecar 交付副本复制失败：{exc}")
             raise StageFailed("sidecar 交付副本") from exc
-        if "windows" in args.target:
-            helper_output = ROOT / "temp" / "release-updater-helper"
+        if "独立更新助手" in paths:
+            helper_output = Path(tempfile.gettempdir()) / "gahub-update-helper-build"
             run_stage("独立更新助手", [sidecar_python, "scripts/build_update_helper.py", "--output", str(helper_output)])
-            shutil.copy2(helper_output / "dist/ga-hub-update.exe",
-                         ROOT / "src-tauri/target" / args.target / "release/ga-hub-update.exe")
+            try:
+                shutil.copy2(helper_output / "dist" / "ga-hub-update.exe", paths["独立更新助手"])
+            except OSError as exc:
+                _log(f"✗ 独立更新助手交付副本复制失败：{exc}")
+                raise StageFailed("独立更新助手交付副本") from exc
     except StageFailed:
         report_consistency(paths, before)
         return EXIT_STAGE_FAILED
@@ -582,8 +612,13 @@ def main(argv: list[str] | None = None) -> int:
     if code:
         return code
 
+    if "独立更新助手" in paths:
+        code = check_update_helper_runtime(paths["独立更新助手"])
+        if code:
+            return code
+
     _log(f"✓ 构建链全部通过（总耗时 {time.monotonic() - started:.1f}s）")
-    _log("  交付物：src-tauri/target/<triple>/release/ 下的 ga-hub-desktop 与 ga-hub-sidecar")
+    _log("  交付物：src-tauri/target/<triple>/release/ 下的 ga-hub-desktop、ga-hub-sidecar（Windows 含 ga-hub-update）")
     return 0
 
 

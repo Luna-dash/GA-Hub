@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node ../assets/remote_access/build-remote.cjs",
     "preview": "vite preview",
     "lint": "tsc -b --noEmit",
     "api:generate": "node scripts/generate-api-schema.mjs",

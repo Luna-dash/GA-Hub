@@ -10,7 +10,7 @@ def build(output):
     with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as z:
         for name in ('connector.py', 'setup.cmd', 'pair.cmd', 'run.cmd', 'CONNECTOR.md'):
             z.write(ROOT / name, 'nova/' + name)
-        for name in ('gateway.py', 'artifacts.py', 'remote_progress.py', 'compact-worker.cjs'):
+        for name in ('gateway.py', 'artifacts.py', 'remote_progress.py'):
             z.write(ROOT.parent / 'remote_access' / name, 'remote_access/' + name)
     return output
 
