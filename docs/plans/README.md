@@ -33,6 +33,7 @@
 | `ga-side-handover-g1g2.md` | ✅ 已完成 → 已归档 | 交接单已被接收方执行（GA `04f0d9d`）；文中「GA HEAD `aba30f7`」已过期 |
 | `PLAN_REMAINING_AUDIT_20260918.md` | 📌 历史分析记录 | 保留盘点过程与证据；其中旧边界批次已被 2026-09-20 方案取代，不再执行 |
 | `gahub-frontend-implementation-plan.md` | 📌 权威方案 | **GA/GA-Hub 关系治理唯一架构与实施依据**：特殊 frontend + 双连接面 + Memory 授权编辑 |
+| `next-phase-roadmap-20261123.md` | 📌 活文档 | **2026-11-23 四方向演进细化方案**（基线 `e4fd708` / 上次包 `0874252`）：桌面图标收尾与重建、`Autonomous`/`AntiChat`/`Conductor` UI 收口、Agy 隔离与 Nova ACP 协议对齐、DB/内存技术债实况 |
 | `TODO_REMAINING.md` | 📌 活文档 | **唯一待办入口**（波次顺序 + 决策区 + 已收口清单）。原 W0（key 轮换）/ W1（重建与验收）已于 2026-09-18 按用户决定移出，故波次从 W2 起 |
 
 ### 2.2 docs/architecture/
