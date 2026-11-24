@@ -216,4 +216,203 @@ describe('VirtualMessageList', () => {
     act(() => callbacks.forEach((cb) => cb()))
     expect(scroller.scrollTop).toBe(10_800)
   })
+
+  it('forces auto scroll on already-mounted virtualized turns and atomically realigns newly mounted overscan', () => {
+    const callbacks: Array<() => void> = []
+    class FakeResizeObserver {
+      constructor(cb: () => void) { callbacks.push(cb) }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+
+    act(() => root.render(<Harness rows={items} threshold={5} overscan={500} />))
+    const scroller = host.firstElementChild as HTMLDivElement
+    const list = host.querySelector<HTMLElement>('[data-chat-virtual-list]')!
+    const scrollToSpy = vi.fn((opts: { top?: number }) => {
+      if (typeof opts?.top === 'number') scroller.scrollTop = opts.top
+    })
+    Object.defineProperty(scroller, 'scrollTo', { value: scrollToSpy, configurable: true })
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => Number.parseFloat(list.style.height || '0'),
+      configurable: true,
+    })
+
+    act(() => handle?.scrollToIndex(50, { behavior: 'auto', align: 'start' }))
+    expect(scroller.scrollTop).toBe(4_984)
+    scrollToSpy.mockClear()
+
+    // Turn 46 is already mounted inside the 500px overscan; virtualized nav must still use auto and sync overscan immediately.
+    act(() => handle?.scrollToIndex(46, { behavior: 'smooth', align: 'start' }))
+    expect(scrollToSpy).toHaveBeenCalledWith({ top: 4_584, behavior: 'auto' })
+    expect(scroller.scrollTop).toBe(4_584)
+
+    const overscanRow42 = host.querySelector<HTMLElement>('[data-virtual-index="42"]')
+    expect(overscanRow42).not.toBeNull()
+    if (overscanRow42) Object.defineProperty(overscanRow42, 'offsetHeight', { value: 400, configurable: true })
+    act(() => callbacks.forEach((cb) => cb()))
+
+    const row46 = host.querySelector<HTMLElement>('[data-virtual-index="46"]')!
+    expect(row46.style.top).toBe('4900px')
+    expect(scroller.scrollTop).toBe(4_884)
+  })
+
+  it('commits above-viewport height delta atomically with DOM offsets outside navigation', () => {
+    const callbacks: Array<() => void> = []
+    class FakeResizeObserver {
+      constructor(cb: () => void) { callbacks.push(cb) }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+
+    act(() => root.render(<Harness rows={items} threshold={5} overscan={500} />))
+    const scroller = host.firstElementChild as HTMLDivElement
+    const list = host.querySelector<HTMLElement>('[data-chat-virtual-list]')!
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => Number.parseFloat(list.style.height || '0'),
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTo', { value: undefined, configurable: true })
+
+    act(() => handle?.scrollToIndex(20, { behavior: 'auto', align: 'start' }))
+    expect(scroller.scrollTop).toBe(1_984)
+    act(() => {
+      scroller.dispatchEvent(new Event('wheel'))
+    })
+
+    let scrollTop = scroller.scrollTop
+    const seenRow20TopOnScrollWrite: string[] = []
+    Object.defineProperty(scroller, 'scrollTop', {
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value
+        const currentRow20 = host.querySelector<HTMLElement>('[data-virtual-index="20"]')
+        seenRow20TopOnScrollWrite.push(currentRow20?.style.top ?? '')
+      },
+      configurable: true,
+    })
+
+    const aboveRow16 = host.querySelector<HTMLElement>('[data-virtual-index="16"]')!
+    Object.defineProperty(aboveRow16, 'offsetHeight', { value: 250, configurable: true })
+    act(() => callbacks.forEach((cb) => cb()))
+
+    expect(seenRow20TopOnScrollWrite).toEqual(['2150px'])
+    expect(scroller.scrollTop).toBe(2_134)
+    expect(Number.parseFloat(host.querySelector<HTMLElement>('[data-virtual-index="20"]')!.style.top) - scroller.scrollTop).toBe(16)
+  })
+
+  it('does not re-render already mounted rows when scrolling within the same overscan window', () => {
+    const renderSpy = vi.fn((item: string) => <div>{item}</div>)
+    function MemoHarness() {
+      const scrollRef = useRef<HTMLDivElement>(null)
+      return (
+        <div ref={scrollRef}>
+          <VirtualMessageList
+            ref={(value) => { handle = value }}
+            items={items}
+            scrollRef={scrollRef}
+            virtualizationThreshold={5}
+            overscanPx={500}
+            itemKey={(item) => item}
+            estimateSize={() => 100}
+            renderItem={renderSpy}
+          />
+        </div>
+      )
+    }
+
+    act(() => root.render(<MemoHarness />))
+    const scroller = host.firstElementChild as HTMLDivElement
+    const list = host.querySelector<HTMLElement>('[data-chat-virtual-list]')!
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => Number.parseFloat(list.style.height || '0'),
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTo', { value: undefined, configurable: true })
+
+    act(() => handle?.scrollToIndex(30, { behavior: 'auto', align: 'start' }))
+    expect(scroller.scrollTop).toBe(2_984)
+    renderSpy.mockClear()
+
+    act(() => {
+      scroller.scrollTop = 2_964
+      scroller.dispatchEvent(new Event('scroll'))
+    })
+    expect(renderSpy).not.toHaveBeenCalled()
+  })
+
+  it('compensates a row straddling the top viewport edge atomically when it grows outside navigation', () => {
+    const callbacks: Array<() => void> = []
+    class FakeResizeObserver {
+      constructor(cb: () => void) { callbacks.push(cb) }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+
+    act(() => root.render(<Harness rows={items} threshold={5} overscan={500} />))
+    const scroller = host.firstElementChild as HTMLDivElement
+    const list = host.querySelector<HTMLElement>('[data-chat-virtual-list]')!
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => Number.parseFloat(list.style.height || '0'),
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTo', { value: undefined, configurable: true })
+
+    act(() => handle?.scrollToIndex(20, { behavior: 'auto', align: 'start' }))
+    expect(scroller.scrollTop).toBe(1_984)
+    act(() => {
+      scroller.dispatchEvent(new Event('wheel'))
+    })
+
+    // Row 19 spans 1900..2000, straddling scrollTop=1984; growing it must keep row 20 locked at +16px.
+    const straddlingRow19 = host.querySelector<HTMLElement>('[data-virtual-index="19"]')!
+    Object.defineProperty(straddlingRow19, 'offsetHeight', { value: 260, configurable: true })
+    act(() => callbacks.forEach((cb) => cb()))
+
+    const row20 = host.querySelector<HTMLElement>('[data-virtual-index="20"]')!
+    expect(row20.style.top).toBe('2160px')
+    expect(scroller.scrollTop).toBe(2_144)
+    expect(Number.parseFloat(row20.style.top) - scroller.scrollTop).toBe(16)
+  })
+
+  it('keeps instant navigation realign active across scrollend until overscan rows settle', () => {
+    const callbacks: Array<() => void> = []
+    class FakeResizeObserver {
+      constructor(cb: () => void) { callbacks.push(cb) }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+
+    act(() => root.render(<Harness rows={items} threshold={5} overscan={500} />))
+    const scroller = host.firstElementChild as HTMLDivElement
+    const list = host.querySelector<HTMLElement>('[data-chat-virtual-list]')!
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => Number.parseFloat(list.style.height || '0'),
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTo', { value: undefined, configurable: true })
+
+    act(() => handle?.scrollToIndex(50, { behavior: 'smooth', align: 'start' }))
+    expect(scroller.scrollTop).toBe(4_984)
+
+    act(() => {
+      scroller.dispatchEvent(new Event('scrollend'))
+    })
+
+    const overscanRow46 = host.querySelector<HTMLElement>('[data-virtual-index="46"]')!
+    Object.defineProperty(overscanRow46, 'offsetHeight', { value: 300, configurable: true })
+    act(() => callbacks.forEach((cb) => cb()))
+
+    const row50 = host.querySelector<HTMLElement>('[data-virtual-index="50"]')!
+    expect(row50.style.top).toBe('5200px')
+    expect(scroller.scrollTop).toBe(5_184)
+  })
 })

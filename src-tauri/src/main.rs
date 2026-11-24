@@ -869,11 +869,6 @@ fn allocate_sidecar_identity() -> Result<(u16, String), String> {
 }
 
 fn spawn_sidecar(port: u16, token: &str) -> Result<OwnedProcess, String> {
-    // Reclaim onefile bundle directories left by earlier sidecars. This runs on
-    // every spawn, not once per process: a rebuild/restart loop reuses one
-    // desktop session, and that loop is exactly what piles up bundles inside
-    // a single %TEMP%. Never fail the launch on cleanup problems.
-    mei_cleanup::sweep_stale_bundles(&record_startup_diagnostic);
     let mut command = sidecar_command()?;
     // Packaged sidecars do not bundle GA's third-party dependencies. The
     // Python bootstrap uses the discovered GA interpreter's site-packages by
@@ -902,7 +897,13 @@ fn spawn_sidecar(port: u16, token: &str) -> Result<OwnedProcess, String> {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|error| format!("<{error}>"))
     ));
-    OwnedProcess::spawn(command)
+    let process = OwnedProcess::spawn(command)?;
+    // Reclaim onefile bundle directories left by earlier sidecars on a
+    // background thread so cold-disk directory scans never delay sidecar launch.
+    let _ = std::thread::Builder::new()
+        .name("mei-cleanup".into())
+        .spawn(|| mei_cleanup::sweep_stale_bundles(&record_startup_diagnostic));
+    Ok(process)
 }
 
 fn ready_response_matches(response: &str, token: &str) -> bool {

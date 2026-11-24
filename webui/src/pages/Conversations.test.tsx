@@ -494,4 +494,28 @@ describe('conversation route selection', () => {
     expect(host.querySelectorAll('[aria-label="多轮会话选择器"] button')).toHaveLength(2)
     expect(host.querySelector('.justify-end > div > .whitespace-pre-wrap')).toBeNull()
   })
+
+  it('omits uncounted placeholder text for lightweight summary rows', async () => {
+    apiMock.conversations.mockResolvedValue({
+      total: 1,
+      offset: 0,
+      limit: 50,
+      items: [{
+        id: 'summary-only',
+        title: 'Summary row',
+        message_count: 0,
+        dialogue_count: null,
+        turn_count: null,
+        mtime: 1_700_000_000,
+        last_user_preview: '',
+        original_user_preview: '',
+      }],
+    })
+
+    await renderAt('/conversations')
+    await waitFor(() => expect(host.textContent).toContain('Summary row'))
+
+    expect(host.textContent).not.toContain('对话次数待统计')
+    expect(host.textContent).not.toContain('0 turns')
+  })
 })

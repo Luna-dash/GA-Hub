@@ -362,6 +362,11 @@ export default function Conversations() {
       detailJumpingBottomUntilRef.current = 0
     }
     const onScrollEnd = () => {
+      const now = performance.now()
+      if (now < detailJumpingBottomUntilRef.current || now < detailNavLockUntilRef.current) {
+        syncDetailNav()
+        return
+      }
       clearNavLock()
       syncDetailNav()
     }
@@ -861,6 +866,112 @@ function RoundView({
   setOpenConclusion: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
   messageFontStyle?: CSSProperties
 }) {
+  const renderRound = useCallback((r: Round) => {
+    const roundKey = `${convId}:${r.index}`
+    const isProcessOpen = !!openConclusion[roundKey]
+    const summaryText = r.conclusion || r.turnSummaries[r.turnSummaries.length - 1]?.summary || '（无结论）'
+    const detailText = r.detail && r.detail !== '（暂无最终正文）' ? r.detail : summaryText
+    const hasTurnSummaries = r.turnSummaries.length > 0
+
+    return (
+      <div className="pb-6">
+        <div className="mb-3.5 flex items-center gap-3">
+          <div className="h-px flex-1 bg-line/55" />
+          <span className="inline-flex items-center rounded-full border border-line/70 bg-bg-card/90 px-2.5 py-0.5 text-[11px] font-medium tabular-nums text-ink-muted shadow-[0_1px_2px_rgba(45,34,22,0.04)]">
+            第 {r.index} 轮
+          </span>
+          <div className="h-px flex-1 bg-line/55" />
+        </div>
+
+        <div className="space-y-3.5">
+          {r.user && (
+            <div className="flex justify-start">
+              <div
+                className={`group/msg relative max-w-[88%] rounded-lg px-3.5 py-2.5 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.16)] ${bubbleTone('user').surfaceClass}`}
+                style={messageFontStyle}
+              >
+                <MessageContent content={cleanArchiveUserText(r.user.content || '')} format="text" />
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-start">
+            <div
+              className={`group/msg relative min-w-0 max-w-[92%] rounded-lg px-4 py-3 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.12)] ${bubbleTone('assistant').surfaceClass}`}
+              style={messageFontStyle}
+            >
+              <div className="mb-2 flex min-h-6 items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
+                <span className="inline-flex shrink-0 items-center gap-2">
+                  <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
+                  GA Agent
+                </span>
+                <div className="pointer-events-none flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+                  <ReplyActions text={detailText} engine="chat" canSave={false} />
+                </div>
+              </div>
+
+              {hasTurnSummaries && (
+                <div className="mb-2.5 flex items-center gap-2">
+                  <button
+                    type="button"
+                    aria-expanded={isProcessOpen}
+                    onClick={() => setOpenConclusion((s) => ({ ...s, [roundKey]: !isProcessOpen }))}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line/70 bg-bg-soft/85 px-2 py-0.5 text-xs font-medium text-accent transition-colors hover:border-accent/45 hover:bg-accent-soft/50"
+                  >
+                    <ChevronDisclosureIcon open={isProcessOpen} size={12} />
+                    <span>{isProcessOpen ? '收起过程' : '展开过程'}</span>
+                  </button>
+                  <span className="text-[11px] tabular-nums text-ink-faint">
+                    {r.turnSummaries.length} 步
+                  </span>
+                </div>
+              )}
+
+              {isProcessOpen && hasTurnSummaries && (
+                <div className="mb-3.5 rounded-lg border border-line/60 bg-bg-soft/75 px-3 py-2.5">
+                  <div className="mb-2 text-xs font-medium text-ink-faint">过程摘要</div>
+                  <div className="space-y-2 border-l-2 border-accent/25 pl-3">
+                    {r.turnSummaries.map((ts, idx) => (
+                      <div key={`${roundKey}-ts-${idx}`} className="text-sm leading-relaxed text-ink">
+                        <span className="mr-2 inline-block rounded bg-bg-card px-1.5 py-0.5 font-mono text-[11px] font-medium text-ink-muted ring-1 ring-line/60">
+                          Turn {ts.turn}
+                        </span>
+                        <span className="whitespace-pre-wrap">{ts.summary}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {detailText && (
+                <div className={isProcessOpen && hasTurnSummaries ? 'border-t border-line/45 pt-3' : ''}>
+                  {isProcessOpen && hasTurnSummaries && (
+                    <div className="mb-2 text-xs font-medium text-ink-faint">最终回答</div>
+                  )}
+                  <MessageContent content={detailText} format="markdown" />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {r.others.length > 0 && (
+            <div className="space-y-2">
+              {r.others.map((m, idx) => (
+                <MessageBlock
+                  key={`o-${idx}`}
+                  m={m}
+                  label={m.role || `message ${idx + 1}`}
+                  tone="other"
+                  messageFontStyle={messageFontStyle}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }, [convId, messageFontStyle, openConclusion, setOpenConclusion])
+
   if (rounds.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-line/75 bg-bg-card/55 py-10 text-center text-sm text-ink-faint">
@@ -878,111 +989,7 @@ function RoundView({
       overscanPx={700}
       itemKey={roundItemKey}
       estimateSize={estimateRoundSize}
-      renderItem={(r) => {
-        const roundKey = `${convId}:${r.index}`
-        const isProcessOpen = !!openConclusion[roundKey]
-        const summaryText = r.conclusion || r.turnSummaries[r.turnSummaries.length - 1]?.summary || '（无结论）'
-        const detailText = r.detail && r.detail !== '（暂无最终正文）' ? r.detail : summaryText
-        const hasTurnSummaries = r.turnSummaries.length > 0
-
-        return (
-          <div className="pb-6">
-            <div className="mb-3.5 flex items-center gap-3">
-              <div className="h-px flex-1 bg-line/55" />
-              <span className="inline-flex items-center rounded-full border border-line/70 bg-bg-card/90 px-2.5 py-0.5 text-[11px] font-medium tabular-nums text-ink-muted shadow-[0_1px_2px_rgba(45,34,22,0.04)]">
-                第 {r.index} 轮
-              </span>
-              <div className="h-px flex-1 bg-line/55" />
-            </div>
-
-            <div className="space-y-3.5">
-              {r.user && (
-                <div className="flex justify-start">
-                  <div
-                    className={`group/msg relative max-w-[88%] rounded-lg px-3.5 py-2.5 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.16)] ${bubbleTone('user').surfaceClass}`}
-                    style={messageFontStyle}
-                  >
-                    <MessageContent content={cleanArchiveUserText(r.user.content || '')} format="text" />
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-start">
-                <div
-                  className={`group/msg relative min-w-0 max-w-[92%] rounded-lg px-4 py-3 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.12)] ${bubbleTone('assistant').surfaceClass}`}
-                  style={messageFontStyle}
-                >
-                  <div className="mb-2 flex min-h-6 items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
-                    <span className="inline-flex shrink-0 items-center gap-2">
-                      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
-                      GA Agent
-                    </span>
-                    <div className="pointer-events-none flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-                      <ReplyActions text={detailText} engine="chat" canSave={false} />
-                    </div>
-                  </div>
-
-                  {hasTurnSummaries && (
-                    <div className="mb-2.5 flex items-center gap-2">
-                      <button
-                        type="button"
-                        aria-expanded={isProcessOpen}
-                        onClick={() => setOpenConclusion((s) => ({ ...s, [roundKey]: !isProcessOpen }))}
-                        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line/70 bg-bg-soft/85 px-2 py-0.5 text-xs font-medium text-accent transition-colors hover:border-accent/45 hover:bg-accent-soft/50"
-                      >
-                        <ChevronDisclosureIcon open={isProcessOpen} size={12} />
-                        <span>{isProcessOpen ? '收起过程' : '展开过程'}</span>
-                      </button>
-                      <span className="text-[11px] tabular-nums text-ink-faint">
-                        {r.turnSummaries.length} 步
-                      </span>
-                    </div>
-                  )}
-
-                  {isProcessOpen && hasTurnSummaries && (
-                    <div className="mb-3.5 rounded-lg border border-line/60 bg-bg-soft/75 px-3 py-2.5">
-                      <div className="mb-2 text-xs font-medium text-ink-faint">过程摘要</div>
-                      <div className="space-y-2 border-l-2 border-accent/25 pl-3">
-                        {r.turnSummaries.map((ts, idx) => (
-                          <div key={`${roundKey}-ts-${idx}`} className="text-sm leading-relaxed text-ink">
-                            <span className="mr-2 inline-block rounded bg-bg-card px-1.5 py-0.5 font-mono text-[11px] font-medium text-ink-muted ring-1 ring-line/60">
-                              Turn {ts.turn}
-                            </span>
-                            <span className="whitespace-pre-wrap">{ts.summary}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {detailText && (
-                    <div className={isProcessOpen && hasTurnSummaries ? 'border-t border-line/45 pt-3' : ''}>
-                      {isProcessOpen && hasTurnSummaries && (
-                        <div className="mb-2 text-xs font-medium text-ink-faint">最终回答</div>
-                      )}
-                      <MessageContent content={detailText} format="markdown" />
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {r.others.length > 0 && (
-                <div className="space-y-2">
-                  {r.others.map((m, idx) => (
-                    <MessageBlock
-                      key={`o-${idx}`}
-                      m={m}
-                      label={m.role || `message ${idx + 1}`}
-                      tone="other"
-                      messageFontStyle={messageFontStyle}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )
-      }}
+      renderItem={renderRound}
     />
   )
 }
@@ -998,6 +1005,26 @@ function FlatView({
   listRef?: RefObject<VirtualMessageListHandle>
   messageFontStyle?: CSSProperties
 }) {
+  const renderFlatMessage = useCallback((m: Msg, i: number) => {
+    const isUser = m.role === 'user'
+    const isAssistant = m.role === 'assistant'
+    const label = isUser ? '你' : isAssistant ? 'GA Agent' : (m.role || `消息 ${i + 1}`)
+    return (
+      <div className="pb-3">
+        <div className="flex justify-start">
+          <div className="w-fit max-w-[90%]">
+            <MessageBlock
+              m={m}
+              label={label}
+              tone={isUser ? 'user' : isAssistant ? 'assistant' : 'other'}
+              messageFontStyle={messageFontStyle}
+            />
+          </div>
+        </div>
+      </div>
+    )
+  }, [messageFontStyle])
+
   if (messages.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-line/75 bg-bg-card/55 py-10 text-center text-sm text-ink-faint">
@@ -1015,25 +1042,7 @@ function FlatView({
       overscanPx={700}
       itemKey={flatMessageKey}
       estimateSize={estimateFlatMessageSize}
-      renderItem={(m, i) => {
-        const isUser = m.role === 'user'
-        const isAssistant = m.role === 'assistant'
-        const label = isUser ? '你' : isAssistant ? 'GA Agent' : (m.role || `消息 ${i + 1}`)
-        return (
-          <div className="pb-3">
-            <div className="flex justify-start">
-              <div className="w-fit max-w-[90%]">
-                <MessageBlock
-                  m={m}
-                  label={label}
-                  tone={isUser ? 'user' : isAssistant ? 'assistant' : 'other'}
-                  messageFontStyle={messageFontStyle}
-                />
-              </div>
-            </div>
-          </div>
-        )
-      }}
+      renderItem={renderFlatMessage}
     />
   )
 }
@@ -1222,6 +1231,7 @@ function ConvRow({ c, active, titleStyle, onClick }: {
   const title = summaryDisplayTitle(c)
   const meta = sourceMeta(c.source)
   const lastActive = formatRelativeTime(c.mtime)
+  const countsText = conversationCountsText(c)
 
   return (
     <button
@@ -1253,11 +1263,13 @@ function ConvRow({ c, active, titleStyle, onClick }: {
         </span>
       </div>
       <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] tabular-nums text-ink-faint">
-        <span className="truncate" title={CONVERSATION_COUNTS_HELP}>
-          {conversationCountsText(c)}
-        </span>
+        {countsText && (
+          <span className="truncate" title={CONVERSATION_COUNTS_HELP}>
+            {countsText}
+          </span>
+        )}
         {lastActive && (
-          <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
+          <span className="ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
             <Clock size={10} strokeWidth={1.85} aria-hidden="true" className="opacity-75" />
             <span>{lastActive}</span>
           </span>

@@ -37,7 +37,9 @@ def test_desktop_pages_bound_source_reads_and_preserve_full_history(tmp_path: Pa
         for i in range(4)
     ), encoding="utf-8")
     full = read_archive_messages(archive)
-    with mock.patch("server.services.archive_messages._items_from_text",
+    with mock.patch.object(archive_messages, "_DESKTOP_PAGE_SOURCE_BYTES", 1024 * 1024), \
+         mock.patch.object(archive_messages, "_DESKTOP_PAGE_MAX_CHARS", 400_000), \
+         mock.patch("server.services.archive_messages._items_from_text",
                     wraps=archive_messages._items_from_text) as project:
         newest = read_archive_messages(archive, desktop=True)
         assert [item["ordinal"] for item in newest["items"]] == [4, 5, 6, 7]

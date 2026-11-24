@@ -121,7 +121,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     const aimDeadlineRef = useRef(0)
     const msgsRef = useRef(msgs)
     msgsRef.current = msgs
-    const capturePosition = useCallback(() => {
+    const capturePosition = useCallback((knownFirstVisible?: number) => {
       const el = scrollRef.current
       // Detached DOM reads zeros and would overwrite a good saved position
       // with a bogus stuck=true entry during unmount cleanup.
@@ -142,12 +142,16 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       // the last programmatic scroll.
       const gestureAt = lastUserGestureAtRef.current
       if (gestureAt === 0 || lastProgrammaticScrollAt() > gestureAt) return
-      const index = virtualListRef.current?.getFirstVisibleIndex(48) ?? 0
+      const index = knownFirstVisible ?? (virtualListRef.current?.getFirstVisibleIndex(48) ?? 0)
       const message = msgs[index]
       if (!message) return
+      const nextKey = chatMessageKey(message)
+      const nextStuck = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+      const previous = scrollPositionsRef.current[sessionId]
+      if (previous?.key === nextKey && previous?.stuck === nextStuck) return
       scrollPositionsRef.current[sessionId] = {
-        key: chatMessageKey(message),
-        stuck: el.scrollHeight - el.scrollTop - el.clientHeight < 80,
+        key: nextKey,
+        stuck: nextStuck,
       }
       writePageState('liveChat.scrollPositions', trimScrollPositions(scrollPositionsRef.current))
     }, [msgs, sessionId])
@@ -262,15 +266,16 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       navigationLockUntilRef.current = 0
 
       let current = at ? turns.length - 1 : 0
+      let firstVisibleIndex: number | undefined
       if (!at) {
-        const firstVisibleIndex = virtualListRef.current?.getFirstVisibleIndex(48) ?? 0
+        firstVisibleIndex = virtualListRef.current?.getFirstVisibleIndex(48) ?? 0
         for (let index = 0; index < turns.length; index += 1) {
           if (turns[index] <= firstVisibleIndex) current = index
           else break
         }
       }
       updateActiveTurn(current)
-      capturePosition()
+      capturePosition(firstVisibleIndex)
     }
     const recomputeStuckRef = useRef(recomputeStuck)
     recomputeStuckRef.current = recomputeStuck
@@ -291,6 +296,8 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         lastUserGestureAtRef.current = performance.now()
       }
       const onScrollEnd = () => {
+        const now = performance.now()
+        if (now < jumpingToBottomUntilRef.current || now < navigationLockUntilRef.current) return
         navigationTargetRef.current = null
         navigationLockUntilRef.current = 0
         jumpingToBottomUntilRef.current = 0
@@ -586,6 +593,12 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       return (
         <div
           {...(message.role === 'user' ? { 'data-chat-turn': true } : {})}
+          style={message.source === 'history'
+            ? {
+              contentVisibility: 'auto',
+              containIntrinsicSize: `auto ${Math.max(40, Math.round(estimateChatMessageSize(message) - 8))}px`,
+            }
+            : undefined}
         >
           <MessageBubble
             role={role}

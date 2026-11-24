@@ -570,6 +570,11 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
       jumpingToBottomUntilRef.current = 0
     }
     const onScrollEnd = () => {
+      const now = performance.now()
+      if (now < jumpingToBottomUntilRef.current || now < navLockUntilRef.current) {
+        syncTranscriptNavRef.current()
+        return
+      }
       clearNavLock()
       syncTranscriptNavRef.current()
     }

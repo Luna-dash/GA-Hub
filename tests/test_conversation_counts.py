@@ -48,25 +48,35 @@ def test_empty_and_missing_archive_counts(tmp_path: Path):
         archive_messages.read_archive_counts(tmp_path / 'missing.txt')
 
 
-def test_list_counts_only_requested_page_and_uses_real_archive(tmp_path: Path, monkeypatch):
+def test_list_returns_cached_counts_without_parsing_uncached_archives(tmp_path: Path, monkeypatch):
+    archive_messages._COUNTS_CACHE.clear()
     paths = [tmp_path / f'{i}.txt' for i in range(3)]
     for path in paths:
         path.write_text(prompt('hello') + response() + prompt('next') + response(), encoding='utf-8')
     monkeypatch.setattr(conversations, 'list_archive_sessions', lambda: [
-        (str(path), 0, '', 99) for path in paths
+        (str(path), 0, '', 0) for path in paths
     ])
     monkeypatch.setattr(conversations, '_bound_session_id', lambda _: None)
     monkeypatch.setattr(conversations._metadata, 'title_for_archive', lambda _: 'Title')
     monkeypatch.setattr(conversations, '_conversation_source', lambda _: 'local')
     app = FastAPI()
     app.include_router(conversations.router)
-    with mock.patch.object(conversations, 'read_archive_counts', wraps=archive_messages.read_archive_counts) as counts:
-        result = TestClient(app).get('/api/conversations?offset=1&limit=1')
-    assert result.status_code == 200
-    counts.assert_called_once_with(str(paths[1]))
-    row = result.json()['items'][0]
-    assert (row['dialogue_count'], row['turn_count']) == (2, 2)
-    assert row['message_count'] == 99  # compatibility only; never used as human count
+    client = TestClient(app)
+
+    uncached = client.get('/api/conversations?offset=1&limit=1')
+    assert uncached.status_code == 200
+    row = uncached.json()['items'][0]
+    assert row['dialogue_count'] is None and row['turn_count'] is None
+
+    # Opening the detail endpoint warms the summary counts cache without list-side parsing.
+    monkeypatch.setattr(conversations, 'archive_session_by_id', lambda cid: (str(paths[1]), 0, '', 0) if cid == '1.txt' else None)
+    detail = client.get('/api/conversations/1.txt')
+    assert detail.status_code == 200
+
+    warmed = client.get('/api/conversations?offset=1&limit=1')
+    assert warmed.status_code == 200
+    warmed_row = warmed.json()['items'][0]
+    assert (warmed_row['dialogue_count'], warmed_row['turn_count']) == (2, 2)
 
 
 def test_list_missing_archive_counts_are_unknown(monkeypatch):

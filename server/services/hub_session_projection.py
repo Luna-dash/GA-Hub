@@ -62,6 +62,7 @@ log = logging.getLogger(__name__)
 PEER_PREFIX = "gh-"
 WINDOW_ITEMS = 40  # archive tail window presented as the task flow
 RECONCILE_INTERVAL = 20.0  # seconds between session-store scans
+INITIAL_RECONCILE_DELAY = 5.0  # let HTTP readiness and initial UI settle first
 SUBMIT_JOIN_TIMEOUT = 14.0  # hub `ask` gives up ~15s; answer ok early and keep running
 DETACH_TIMEOUT = 3.0  # per-peer client.stop() cap during teardown
 
@@ -256,12 +257,14 @@ class HubSessionProjectionService:
         get_coordinator: Callable[[], Any] | None = None,
         peek_coordinator: Callable[[], Any] | None = None,
         reconcile_interval: float = RECONCILE_INTERVAL,
+        initial_delay: float = 0.0,
     ) -> None:
         self._store = store
         self._client_factory = client_factory
         self._get_coordinator = get_coordinator
         self._peek_coordinator = peek_coordinator
         self._interval = reconcile_interval
+        self._initial_delay = max(0.0, float(initial_delay))
         self._stopping = threading.Event()
         self._thread: threading.Thread | None = None
         self._peers: dict[str, _ProjectedSession] = {}
@@ -301,6 +304,8 @@ class HubSessionProjectionService:
         return True
 
     def _loop(self) -> None:
+        if self._initial_delay > 0 and self._stopping.wait(self._initial_delay):
+            return
         while not self._stopping.is_set():
             try:
                 self._reconcile()
@@ -422,6 +427,7 @@ def start_hub_session_projection(
     store: Any = None,
     get_coordinator: Callable[[], Any] | None = None,
     peek_coordinator: Callable[[], Any] | None = None,
+    initial_delay: float = INITIAL_RECONCILE_DELAY,
 ) -> bool:
     """Start the process-wide projection service (idempotent).
 
@@ -437,6 +443,7 @@ def start_hub_session_projection(
             store=store,
             get_coordinator=get_coordinator,
             peek_coordinator=peek_coordinator,
+            initial_delay=initial_delay,
         )
         if not service.start():
             return False

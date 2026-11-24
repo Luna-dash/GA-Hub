@@ -416,6 +416,21 @@ class ExternalSitePathsFallbackTests(unittest.TestCase):
                     _paths.external_python_site_paths(Path("/ga")),
                     [str(site.resolve())])
 
+    def test_external_site_paths_skips_probe_when_frozen_has_static(self):
+        with TemporaryDirectory() as td:
+            exe, site = self._windows_venv(td)
+            with mock.patch.object(_paths.sys, "frozen", True, create=True), \
+                 mock.patch.dict(_paths.os.environ,
+                                 {"GA_HUB_ENABLE_EXTERNAL_SITE_PATHS": "1"}), \
+                 mock.patch.object(_paths, "discover_user_python",
+                                   return_value=str(exe)), \
+                 mock.patch.object(_paths.subprocess, "check_output") as probe:
+                self.assertEqual(
+                    _paths.external_python_site_paths(Path("/ga")),
+                    [str(site.resolve())],
+                )
+                probe.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

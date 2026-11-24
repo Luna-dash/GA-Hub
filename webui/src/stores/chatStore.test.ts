@@ -509,8 +509,8 @@ describe('chatStore lifecycle', () => {
 
     expect(getHistory).toHaveBeenCalledWith('session-a', expect.objectContaining({
       view: 'desktop',
-      limit: 32,
-      maxChars: 400_000,
+      limit: 40,
+      maxChars: 1_600_000,
       signal: expect.any(AbortSignal),
     }))
   })
@@ -539,7 +539,7 @@ describe('chatStore lifecycle', () => {
     await useChatStore.getState().loadOlderHistory()
 
     expect(getHistory).toHaveBeenLastCalledWith('session-a', expect.objectContaining({
-      view: 'desktop', before: 2, turns: 20, maxChars: 400_000,
+      view: 'desktop', before: 2, turns: 20, maxChars: 1_600_000,
     }))
     expect(useChatStore.getState().msgs.map((message) => message.content)).toEqual([
       'older question', 'older answer', 'newer question', 'newer answer',

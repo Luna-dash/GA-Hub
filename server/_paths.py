@@ -444,6 +444,12 @@ def external_python_site_paths(ga_root: Path | None = None) -> list[str]:
     except Exception:
         pass
 
+    if getattr(sys, "frozen", False):
+        static = _static_site_packages(python)
+        if static:
+            log.info("using static site-packages for frozen sidecar %s: %s", python, static)
+            return static
+
     code = (
         "import json, site, sys\n"
         "paths = []\n"

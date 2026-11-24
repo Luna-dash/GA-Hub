@@ -182,14 +182,14 @@ function sessionSocketPath(sessionId: string): string {
 export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   return applyMessageEvent(prev, evt, runtime.abortedStreams)
 }
-const HISTORY_PAGE_LIMIT = 32
-const HISTORY_PAGE_MAX_CHARS = 400_000
+const HISTORY_PAGE_LIMIT = 40
+const HISTORY_PAGE_MAX_CHARS = 1_600_000
 const HISTORY_PAGE_TURNS = 20
 const MAX_CACHED_SESSION_VIEWS = 3
-const MAX_CACHED_SESSION_CHARS = 3_000_000
+const MAX_CACHED_SESSION_CHARS = 6_000_000
 export const MAX_ACTIVE_SESSION_MSGS = 300
-export const MAX_ACTIVE_SESSION_CHARS = 2_000_000
-const MAX_LOAD_ALL_CHARS = 2_500_000
+export const MAX_ACTIVE_SESSION_CHARS = 4_000_000
+const MAX_LOAD_ALL_CHARS = 5_000_000
 
 /**
  * Bound active-session `msgs` to prevent unbounded growth in long-running chats

@@ -65,7 +65,7 @@ _store_caches: dict[str, dict[str, Any]] = {}
 def _cache_slot(path: Path) -> dict[str, Any]:
     key = os.path.normcase(str(path.resolve()))
     with _store_cache_guard:
-        return _store_caches.setdefault(key, {"sig": None, "data": None})
+        return _store_caches.setdefault(key, {"sig": None, "data": None, "archive_index": None})
 
 
 def _now() -> str:
@@ -96,12 +96,14 @@ class SessionMetadataStore:
         if not self.path.exists():
             cache["sig"] = None
             cache["data"] = None
+            cache["archive_index"] = None
             return {"schema_version": 1, "sessions": []}
         data = json.loads(self.path.read_text("utf-8"))
         if data.get("schema_version") not in {1, 2} or not isinstance(data.get("sessions"), list):
             raise ValueError("unsupported session metadata format")
         cache["sig"] = sig
         cache["data"] = data
+        cache["archive_index"] = None
         return data
 
     def _write(self, data: dict[str, Any]) -> None:
@@ -118,6 +120,7 @@ class SessionMetadataStore:
             cache = _cache_slot(self.path)
             cache["sig"] = self._signature()
             cache["data"] = data
+            cache["archive_index"] = None
         except BaseException:
             # _read hands out the cached dict and callers mutate it in place
             # before writing — a failed write must not leave the mutated
@@ -125,6 +128,7 @@ class SessionMetadataStore:
             cache = _cache_slot(self.path)
             cache["sig"] = None
             cache["data"] = None
+            cache["archive_index"] = None
             raise
         finally:
             try:
@@ -256,13 +260,20 @@ class SessionMetadataStore:
         raise SessionNotFoundError(session_id)
 
     def find_by_archive(self, archive_path: str | Path) -> dict[str, Any] | None:
-        path = str(Path(archive_path).resolve())
+        key = os.path.normcase(str(Path(archive_path).resolve()))
         with self._lock:
-            for row in self._read()["sessions"]:
-                current = row.get("archive_path")
-                if current and str(Path(current).resolve()) == path:
-                    return dict(row)
-        return None
+            data = self._read()
+            cache = _cache_slot(self.path)
+            index = cache.get("archive_index")
+            if index is None:
+                index = {}
+                for row in data["sessions"]:
+                    current = row.get("archive_path")
+                    if current:
+                        index.setdefault(os.path.normcase(str(Path(current).resolve())), row)
+                cache["archive_index"] = index
+            found = index.get(key)
+            return dict(found) if found is not None else None
 
     def rotate_archive(self, session_id: str, archive_path: str | Path) -> dict[str, Any]:
         """Rebind a session to a replacement native archive (L2 recovery).

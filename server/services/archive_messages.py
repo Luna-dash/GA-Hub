@@ -379,7 +379,7 @@ def _prompt_is_user(data: mmap.mmap, start: int, end: int) -> bool:
     return bool(_prompt_user_items(data, start, end))
 
 
-@lru_cache(maxsize=64)
+@lru_cache(maxsize=256)
 def _build_archive_index(
     path_text: str,
     device: int,
@@ -439,9 +439,46 @@ def _build_archive_index(
                 for start, end, item_count in raw_groups:
                     groups.append(_ArchiveGroup(start, end, item_start, item_count))
                     item_start += item_count
+                record_archive_counts(path, dialogue_count, len(pairs))
                 return _ArchiveIndex(path, revision, tuple(groups), item_start, dialogue_count, len(pairs))
     except (OSError, ValueError) as exc:
         raise HistoryUnavailableError from exc
+
+
+_COUNTS_CACHE_LOCK = threading.Lock()
+_COUNTS_CACHE_LIMIT = 1024
+_COUNTS_CACHE: dict[tuple[str, int, int], tuple[int, int]] = {}
+
+
+def record_archive_counts(
+    archive_path: str | Path,
+    dialogue_count: int,
+    turn_count: int,
+) -> None:
+    """Remember dialogue/turn counts keyed by resolved path and file stat signature."""
+    path = os.path.abspath(str(archive_path))
+    signature = _stat_signature(path)
+    if signature is None:
+        return
+    key = (os.path.normcase(path), signature[0], signature[1])
+    counts = (int(dialogue_count), int(turn_count))
+    with _COUNTS_CACHE_LOCK:
+        if key in _COUNTS_CACHE:
+            _COUNTS_CACHE.pop(key)
+        elif len(_COUNTS_CACHE) >= _COUNTS_CACHE_LIMIT:
+            _COUNTS_CACHE.pop(next(iter(_COUNTS_CACHE)))
+        _COUNTS_CACHE[key] = counts
+
+
+def peek_archive_counts(archive_path: str | Path) -> tuple[int, int] | None:
+    """Return cached (dialogue_count, turn_count) without reading or parsing the archive."""
+    path = os.path.abspath(str(archive_path))
+    signature = _stat_signature(path)
+    if signature is None:
+        return None
+    key = (os.path.normcase(path), signature[0], signature[1])
+    with _COUNTS_CACHE_LOCK:
+        return _COUNTS_CACHE.get(key)
 
 
 def _archive_index(path: Path) -> _ArchiveIndex:
@@ -465,8 +502,11 @@ def read_archive_counts(archive_path: str | Path) -> tuple[int, int]:
     Tools and automatic retries count as model turns, not human dialogues.
     A pending human input counts as a dialogue, not a completed model turn.
     """
-    index = _archive_index(Path(archive_path).resolve())
-    return index.dialogue_count, index.turn_count
+    resolved = Path(archive_path).resolve()
+    index = _archive_index(resolved)
+    counts = (index.dialogue_count, index.turn_count)
+    record_archive_counts(resolved, counts[0], counts[1])
+    return counts
 
 
 def read_archive_total(archive_path: str | Path | None) -> int:
@@ -525,8 +565,8 @@ def _read_indexed_window(
 
 # This raw-byte cap is a work guard, not a prediction of rendered size:
 # archived tool output can be much bigger than its visible projection.
-_DESKTOP_PAGE_SOURCE_BYTES = 1024 * 1024
-_DESKTOP_PAGE_MAX_CHARS = 400_000
+_DESKTOP_PAGE_SOURCE_BYTES = 4 * 1024 * 1024
+_DESKTOP_PAGE_MAX_CHARS = 1_600_000
 
 
 def _read_desktop_window(
@@ -790,7 +830,7 @@ def _read_archive_messages_impl(
     if desktop:
         max_chars = max_chars if max_chars is not None else _DESKTOP_PAGE_MAX_CHARS
         if limit is None and turns is None:
-            limit = 32
+            limit = 40
     if limit is not None or turns is not None:
         index = _archive_index(path)
         if desktop:
@@ -849,8 +889,36 @@ _CATALOGUE_STATE: tuple | None = None
 _CATALOGUE_INDEX: dict[str, tuple] = {}
 
 
+def _fast_archive_entries() -> list[tuple[str, float, str, int]] | None:
+    """List GA archives by directory stat without parsing every archive body."""
+    root = _paths.GA_ROOT
+    if root is None:
+        return None
+    archive_dir = _paths.ga_archives_dir()
+    rows: list[tuple[float, str, str, int]] = []
+    try:
+        with os.scandir(archive_dir) as entries:
+            for entry in entries:
+                if not (entry.name.startswith("model_responses_") and entry.name.endswith(".txt")):
+                    continue
+                try:
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    stat = entry.stat()
+                except OSError:
+                    continue
+                rows.append((stat.st_mtime, entry.path, "", 0))
+    except OSError:
+        return []
+    rows.sort(key=lambda item: item[0], reverse=True)
+    return [(path, mtime, preview, rounds) for mtime, path, preview, rounds in rows]
+
+
 def _ga_sessions() -> list[tuple]:
-    """Return GA-native archive rows through the public archive bridge."""
+    """Return GA-native archive rows quickly via scandir, else GA's native bridge."""
+    fast = _fast_archive_entries()
+    if fast is not None:
+        return fast
     return _archive_bridge().list_native_sessions()
 
 

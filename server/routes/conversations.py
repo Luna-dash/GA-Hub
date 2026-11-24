@@ -51,8 +51,10 @@ from ..services.archive_messages import (
     first_user_preview,
     invalidate_archive_catalogue,
     list_archive_sessions,
+    peek_archive_counts,
     read_ui_messages,
     read_archive_counts,
+    record_archive_counts,
     refresh_archive_catalogue,
 )
 from ..services.conversation_titles import migrate_legacy_titles
@@ -238,12 +240,13 @@ def _list_conversations_sync(
     token = _scoped_metadata.set(store)
     try:
         sessions = list_archive_sessions()
+        filter_by_source = bool(source and source != "all")
         items = []
         for path, mtime, preview, rounds in sessions:
             cid = os.path.basename(path)
             bound_id = _bound_session_id(path)
-            row_source = _conversation_source(path)
-            if source and source != "all" and row_source != source:
+            row_source = _conversation_source(path) if filter_by_source else None
+            if filter_by_source and row_source != source:
                 continue
             items.append({
                 "id": cid,
@@ -257,16 +260,15 @@ def _list_conversations_sync(
             })
         if q:
             ql = q.lower()
-            # Search id + last-user preview first (cheap). For sessions that miss on
-            # those, fall back to scanning the raw archive text so the "search title
-            # or content" promise in the UI actually holds (GA archives carry no
-            # title and the preview is only the last user message).
+            # Search id + title + cached 64 KiB head preview first (cheap).
+            # Only files missing all summary fields scan raw archive bytes.
             keep = []
             for it in items:
                 path = it["_archive_path"]
                 if (ql in it["id"].lower()
                         or ql in (it["title"] or "").lower()
-                        or ql in (it["last_user_preview"] or "").lower()):
+                        or ql in (it["last_user_preview"] or "").lower()
+                        or ql in first_user_preview(path).lower()):
                     keep.append(it)
                     continue
                 if archive_contains(path, ql):
@@ -276,10 +278,12 @@ def _list_conversations_sync(
         page = items[offset: offset + limit]
         for item in page:
             path = item.pop("_archive_path")
-            try:
-                item["dialogue_count"], item["turn_count"] = read_archive_counts(path)
-            except HistoryUnavailableError:
-                # Concurrent deletion/locking: unknown counts must not appear as zero.
+            if item["source"] is None:
+                item["source"] = _conversation_source(path)
+            counts = peek_archive_counts(path)
+            if counts is not None:
+                item["dialogue_count"], item["turn_count"] = counts
+            else:
                 item["dialogue_count"] = item["turn_count"] = None
             item["original_user_preview"] = (
                 "" if item["title"] else first_user_preview(path)
@@ -315,6 +319,13 @@ async def get_conversation(cid: str, request: Request = None):  # type: ignore[a
         raise HTTPException(404, "conversation not found")
     path = s[0]
     messages = await asyncio.to_thread(_ga_extract, path)
+    dialogue_count = sum(1 for m in messages if m.get("role") == "user")
+    turn_count = sum(
+        max(1, len(m.get("turn_segs") or []))
+        for m in messages
+        if m.get("role") == "assistant"
+    )
+    await asyncio.to_thread(record_archive_counts, path, dialogue_count, turn_count)
     title = await asyncio.to_thread(store.title_for_archive, path)
     token = _scoped_metadata.set(store)
     try:

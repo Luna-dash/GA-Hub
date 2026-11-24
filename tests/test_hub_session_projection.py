@@ -441,6 +441,28 @@ def test_module_start_fails_without_hub_client(monkeypatch):
         proj.stop_hub_session_projection()
 
 
+def test_initial_delay_skips_reconcile_when_stopped_early():
+    _FakeClient.instances = []
+    calls = 0
+
+    class _CountingStore(_FakeStore):
+        def list(self):
+            nonlocal calls
+            calls += 1
+            return super().list()
+
+    service = proj.HubSessionProjectionService(
+        store=_CountingStore([]),
+        client_factory=_FakeClient,
+        reconcile_interval=30.0,
+        initial_delay=10.0,
+    )
+    assert service.start() is True
+    assert calls == 0
+    assert service.stop() is True
+    assert calls == 0
+
+
 # ── contract: GA's real hub module drives the hooks ─────────────
 
 
