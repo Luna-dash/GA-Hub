@@ -382,6 +382,11 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await response.json(), {'code': 'project_unavailable'})
         self.assertEqual(self.created, 0)
 
+        # The same ID can be reused with a different project after a definitive rejection.
+        response = await self.client.post('/api/sessions', json={**body, 'project_id': None}, headers=self.headers)
+        self.assertEqual(response.status, 201)
+        self.assertEqual(self.created, 1)
+
     async def test_project_disappears_after_creation(self):
         catalog = await (await self.client.get('/api/projects', headers=self.headers)).json()
         body = {'request_id': 'missing-binding-123', 'project_id': catalog['items'][0]['id']}

@@ -165,14 +165,14 @@ class Gateway:
             result[key]={'name':name,'path':path,'label':item.get('display_name') or name}
         return result
     async def create_session(self,r):
-        if r.headers.get('Origin')!='https://'+PUBLIC:raise web.HTTPForbidden(text='Origin required')
-        if r.query_string or r.content_type!='application/json':raise web.HTTPBadRequest(text='JSON without query required')
+        if r.headers.get('Origin')!='https://'+PUBLIC:return web.json_response({'code':'creation_rejected','message':'Origin required'},status=403)
+        if r.query_string or r.content_type!='application/json':return web.json_response({'code':'creation_rejected','message':'JSON without query required'},status=400)
         try:data=await r.json()
-        except (ValueError,UnicodeError):raise web.HTTPBadRequest(text='Invalid JSON')
-        if not isinstance(data,dict) or set(data)!={'request_id','project_id'}:raise web.HTTPBadRequest(text='Only request_id and project_id allowed')
+        except (ValueError,UnicodeError):return web.json_response({'code':'creation_rejected','message':'Invalid JSON'},status=400)
+        if not isinstance(data,dict) or set(data)!={'request_id','project_id'}:return web.json_response({'code':'creation_rejected','message':'Only request_id and project_id allowed'},status=400)
         rid,pid=data['request_id'],data['project_id']
-        if not isinstance(rid,str) or not re.fullmatch(r'[a-zA-Z0-9_-]{16,80}',rid):raise web.HTTPBadRequest(text='Invalid request_id')
-        if pid is not None and (not isinstance(pid,str) or not re.fullmatch(r'[a-f0-9]{64}',pid)):raise web.HTTPBadRequest(text='Invalid project_id')
+        if not isinstance(rid,str) or not re.fullmatch(r'[a-zA-Z0-9_-]{16,80}',rid):return web.json_response({'code':'creation_rejected','message':'Invalid request_id'},status=400)
+        if pid is not None and (not isinstance(pid,str) or not re.fullmatch(r'[a-f0-9]{64}',pid)):return web.json_response({'code':'creation_rejected','message':'Invalid project_id'},status=400)
         if not hasattr(self,'creations'):self.creations={}
         now=time.monotonic()
         self.creations={k:v for k,v in self.creations.items() if now-v['time']<43200 or v['lock'].locked()}
@@ -180,16 +180,20 @@ class Gateway:
         entry=self.creations.get(key)
         if entry and entry['project_id']!=pid:return web.json_response({'code':'request_conflict'},status=409)
         if entry is None:
-            if len(self.creations)>=256:raise web.HTTPTooManyRequests(text='Create cache full')
+            if len(self.creations)>=256:return web.json_response({'code':'creation_rejected','message':'创建队列已满，请稍后重试。'},status=429)
             entry={'time':now,'project_id':pid,'lock':asyncio.Lock(),'session':None,'attempted':False,'done':False}
             self.creations[key]=entry
         async def perform():
             async with entry['lock']:
+                # A queued duplicate must not run after this entry was released.
+                if self.creations.get(key) is not entry:
+                    return web.json_response({'code':'creation_rejected','message':'原请求未创建会话，请重新提交。'},status=409)
                 if entry['done']:return web.json_response(entry['session'],status=201)
                 base=await self.backend();project=None
                 if pid is not None:
                     project=(await self.project_catalog()).get(pid)
                     if project is None and not entry['attempted']:
+                        self.creations.pop(key)
                         return web.json_response({'code':'project_unavailable'},status=409)
                     if project is None and entry['session'] is not None:
                         return web.json_response({'code':'binding_unavailable','session_id':entry['session']['id']},status=409)
@@ -197,9 +201,11 @@ class Gateway:
                     if entry['attempted']:return web.json_response({'code':'creation_unknown'},status=409)
                     entry['attempted']=True
                     async with self.http.post(base+'/api/sessions',json={'title':''},headers={'Origin':base},allow_redirects=False) as up:
+                        if up.status in (400,403,422,429):
+                            self.creations.pop(key)
+                            return web.json_response({'code':'creation_rejected','message':'GA-Hub 拒绝创建会话。'},status=up.status)
                         if up.status!=201:
-                            entry['attempted']=False
-                            return web.Response(status=up.status,text='GA-Hub 拒绝创建会话')
+                            raise ValueError('Unconfirmed upstream create result')
                         session=await up.json()
                     if not isinstance(session.get('id'),str) or not re.fullmatch(r'[A-Za-z0-9_-]+',session['id']):raise ValueError('Invalid session')
                     entry['session']=session

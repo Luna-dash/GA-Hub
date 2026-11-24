@@ -38,8 +38,14 @@ export function initNewSession({ api, loadSessions, select, notice }) {
     try {
       const response = await fetch('/api/sessions', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(pending) });
       if (response.status === 401) { location.href = '/_gateway/login'; return; }
-      if (response.status === 409 && response.headers.get('content-type')?.includes('application/json')) {
+      if (!response.ok && response.headers.get('content-type')?.includes('application/json')) {
         const conflict = await response.json();
+        if (conflict.code === 'creation_rejected') {
+          pending = null;
+          state.textContent = conflict.message || '会话未创建，请重新提交。';
+          confirm.textContent = '创建';
+          return;
+        }
         if (conflict.code === 'project_unavailable' || conflict.code === 'request_conflict') {
           pending = null;
           await refreshProjects();
@@ -47,7 +53,7 @@ export function initNewSession({ api, loadSessions, select, notice }) {
           return;
         }
         if (conflict.code === 'creation_unknown' || conflict.code === 'binding_unavailable') {
-          pending = null;
+          if (conflict.code === 'binding_unavailable') pending = null;
           dialog.close();
           const message = conflict.code === 'binding_unavailable'
             ? '会话已创建，但项目已不可用。'
