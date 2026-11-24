@@ -37,6 +37,9 @@ import { bubbleTone } from './bubbleTone'
 import { ChevronDisclosureIcon, Paperclip, RewindIcon, Square } from './ActionIcons'
 import type { PasteAttachment } from '@/api/types'
 import { api } from '@/api/client'
+import { canReferenceLocalFiles } from '@/utils/desktop'
+import { toast } from '@/stores/toastStore'
+import { errorMessageFromError } from '@/utils/sessionUi'
 import { AttachmentImage, isImageAttachment } from './AttachmentImage'
 
 const StableMessageContent = memo(MessageContent)
@@ -528,9 +531,6 @@ export function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
   return (
     <div className="flex flex-wrap gap-2 justify-start">
       {atts.map((a) => {
-        // Prefer the local upload-result url; fall back to files-by-path for
-        // restored snapshots where only the abs path is around.
-        const src = a.preview || (a.path ? api.fileUrlByPath(a.path) : '')
         if (isImageAttachment(a)) {
           return (
             <AttachmentImage
@@ -541,18 +541,33 @@ export function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
             />
           )
         }
-        return (
-          <a
-            key={a.file_id}
-            href={src || '#'}
-            target="_blank"
-            rel="noreferrer"
-            title={a.name}
-            className="px-3 py-2 rounded-md border border-line bg-bg-card text-xs text-ink hover:bg-bg-soft inline-flex items-center gap-2 max-w-[16rem]"
-          >
+        const chipClass = 'px-3 py-2 rounded-md border border-line bg-bg-card text-xs text-ink hover:bg-bg-soft inline-flex items-center gap-2 max-w-[16rem]'
+        const chip = (
+          <>
             <Paperclip size={13} strokeWidth={1.85} className="shrink-0 text-ink-muted" aria-hidden="true" />
             <span className="truncate">{a.name}</span>
             {!!a.size && <span className="text-ink-faint shrink-0">{fmtSize(a.size)}</span>}
+          </>
+        )
+        if (a.source === 'local_ref' && a.path && canReferenceLocalFiles()) {
+          return (
+            <button
+              key={a.file_id}
+              type="button"
+              title={a.name}
+              className={chipClass}
+              onClick={() => void api.revealFile(a.path, 'open').catch((error) => {
+                toast.error(errorMessageFromError(error, '无法打开附件'))
+              })}
+            >
+              {chip}
+            </button>
+          )
+        }
+        const src = a.preview || (a.path ? api.fileUrlByPath(a.path) : '')
+        return (
+          <a key={a.file_id} href={src || '#'} target="_blank" rel="noreferrer" title={a.name} className={chipClass}>
+            {chip}
           </a>
         )
       })}

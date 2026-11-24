@@ -13,7 +13,8 @@ vi.mock('./MarkdownView', () => ({
 }))
 
 import { FileLinkContext } from './FileCitation'
-import { MessageBubble } from './MessageBubble'
+import { MessageBubble, UserAttachments } from './MessageBubble'
+import { api } from '@/api/client'
 import { useDraftStore } from '@/stores/draftStore'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -55,6 +56,33 @@ describe('MessageBubble render isolation', () => {
   afterEach(() => {
     act(() => root.unmount())
     host.remove()
+  })
+
+  it('opens desktop local files through reveal without changing upload or browser links', async () => {
+    const local = { file_id: 'local', name: 'notes.txt', path: 'D:/outside/notes.txt', url: '', mime: 'text/plain', size: 12, source: 'local_ref' as const }
+    const upload = { ...local, file_id: 'upload', name: 'uploaded.txt', source: 'managed_upload' as const }
+    const render = () => act(() => root.render(<UserAttachments atts={[local, upload]} />))
+    const reveal = vi.spyOn(api, 'revealFile').mockImplementation(async (path) => ({ ok: true, path }))
+    try {
+      render()
+      expect(host.querySelectorAll('a')).toHaveLength(2)
+      expect(host.querySelector('button')).toBeNull()
+      window.__TAURI_INTERNALS__ = {}
+      window.__GA_HUB_RUNTIME__ = { desktop: true, apiOrigin: 'http://127.0.0.1:19000', instanceToken: 'test-instance' }
+      render()
+      const button = host.querySelector('button')!
+      expect(button.title).toBe(local.name)
+      expect(host.querySelectorAll('a')).toHaveLength(1)
+      expect(host.querySelector('a')?.getAttribute('href')).toContain('/api/files-by-path?')
+      expect(reveal).not.toHaveBeenCalled()
+      await act(async () => button.click())
+      expect(reveal).toHaveBeenCalledTimes(1)
+      expect(reveal).toHaveBeenCalledWith(local.path, 'open')
+    } finally {
+      reveal.mockRestore()
+      delete window.__GA_HUB_RUNTIME__
+      delete window.__TAURI_INTERNALS__
+    }
   })
 
   it('saves only the completed Chat conclusion, and only after clicking', async () => {
