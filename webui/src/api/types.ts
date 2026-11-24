@@ -183,7 +183,7 @@ export type BtwResp = ApiSchemas['BtwResp']
 export type ChatEventCursor = { event_id: number; epoch: string }
 export type ChatWSMeta = { turn_segs?: string[]; event_id?: number; epoch?: string; session_id?: string; run_id?: string; logical_id?: string; outcome?: 'completed' | 'cancelled' | 'failed' | null }
 
-export type ChatWSOut = (
+type ChatWSVariant = (
   | {
       type: 'snapshot'
       streams?: ChatStreamSnapshot[]
@@ -210,7 +210,13 @@ export type ChatWSOut = (
   | { type: 'rewound'; session_id: string; removed_sids: string[]; kept: number; history_lines: number }
   | { type: 'resync_required'; session_id: string; reason: string }
   | { type: 'replay_done'; session_id: string; event_id: number }
-) & ChatWSMeta
+)
+
+type WithChatWSMeta<T> = T extends { run_id?: string | null }
+  ? T & Omit<ChatWSMeta, 'run_id'>
+  : T & ChatWSMeta
+
+export type ChatWSOut = WithChatWSMeta<ChatWSVariant>
 
 type EventBusBase = Omit<ApiSchemas['EventBusEnvelope'], 'topic' | 'payload'>
 export interface KnownEventPayloadMap {

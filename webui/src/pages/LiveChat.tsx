@@ -161,8 +161,12 @@ export default function LiveChat() {
         } as SessionRuntime,
       }),
     )
-    if (runtime.status && runtime.status !== 'starting' && runtime.status !== 'running' && runtime.status !== 'aborting') {
-      settleInactiveSessionView(runtime.session_id)
+    if (runtime.status === 'idle' && runtime.completed_run_id && runtime.outcome) {
+      settleInactiveSessionView({
+        type: 'session_runtime', session_id: runtime.session_id, status: runtime.status,
+        run_id: runtime.run_id ?? null, stream_id: runtime.stream_id ?? null,
+        completed_run_id: runtime.completed_run_id, outcome: runtime.outcome,
+      })
     }
   })
 

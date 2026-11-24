@@ -1046,7 +1046,7 @@ describe('chatStore viewport resume handoff', () => {
       useChatStore.getState().start(sessionId)
       await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
       const sock = FakeWebSocket.instances.at(-1)!
-      sock.emit({ type: 'next', stream_id: `${sessionId}-live`, content: 'chunk' })
+      sock.emit({ type: 'next', stream_id: `${sessionId}-live`, run_id: `${sessionId}-run`, content: 'chunk' })
       await vi.waitFor(() => expect(useChatStore.getState().streaming).toBe(true))
       await new Promise((resolve) => setTimeout(resolve, 2))
     }
@@ -1055,8 +1055,23 @@ describe('chatStore viewport resume handoff', () => {
     expect(Object.keys(viewsBeforeSettle)).toEqual(['s4', 's3', 's2'])
     expect(viewsBeforeSettle.s4.streaming).toBe(true)
 
-    useChatStore.getState().settleInactiveSessionView('s4')
-    expect(useChatStore.getState().sessionViews.s4.streaming).toBe(false)
+    const runtime = { type: 'session_runtime', session_id: 's4' } as const
+    useChatStore.getState().settleInactiveSessionView({
+      ...runtime, status: 'error', run_id: 's4-run', stream_id: 's4-live', error: 'abort_timeout',
+    })
+    expect(useChatStore.getState().sessionViews.s4.streaming).toBe(true)
+    useChatStore.getState().settleInactiveSessionView({
+      ...runtime, status: 'idle', run_id: null, stream_id: null,
+      completed_run_id: 'different-run', outcome: 'failed',
+    })
+    expect(useChatStore.getState().sessionViews.s4.streaming).toBe(true)
+    useChatStore.getState().settleInactiveSessionView({
+      ...runtime, status: 'idle', run_id: null, stream_id: null,
+      completed_run_id: 's4-run', outcome: 'failed', error: 'run failed',
+    })
+    const settled = useChatStore.getState().sessionViews.s4
+    expect(settled.streaming).toBe(false)
+    expect(settled.msgs.find((message) => message.runId === 's4-run')).toMatchObject({ streaming: false })
   })
 })
 

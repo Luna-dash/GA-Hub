@@ -85,7 +85,7 @@ interface ChatState {
   loadAllHistory: (beforePrepend?: () => void) => Promise<void>
   dropSessionView: (sessionId: string) => void
   /** Clear streaming protection on a parked session once the backend reports it idle. */
-  settleInactiveSessionView: (sessionId: string) => void
+  settleInactiveSessionView: (runtime: Extract<ChatWSOut, { type: 'session_runtime' }>) => void
   /**
    * Tear down the live connection and local projection state (session
    * unbind / app-level logout). This does NOT abort a running task —
@@ -810,14 +810,16 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     })
   },
 
-  settleInactiveSessionView: (sessionId) => set((st) => {
-    if (st.sessionId === sessionId) return st
+  settleInactiveSessionView: (runtime) => set((st) => {
+    const sessionId = runtime.session_id
+    if (st.sessionId === sessionId || runtime.status !== 'idle' || !runtime.completed_run_id || !runtime.outcome) return st
     const view = st.sessionViews[sessionId]
-    if (!view?.streaming) return st
+    if (!view || !view.msgs.some((message) => message.runId === runtime.completed_run_id && message.role === 'assistant')) return st
+    const messages = applyMessageEvent(view.msgs, runtime)
     return {
       sessionViews: pruneSessionViews({
         ...st.sessionViews,
-        [sessionId]: { ...view, streaming: false },
+        [sessionId]: { ...view, msgs: messages, streaming: anyStreaming(messages) },
       }),
     }
   }),
