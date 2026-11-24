@@ -20,18 +20,61 @@ from .self_update import atomic_json
 from .update_executor import ProcessIdentity
 
 
+def _process_identity(process: psutil.Process) -> ProcessIdentity:
+    return ProcessIdentity(process.pid, str(process.create_time()), Path(process.exe()).resolve())
+
+
 def identity(pid: int) -> ProcessIdentity:
-    process = psutil.Process(pid)
-    return ProcessIdentity(pid, str(process.create_time()), Path(process.exe()).resolve())
+    return _process_identity(psutil.Process(pid))
+
+
+def _matching_process(value: ProcessIdentity) -> psutil.Process | None:
+    try:
+        process = psutil.Process(value.pid)
+        if (_process_identity(process) == value and process.is_running()
+                and process.status() != psutil.STATUS_ZOMBIE):
+            return process
+    except psutil.NoSuchProcess:
+        pass
+    # AccessDenied is NOT proof of exit.
+    return None
 
 
 def alive(value: ProcessIdentity) -> bool:
+    return _matching_process(value) is not None
+
+
+def _observe_children(value: ProcessIdentity, observed: set[ProcessIdentity]) -> bool:
     try:
-        actual = identity(value.pid)
-        return actual == value and psutil.Process(value.pid).status() != psutil.STATUS_ZOMBIE
+        parent = _matching_process(value)
+        if parent is None:
+            return True
+        children = parent.children(recursive=True)
     except psutil.NoSuchProcess:
+        return True
+    except psutil.AccessDenied:
         return False
-    # AccessDenied is NOT proof of exit.
+    complete = True
+    for child in children:
+        try:
+            pinned = _process_identity(child)
+            if child.is_running():
+                observed.add(pinned)
+        except psutil.NoSuchProcess:
+            # A transient child exiting does not invalidate its siblings.
+            continue
+        except psutil.AccessDenied:
+            complete = False
+    return complete
+
+
+def _terminate_owned(value: ProcessIdentity) -> None:
+    try:
+        process = _matching_process(value)
+        if process is not None:
+            process.terminate()  # psutil also checks PID reuse on this instance.
+    except psutil.NoSuchProcess:
+        pass
 
 
 def outside_job() -> bool:
@@ -64,11 +107,12 @@ class NativeHost:
     def __init__(self, root: Path, admin_data: Path):
         self.root = root.resolve()
         self.admin_data = admin_data.resolve()
-        self.children: list[ProcessIdentity] = []
-        self.started: dict[int, subprocess.Popen] = {}
+        self.children: set[ProcessIdentity] = set()
+        self.started: dict[ProcessIdentity, subprocess.Popen] = {}
         self.receipt: Path | None = None
         self.nonce = ""
-        self.candidate_children: list[ProcessIdentity] = []
+        self.candidate_children: dict[ProcessIdentity, set[ProcessIdentity]] = {}
+        self.incomplete_candidates: set[ProcessIdentity] = set()
 
     def independent(self) -> bool:
         return outside_job()
@@ -80,20 +124,17 @@ class NativeHost:
             raise ValueError("Updater cannot update itself")
         # Snapshot exact child identities while old desktop is alive. Its Job
         # must release the backend before a candidate can share the data dir.
-        self.children = [identity(p.pid) for p in psutil.Process(value.pid).children(recursive=True)]
+        self.children.clear()
+        if not _observe_children(value, self.children):
+            raise ValueError("Cannot verify old desktop descendants")
 
     def wait_old_exit(self, value: ProcessIdentity, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            if not _observe_children(value, self.children):
+                return False
             if not alive(value) and not any(alive(p) for p in self.children):
                 return True
-            if alive(value):
-                known = {p.pid for p in self.children}
-                try:
-                    self.children += [identity(p.pid) for p in psutil.Process(value.pid).children(recursive=True)
-                                      if p.pid not in known]
-                except psutil.NoSuchProcess:
-                    pass
             time.sleep(.2)
         return False
 
@@ -106,8 +147,9 @@ class NativeHost:
         process = subprocess.Popen([str(executable)], cwd=executable.parent, env=env,
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.DEVNULL, close_fds=True)
-        self.started[process.pid] = process
         value = identity(process.pid)
+        self.started[value] = process
+        self.candidate_children[value] = set()
         atomic_json(self.root / "candidate-process.json", {
             "plan_id": plan_id, "pid": value.pid, "created": value.created,
             "executable": str(value.executable), "receipt": str(self.receipt), "nonce": self.nonce,
@@ -120,12 +162,17 @@ class NativeHost:
     def rollback_ready(self, value: ProcessIdentity, plan: dict, timeout: float) -> bool:
         return self._ready(value, timeout, allow_diagnostics=True)
 
+    def _observe_candidate(self, value: ProcessIdentity) -> None:
+        children = self.candidate_children.setdefault(value, set())
+        if not _observe_children(value, children):
+            self.incomplete_candidates.add(value)
+
     def _ready(self, value: ProcessIdentity, timeout: float, *, allow_diagnostics: bool) -> bool:
         deadline = time.monotonic() + timeout
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         while time.monotonic() < deadline and alive(value):
             try:
-                self.candidate_children = [identity(p.pid) for p in psutil.Process(value.pid).children(recursive=True)]
+                self._observe_candidate(value)
                 data = json.loads(self.receipt.read_text(encoding="utf8"))
                 if (data["nonce"] != self.nonce or data["pid"] != value.pid
                         or Path(data["executable"]).resolve() != value.executable):
@@ -138,7 +185,7 @@ class NativeHost:
                 with opener.open(request, timeout=1) as response:
                     report = json.load(response)
                 backend = identity(report["pid"])
-                self.candidate_children = [identity(p.pid) for p in psutil.Process(value.pid).children(recursive=True)]
+                self._observe_candidate(value)
                 ancestors = {p.pid for p in psutil.Process(backend.pid).parents()}
                 ready = report["ready"] is True or (
                     allow_diagnostics and report.get("diagnostic_ready") is True
@@ -156,18 +203,31 @@ class NativeHost:
         return False
 
     def stop_candidate(self, value: ProcessIdentity, timeout: float) -> bool:
-        # Only a process started by THIS executor may be terminated.
-        if value.pid not in self.started:
+        # Never infer ownership from a numeric PID alone.
+        children = self.candidate_children.get(value)
+        process = self.started.get(value)
+        if children is None or process is None:
             return False
-        children = list(self.candidate_children)
-        if alive(value):
-            children += [identity(p.pid) for p in psutil.Process(value.pid).children(recursive=True)]
-            psutil.Process(value.pid).terminate()
+        # Refresh before terminating the root; already-observed children may
+        # have been reparented if the desktop crashed during readiness checks.
+        self._observe_candidate(value)
+        for child in tuple(children):
+            if not _observe_children(child, children):
+                self.incomplete_candidates.add(value)
+        for target in (value, *children):
+            try:
+                _terminate_owned(target)
+            except psutil.AccessDenied:
+                # Still attempt all other known targets and verify exits below.
+                continue
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            self.started[value.pid].poll()
-            if not alive(value) and not any(alive(p) for p in children):
-                return True
+            process.poll()
+            try:
+                if not alive(value) and not any(alive(child) for child in children):
+                    return value not in self.incomplete_candidates
+            except psutil.AccessDenied:
+                pass
             time.sleep(.1)
         return False
 

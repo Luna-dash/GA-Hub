@@ -56,6 +56,47 @@ def test_setup_blocks_application_without_touching_handoff(tmp_path, monkeypatch
         assert "Complete GA setup" in response.json()["detail"]
 
 
+def test_observe_children_skips_exited_children_and_preserves_live_siblings(tmp_path, monkeypatch):
+    parent = ProcessIdentity(111, "1.0", tmp_path / EXECUTABLES[0])
+    previous = ProcessIdentity(200, "0.5", tmp_path / EXECUTABLES[1])
+    survivor = ProcessIdentity(222, "2.0", tmp_path / EXECUTABLES[1])
+    def vanished():
+        raise native.psutil.NoSuchProcess(201)
+    def denied():
+        raise native.psutil.AccessDenied(202)
+    live = SimpleNamespace(pid=222, create_time=lambda: 2.0, exe=lambda: str(survivor.executable),
+                           is_running=lambda: True)
+    children = [SimpleNamespace(pid=201, create_time=vanished), live]
+    monkeypatch.setattr(native, "_matching_process", lambda value: SimpleNamespace(
+        children=lambda **kwargs: children))
+    observed = {previous}
+    assert native._observe_children(parent, observed) is True
+    assert observed == {previous, survivor}
+    children.insert(1, SimpleNamespace(pid=202, create_time=denied))
+    observed.clear()
+    assert native._observe_children(parent, observed) is False
+    assert observed == {survivor}
+
+
+def test_restore_stops_only_its_own_observed_children(tmp_path, monkeypatch):
+    host = native.NativeHost(tmp_path, tmp_path)
+    old_launch = ProcessIdentity(111, "1", tmp_path / EXECUTABLES[0])
+    stale_child = ProcessIdentity(222, "2", tmp_path / EXECUTABLES[1])
+    restored = ProcessIdentity(111, "3", tmp_path / EXECUTABLES[0])
+    host.candidate_children[old_launch] = {stale_child}
+    proc = SimpleNamespace(pid=restored.pid, poll=lambda: 0)
+    monkeypatch.setattr(native.subprocess, "Popen", lambda *args, **kwargs: proc)
+    monkeypatch.setattr(native, "identity", lambda pid: restored)
+    monkeypatch.setattr(native, "_observe_children", lambda value, observed: True)
+    monkeypatch.setattr(native, "alive", lambda value: False)
+    calls = []
+    monkeypatch.setattr(native, "_terminate_owned", calls.append)
+    assert host.restore(restored.executable, "plan") == restored
+    assert host.stop_candidate(restored, 1) is True
+    assert calls == [restored]
+    assert host.stop_candidate(old_launch, 1) is False
+
+
 def test_diagnostic_receipt_is_only_accepted_for_rollback(tmp_path, monkeypatch):
     from io import BytesIO
 
@@ -70,6 +111,7 @@ def test_diagnostic_receipt_is_only_accepted_for_rollback(tmp_path, monkeypatch)
               "pid": backend.pid, "executable": str(backend.executable), "admin_data": str(tmp_path)}
     monkeypatch.setattr(native, "alive", lambda value: value == desktop)
     monkeypatch.setattr(native, "identity", lambda pid: backend)
+    monkeypatch.setattr(native, "_observe_children", lambda value, observed: True)
     monkeypatch.setattr(native.psutil, "Process", lambda pid: SimpleNamespace(
         children=lambda **kwargs: [], parents=lambda: [SimpleNamespace(pid=desktop.pid)]))
     monkeypatch.setattr(native.urllib.request, "build_opener", lambda *args: SimpleNamespace(
@@ -126,10 +168,14 @@ def test_dead_candidate_with_live_observed_child_blocks_rollback(tmp_path, monke
     host = native.NativeHost(tmp_path, tmp_path)
     parent = ProcessIdentity(111, "p", tmp_path / EXECUTABLES[0])
     child = ProcessIdentity(222, "c", tmp_path / EXECUTABLES[1])
-    host.started[parent.pid] = SimpleNamespace(poll=lambda: 0)
-    host.candidate_children = [child]
+    host.started[parent] = SimpleNamespace(poll=lambda: 0)
+    host.candidate_children[parent] = {child}
+    calls = []
+    monkeypatch.setattr(native, "_observe_children", lambda value, observed: True)
+    monkeypatch.setattr(native, "_terminate_owned", calls.append)
     monkeypatch.setattr(native, "alive", lambda value: value == child)
     assert host.stop_candidate(parent, .01) is False
+    assert calls == [parent, child]
     monkeypatch.setattr(native, "alive", lambda value: False)
     assert host.stop_candidate(parent, .01) is True
 
@@ -226,7 +272,8 @@ def test_native_wait_and_candidate_stop_real_processes(tmp_path):
         assert host.wait_old_exit(pinned, .05) is False
         # Adapter may only stop an explicitly registered owned process.
         assert host.stop_candidate(pinned, .05) is False
-        host.started[proc.pid] = proc
+        host.started[pinned] = proc
+        host.candidate_children[pinned] = set()
         assert host.stop_candidate(pinned, 5) is True
         proc.wait(timeout=5)
         assert host.wait_old_exit(pinned, 1) is True
