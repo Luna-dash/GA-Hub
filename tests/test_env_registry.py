@@ -43,6 +43,7 @@ def _registered_names() -> set[str]:
         constants.ENV_UPDATE_PREFLIGHT,
         constants.ENV_UPDATE_NONCE,
         constants.ENV_UPDATE_RECEIPT,
+        constants.ENV_DESKTOP_INSTANCE_TOKEN,
         constants.ENV_SUPPRESS_STARTUP_DIALOG,
         constants.ENV_MYKEY_BASE_URL,
         constants.ENV_SESSION_RUN_CAPACITY,
