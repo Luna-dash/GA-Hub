@@ -14,7 +14,7 @@ const source = require(path.join(modules, 'esbuild')).buildSync({
 }).outputFiles[0].text;
 const loaded = { exports: {} };
 new Function('module', 'exports', 'require', source)(loaded, loaded.exports, require);
-const { messageCard, sessionTitle, renderRail } = loaded.exports;
+const { messageCard, sessionTitle, renderRail, initFilters } = loaded.exports;
 let count = 0;
 const test = (label, fn) => { fn(); count++; console.log('PASS', label); };
 const compact = (n, ordinal = 1) => ({
@@ -136,6 +136,16 @@ test('rail uses unnamed label in display, tooltip, accessibility and search', ()
   assert.equal(chosen, sessions[0].id);
   document.getElementById('search').value = '未命名会话'; draw();
   assert.equal(document.querySelectorAll('.session').length, 1);
+});
+test('running filter keeps recovering and aborting sessions with readable labels', () => {
+  document.body.innerHTML = '<button data-filter="running"></button><input id="search"><span id="sessionCount"></span><div id="sessions"></div>';
+  const sessions = ['idle', 'aborting', 'recovering', 'error'].map(status => ({id:status,title:status,status}));
+  const draw = () => renderRail(sessions, '', () => {}, draw);
+  initFilters(draw);
+  document.querySelector('[data-filter]').click();
+  assert.equal(document.getElementById('sessionCount').textContent, '2 / 4');
+  assert.equal(document.querySelector('[data-session-id="aborting"] .session-status').textContent, '停止中');
+  assert.equal(document.querySelector('[data-session-id="recovering"] .session-status').textContent, '恢复中');
 });
 console.log(`${count} tests passed`);
 dom.window.close();

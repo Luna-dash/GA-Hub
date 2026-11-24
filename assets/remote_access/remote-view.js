@@ -14,7 +14,8 @@ const recency = session => {
   }
   return 0;
 };
-const labels = {idle:'空闲',running:'运行中',starting:'启动中',error:'异常',stopping:'停止中',unknown:'读取中'};
+const labels = {idle:'空闲',running:'运行中',starting:'启动中',recovering:'恢复中',error:'异常',stopping:'停止中',aborting:'停止中',unknown:'读取中'};
+const activeStatuses = new Set(['running', 'starting', 'recovering', 'stopping', 'aborting']);
 export const statusLabel = status => labels[status] || status || '未知';
 function detail(key, title, cls, initiallyOpen = false) {
   const node = el('details', cls); node.dataset.foldKey = key;
@@ -66,7 +67,7 @@ export function renderRail(sessions, selected, choose, refresh) {
   const host = document.getElementById('sessions'), term = document.getElementById('search').value.trim().toLowerCase();
   const oldScroll = host.scrollTop;
   const filtered = sessions.filter(s => `${sessionTitle(s)} ${s.project_name?.trim() || '自由会话'} ${s.project_path || ''}`.toLowerCase().includes(term)
-    && (filter !== 'running' || ['running','starting','stopping'].includes(s.status)) && (filter !== 'starred' || stars.has(s.id)));
+    && (filter !== 'running' || activeStatuses.has(s.status)) && (filter !== 'starred' || stars.has(s.id)));
   document.getElementById('sessionCount').textContent = `${filtered.length} / ${sessions.length}`;
   const groups = new Map();
   const hasProjects = sessions.some(s => s.project_name?.trim());

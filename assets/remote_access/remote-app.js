@@ -252,6 +252,7 @@ async function select(sid, navigate = true) {
   if (selected) drafts.set(selected, $('instruction').value);
   cacheHistory(); cancelReads();
   generation++; selected = sid;
+  setImageScope(sid);
   const cached = historyCache.get(sid);
   messages = cached?.messages || []; liveMessages = []; nextBefore = cached?.nextBefore ?? null; expanded = cached?.expanded || false;
   window.dispatchEvent(new CustomEvent('remote-session-selected', {detail: sid}));
@@ -331,6 +332,7 @@ window.addEventListener('remote-session-cleared', () => {
   if (selected) drafts.set(selected, $('instruction').value);
   cacheHistory(); cancelReads();
   generation++; selected = ''; messages = []; liveMessages = []; nextBefore = null; expanded = false;
+  setImageScope('');
   runtimeStatus = 'unknown'; firstLoad = true;
   rendered.clear(); $('messages').replaceChildren();
   $('instruction').value = ''; $('older').hidden = true;
