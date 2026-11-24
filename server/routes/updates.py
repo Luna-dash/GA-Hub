@@ -130,8 +130,14 @@ def prepare_release() -> dict:
         raise HTTPException(409, str(exc)) from exc
 
 
+def _require_configured_core(request: Request) -> None:
+    if getattr(request.app.state, "setup_mode", _paths.GA_ROOT is None):
+        raise HTTPException(409, "Complete GA setup and restart GA-Hub before applying updates.")
+
+
 @router.post("/preflight", dependencies=[Depends(require_desktop_instance)])
-def preflight_update(body: UpdateIdentity) -> dict:
+def preflight_update(body: UpdateIdentity, request: Request) -> dict:
+    _require_configured_core(request)
     import subprocess
     import psutil
     try:
@@ -149,7 +155,8 @@ def cancel_update(body: UpdateIdentity) -> dict:
 
 
 @router.post("/request", dependencies=[Depends(require_desktop_instance)])
-def request_update(body: UpdateIdentity) -> dict:
+def request_update(body: UpdateIdentity, request: Request) -> dict:
+    _require_configured_core(request)
     import subprocess
     import psutil
     try:
@@ -165,7 +172,8 @@ def request_update(body: UpdateIdentity) -> dict:
 
 
 @router.post("/approve", dependencies=[Depends(require_desktop_instance)])
-def approve_update(body: UpdateIdentity) -> dict:
+def approve_update(body: UpdateIdentity, request: Request) -> dict:
+    _require_configured_core(request)
     try:
         return update_handoff.approve(store(), body.id)
     except (ValueError, OSError, KeyError) as exc:

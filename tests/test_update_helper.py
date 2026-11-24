@@ -39,6 +39,23 @@ def test_ready_endpoint_requires_nonce_and_reports_real_paths(tmp_path, monkeypa
     assert response.json()["ready"] is True
 
 
+def test_setup_blocks_application_without_touching_handoff(tmp_path, monkeypatch):
+    from server import main
+    from server.routes import updates
+
+    monkeypatch.setattr(main._paths, "GA_ROOT", None)
+    app = main.create_app()
+    assert app.state.setup_mode
+    monkeypatch.setattr(updates, "store", lambda: pytest.fail("Setup reached the update store"))
+    # Setup may discover GA_ROOT before restarting; app mode is a startup snapshot.
+    monkeypatch.setattr(main._paths, "GA_ROOT", tmp_path)
+    client = TestClient(app, base_url="http://127.0.0.1")
+    for action in ("preflight", "request", "approve"):
+        response = client.post(f"/api/updates/{action}", json={"id": "a" * 32})
+        assert response.status_code == 409, response.text
+        assert "Complete GA setup" in response.json()["detail"]
+
+
 def test_diagnostic_receipt_is_only_accepted_for_rollback(tmp_path, monkeypatch):
     from io import BytesIO
 
