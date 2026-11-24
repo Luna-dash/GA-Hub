@@ -160,6 +160,7 @@ class SessionCoordinator:
         # handle really finishes, including while aborting or timed out.
         self._active_by_session: dict[str, RuntimeState] = {}
         self._abort_started: dict[str, float] = {}
+        self._finalizing_runs: set[str] = set()
         # Rewind mutates the runtime history/archive and must be exclusive for
         # one session. BTW is read-only against a history snapshot: multiple
         # BTW calls and a normal run may overlap, but rewind/configuration may
@@ -806,7 +807,7 @@ class SessionCoordinator:
             if current is None or current.run_id != active.run_id:
                 return None, True
             runtime = self._runtimes.get(active.session_id)
-            if runtime is None or not current.run_id:
+            if runtime is None or not current.run_id or current.run_id in self._finalizing_runs:
                 return None, True
             if current.status in {STATUS_ABORTING, STATUS_ERROR}:
                 # A previous shutdown abort worker may have failed. Returning
@@ -957,9 +958,9 @@ class SessionCoordinator:
     def abort_if_current(self, *, session_id: str) -> RuntimeState:
         """Atomically identify and abort this session's current run.
 
-        Returning idle/error/aborting is idempotent. In particular, a watcher
-        cannot finish an old run and let this call accidentally abort a newer
-        identity between separate state and abort operations.
+        Returning idle/error/aborting or the current state of a finalizing run
+        is idempotent. A watcher cannot finish an old run and let this call
+        accidentally abort a newer identity between separate operations.
         """
         with self._lock:
             active = self._active_by_session.get(session_id)
@@ -985,7 +986,7 @@ class SessionCoordinator:
             return self._abort_locked(active)
 
     def _abort_locked(self, active: RuntimeState) -> RuntimeState:
-        if active.status in {STATUS_ABORTING, STATUS_ERROR}:
+        if active.run_id in self._finalizing_runs or active.status in {STATUS_ABORTING, STATUS_ERROR}:
             return replace(active)
         # The runtime may not exist yet: admission reserves the run before its
         # runtime is created (creation happens outside the lock), so a stop
@@ -1043,9 +1044,12 @@ class SessionCoordinator:
                 if active is None or active.run_id != run_id:
                     return
                 outcome = getattr(handle, "run_outcome", None)
-                if active.status == STATUS_ABORTING:
-                    outcome = "cancelled"
-            resolved_outcome = outcome or "completed"
+                resolved_outcome = ("cancelled" if active.status == STATUS_ABORTING
+                                    else outcome or "completed")
+                # Commit the outcome before releasing the lock: a later stop
+                # (including shutdown) is a no-op, but the slot stays reserved
+                # until the archive and report have been finalized.
+                self._finalizing_runs.add(run_id)
             final_text = getattr(handle, "run_final_text", "")
             # Persist archive identity and final theme report outside self._lock
             # so slow disk I/O never stalls unrelated sessions; _active_by_session
@@ -1067,11 +1071,6 @@ class SessionCoordinator:
                 active = self._active_by_session.get(session_id)
                 if active is None or active.run_id != run_id:
                     return
-                if active.status == STATUS_ABORTING and resolved_outcome != "cancelled":
-                    resolved_outcome = "cancelled"
-                    theme_task_runs.finish(
-                        session_id, run_id, resolved_outcome, final_text,
-                    )
                 completed = RuntimeState(
                     session_id, completed_run_id=run_id,
                     outcome=resolved_outcome,
@@ -1085,5 +1084,6 @@ class SessionCoordinator:
             self._emit_state_change(notification)
         finally:
             with self._lock:
+                self._finalizing_runs.discard(run_id)
                 if self._watchers.get(run_id) is threading.current_thread():
                     self._watchers.pop(run_id, None)

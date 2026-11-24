@@ -52,7 +52,7 @@ class _GateRuntime:
 
 
 @pytest.fixture()
-def gate():
+def gate(tmp_path):
     """capacity=1 coordinator + real system channels over a temp store."""
     runtimes: dict[str, _GateRuntime] = {}
 
@@ -62,7 +62,7 @@ def gate():
     coordinator = SessionCoordinator(factory, capacity=1, poll_interval=0.005)
     channels = SystemChannels(
         coordinator=lambda: coordinator,
-        store=SessionMetadataStore(),
+        store=SessionMetadataStore(tmp_path),
         llm_key_resolver=lambda _row: None,
     )
     yield SimpleNamespace(coordinator=coordinator, channels=channels,

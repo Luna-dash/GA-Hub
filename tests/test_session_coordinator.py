@@ -1042,3 +1042,88 @@ def test_theme_report_is_final_before_idle_event_and_new_admission(tmp_path, mon
     finally:
         runtime.handle.finished = True
         coordinator.shutdown()
+
+
+@pytest.mark.parametrize('stop_first', [False, True], ids=['completion-first', 'stop-first'])
+def test_stop_and_completion_agree_across_runtime_archive_and_report(
+    tmp_path, monkeypatch, stop_first,
+):
+    import json
+    from types import SimpleNamespace
+
+    from server.services import archive_identity, theme_task_runs as metrics
+    from server.services.session_coordinator import AgentBusyError, SessionCoordinator
+
+    monkeypatch.setattr(metrics._paths, 'ADMIN_DATA', tmp_path)
+    archive = tmp_path / 'messages.jsonl'
+    archive.write_text('{}\n', encoding='utf-8')
+    sidecar = archive.with_name(archive.name + '.hub-identity.json')
+    runtime = FakeRuntime('s')
+    runtime.agent = SimpleNamespace(log_path=archive)
+    persisting = threading.Event()
+    release = threading.Event()
+    wait_expired = threading.Event()
+    archive_outcomes = []
+    settled = []
+    finish_run = archive_identity.finish_run
+
+    def slow_finish(*args, **kwargs):
+        archive_outcomes.append(kwargs['outcome'])
+        persisting.set()
+        if not release.wait(timeout=5):
+            wait_expired.set()
+        return finish_run(*args, **kwargs)
+
+    monkeypatch.setattr(archive_identity, 'finish_run', slow_finish)
+
+    def on_state(state):
+        if state.completed_run_id:
+            record, = json.loads(sidecar.read_text(encoding='utf-8'))['runs']
+            settled.append((state, record, metrics.get('s')))
+
+    coordinator = SessionCoordinator(
+        lambda sid: runtime if sid == 's' else FakeRuntime(sid),
+        capacity=1, poll_interval=0.001, is_theme_task=lambda sid: sid == 's',
+        on_state_change=on_state,
+    )
+    try:
+        state = coordinator.submit('request', session_id='s')
+        archive_identity.begin_run(
+            archive, session_id='s', run_id=state.run_id, logical_id=state.run_id,
+            stream_id=state.stream_id, ordinal=0,
+        )
+        if stop_first:
+            assert coordinator.abort_if_current(session_id='s').status == 'aborting'
+        runtime.handle.run_final_text = 'final conclusion'
+        runtime.handle.finished = True
+        assert persisting.wait(timeout=3)
+
+        # Slow persistence must not hold the global lock or release the slot.
+        # A second stop must not change the decision, even through shutdown.
+        coordinator.abort_if_current(session_id='s')
+        coordinator.abort(session_id='s', run_id=state.run_id)
+        shutdown_abort, acquired = coordinator._mark_shutdown_aborting(state, time.monotonic() + 1)
+        assert acquired
+        assert coordinator.runtime_state('s').completed_run_id is None
+        assert not settled
+        with pytest.raises(AgentBusyError):
+            coordinator.submit('request', session_id='other')
+
+        release.set()
+        _wait_until(lambda: not coordinator._watchers)
+        assert not wait_expired.is_set()
+        final, record, report = settled.pop()
+        expected = 'cancelled' if stop_first else 'completed'
+        assert archive_outcomes == [expected]
+        assert final == coordinator.runtime_state('s')
+        assert final.completed_run_id == record['run_id'] == report['run_id'] == state.run_id
+        assert final.outcome == record['outcome'] == report['outcome'] == expected
+        assert report['report'] == 'final conclusion'
+        assert shutdown_abort is None
+        assert not settled
+        assert runtime.abort_calls == int(stop_first)
+    finally:
+        release.set()
+        if runtime.handle is not None:
+            runtime.handle.finished = True
+        coordinator.shutdown()
