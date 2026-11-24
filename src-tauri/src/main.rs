@@ -1565,7 +1565,6 @@ fn follow_current_update() -> Result<bool, String> {
     let target = value["executable"].as_str().ok_or("Invalid current update pointer")?;
     let target_path = Path::new(target);
     if !target_path.is_file() {
-        ensure_safe_update_fallback(&updates_dir)?;
         record_startup_diagnostic(&format!(
             "follow_current_update: pointer target missing ({target}), continuing with current executable"
         ));
@@ -1577,7 +1576,6 @@ fn follow_current_update() -> Result<bool, String> {
     }
     let helper = current.with_file_name("ga-hub-update.exe");
     if !helper.is_file() {
-        ensure_safe_update_fallback(&updates_dir)?;
         record_startup_diagnostic(&format!(
             "follow_current_update: helper missing ({}), continuing with current executable",
             helper.display()
