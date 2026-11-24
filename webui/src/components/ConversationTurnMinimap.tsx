@@ -29,8 +29,20 @@ export function ConversationTurnMinimap({
   const clampedActive = items.length > 0 ? Math.max(0, Math.min(items.length - 1, activeIndex)) : 0
 
   useEffect(() => {
-    const activeNode = navRef.current?.querySelector<HTMLElement>('[aria-current="step"]')
-    activeNode?.scrollIntoView?.({ block: 'nearest' })
+    const nav = navRef.current
+    const activeNode = nav?.querySelector<HTMLElement>('[aria-current="step"]')
+    if (!nav || !activeNode || nav.scrollHeight <= nav.clientHeight + 1) return
+    const navRect = nav.getBoundingClientRect()
+    const nodeRect = activeNode.getBoundingClientRect()
+    if (navRect.height <= 0 || nodeRect.height <= 0) return
+    const pad = 10
+    const relTop = nodeRect.top - navRect.top
+    const relBottom = nodeRect.bottom - navRect.top
+    if (relTop < pad) {
+      nav.scrollTop = Math.max(0, nav.scrollTop + relTop - pad)
+    } else if (relBottom > nav.clientHeight - pad) {
+      nav.scrollTop += relBottom - (nav.clientHeight - pad)
+    }
   }, [clampedActive, items.length])
 
   if (items.length <= 1) return null
@@ -45,14 +57,21 @@ export function ConversationTurnMinimap({
       <nav
         ref={navRef}
         aria-label="多轮会话选择器"
-        className="flex max-h-full w-7 flex-col items-center gap-[4px] overflow-y-auto rounded-full border border-line/65 bg-bg-card/88 px-1 py-2.5 shadow-[inset_0_1px_0_rgba(255,250,232,0.82),0_4px_14px_rgba(45,34,22,0.09)] backdrop-blur-md [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        onWheel={(event) => {
+          const nav = navRef.current
+          if (!nav || nav.scrollHeight <= nav.clientHeight + 1) return
+          const canUp = event.deltaY < 0 && nav.scrollTop > 0
+          const canDown = event.deltaY > 0 && nav.scrollTop + nav.clientHeight < nav.scrollHeight - 1
+          if (canUp || canDown) event.stopPropagation()
+        }}
+        className="flex max-h-full w-7 flex-col items-center gap-[3px] overflow-y-auto rounded-full border border-line/65 bg-bg-card/88 px-1 py-2.5 shadow-[inset_0_1px_0_rgba(255,250,232,0.82),0_4px_14px_rgba(45,34,22,0.09)] backdrop-blur-md [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {items.map((item, idx) => {
           const dist = Math.abs(idx - clampedActive)
           const isCurrent = dist === 0
           const isLast = idx === items.length - 1
           const indicatorClass = isCurrent
-            ? 'h-4 w-[6px] bg-accent shadow-[0_0_0_3px_rgba(166,91,42,0.16),0_1px_4px_rgba(166,91,42,0.35)]'
+            ? 'h-3.5 w-[6px] bg-accent shadow-[0_0_0_3px_rgba(166,91,42,0.16),0_1px_4px_rgba(166,91,42,0.35)]'
             : dist === 1
               ? 'h-2.5 w-[5px] bg-ink/45 group-hover/dot:bg-accent/85'
               : dist === 2
@@ -84,7 +103,7 @@ export function ConversationTurnMinimap({
               aria-label={`跳到第 ${item.index} 轮：${item.label}`}
               aria-current={isCurrent ? 'step' : undefined}
               title={`第 ${item.index} 轮：${item.label}`}
-              className="group/dot flex w-5 shrink-0 items-center justify-center py-[2px] focus-visible:outline-none"
+              className="group/dot flex h-4 w-5 shrink-0 items-center justify-center focus-visible:outline-none"
             >
               <span
                 aria-hidden="true"

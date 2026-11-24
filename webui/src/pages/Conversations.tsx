@@ -209,6 +209,14 @@ export default function Conversations() {
   const detailListRef = useRef<VirtualMessageListHandle>(null)
   const [detailStuckBottom, setDetailStuckBottom] = useState(false)
   const [detailActiveTurn, setDetailActiveTurn] = useState(0)
+  const detailActiveTurnRef = useRef(0)
+  const detailNavTargetRef = useRef<number | null>(null)
+  const detailNavLockUntilRef = useRef(0)
+  const detailJumpingBottomUntilRef = useRef(0)
+  const updateDetailActiveTurn = useCallback((next: number) => {
+    detailActiveTurnRef.current = next
+    setDetailActiveTurn((previous) => previous === next ? previous : next)
+  }, [])
 
   const rounds = useMemo(() => buildRounds(detail?.messages || []), [detail])
   // Non-empty only for a real chat session: the backend excludes title-only
@@ -248,45 +256,84 @@ export default function Conversations() {
   const syncDetailNav = useCallback(() => {
     const el = detailScrollRef.current
     if (!el) return
+    const now = performance.now()
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 64
+    if (detailJumpingBottomUntilRef.current > now) {
+      if (atBottom) {
+        detailJumpingBottomUntilRef.current = 0
+      } else {
+        return
+      }
+    }
     setDetailStuckBottom(atBottom)
     if (navTargets.length === 0) {
-      setDetailActiveTurn(0)
+      updateDetailActiveTurn(0)
       return
     }
-    const firstVisible = detailListRef.current?.getFirstVisibleIndex(48) ?? 0
-    let currentTurn = 0
-    for (let i = 0; i < navTargets.length; i += 1) {
-      if (navTargets[i].scrollIndex <= firstVisible) currentTurn = i
-      else break
+    const navTarget = detailNavTargetRef.current
+    if (navTarget !== null && navTarget < navTargets.length && now < detailNavLockUntilRef.current) {
+      updateDetailActiveTurn(navTarget)
+      return
     }
-    setDetailActiveTurn(currentTurn)
-  }, [navTargets])
+    detailNavTargetRef.current = null
+    detailNavLockUntilRef.current = 0
+    let currentTurn = atBottom ? navTargets.length - 1 : 0
+    if (!atBottom) {
+      const firstVisible = detailListRef.current?.getFirstVisibleIndex(48) ?? 0
+      for (let i = 0; i < navTargets.length; i += 1) {
+        if (navTargets[i].scrollIndex <= firstVisible) currentTurn = i
+        else break
+      }
+    }
+    updateDetailActiveTurn(currentTurn)
+  }, [navTargets, updateDetailActiveTurn])
+
+  const detailTailIndex = useMemo(() => {
+    if (!detail) return -1
+    return viewMode === 'round'
+      ? Math.max(-1, rounds.length - 1)
+      : Math.max(-1, (detail.messages?.length ?? 0) - 1)
+  }, [detail, rounds.length, viewMode])
 
   const jumpToDetailBottom = useCallback(() => {
     const el = detailScrollRef.current
     if (!el) return
     setDetailStuckBottom(true)
-    if (navTargets.length > 0) setDetailActiveTurn(navTargets.length - 1)
-    if (typeof el.scrollTo === 'function') {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-    } else {
-      el.scrollTop = el.scrollHeight
+    const lastTurn = navTargets.length - 1
+    detailNavTargetRef.current = lastTurn >= 0 ? lastTurn : null
+    detailNavLockUntilRef.current = performance.now() + 900
+    detailJumpingBottomUntilRef.current = performance.now() + 900
+    if (lastTurn >= 0) updateDetailActiveTurn(lastTurn)
+    if (detailTailIndex >= 0) {
+      detailListRef.current?.scrollToIndex(detailTailIndex, { behavior: 'auto', align: 'end' })
     }
-  }, [navTargets.length])
+    el.scrollTop = el.scrollHeight
+    requestAnimationFrame(() => {
+      if (detailJumpingBottomUntilRef.current > performance.now()) {
+        el.scrollTop = el.scrollHeight
+      }
+    })
+  }, [detailTailIndex, navTargets.length, updateDetailActiveTurn])
 
   const jumpToDetailTurn = useCallback((turnIndex: number) => {
     if (navTargets.length === 0) return
     const clamped = Math.max(0, Math.min(navTargets.length - 1, turnIndex))
     const target = navTargets[clamped]
-    setDetailActiveTurn(clamped)
+    detailNavTargetRef.current = clamped
+    detailNavLockUntilRef.current = performance.now() + 700
+    detailJumpingBottomUntilRef.current = 0
+    updateDetailActiveTurn(clamped)
     setDetailStuckBottom(false)
     if (detailListRef.current) {
       detailListRef.current.scrollToIndex(target.scrollIndex, { behavior: 'smooth', align: 'start' })
     } else if (detailScrollRef.current) {
       detailScrollRef.current.scrollTop = 0
     }
-  }, [navTargets])
+  }, [navTargets, updateDetailActiveTurn])
+
+  const stepDetailTurn = useCallback((delta: -1 | 1) => {
+    jumpToDetailTurn(detailActiveTurnRef.current + delta)
+  }, [jumpToDetailTurn])
 
   useEffect(() => {
     // A deep-link change reuses the same page component. Restore the saved
@@ -309,9 +356,26 @@ export default function Conversations() {
       writePageState('conversations.detailScroll', trimDetailScrollPositions(detailScrollPositionsRef.current))
       syncDetailNav()
     }
+    const clearNavLock = () => {
+      detailNavTargetRef.current = null
+      detailNavLockUntilRef.current = 0
+      detailJumpingBottomUntilRef.current = 0
+    }
+    const onScrollEnd = () => {
+      clearNavLock()
+      syncDetailNav()
+    }
     el.addEventListener('scroll', capture, { passive: true })
+    el.addEventListener('scrollend', onScrollEnd, { passive: true })
+    el.addEventListener('wheel', clearNavLock, { passive: true })
+    el.addEventListener('touchstart', clearNavLock, { passive: true })
+    el.addEventListener('pointerdown', clearNavLock, { passive: true })
     return () => {
       el.removeEventListener('scroll', capture)
+      el.removeEventListener('scrollend', onScrollEnd)
+      el.removeEventListener('wheel', clearNavLock)
+      el.removeEventListener('touchstart', clearNavLock)
+      el.removeEventListener('pointerdown', clearNavLock)
       capture()
     }
   }, [active, syncDetailNav])
@@ -759,8 +823,8 @@ export default function Conversations() {
               canPrev={detailActiveTurn > 0}
               canNext={detailActiveTurn < navTargets.length - 1}
               onJumpToBottom={jumpToDetailBottom}
-              onPrev={() => jumpToDetailTurn(detailActiveTurn - 1)}
-              onNext={() => jumpToDetailTurn(detailActiveTurn + 1)}
+              onPrev={() => stepDetailTurn(-1)}
+              onNext={() => stepDetailTurn(1)}
             />
           </div>
         )}

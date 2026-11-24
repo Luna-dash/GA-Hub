@@ -209,8 +209,70 @@ describe('LiveChatTranscript reading intent', () => {
     mount()
     const minimapButtons = host.querySelectorAll<HTMLButtonElement>('[aria-label="多轮会话选择器"] button')
     expect(minimapButtons).toHaveLength(4)
+    minimapButtons.forEach((button) => {
+      expect(button.className).toContain('h-4')
+    })
     act(() => minimapButtons[0].click())
     expect(layout.scrollToIndex).toHaveBeenLastCalledWith(0, { behavior: 'smooth', align: 'start' })
     expect(saved().A).toEqual({ key: key(0), stuck: false })
+  })
+
+  it('steps across multiple turns on rapid prev clicks without stale activeTurn', () => {
+    const el = mount()
+    Object.defineProperty(el, 'scrollTop', { configurable: true, writable: true, value: 500 })
+    layout.first = 6
+    act(() => {
+      el.dispatchEvent(new Event('wheel'))
+      el.dispatchEvent(new Event('scroll'))
+    })
+    flushFrames()
+    const prevBtn = () => host.querySelector<HTMLButtonElement>('button[aria-label="上一节"]')!
+    expect(prevBtn()).not.toBeNull()
+    layout.scrollToIndex.mockClear()
+    act(() => {
+      prevBtn().click()
+      prevBtn().click()
+    })
+    expect(layout.scrollToIndex).toHaveBeenNthCalledWith(1, 4, { behavior: 'smooth', align: 'start' })
+    expect(layout.scrollToIndex).toHaveBeenLastCalledWith(2, { behavior: 'smooth', align: 'start' })
+  })
+
+  it('does not yank scrollTop when manual scrolling enters bottom zone and keeps dock hidden while jumpToBottom animates', () => {
+    const el = mount()
+    let scrollTop = 500
+    const scrollTopSetter = vi.fn((next: number) => { scrollTop = next })
+    Object.defineProperty(el, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: scrollTopSetter,
+    })
+
+    // Manual scroll enters bottom 80px zone (4000 - 3450 - 500 = 50 < 80).
+    scrollTop = 3450
+    scrollTopSetter.mockClear()
+    act(() => {
+      el.dispatchEvent(new Event('wheel'))
+      el.dispatchEvent(new Event('scroll'))
+      flushFrames()
+    })
+    expect(scrollTopSetter).not.toHaveBeenCalled()
+
+    // Scroll away, then click jumpToBottom; mid-animation scroll events must not re-show dock.
+    scrollTop = 400
+    act(() => {
+      el.dispatchEvent(new Event('wheel'))
+      el.dispatchEvent(new Event('scroll'))
+      flushFrames()
+    })
+    expect(host.querySelector('[aria-label="对话位置导航"]')).not.toBeNull()
+    click('跳到底部')
+    expect(layout.scrollToIndex).toHaveBeenLastCalledWith(7, { behavior: 'auto', align: 'end' })
+    expect(scrollTopSetter).toHaveBeenCalledWith(4000)
+    expect(host.querySelector('[aria-label="对话位置导航"]')).toBeNull()
+    act(() => {
+      el.dispatchEvent(new Event('scroll'))
+      flushFrames()
+    })
+    expect(host.querySelector('[aria-label="对话位置导航"]')).toBeNull()
   })
 })

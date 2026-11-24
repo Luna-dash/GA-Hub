@@ -156,4 +156,64 @@ describe('VirtualMessageList', () => {
 
     expect(scroller.scrollTop).toBe(4_984)
   })
+
+  it('downgrades smooth jump to auto for far unmounted rows and pauses above-viewport jolt compensation', () => {
+    const callbacks: Array<() => void> = []
+    class FakeResizeObserver {
+      constructor(cb: () => void) { callbacks.push(cb) }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+
+    act(() => root.render(<Harness rows={items} threshold={5} overscan={0} />))
+    const scroller = host.firstElementChild as HTMLDivElement
+    const scrollToSpy = vi.fn((opts: { top?: number }) => {
+      if (typeof opts?.top === 'number') scroller.scrollTop = opts.top
+    })
+    Object.defineProperty(scroller, 'scrollTo', { value: scrollToSpy, configurable: true })
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+
+    act(() => handle?.scrollToIndex(80, { behavior: 'smooth', align: 'start' }))
+    expect(scrollToSpy).toHaveBeenCalledWith({ top: 7_984, behavior: 'auto' })
+
+    // Triggering a row resize above the active target must not jolt scrollTop.
+    const row0 = host.querySelector<HTMLElement>('[data-virtual-index="0"]')
+    if (row0) Object.defineProperty(row0, 'offsetHeight', { value: 180, configurable: true })
+    const before = scroller.scrollTop
+    act(() => callbacks.forEach((cb) => cb()))
+    expect(scroller.scrollTop).toBe(before)
+  })
+
+  it('mounts unmounted tail rows and re-pins to the true bottom in one scrollToIndex click', () => {
+    const callbacks: Array<() => void> = []
+    class FakeResizeObserver {
+      constructor(cb: () => void) { callbacks.push(cb) }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+
+    act(() => root.render(<Harness rows={items} threshold={5} overscan={200} />))
+    const scroller = host.firstElementChild as HTMLDivElement
+    const list = host.querySelector<HTMLElement>('[data-chat-virtual-list]')!
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => Number.parseFloat(list.style.height || '0'),
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTo', { value: undefined, configurable: true })
+
+    act(() => handle?.scrollToIndex(items.length - 1, { behavior: 'auto', align: 'end' }))
+    expect(host.querySelector('[data-virtual-index="99"]')).not.toBeNull()
+    expect(scroller.scrollTop).toBe(10_000)
+
+    // Simulate mounted tail rows measuring much taller than their 100px estimate.
+    for (let idx = 95; idx < 100; idx += 1) {
+      const row = host.querySelector<HTMLElement>(`[data-virtual-index="${idx}"]`)
+      if (row) Object.defineProperty(row, 'offsetHeight', { value: 260, configurable: true })
+    }
+    act(() => callbacks.forEach((cb) => cb()))
+    expect(scroller.scrollTop).toBe(10_800)
+  })
 })

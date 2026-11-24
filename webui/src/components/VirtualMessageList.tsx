@@ -68,6 +68,15 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
   const offsetsRef = useRef<number[]>([0])
   const prependAnchorRef = useRef<{ key: string; y: number } | null>(null)
   const hasVirtualizedRef = useRef(false)
+  const navTargetRef = useRef<{
+    index: number
+    align: 'start' | 'center' | 'end'
+    toBottom: boolean
+    smooth: boolean
+    needsRealign: boolean
+    until: number
+  } | null>(null)
+  const realignFrameRef = useRef<number | null>(null)
   const viewportRef = useRef({ scrollTop: 0, height: 0, listTop: 0 })
   const [viewport, setViewport] = useState(viewportRef.current)
   const [layoutRevision, setLayoutRevision] = useState(0)
@@ -169,17 +178,110 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
     }
   }, [scrollRef, setAnchorSpace])
 
+  const computeTargetTop = useCallback((
+    itemTop: number,
+    itemBottom: number,
+    viewportHeight: number,
+    align: 'start' | 'center' | 'end',
+  ) => (
+    align === 'center'
+      ? Math.max(0, itemTop - Math.max(0, (viewportHeight - (itemBottom - itemTop)) / 2))
+      : align === 'end'
+        ? Math.max(0, itemBottom - viewportHeight)
+        : Math.max(0, itemTop - 16)
+  ), [])
+
+  const getRowMetrics = useCallback((targetIndex: number) => {
+    const scroller = scrollRef.current
+    const list = listRef.current
+    const fallbackTop = (list?.offsetTop ?? 0) + (offsetsRef.current[targetIndex] ?? 0)
+    const fallbackBottom = (list?.offsetTop ?? 0)
+      + (offsetsRef.current[targetIndex + 1] ?? offsetsRef.current[targetIndex] ?? 0)
+    if (!scroller || !list) {
+      return { itemTop: fallbackTop, itemBottom: fallbackBottom, mounted: false }
+    }
+    const row = list.querySelector<HTMLElement>(`[data-virtual-index="${targetIndex}"]`)
+    if (row) {
+      const scrollerRect = scroller.getBoundingClientRect?.()
+      const rowRect = row.getBoundingClientRect?.()
+      if (scrollerRect && rowRect && scrollerRect.height > 0 && rowRect.height > 0) {
+        const itemTop = rowRect.top - scrollerRect.top - scroller.clientTop + scroller.scrollTop
+        return { itemTop, itemBottom: itemTop + rowRect.height, mounted: true }
+      }
+      return { itemTop: fallbackTop, itemBottom: fallbackBottom, mounted: true }
+    }
+    return { itemTop: fallbackTop, itemBottom: fallbackBottom, mounted: false }
+  }, [scrollRef])
+
   useLayoutEffect(() => {
     hasVirtualizedRef.current = virtualized
     if (prependAnchorRef.current && anchorIndex < 0) prependAnchorRef.current = null
     restorePrependAnchor()
+    const scroller = scrollRef.current
+    const nav = navTargetRef.current
+    if (nav && scroller) {
+      if (performance.now() >= nav.until) {
+        navTargetRef.current = null
+      } else if (nav.needsRealign) {
+        nav.needsRealign = false
+        if (nav.toBottom) {
+          const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+          if (Math.abs(scroller.scrollTop - maxTop) >= 1) {
+            markProgrammaticScroll()
+            scroller.scrollTop = scroller.scrollHeight
+          }
+        } else {
+          const metrics = getRowMetrics(nav.index)
+          const top = computeTargetTop(metrics.itemTop, metrics.itemBottom, scroller.clientHeight, nav.align)
+          if (Math.abs(scroller.scrollTop - top) >= 2) {
+            markProgrammaticScroll()
+            scroller.scrollTop = top
+          }
+        }
+      }
+    }
     refreshViewport()
-  }, [anchorIndex, items, offsets, refreshViewport, restorePrependAnchor, virtualized])
+  }, [anchorIndex, computeTargetTop, getRowMetrics, items, offsets, refreshViewport, restorePrependAnchor, scrollRef, virtualized])
+
+  const scheduleRealign = useCallback(() => {
+    if (realignFrameRef.current !== null) return
+    realignFrameRef.current = window.requestAnimationFrame(() => {
+      realignFrameRef.current = null
+      const nav = navTargetRef.current
+      const scroller = scrollRef.current
+      if (!nav || !scroller || performance.now() >= nav.until) {
+        navTargetRef.current = null
+        return
+      }
+      nav.needsRealign = false
+      if (nav.toBottom) {
+        const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+        if (Math.abs(scroller.scrollTop - maxTop) >= 1) {
+          markProgrammaticScroll()
+          scroller.scrollTop = scroller.scrollHeight
+        }
+        return
+      }
+      const metrics = getRowMetrics(nav.index)
+      const top = computeTargetTop(metrics.itemTop, metrics.itemBottom, scroller.clientHeight, nav.align)
+      if (Math.abs(scroller.scrollTop - top) >= 2) {
+        markProgrammaticScroll()
+        scroller.scrollTop = top
+      }
+    })
+  }, [computeTargetTop, getRowMetrics, scrollRef])
 
   useEffect(() => {
     const scroller = scrollRef.current
     if (!scroller) return
     let frame: number | null = null
+    const cancelNav = () => {
+      navTargetRef.current = null
+      if (realignFrameRef.current !== null) {
+        window.cancelAnimationFrame(realignFrameRef.current)
+        realignFrameRef.current = null
+      }
+    }
     const onScroll = () => {
       if (frame !== null) return
       frame = window.requestAnimationFrame(() => {
@@ -192,7 +294,23 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
         refreshViewport()
       })
     }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target === scroller && ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
+        cancelNav()
+      }
+    }
+    const onScrollEnd = () => {
+      const nav = navTargetRef.current
+      if (nav && !nav.toBottom && !nav.needsRealign && realignFrameRef.current === null) {
+        navTargetRef.current = null
+      }
+    }
     scroller.addEventListener('scroll', onScroll, { passive: true })
+    scroller.addEventListener('wheel', cancelNav, { passive: true })
+    scroller.addEventListener('touchstart', cancelNav, { passive: true })
+    scroller.addEventListener('pointerdown', cancelNav, { passive: true })
+    scroller.addEventListener('keydown', onKeyDown)
+    scroller.addEventListener('scrollend', onScrollEnd, { passive: true })
     const resizeObserver = typeof ResizeObserver === 'undefined'
       ? null
       : new ResizeObserver(() => {
@@ -203,7 +321,16 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
     if (listRef.current) resizeObserver?.observe(listRef.current)
     return () => {
       scroller.removeEventListener('scroll', onScroll)
+      scroller.removeEventListener('wheel', cancelNav)
+      scroller.removeEventListener('touchstart', cancelNav)
+      scroller.removeEventListener('pointerdown', cancelNav)
+      scroller.removeEventListener('keydown', onKeyDown)
+      scroller.removeEventListener('scrollend', onScrollEnd)
       if (frame !== null) window.cancelAnimationFrame(frame)
+      if (realignFrameRef.current !== null) {
+        window.cancelAnimationFrame(realignFrameRef.current)
+        realignFrameRef.current = null
+      }
       resizeObserver?.disconnect()
     }
   }, [refreshViewport, restorePrependAnchor, scrollRef, setAnchorSpace])
@@ -218,6 +345,18 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
     measuredSizesRef.current.set(key, measured)
 
     const scroller = scrollRef.current
+    const nav = navTargetRef.current
+    const navigating = nav !== null && performance.now() < nav.until
+    if (navigating) {
+      if (nav.toBottom || (index <= nav.index && Math.abs(delta) >= 1)) {
+        nav.needsRealign = true
+        nav.smooth = false
+        scheduleRealign()
+      }
+      setLayoutRevision((value) => value + 1)
+      return
+    }
+
     const currentListTop = listRef.current?.offsetTop ?? 0
     const currentRelativeTop = Math.max(0, (scroller?.scrollTop ?? 0) - currentListTop)
     const wasAboveViewport = oldOffsets[index + 1] <= currentRelativeTop + 1
@@ -230,6 +369,7 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
     } else if (virtualized && !prependAnchorRef.current && scroller && Math.abs(delta) >= 0.5 && currentlyPinned && pinnedToBottom) {
       window.requestAnimationFrame(() => {
         if (scrollRef.current === scroller && !prependAnchorRef.current
+          && !navTargetRef.current
           && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80 + Math.max(0, delta)) {
           markProgrammaticScroll()
           scroller.scrollTop = scroller.scrollHeight
@@ -237,7 +377,7 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
       })
     }
     setLayoutRevision((value) => value + 1)
-  }, [pinnedToBottom, scrollRef, virtualized])
+  }, [pinnedToBottom, scheduleRealign, scrollRef, virtualized])
 
   useImperativeHandle(forwardedRef, () => ({
     prepareForPrepend: () => {
@@ -262,6 +402,25 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
       const scroller = scrollRef.current
       const list = listRef.current
       if (!scroller || !list || items.length === 0) return 0
+      const scrollerRect = scroller.getBoundingClientRect?.()
+      if (scrollerRect && scrollerRect.height > 0 && list.children.length > 0) {
+        const threshold = scrollerRect.top + scroller.clientTop + extraOffset
+        let hasLiveGeometry = false
+        for (const node of list.children) {
+          const rect = (node as HTMLElement).getBoundingClientRect?.()
+          if (!rect || rect.height <= 0) continue
+          hasLiveGeometry = true
+          if (rect.bottom > threshold) {
+            const rawIndex = Number((node as HTMLElement).dataset.virtualIndex)
+            if (Number.isFinite(rawIndex)) return rawIndex
+          }
+        }
+        if (hasLiveGeometry) {
+          const last = list.children[list.children.length - 1] as HTMLElement | undefined
+          const lastIndex = Number(last?.dataset.virtualIndex)
+          if (Number.isFinite(lastIndex)) return lastIndex
+        }
+      }
       const top = Math.max(0, scroller.scrollTop - list.offsetTop + extraOffset)
       return virtualIndexAtOffset(offsetsRef.current, top)
     },
@@ -272,25 +431,53 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
       prependAnchorRef.current = null
       if (anchorSpaceRef.current) anchorSpaceRef.current.style.height = ''
       const targetIndex = Math.max(0, Math.min(items.length - 1, index))
-      const itemTop = offsetsRef.current[targetIndex] ?? 0
-      const itemBottom = offsetsRef.current[targetIndex + 1] ?? itemTop
-      const viewportHeight = scroller.clientHeight
       const align = options.align ?? 'start'
-      const targetTop = align === 'center'
-        ? itemTop - Math.max(0, (viewportHeight - (itemBottom - itemTop)) / 2)
-        : align === 'end'
-          ? itemBottom - viewportHeight
-          : itemTop - 16
-      const top = Math.max(0, list.offsetTop + targetTop)
+      const toBottom = align === 'end' && targetIndex === items.length - 1
+      const metrics = getRowMetrics(targetIndex)
+      const viewportHeight = scroller.clientHeight
+      const computedTop = computeTargetTop(metrics.itemTop, metrics.itemBottom, viewportHeight, align)
+      const top = toBottom
+        ? Math.max(computedTop, scroller.scrollHeight - viewportHeight, 0)
+        : computedTop
+      const requestedBehavior = options.behavior ?? 'smooth'
+      const farOrUnmeasured = (virtualized && !metrics.mounted)
+        || Math.abs(top - scroller.scrollTop) > Math.max(viewportHeight * 2.5, 1600)
+      const effectiveBehavior: ScrollBehavior = requestedBehavior === 'smooth' && farOrUnmeasured
+        ? 'auto'
+        : requestedBehavior
+      navTargetRef.current = {
+        index: targetIndex,
+        align,
+        toBottom,
+        smooth: effectiveBehavior === 'smooth',
+        needsRealign: !metrics.mounted || toBottom,
+        until: performance.now() + 900,
+      }
+      if (virtualized && !metrics.mounted) {
+        const nextViewport = {
+          scrollTop: top,
+          height: viewportHeight,
+          listTop: list.offsetTop,
+        }
+        viewportRef.current = nextViewport
+        setViewport((previous) => (
+          previous.scrollTop === nextViewport.scrollTop
+          && previous.height === nextViewport.height
+          && previous.listTop === nextViewport.listTop
+            ? previous
+            : nextViewport
+        ))
+      }
       markProgrammaticScroll()
       if (typeof scroller.scrollTo === 'function') {
-        scroller.scrollTo({ top, behavior: options.behavior ?? 'smooth' })
+        scroller.scrollTo({ top, behavior: effectiveBehavior })
       } else {
-        scroller.scrollTop = top
+        scroller.scrollTop = toBottom ? Math.max(top, scroller.scrollHeight) : top
       }
+      if (!metrics.mounted || toBottom) scheduleRealign()
     },
     getTotalSize: () => offsetsRef.current[offsetsRef.current.length - 1] ?? 0,
-  }), [forwardedRef, items.length, scrollRef])
+  }), [computeTargetTop, forwardedRef, getRowMetrics, items.length, scheduleRealign, scrollRef, virtualized])
 
   return (
     <>

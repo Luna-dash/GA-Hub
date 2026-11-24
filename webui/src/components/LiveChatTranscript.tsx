@@ -91,14 +91,21 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     const [stuckBottom, setStuckBottom] = useState(true)
     const [unread, setUnread] = useState(0)
     const [activeTurn, setActiveTurn] = useState(-1)
+    const activeTurnRef = useRef(-1)
     const [hoveredSchedule, setHoveredSchedule] = useState<{
       task: ScheduledChat
       top: number
       right: number
     } | null>(null)
     const navigationTargetRef = useRef<number | null>(null)
+    const navigationLockUntilRef = useRef(0)
+    const jumpingToBottomUntilRef = useRef(0)
     const prependingHistoryRef = useRef(false)
     const virtualListRef = useRef<VirtualMessageListHandle>(null)
+    const updateActiveTurn = useCallback((next: number) => {
+      activeTurnRef.current = next
+      setActiveTurn((previous) => previous === next ? previous : next)
+    }, [])
 
     // Reading-position persistence across route switches. The anchor is the
     // first visible message key, so restores survive estimate-vs-measured
@@ -227,22 +234,32 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     const recomputeStuck = () => {
       const el = scrollRef.current
       if (!el) return
+      const now = performance.now()
       const dist = el.scrollHeight - el.scrollTop - el.clientHeight
       const at = dist < 80
+      if (jumpingToBottomUntilRef.current > now) {
+        if (at) {
+          jumpingToBottomUntilRef.current = 0
+        } else {
+          return
+        }
+      }
       if (sessionId) useChatStore.getState().setReadingOlderHistory(sessionId, !at)
       setStuckBottom(at)
       if (at) setUnread(0)
 
       const turns = turnMessageIndexesRef.current
       if (turns.length === 0) {
-        setActiveTurn(-1)
+        updateActiveTurn(-1)
         return
       }
       const navigationTarget = navigationTargetRef.current
-      if (navigationTarget !== null && navigationTarget < turns.length) {
-        setActiveTurn((previous) => previous === navigationTarget ? previous : navigationTarget)
+      if (navigationTarget !== null && navigationTarget < turns.length && now < navigationLockUntilRef.current) {
+        updateActiveTurn(navigationTarget)
         return
       }
+      navigationTargetRef.current = null
+      navigationLockUntilRef.current = 0
 
       let current = at ? turns.length - 1 : 0
       if (!at) {
@@ -252,27 +269,35 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           else break
         }
       }
-      setActiveTurn((previous) => previous === current ? previous : current)
+      updateActiveTurn(current)
       capturePosition()
     }
+    const recomputeStuckRef = useRef(recomputeStuck)
+    recomputeStuckRef.current = recomputeStuck
+    const hasUtilityRail = scheduledChats.length > 0 || turnCount > 0
 
     useEffect(() => {
       const el = scrollRef.current
       if (!el) return
-      recomputeStuck()
-      const scrollScheduler = createRafScheduler(recomputeStuck)
+      const scrollScheduler = createRafScheduler(() => recomputeStuckRef.current())
       // Real input only: programmatic scrolls never fire these events, so
       // they are the trusted signal that re-arms position capturing.
       const onUserGesture = () => {
         virtualListRef.current?.releasePrependAnchor()
         navigationTargetRef.current = null
+        navigationLockUntilRef.current = 0
+        jumpingToBottomUntilRef.current = 0
         viewportIntentVersionRef.current += 1
         lastUserGestureAtRef.current = performance.now()
       }
-      const utilityRail = utilityRailRef.current
-      const onWheel = (event: WheelEvent) => routeChatWheel(event, el, onUserGesture)
-      utilityRail?.addEventListener('wheel', onWheel, { capture: true, passive: false })
+      const onScrollEnd = () => {
+        navigationTargetRef.current = null
+        navigationLockUntilRef.current = 0
+        jumpingToBottomUntilRef.current = 0
+        scrollScheduler.schedule()
+      }
       el.addEventListener('scroll', scrollScheduler.schedule, { passive: true })
+      el.addEventListener('scrollend', onScrollEnd, { passive: true })
       el.addEventListener('wheel', onUserGesture, { passive: true })
       el.addEventListener('touchstart', onUserGesture, { passive: true })
       el.addEventListener('pointerdown', onUserGesture, { passive: true })
@@ -282,22 +307,48 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       el.addEventListener('keydown', onKeyDown)
       return () => {
         scrollScheduler.cancel()
-        utilityRail?.removeEventListener('wheel', onWheel, { capture: true })
         el.removeEventListener('scroll', scrollScheduler.schedule)
+        el.removeEventListener('scrollend', onScrollEnd)
         el.removeEventListener('wheel', onUserGesture)
         el.removeEventListener('touchstart', onUserGesture)
         el.removeEventListener('pointerdown', onUserGesture)
         el.removeEventListener('keydown', onKeyDown)
       }
+    }, [sessionId])
+
+    useEffect(() => {
+      const el = scrollRef.current
+      const utilityRail = utilityRailRef.current
+      if (!el || !utilityRail || !hasUtilityRail) return
+      const onUserGesture = () => {
+        virtualListRef.current?.releasePrependAnchor()
+        navigationTargetRef.current = null
+        navigationLockUntilRef.current = 0
+        jumpingToBottomUntilRef.current = 0
+        viewportIntentVersionRef.current += 1
+        lastUserGestureAtRef.current = performance.now()
+      }
+      const onWheel = (event: WheelEvent) => routeChatWheel(event, el, onUserGesture)
+      utilityRail.addEventListener('wheel', onWheel, { capture: true, passive: false })
+      return () => {
+        utilityRail.removeEventListener('wheel', onWheel, { capture: true })
+      }
+    }, [hasUtilityRail, sessionId])
+
+    useEffect(() => {
+      recomputeStuckRef.current()
     }, [msgs.length, sessionId, turnCount, scheduledChats.length])
 
     // The list owns history anchoring; only ordinary updates follow the tail.
+    const lastMsgsRef = useRef(msgs)
     const lastLenRef = useRef(0)
     useLayoutEffect(() => {
       const el = scrollRef.current
-      if (!el) return
+      const msgsChanged = msgs !== lastMsgsRef.current
+      lastMsgsRef.current = msgs
       const grew = msgs.length > lastLenRef.current
       lastLenRef.current = msgs.length
+      if (!el || !msgsChanged) return
       if (prependingHistoryRef.current) {
         prependingHistoryRef.current = false
         return
@@ -351,10 +402,16 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           // Rows above the anchor can finish measuring after this verdict
           // (slow markdown/images) and push the anchor off the 48px line.
           // Keep re-checking on a sparse schedule until the settle horizon
-          // passes; with settled offsets the re-aim is deterministic and
-          // idempotent, so watching costs one no-op scroll at worst.
+          // passes, and only re-aim if the anchor actually drifted.
           if (anchorKey !== null && Date.now() < aimDeadlineRef.current && attempt < 12) {
-            setTimeout(() => aimAtAnchor(anchorKey, fallbackIndex, attempt + 1, session, version), 250)
+            setTimeout(() => {
+              if (useChatStore.getState().sessionId !== session || viewportIntentVersionRef.current !== version) return
+              const latestMsgs = msgsRef.current
+              const latestFirst = virtualListRef.current?.getFirstVisibleIndex(48) ?? -1
+              const latestMsg = latestMsgs[latestFirst]
+              if (latestMsg && chatMessageKey(latestMsg) === anchorKey) return
+              aimAtAnchor(anchorKey, fallbackIndex, attempt + 1, session, version)
+            }, 250)
           }
           return
         }
@@ -456,29 +513,44 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       followTail()
       const lastTurn = turnCount - 1
       navigationTargetRef.current = lastTurn >= 0 ? lastTurn : null
-      if (lastTurn >= 0) setActiveTurn(lastTurn)
+      navigationLockUntilRef.current = performance.now() + 900
+      jumpingToBottomUntilRef.current = performance.now() + 900
+      if (lastTurn >= 0) updateActiveTurn(lastTurn)
       markProgrammaticScroll()
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+      if (msgsRef.current.length > 0) {
+        virtualListRef.current?.scrollToIndex(msgsRef.current.length - 1, { behavior: 'auto', align: 'end' })
+      }
+      el.scrollTop = el.scrollHeight
+      requestAnimationFrame(() => {
+        if (useChatStore.getState().sessionId === sessionId && jumpingToBottomUntilRef.current > performance.now()) {
+          markProgrammaticScroll()
+          el.scrollTop = el.scrollHeight
+        }
+      })
       setUnread(0)
     }
 
     const collapseToLatest = useCallback(() => {
       navigationTargetRef.current = null
+      navigationLockUntilRef.current = 0
+      jumpingToBottomUntilRef.current = 0
       followTail()
-      setActiveTurn(turnMessageIndexesRef.current.length - 1)
+      updateActiveTurn(turnMessageIndexesRef.current.length - 1)
       const el = scrollRef.current
       if (!el) return
       markProgrammaticScroll()
       virtualListRef.current?.scrollToIndex(Math.max(0, msgsRef.current.length - 1), { behavior: 'instant', align: 'end' })
       el.scrollTop = el.scrollHeight
-    }, [followTail])
+    }, [followTail, updateActiveTurn])
 
     const jumpToTurnIndex = (turnIndex: number) => {
       const el = scrollRef.current
       if (!el || turnCount === 0) return
       const clamped = Math.max(0, Math.min(turnCount - 1, turnIndex))
       navigationTargetRef.current = clamped
-      setActiveTurn(clamped)
+      navigationLockUntilRef.current = performance.now() + 700
+      jumpingToBottomUntilRef.current = 0
+      updateActiveTurn(clamped)
       const targetIndex = turnMessageIndexesRef.current[clamped]
       if (targetIndex == null) return
       commitNavigation(targetIndex, false)
@@ -488,7 +560,8 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     const jumpToTurn = (direction: -1 | 1) => {
       const el = scrollRef.current
       if (!el || turnCount === 0) return
-      const current = activeTurn < 0 ? (stuckBottom ? turnCount - 1 : 0) : activeTurn
+      const currentTurn = activeTurnRef.current
+      const current = currentTurn < 0 ? (stuckBottom ? turnCount - 1 : 0) : currentTurn
       const next = Math.max(0, Math.min(turnCount - 1, current + direction))
       if (next === current) return
       jumpToTurnIndex(next)
@@ -513,9 +586,6 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       return (
         <div
           {...(message.role === 'user' ? { 'data-chat-turn': true } : {})}
-          style={message.source === 'history'
-            ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }
-            : undefined}
         >
           <MessageBubble
             role={role}
