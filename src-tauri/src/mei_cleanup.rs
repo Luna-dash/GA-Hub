@@ -165,7 +165,7 @@ fn sweep_dir(
 
     let mut doomed = Vec::new();
     for candidate in candidates {
-        if live.contains(&candidate.path) {
+        if bundle_is_live_or_uncertain(&candidate.path, &live) {
             report.skipped_live += 1;
             continue;
         }
@@ -192,7 +192,7 @@ fn sweep_dir(
             return report;
         } else {
             doomed.retain(|candidate| {
-                let keep = live_now.contains(&candidate.path);
+                let keep = bundle_is_live_or_uncertain(&candidate.path, &live_now);
                 if keep {
                     report.skipped_live += 1;
                 }
@@ -238,6 +238,24 @@ struct Candidate {
     path: PathBuf,
     name: String,
     created: Option<SystemTime>,
+}
+
+fn bundle_is_live_or_uncertain(path: &Path, live: &HashSet<PathBuf>) -> bool {
+    if live.contains(path) {
+        return true;
+    }
+    let Ok(path) = fs::canonicalize(path) else {
+        return true;
+    };
+    live.iter().any(|entry| {
+        let Ok(entry) = fs::canonicalize(entry) else {
+            return true;
+        };
+        #[cfg(windows)]
+        return path.to_string_lossy().to_lowercase() == entry.to_string_lossy().to_lowercase();
+        #[cfg(not(windows))]
+        return path == entry;
+    })
 }
 
 /// List `%TEMP%\_MEI*` and keep the ones that carry gahub's packaging
@@ -333,7 +351,7 @@ fn directory_size(path: &Path) -> Option<u64> {
 /// whether the enumeration was complete enough to trust the answer.
 #[cfg(windows)]
 fn live_bundle_dirs() -> (HashSet<PathBuf>, bool) {
-    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_NO_MORE_FILES};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
     };
@@ -363,6 +381,7 @@ fn live_bundle_dirs() -> (HashSet<PathBuf>, bool) {
         }
         has_entry = unsafe { Process32NextW(process_snapshot, &mut entry) } != 0;
     }
+    complete &= unsafe { GetLastError() } == ERROR_NO_MORE_FILES;
     unsafe { CloseHandle(process_snapshot) };
     (live, complete)
 }
@@ -402,7 +421,7 @@ fn could_hold_bundle(process_name: &str) -> bool {
 /// `_MEI` directories this process has modules mapped from.
 #[cfg(windows)]
 fn module_dirs(process_id: u32) -> Result<Vec<PathBuf>, ()> {
-    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_NO_MORE_FILES};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         Module32FirstW, Module32NextW, MODULEENTRY32W, TH32CS_SNAPMODULE, TH32CS_SNAPMODULE32,
     };
@@ -431,21 +450,30 @@ fn module_dirs(process_id: u32) -> Result<Vec<PathBuf>, ()> {
     let mut has_entry = unsafe { Module32FirstW(module_snapshot, &mut entry) } != 0;
     while has_entry {
         let path = PathBuf::from(wide_to_string(&entry.szExePath));
-        if let Some(parent) = path.parent() {
-            if parent
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with("_MEI"))
-            {
-                dirs.push(parent.to_path_buf());
+        // Resolve short names and junctions before examining all ancestors.
+        // If an observed module cannot be resolved, do not authorize deletion.
+        let Ok(resolved) = fs::canonicalize(&path) else {
+            unsafe {
+                CloseHandle(module_snapshot);
+                CloseHandle(process);
+            }
+            return Err(());
+        };
+        for ancestor in path.ancestors().skip(1).chain(resolved.ancestors().skip(1)) {
+            if ancestor.file_name().is_some_and(|name| {
+                name.to_string_lossy().to_ascii_uppercase().starts_with("_MEI")
+            }) {
+                dirs.push(ancestor.to_path_buf());
             }
         }
         has_entry = unsafe { Module32NextW(module_snapshot, &mut entry) } != 0;
     }
+    let complete = unsafe { GetLastError() } == ERROR_NO_MORE_FILES;
     unsafe {
         let _ = CloseHandle(module_snapshot);
         let _ = CloseHandle(process);
     }
-    Ok(dirs)
+    if complete { Ok(dirs) } else { Err(()) }
 }
 
 #[cfg(windows)]
