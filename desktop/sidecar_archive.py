@@ -4,6 +4,7 @@ from pathlib import Path
 
 EXCLUDED_MODULES = (
     "mykey", "agentmain", "ga", "llmcore", "frontends", "plugins", "server.run",
+    "TMWebDriver", "legacy_llmcore", "agent_loop",
 )
 
 

@@ -384,6 +384,9 @@ class MainFlowTests(unittest.TestCase):
         copier = mock.patch.object(build_all.shutil, "copy2")
         self.copy_helper = copier.start()
         self.addCleanup(copier.stop)
+        archive = mock.patch.object(build_all, "check_delivery_archive", return_value=0)
+        self.check_archive = archive.start()
+        self.addCleanup(archive.stop)
 
     def _patched(self):
         return (
@@ -471,6 +474,7 @@ class MainFlowTests(unittest.TestCase):
         ])
         self.assertEqual(self.copy_helper.call_count, 2)
         self.assertEqual(guard.call_count, 4)
+        self.check_archive.assert_called_once_with(paths["sidecar 交付副本"], "python")
         runtime.assert_called_once()
         helper_runtime.assert_called_once_with(paths["独立更新助手"])
         self.assertIn("构建链全部通过", stream.getvalue())

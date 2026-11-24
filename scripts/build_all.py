@@ -398,6 +398,28 @@ def check_artifact(label: str, path: Path, before: tuple[int, int] | None) -> in
     return 0
 
 
+def check_delivery_archive(path: Path, sidecar_python: str) -> int:
+    # PyInstaller belongs to the configured packaging interpreter, not necessarily ours.
+    try:
+        result = subprocess.run(
+            [sidecar_python, "-c",
+             "import sys; from pathlib import Path; from desktop.sidecar_archive import "
+             "verify_sidecar_archive; verify_sidecar_archive(Path(sys.argv[1]))",
+             str(path.resolve())],
+            cwd=ROOT, stdin=subprocess.DEVNULL, capture_output=True, timeout=180,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _log(f"✗ sidecar 交付归档校验无法运行：{exc}")
+        return EXIT_ARTIFACT_GUARD
+    if result.returncode:
+        error = (result.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        _log(f"✗ sidecar 交付归档校验失败（exit {result.returncode}）")
+        if error:
+            _log(f"  {error[-1]}")
+        return EXIT_ARTIFACT_GUARD
+    return 0
+
+
 def check_sidecar_runtime(path: Path) -> int:
     """运行期守卫：产物刷新 ≠ 能启动。
 
@@ -612,6 +634,9 @@ def main(argv: list[str] | None = None) -> int:
         if code:
             return code
 
+    code = check_delivery_archive(paths["sidecar 交付副本"], sidecar_python)
+    if code:
+        return code
     code = check_sidecar_runtime(paths["sidecar 交付副本"])
     if code:
         return code
