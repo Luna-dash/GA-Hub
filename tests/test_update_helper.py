@@ -39,6 +39,37 @@ def test_ready_endpoint_requires_nonce_and_reports_real_paths(tmp_path, monkeypa
     assert response.json()["ready"] is True
 
 
+def test_diagnostic_receipt_is_only_accepted_for_rollback(tmp_path, monkeypatch):
+    from io import BytesIO
+
+    host = native.NativeHost(tmp_path / "updates", tmp_path)
+    desktop = ProcessIdentity(123, "desktop", tmp_path / EXECUTABLES[0])
+    backend = ProcessIdentity(124, "backend", tmp_path / EXECUTABLES[1])
+    host.nonce = "a" * 64
+    host.receipt = tmp_path / "receipt.json"
+    host.receipt.write_text(json.dumps({"nonce": host.nonce, "pid": desktop.pid,
+                                       "executable": str(desktop.executable), "port": 32100}))
+    report = {"nonce": host.nonce, "ready": False, "diagnostic_ready": True,
+              "pid": backend.pid, "executable": str(backend.executable), "admin_data": str(tmp_path)}
+    monkeypatch.setattr(native, "alive", lambda value: value == desktop)
+    monkeypatch.setattr(native, "identity", lambda pid: backend)
+    monkeypatch.setattr(native.psutil, "Process", lambda pid: SimpleNamespace(
+        children=lambda **kwargs: [], parents=lambda: [SimpleNamespace(pid=desktop.pid)]))
+    monkeypatch.setattr(native.urllib.request, "build_opener", lambda *args: SimpleNamespace(
+        open=lambda *args, **kwargs: BytesIO(json.dumps(report).encode("utf8"))))
+    def monotonic():
+        return next(ticks)
+
+    monkeypatch.setattr(native, "time", SimpleNamespace(monotonic=monotonic, sleep=lambda delay: None))
+    ticks = iter([0, 0, 2])
+    assert host.healthy(desktop, {}, 1) is False
+    ticks = iter([0, 0])
+    assert host.rollback_ready(desktop, {}, 1) is True
+    report["admin_data"] = str(tmp_path / "wrong")
+    ticks = iter([0, 0, 2])
+    assert host.rollback_ready(desktop, {}, 1) is False
+
+
 def test_apply_forwards_exit_timeout(tmp_path, monkeypatch):
     old = tmp_path / "old"
     old.mkdir()
@@ -92,6 +123,38 @@ def test_recover_requires_confirmation(tmp_path):
     store.transition(plan["id"], {"prepared"}, "armed")
     assert cli.main(["--admin-data", str(tmp_path), "recover", "--plan", plan["id"]]) == 1
     assert store.read()["state"] == "armed"
+
+
+@pytest.mark.parametrize("terminal", ["cancelled", "succeeded", "rolled_back"])
+def test_recover_only_clears_matching_marker_after_desktops_exit(tmp_path, monkeypatch, terminal):
+    from server.services.self_update import atomic_json
+
+    store = UpdateStore(tmp_path / "updates")
+    plan = prepare(store, release(tmp_path))
+    plan_id = plan["id"]
+    store.transition(plan_id, {"prepared"}, "switching", switch_started=True)
+    marker = store.root / "maintenance.json"
+    command = ["--admin-data", str(tmp_path), "recover", "--plan", plan_id, "--confirm-all-exited"]
+    checked = []
+
+    def check_exit(store, plan):
+        checked.append(plan["id"])
+        if len(checked) == 1:
+            raise ValueError("Desktop still running")
+
+    monkeypatch.setattr(cli, "ensure_no_desktop", check_exit)
+    atomic_json(marker, {"id": "another-plan"})
+    assert cli.main(command) == 1
+    assert checked == [] and marker.exists()
+    atomic_json(marker, {"id": plan_id})
+    assert cli.main(command) == 1
+    assert store.read()["state"] == "switching" and marker.exists()
+
+    # Simulate interruption after the terminal write but before marker deletion.
+    store.transition(plan_id, {"switching"}, terminal)
+    assert cli.main(command) == 0
+    assert checked == [plan_id, plan_id]
+    assert store.read()["state"] == terminal and not marker.exists()
 
 
 def test_launch_current_survives_later_prepared_plan(tmp_path, monkeypatch):

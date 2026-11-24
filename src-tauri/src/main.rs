@@ -1556,9 +1556,9 @@ fn follow_current_update() -> Result<bool, String> {
         .or_else(|| std::env::var_os("USERPROFILE").map(|p| std::path::PathBuf::from(p).join(".genericagent-admin")))
         .ok_or("Cannot locate admin data")?;
     let updates_dir = admin.join("updates");
+    ensure_safe_update_fallback(&updates_dir)?;
     let pointer = updates_dir.join("current.json");
     if !pointer.exists() {
-        ensure_safe_update_fallback(&updates_dir)?;
         return Ok(false);
     }
     let value: serde_json::Value = serde_json::from_slice(&std::fs::read(pointer).map_err(|e| e.to_string())?)

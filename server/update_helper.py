@@ -183,14 +183,30 @@ def main(argv: list[str] | None = None) -> int:
                 print("ARMED: helper is independent. Finish all tasks, then exit the old desktop normally.", flush=True)
                 result = worker.run(args.plan, exit_timeout=args.old_exit_timeout)
             elif args.command == "recover":
+                from .services import update_handoff
+
                 plan = store.read()
                 if not args.confirm_all_exited or not plan or plan["id"] != args.plan:
                     raise ValueError("Recovery requires exact plan and explicit all-exited confirmation")
-                if plan["state"] not in {"armed", "switching", "verifying", "failed"}:
+                marker = store.root / "maintenance.json"
+                has_marker = marker.exists()
+                if has_marker and update_handoff.read_json(marker).get("id") != args.plan:
+                    raise ValueError("Maintenance marker belongs to another plan")
+                state = plan["state"]
+                marker_only = state in {"cancelled", "succeeded", "rolled_back"} and has_marker
+                if state not in {"armed", "switching", "verifying", "failed"} and not marker_only:
                     raise ValueError("Plan does not require recovery")
                 ensure_no_desktop(store, plan)
-                result = store.transition(args.plan, {plan["state"]}, "cancelled",
-                                          recovery="All known desktops exited; no auto-resume or data rollback")
+                result = plan if marker_only else store.transition(
+                    args.plan, {state}, "cancelled",
+                    recovery="All known desktops exited; no auto-resume or data rollback",
+                )
+                # State first: if interrupted here, the matching marker still blocks
+                # startup and the same recovery command can finish the cleanup.
+                if has_marker:
+                    marker.unlink()
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+                return 0
             else:
                 if args.launcher_pid:
                     try:

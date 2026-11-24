@@ -25,6 +25,7 @@ class FakeHost:
     detached = True
     exited = True
     ready = True
+    restored_ready = True
     stopped = True
 
     def __init__(self):
@@ -46,7 +47,11 @@ class FakeHost:
 
     def healthy(self, identity, plan, timeout):
         self.events.append("health")
-        return getattr(self, "rollback_ready", True) if identity.pid == 789 else self.ready
+        return self.ready
+
+    def rollback_ready(self, identity, plan, timeout):
+        self.events.append("health")
+        return self.restored_ready
 
     def stop_candidate(self, identity, timeout):
         self.events.append("stop")
@@ -194,12 +199,12 @@ def test_arm_rejects_invalid_admission(setup, receipt):
     assert "start" not in host.events
 
 
-def test_rollback_not_healthy_is_failed_not_rolled_back(setup, monkeypatch):
+def test_rollback_not_ready_is_stopped_and_marked_failed(setup):
     store, plan, old, host, worker = setup
-    monkeypatch.setattr(host, "healthy", lambda *args: False)
+    host.ready = host.restored_ready = False
     worker.arm(plan["id"], old)
     result = worker.run(plan["id"])
     assert result["state"] == "failed"
     assert "rollback failed" in result["error"]
-    assert "restore" in host.events
+    assert host.events[-5:] == ["health", "stop", "restore", "health", "stop"]
     assert not (store.root / "current.json").exists()

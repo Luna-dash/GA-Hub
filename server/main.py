@@ -310,9 +310,13 @@ def create_app() -> FastAPI:
             await _startup()
             await nova.start()
             _app.state.update_ready = runtime_initialized and not setup_mode
+            _app.state.update_diagnostic_ready = setup_mode or (
+                _app.state.core_contract is not None and not _app.state.core_contract.ok
+            )
             yield
         finally:
             _app.state.update_ready = False
+            _app.state.update_diagnostic_ready = False
             try:
                 await nova.stop()
                 await _shutdown()

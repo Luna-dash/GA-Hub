@@ -115,6 +115,12 @@ class NativeHost:
         return value
 
     def healthy(self, value: ProcessIdentity, plan: dict, timeout: float) -> bool:
+        return self._ready(value, timeout, allow_diagnostics=False)
+
+    def rollback_ready(self, value: ProcessIdentity, plan: dict, timeout: float) -> bool:
+        return self._ready(value, timeout, allow_diagnostics=True)
+
+    def _ready(self, value: ProcessIdentity, timeout: float, *, allow_diagnostics: bool) -> bool:
         deadline = time.monotonic() + timeout
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         while time.monotonic() < deadline and alive(value):
@@ -134,7 +140,10 @@ class NativeHost:
                 backend = identity(report["pid"])
                 self.candidate_children = [identity(p.pid) for p in psutil.Process(value.pid).children(recursive=True)]
                 ancestors = {p.pid for p in psutil.Process(backend.pid).parents()}
-                if (report["nonce"] == self.nonce and report["ready"] is True
+                ready = report["ready"] is True or (
+                    allow_diagnostics and report.get("diagnostic_ready") is True
+                )
+                if (report["nonce"] == self.nonce and ready
                         and Path(report["admin_data"]).resolve() == self.admin_data
                         and Path(report["executable"]).resolve() == backend.executable
                         and backend.executable.parent == value.executable.parent

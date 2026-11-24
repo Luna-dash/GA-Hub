@@ -30,6 +30,7 @@ class UpdateHost(Protocol):
     def wait_old_exit(self, identity: ProcessIdentity, timeout: float) -> bool: ...
     def start(self, executable: Path, plan_id: str) -> ProcessIdentity: ...
     def healthy(self, identity: ProcessIdentity, plan: dict, timeout: float) -> bool: ...
+    def rollback_ready(self, identity: ProcessIdentity, plan: dict, timeout: float) -> bool: ...
     def stop_candidate(self, identity: ProcessIdentity, timeout: float) -> bool: ...
     def restore(self, executable: Path, plan_id: str) -> ProcessIdentity: ...
 
@@ -132,6 +133,8 @@ class UpdateExecutor:
                 if not stopped:
                     return self.store.transition(plan_id, {"switching", "verifying"}, "failed",
                                                  error=f"{exc}; candidate may be alive; manual recovery required")
+            restored = None
+            restore_attempted = False
             try:
                 if pointer_published:
                     if previous_pointer is None:
@@ -143,11 +146,21 @@ class UpdateExecutor:
                 for name in EXECUTABLES:
                     if digest(old.executable.parent / name) != old_data["sha256"][name]:
                         raise ValueError("Old executable pair changed; refusing rollback")
+                restore_attempted = True
                 restored = self.host.restore(old.executable, plan_id)
-                if not self.host.healthy(restored, plan, health_timeout):
-                    raise ValueError("Restored desktop did not produce a healthy receipt")
+                if not self.host.rollback_ready(restored, plan, health_timeout):
+                    raise ValueError("Restored desktop did not produce a ready receipt")
             except Exception as rollback_error:
-                return self.store.transition(plan_id, {"switching", "verifying"}, "failed",
-                                             error=f"{exc}; rollback failed: {rollback_error}")
+                detail = f"{exc}; rollback failed: {rollback_error}"
+                if restored is not None:
+                    try:
+                        stopped = self.host.stop_candidate(restored, 30)
+                    except Exception:
+                        stopped = False
+                    if not stopped:
+                        detail += "; restored desktop may be alive; manual recovery required"
+                elif restore_attempted:
+                    detail += "; restored desktop launch uncertain; manual recovery required"
+                return self.store.transition(plan_id, {"switching", "verifying"}, "failed", error=detail)
             return self.store.transition(plan_id, {"switching", "verifying"}, "rolled_back",
                                          error=str(exc))

@@ -42,6 +42,7 @@ def update_ready(request: Request):
         return PlainTextResponse("Not found", status_code=404)
     return {
         "ready": bool(getattr(request.app.state, "update_ready", False)),
+        "diagnostic_ready": bool(getattr(request.app.state, "update_diagnostic_ready", False)),
         "nonce": nonce,
         "pid": os.getpid(),
         "executable": str(Path(sys.executable).resolve()),
