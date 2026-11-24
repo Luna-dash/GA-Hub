@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 import time
 import uuid
@@ -201,31 +202,72 @@ class ScheduledChatService:
                 log.exception("scheduled chat worker iteration failed")
             self._wake.wait(self._poll_seconds)
 
+    @staticmethod
+    def _decode_task(row: dict) -> ScheduledChat:
+        task = ScheduledChat(**row)
+        if (
+            not all(isinstance(value, str) for value in (task.id, task.session_id, task.text))
+            or task.status not in ("pending", "dispatching", "sent", "cancelled")
+            or not isinstance(task.images, list)
+            or not all(isinstance(image, str) for image in task.images)
+            or not isinstance(task.attachments, list)
+            or not all(isinstance(attachment, dict) for attachment in task.attachments)
+            or (task.last_error is not None and not isinstance(task.last_error, str))
+        ):
+            raise ValueError("invalid scheduled chat fields")
+        for value in (task.scheduled_for, task.created_at, task.sent_at, task.cancelled_at, task.retry_at):
+            if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+                raise ValueError("invalid scheduled chat timestamp")
+        if task.scheduled_for is None or task.created_at is None:
+            raise ValueError("missing scheduled chat timestamp")
+        return task
+
     def _load(self) -> None:
         if not self._path.is_file():
             return
+        corrupt_backup = self._path.with_name(f"{self._path.name}.corrupt.{time.time_ns()}.bak")
         try:
-            raw = json.loads(self._path.read_text("utf-8"))
-            recovered = False
-            for row in raw if isinstance(raw, list) else []:
-                task = ScheduledChat(**row)
-                if task.status == "dispatching":
-                    task.status = "pending"
-                    task.retry_at = self._clock() + self._retry_seconds
-                    task.last_error = "服务重启后重新调度"
-                    recovered = True
-                self._tasks[task.id] = task
-            if recovered:
-                self._save_locked()
-        except (json.JSONDecodeError, ValueError, TypeError):
-            corrupt_backup = self._path.with_name(f"{self._path.name}.corrupt.{time.time_ns()}.bak")
+            original = self._path.read_bytes()
+            raw = json.loads(original.decode("utf-8"))
+            if not isinstance(raw, list):
+                raise ValueError("scheduled chat state must be a list")
+        except ValueError:
             try:
                 self._path.replace(corrupt_backup)
                 log.warning("scheduled chat state corrupted; quarantined to %s", corrupt_backup, exc_info=True)
             except OSError:
                 log.exception("scheduled chat state unreadable; starting empty")
-        except Exception:
+            return
+        except OSError:
             log.exception("scheduled chat state unreadable; starting empty")
+            return
+
+        recovered = False
+        invalid = 0
+        for row in raw:
+            try:
+                task = self._decode_task(row)
+            except (TypeError, ValueError, OverflowError):
+                invalid += 1
+                continue
+            if task.status == "dispatching":
+                task.status = "pending"
+                task.retry_at = self._clock() + self._retry_seconds
+                task.last_error = "服务重启后重新调度"
+                recovered = True
+            self._tasks[task.id] = task
+
+        if invalid or recovered:
+            try:
+                if invalid:
+                    # Copy rather than move: until the atomic save succeeds, the
+                    # original pathname must still be loadable on the next boot.
+                    corrupt_backup.write_bytes(original)
+                self._save_locked()
+                if invalid:
+                    log.warning("skipped %d invalid scheduled chat rows; original saved to %s", invalid, corrupt_backup)
+            except OSError:
+                log.exception("scheduled chat repair could not be persisted; keeping loaded tasks in memory")
 
     def _prune_finished_locked(self) -> None:
         finished = [

@@ -193,6 +193,43 @@ class ScheduledChatServiceTests(unittest.TestCase):
         self.assertEqual(service.list("alpha"), [])
         self.assertEqual([row["id"] for row in service.list("beta")], [keep["id"]])
 
+    def test_mixed_state_keeps_valid_tasks_through_two_restarts(self):
+        service = self.service()
+        first = service.create(session_id="alpha", text="first", images=[], scheduled_for=1_010)
+        last = service.create(session_id="alpha", text="last", images=[], scheduled_for=1_020)
+        rows = json.loads(self.path.read_text("utf-8"))
+        malformed = [{"unknown_field": True}, {**rows[0], "id": "bad-time", "scheduled_for": "later"}]
+        original = json.dumps([rows[0], *malformed, rows[1]])
+        self.path.write_text(original, encoding="utf-8")
+
+        self.service()
+        submitted = []
+        reloaded = self.service(submitted.append)
+        self.assertEqual([row["id"] for row in reloaded.list("alpha")], [first["id"], last["id"]])
+        self.assertEqual(reloaded.run_due_once(), 0)
+        self.clock.value = 1_020
+        self.assertEqual(reloaded.run_due_once(), 2)
+        self.assertEqual(reloaded.run_due_once(), 0)
+        self.assertCountEqual([task.id for task in submitted], [first["id"], last["id"]])
+
+        backups = list(self.path.parent.glob(f"{self.path.name}.corrupt.*.bak"))
+        self.assertEqual([path.read_text("utf-8") for path in backups], [original])
+
+    def test_mixed_state_repair_write_failure_leaves_original_for_restart(self):
+        service = self.service()
+        task = service.create(session_id="alpha", text="keep", images=[], scheduled_for=1_010)
+        rows = json.loads(self.path.read_text("utf-8"))
+        original = json.dumps([*rows, None])
+        self.path.write_text(original, encoding="utf-8")
+
+        with mock.patch.object(ScheduledChatService, "_save_locked", side_effect=OSError("disk full")):
+            recovered = self.service()
+
+        self.assertEqual(self.path.read_text("utf-8"), original)
+        self.assertEqual([row["id"] for row in recovered.list("alpha")], [task["id"]])
+        self.assertEqual([row["id"] for row in self.service().list("alpha")], [task["id"]])
+        self.assertEqual(json.loads(self.path.read_text("utf-8")), rows)
+
     def test_corrupt_json_quarantined_and_finished_tasks_capped(self):
         self.path.write_text("{corrupt-json", encoding="utf-8")
         service = self.service()
