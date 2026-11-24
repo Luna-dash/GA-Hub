@@ -209,7 +209,7 @@ def run_selftest() -> int:
     if failures:
         _diagnostic("selftest failed: " + " | ".join(failures))
         return 1
-    _emit("selftest", ok=True, modules=len(selftest_modules()))
+    _emit("selftest", ok=True, modules=len(selftest_modules()), instance_token_env=True)
     return 0
 
 
@@ -220,6 +220,8 @@ def main(argv: list[str] | None = None) -> int:
     if not 0 <= args.port <= 65535:
         _diagnostic("port must be between 0 and 65535")
         return 2
+    # Keep the token out of the environments of tools launched by the backend.
+    launch_token = os.environ.pop("GA_HUB_DESKTOP_INSTANCE_TOKEN", None)
     owner_stdin_fd: int | None = None
     if args.owned_stdin:
         try:
@@ -270,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         from fastapi.routing import APIRoute
         from server.main import app
 
-        token = args.instance_token or secrets.token_urlsafe(24)
+        token = launch_token or args.instance_token or secrets.token_urlsafe(24)
         if args.owned_stdin:
             app.state.desktop_instance_token = token
 

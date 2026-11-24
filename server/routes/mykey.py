@@ -8,7 +8,9 @@ from __future__ import annotations
 import asyncio
 import functools
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from ..desktop_auth import require_desktop_instance
 
 from ..schemas import (
     MyKeyAutoSyncSettings,
@@ -24,7 +26,7 @@ from ..schemas import (
 )
 from ..services import mykey_service
 
-router = APIRouter(prefix="/api/mykey", tags=["mykey"])
+router = APIRouter(prefix="/api/mykey", tags=["mykey"], dependencies=[Depends(require_desktop_instance)])
 
 
 # ── pydantic models ────────────────────────────────────────────────────

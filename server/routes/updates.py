@@ -7,19 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import _paths
+from ..desktop_auth import require_desktop_instance
 from ..services.self_update import UpdateStore
 from ..services import update_handoff, update_preflight, update_release, update_download
 
 router = APIRouter(prefix="/api/updates", tags=["updates"])
-
-
-def _verify_update_caller(request: Request) -> None:
-    expected = getattr(request.app.state, "desktop_instance_token", None)
-    if not expected:
-        return
-    provided = request.headers.get("x-ga-hub-instance", "")
-    if not provided or not secrets.compare_digest(provided, str(expected)):
-        raise HTTPException(403, "Forbidden desktop update caller")
 
 
 class PrepareUpdate(BaseModel):
@@ -106,7 +98,7 @@ def update_status() -> dict:
             "handoff": update_handoff.read_json(handoff) if handoff.exists() else None}
 
 
-@router.post("/prepare", response_model=UpdatePlanResp, dependencies=[Depends(_verify_update_caller)])
+@router.post("/prepare", response_model=UpdatePlanResp, dependencies=[Depends(require_desktop_instance)])
 def prepare_update(body: PrepareUpdate) -> dict:
     try:
         return store().prepare(Path(body.archive), body.sha256, trusted=body.trusted_source_confirmed)
@@ -122,7 +114,7 @@ def check_release() -> dict:
         raise HTTPException(502, str(exc)) from exc
 
 
-@router.post("/release/download", status_code=202, response_model=UpdateDownloadResp, dependencies=[Depends(_verify_update_caller)])
+@router.post("/release/download", status_code=202, response_model=UpdateDownloadResp, dependencies=[Depends(require_desktop_instance)])
 def download_release() -> dict:
     try:
         return update_download.start(store())
@@ -130,7 +122,7 @@ def download_release() -> dict:
         raise HTTPException(409, update_download.failure(exc)) from exc
 
 
-@router.post("/release/prepare", response_model=UpdatePlanResp, dependencies=[Depends(_verify_update_caller)])
+@router.post("/release/prepare", response_model=UpdatePlanResp, dependencies=[Depends(require_desktop_instance)])
 def prepare_release() -> dict:
     try:
         return update_release.prepare(store())
@@ -138,7 +130,7 @@ def prepare_release() -> dict:
         raise HTTPException(409, str(exc)) from exc
 
 
-@router.post("/preflight", dependencies=[Depends(_verify_update_caller)])
+@router.post("/preflight", dependencies=[Depends(require_desktop_instance)])
 def preflight_update(body: UpdateIdentity) -> dict:
     import subprocess
     import psutil
@@ -148,7 +140,7 @@ def preflight_update(body: UpdateIdentity) -> dict:
         raise HTTPException(409, str(exc)) from exc
 
 
-@router.post("/cancel", response_model=UpdatePlanResp, dependencies=[Depends(_verify_update_caller)])
+@router.post("/cancel", response_model=UpdatePlanResp, dependencies=[Depends(require_desktop_instance)])
 def cancel_update(body: UpdateIdentity) -> dict:
     try:
         return store().cancel(body.id)
@@ -156,7 +148,7 @@ def cancel_update(body: UpdateIdentity) -> dict:
         raise HTTPException(409, str(exc)) from exc
 
 
-@router.post("/request", dependencies=[Depends(_verify_update_caller)])
+@router.post("/request", dependencies=[Depends(require_desktop_instance)])
 def request_update(body: UpdateIdentity) -> dict:
     import subprocess
     import psutil
@@ -172,7 +164,7 @@ def request_update(body: UpdateIdentity) -> dict:
         raise HTTPException(409, str(exc)) from exc
 
 
-@router.post("/approve", dependencies=[Depends(_verify_update_caller)])
+@router.post("/approve", dependencies=[Depends(require_desktop_instance)])
 def approve_update(body: UpdateIdentity) -> dict:
     try:
         return update_handoff.approve(store(), body.id)

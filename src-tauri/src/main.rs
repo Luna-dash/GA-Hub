@@ -890,10 +890,9 @@ fn spawn_sidecar(port: u16, token: &str) -> Result<OwnedProcess, String> {
             "127.0.0.1",
             "--port",
             &port_arg,
-            "--instance-token",
-            token,
             "--owned-stdin",
         ])
+        .env("GA_HUB_DESKTOP_INSTANCE_TOKEN", token)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     record_startup_diagnostic(&format!(

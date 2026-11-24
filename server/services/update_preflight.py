@@ -53,6 +53,7 @@ def preflight(store: UpdateStore, plan_id: str, *, timeout: float = 90) -> dict:
         for name in tuple(env):
             if name.startswith(("GA_HUB_UPDATE_", "GA_DESKTOP_", "GA_HUB_CORE_")) or name in {
                 "GA_ROOT", "GA_ADMIN_DATA", "PYTHONHOME", "PYTHONPATH", "_MEIPASS2",
+                "GA_HUB_DESKTOP_INSTANCE_TOKEN",
                 "_PYI_APPLICATION_HOME_DIR", "_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
             }:
                 env.pop(name, None)
@@ -74,9 +75,20 @@ def preflight(store: UpdateStore, plan_id: str, *, timeout: float = 90) -> dict:
             # Previous candidate builds echoed the disposable preflight token.
             return message.get("instance_token") == token
 
-        proc = subprocess.Popen([str(executable), "--port", "0", "--owned-stdin",
-                                 "--admin-data", str(admin), "--instance-token", token],
-                                cwd=run_dir, env=env, stdin=subprocess.PIPE,
+        # Older candidates only accept a disposable token on the command line.
+        args = [str(executable), "--port", "0", "--owned-stdin", "--admin-data", str(admin)]
+        child_env = dict(env)
+        for line in check.stdout.splitlines():
+            try:
+                receipt = json.loads(line)
+            except (ValueError, UnicodeError):
+                continue
+            if isinstance(receipt, dict) and receipt.get("event") == "selftest" and receipt.get("instance_token_env") is True:
+                child_env["GA_HUB_DESKTOP_INSTANCE_TOKEN"] = token
+                break
+        else:
+            args.extend(("--instance-token", token))
+        proc = subprocess.Popen(args, cwd=run_dir, env=child_env, stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         lines: queue.Queue = queue.Queue()
         def read_lines():
