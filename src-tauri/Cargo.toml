@@ -27,6 +27,7 @@ tauri-build = { version = "2", features = [] }
 indexmap = { version = "1", features = ["std"] }
 
 [dependencies]
+sha2 = "0.10"
 serde_json = "1"
 # 见 [build-dependencies] 同名条目：覆盖 target 侧依赖图（tauri-utils 也依赖 schemars）。
 indexmap = { version = "1", features = ["std"] }

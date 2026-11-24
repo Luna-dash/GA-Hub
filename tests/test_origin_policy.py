@@ -21,7 +21,10 @@ from server.origin_policy import is_allowed_mutating_http_origin, is_allowed_ui_
     ],
 )
 def test_allowed_ui_origins(origin: str | None) -> None:
-    assert is_allowed_ui_origin(origin)
+    from urllib.parse import urlsplit
+
+    target = urlsplit(origin).netloc if origin else "127.0.0.1:8765"
+    assert is_allowed_ui_origin(origin, target, frozen=True)
 
 
 @pytest.mark.parametrize(
@@ -53,7 +56,7 @@ def test_allowed_ui_origins(origin: str | None) -> None:
     ],
 )
 def test_rejected_ui_origins(origin: str) -> None:
-    assert not is_allowed_ui_origin(origin)
+    assert not is_allowed_ui_origin(origin, "127.0.0.1:8765", frozen=True)
 
 
 def test_mutating_http_origin_enforces_exact_port_and_frozen_dev_gate() -> None:
@@ -88,3 +91,8 @@ def test_app_middleware_blocks_cross_origin_and_cross_port_mutations() -> None:
             resp = client.delete("/api/file-transfer", headers={"Origin": bad_origin})
             assert resp.status_code == 403, (bad_origin, resp.text)
             assert resp.text == "Forbidden origin"
+            for method in ("GET", "OPTIONS"):
+                headers = {"Origin": bad_origin, "Access-Control-Request-Method": "GET"}
+                rejected = client.request(method, "/api/file-transfer", headers=headers)
+                assert rejected.status_code == 403
+                assert "access-control-allow-origin" not in rejected.headers

@@ -491,7 +491,7 @@ function settleSnapshot(msgs, event) {
   const state = { ...event, ...event.runtime };
   const completedRunId = event.runtime?.completed_run_id ?? event.completed_run_id;
   const outcome = event.runtime?.outcome ?? event.outcome;
-  return applyEvent(msgs, {
+  const settled = applyEvent(msgs, {
     type: "session_runtime",
     session_id: event.session_id || "",
     status: state.status || "",
@@ -500,6 +500,15 @@ function settleSnapshot(msgs, event) {
     completed_run_id: completedRunId,
     outcome
   });
+  if (event.runtime?.status !== "idle" || event.active_message && !event.active_message.done || event.streams?.some((stream) => !stream.done)) return settled;
+  return settled.map((message) => message.role === "assistant" && message.streaming ? {
+    ...message,
+    streaming: false,
+    finishedAt: message.finishedAt ?? Date.now(),
+    recoveryNotice: void 0,
+    recoveryOffset: void 0,
+    recoveryStreamId: void 0
+  } : message);
 }
 function updateLogicalReply(prev, evt, now) {
   const sid = evt.stream_id;

@@ -44,9 +44,13 @@ def artifacts(root):
         (directory / name).write_bytes(name.encode())
 
 
-def test_package_contains_both_exes_and_traceable_metadata(checkout):
+def test_package_contains_both_exes_and_traceable_metadata(checkout, monkeypatch):
     artifacts(checkout)
-    archive = load("package_release").package(checkout, checkout / "output", "v1.0.0")
+    module = load("package_release")
+    checked = []
+    monkeypatch.setattr(module, "verify_sidecar_archive", checked.append)
+    archive = module.package(checkout, checkout / "output", "v1.0.0")
+    assert [path.name for path in checked] == ["ga-hub-sidecar.exe"]
     assert archive.name == "GA-Hub-1.0.0-windows-x64.zip"
     with zipfile.ZipFile(archive) as z:
         assert set(z.namelist()) == {"ga-hub-desktop.exe", "ga-hub-sidecar.exe", "ga-hub-update.exe", "README.txt", "build-info.json", "update-manifest.json"}
@@ -83,7 +87,9 @@ def test_package_rejects_dirty_release(checkout, staged):
         load("package_release").package(checkout, checkout / "output", "v1.0.0")
 
 
-def test_package_accepts_normalized_line_endings(checkout):
+def test_package_accepts_normalized_line_endings(checkout, monkeypatch):
+    module = load("package_release")
+    monkeypatch.setattr(module, "verify_sidecar_archive", lambda _: None)
     subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=checkout, check=True)
     # Reproduce Tauri rewriting a CRLF checkout using LF without changing content.
     path = checkout / "pyproject.toml"
@@ -92,14 +98,25 @@ def test_package_accepts_normalized_line_endings(checkout):
     subprocess.run(["git", "update-index", "--refresh"], cwd=checkout, check=True)
     path.write_bytes(b'[project]\nversion = "1.0.0"\n')
     artifacts(checkout)
-    load("package_release").package(checkout, checkout / "output", "v1.0.0")
+    module.package(checkout, checkout / "output", "v1.0.0")
     info = json.loads((checkout / "output/build-info.json").read_text())
     assert info["dirty"] is False and info["channel"] == "stable"
 
 
-def test_preview_is_distinguishable(checkout):
+def test_preview_is_distinguishable(checkout, monkeypatch):
+    module = load("package_release")
+    monkeypatch.setattr(module, "verify_sidecar_archive", lambda _: None)
     artifacts(checkout)
-    archive = load("package_release").package(checkout, checkout / "output")
+    archive = module.package(checkout, checkout / "output")
     assert archive.name.startswith("GA-Hub-1.0.0-")
     info = json.loads((checkout / "output/build-info.json").read_text())
     assert info["channel"] == "preview" and info["tag"] is None
+
+
+
+def test_portable_packaging_rejects_unverifiable_sidecar(checkout):
+    artifacts(checkout)
+    out = checkout / "output"
+    with pytest.raises(ValueError, match="Cannot verify sidecar archive"):
+        load("package_release").package(checkout, out, "v1.0.0")
+    assert not list(out.glob("*.zip"))

@@ -178,7 +178,7 @@ class Gateway:
         self.creations={k:v for k,v in self.creations.items() if now-v['time']<43200 or v['lock'].locked()}
         key=(r.cookies.get(COOKIE),rid)
         entry=self.creations.get(key)
-        if entry and entry['project_id']!=pid:raise web.HTTPConflict(text='request_id already used with a different project')
+        if entry and entry['project_id']!=pid:return web.json_response({'code':'request_conflict'},status=409)
         if entry is None:
             if len(self.creations)>=256:raise web.HTTPTooManyRequests(text='Create cache full')
             entry={'time':now,'project_id':pid,'lock':asyncio.Lock(),'session':None,'attempted':False,'done':False}
@@ -189,9 +189,12 @@ class Gateway:
                 base=await self.backend();project=None
                 if pid is not None:
                     project=(await self.project_catalog()).get(pid)
-                    if project is None:raise web.HTTPConflict(text='项目已不可用，请重新选择')
+                    if project is None and not entry['attempted']:
+                        return web.json_response({'code':'project_unavailable'},status=409)
+                    if project is None and entry['session'] is not None:
+                        return web.json_response({'code':'binding_unavailable','session_id':entry['session']['id']},status=409)
                 if entry['session'] is None:
-                    if entry['attempted']:raise web.HTTPConflict(text='创建结果未确认，请刷新列表检查后再新建，勿重复提交')
+                    if entry['attempted']:return web.json_response({'code':'creation_unknown'},status=409)
                     entry['attempted']=True
                     async with self.http.post(base+'/api/sessions',json={'title':''},headers={'Origin':base},allow_redirects=False) as up:
                         if up.status!=201:

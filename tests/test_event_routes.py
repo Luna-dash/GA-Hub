@@ -32,7 +32,9 @@ class _FakeBus:
 
 class _FakeWebSocket:
     def __init__(self, query: str, origin: str | None = None) -> None:
-        self.headers = {} if origin is None else {"origin": origin}
+        self.headers = {"host": "127.0.0.1:8765"}
+        if origin is not None:
+            self.headers["origin"] = origin
         self.query_params = QueryParams(query)
         self.accepted = False
         self.close_args = None
@@ -89,7 +91,7 @@ def event_client(monkeypatch):
 
     app = FastAPI(lifespan=lifespan)
     app.include_router(events.router)
-    with TestClient(app, base_url="http://127.0.0.1") as client:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
         yield client, test_bus
 
 
@@ -120,7 +122,7 @@ def test_cursor_first_connection_sends_replay_done(event_client) -> None:
     client, test_bus = event_client
 
     with client.websocket_connect(
-        "/ws/events?cursor=1&prefix=agent:",
+        "ws://127.0.0.1:8765/ws/events?cursor=1&prefix=agent:",
         headers=TRUSTED_ORIGIN,
     ) as websocket:
         assert websocket.receive_json() == {
@@ -194,7 +196,7 @@ def test_valid_cursor_replays_only_matching_prefixes(event_client) -> None:
     test_bus.publish("conductor:status", {"text": "included"})
 
     with client.websocket_connect(
-        "/ws/events?cursor=1"
+        "ws://127.0.0.1:8765/ws/events?cursor=1"
         f"&after_event_id={cursor}&epoch={test_bus.epoch}"
         "&prefix=session:&prefix=conductor:",
         headers=TRUSTED_ORIGIN,
@@ -230,7 +232,7 @@ def test_invalid_cursor_requires_resync(event_client, raw_cursor: str) -> None:
     test_bus.publish("agent:status", {"phase": "ready"})
 
     with client.websocket_connect(
-        f"/ws/events?cursor=1&after_event_id={raw_cursor}&epoch={test_bus.epoch}",
+        f"ws://127.0.0.1:8765/ws/events?cursor=1&after_event_id={raw_cursor}&epoch={test_bus.epoch}",
         headers=TRUSTED_ORIGIN,
     ) as websocket:
         resync = websocket.receive_json()
@@ -253,7 +255,7 @@ def test_epoch_mismatch_requires_resync(event_client) -> None:
     test_bus.publish("agent:status", {"phase": "ready"})
 
     with client.websocket_connect(
-        "/ws/events?cursor=1&after_event_id=0&epoch=stale-epoch",
+        "ws://127.0.0.1:8765/ws/events?cursor=1&after_event_id=0&epoch=stale-epoch",
         headers=TRUSTED_ORIGIN,
     ) as websocket:
         resync = websocket.receive_json()
@@ -276,7 +278,7 @@ def test_legacy_replay_keeps_original_frames_without_controls(event_client) -> N
     test_bus.publish("agent:status", {"phase": "replayed"})
 
     with client.websocket_connect(
-        "/ws/events?prefix=agent:&replay=1",
+        "ws://127.0.0.1:8765/ws/events?prefix=agent:&replay=1",
         headers=TRUSTED_ORIGIN,
     ) as websocket:
         replayed = websocket.receive_json()

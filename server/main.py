@@ -35,7 +35,7 @@ from .constants import ENV_GAHUB_ALLOWED_HOSTS
 from .origin_policy import (
     LOOPBACK_HTTP_ORIGIN_REGEX,
     TAURI_UI_ORIGINS,
-    is_allowed_mutating_http_origin,
+    is_allowed_ui_origin,
 )
 from .routes import events as event_routes  # safe to import in setup mode
 from .schemas import SetupReq, SetupStatusResp
@@ -365,14 +365,13 @@ def create_app() -> FastAPI:
         if not allowed:
             log.warning("[HOST-GUARD] Rejected Host=%r", host_header)
             return PlainTextResponse("Forbidden host", status_code=403)
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-            origin_header = request.headers.get("origin")
-            if not is_allowed_mutating_http_origin(origin_header, host_header):
-                log.warning(
-                    "[ORIGIN-GUARD] Rejected %s %s Origin=%r Host=%r",
-                    request.method, request.url.path, origin_header, host_header,
-                )
-                return PlainTextResponse("Forbidden origin", status_code=403)
+        origin_header = request.headers.get("origin")
+        if not is_allowed_ui_origin(origin_header, host_header):
+            log.warning(
+                "[ORIGIN-GUARD] Rejected %s %s Origin=%r Host=%r",
+                request.method, request.url.path, origin_header, host_header,
+            )
+            return PlainTextResponse("Forbidden origin", status_code=403)
         return await call_next(request)
 
     async def _startup():

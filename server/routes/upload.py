@@ -356,14 +356,13 @@ def _resolve_file_by_path(raw_path: str) -> str:
         os.path.realpath(os.path.abspath(str(_paths.temp_dir()))),
         os.path.realpath(os.path.abspath(_upload_dir())),
     ]
-    try:
-        inside_root = any(
-            os.path.commonpath([resolved, root]) == root
-            for root in allowed_roots
-        )
-    except ValueError:
-        inside_root = False
-    if not inside_root:
+    def contains(root: str) -> bool:
+        try:
+            return os.path.normcase(os.path.commonpath([resolved, root])) == os.path.normcase(root)
+        except ValueError:  # Windows paths can be on different drives.
+            return False
+
+    if not any(contains(root) for root in allowed_roots):
         raise HTTPException(403, "outside allowed roots")
     if not os.path.isfile(resolved):
         raise HTTPException(404, "not found")

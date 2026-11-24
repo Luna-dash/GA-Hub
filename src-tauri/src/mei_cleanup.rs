@@ -189,6 +189,7 @@ fn sweep_dir(
                 "mei_sweep refused: re-check enumeration incomplete, kept {} bundle(s)",
                 doomed.len()
             ));
+            return report;
         } else {
             doomed.retain(|candidate| {
                 let keep = live_now.contains(&candidate.path);
@@ -635,6 +636,28 @@ mod tests {
         );
         assert!(sandbox.bundle().exists(), "deleted without a trustworthy probe");
         assert!(report.removed.is_empty());
+        assert!(!report.scan_complete);
+    }
+
+    #[test]
+    fn an_incomplete_recheck_keeps_every_bundle() {
+        let sandbox = Sandbox::new("incomplete-recheck");
+        let probes = std::cell::Cell::new(0);
+        let report = sweep_dir(
+            &sandbox.root,
+            &|| {
+                let count = probes.get();
+                probes.set(count + 1);
+                (HashSet::new(), count == 0)
+            },
+            sandbox.age_enough(),
+            false,
+            &|_| {},
+        );
+        assert_eq!(probes.get(), 2);
+        assert!(sandbox.bundle().exists(), "deleted after an incomplete recheck");
+        assert!(report.removed.is_empty());
+        assert_eq!(report.reclaimed_bytes, 0);
         assert!(!report.scan_complete);
     }
 

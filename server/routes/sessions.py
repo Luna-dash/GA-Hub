@@ -590,7 +590,7 @@ def _session_event_frame(session_id: str, event: Event) -> dict | None:
 @router.websocket("/ws/sessions/{session_id}")
 async def session_events(ws: WebSocket, session_id: str):
     origin = ws.headers.get("origin")
-    if not is_allowed_ui_origin(origin):
+    if not is_allowed_ui_origin(origin, ws.headers.get("host")):
         log.warning(
             "Rejected session WebSocket session_id=%s from origin %r",
             session_id,

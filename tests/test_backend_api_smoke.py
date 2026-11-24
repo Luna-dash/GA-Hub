@@ -168,7 +168,7 @@ class BackendApiSmokeTests(unittest.TestCase):
 
     def test_cors_allows_tauri_and_loopback_ui_origins(self) -> None:
         app = main.create_app()
-        with TestClient(app, base_url="http://127.0.0.1") as client:
+        with TestClient(app, base_url="http://127.0.0.1:8765") as client:
             for origin in (
                 "http://tauri.localhost",
                 "https://tauri.localhost",
@@ -200,7 +200,7 @@ class BackendApiSmokeTests(unittest.TestCase):
 
     def test_cors_rejects_lookalike_and_opaque_origins(self) -> None:
         app = main.create_app()
-        with TestClient(app, base_url="http://127.0.0.1") as client:
+        with TestClient(app, base_url="http://127.0.0.1:8765") as client:
             for origin in (
                 "http://tauri.localhost.evil.example",
                 "http://localhost:",
@@ -216,14 +216,14 @@ class BackendApiSmokeTests(unittest.TestCase):
                             "access-control-request-method": "GET",
                         },
                     )
-                    self.assertEqual(response.status_code, 400)
+                    self.assertEqual(response.status_code, 403)
                     self.assertIsNone(
                         response.headers.get("access-control-allow-origin")
                     )
 
     def test_event_websocket_allows_trusted_ui_origins(self) -> None:
         app = main.create_app()
-        with TestClient(app, base_url="http://127.0.0.1") as client:
+        with TestClient(app, base_url="http://127.0.0.1:8765") as client:
             for origin in (
                 "http://127.0.0.1:8765",
                 "http://localhost:5173",
@@ -233,17 +233,17 @@ class BackendApiSmokeTests(unittest.TestCase):
             ):
                 with self.subTest(origin=origin):
                     with client.websocket_connect(
-                        "/ws/events", headers={"origin": origin}
+                        "ws://127.0.0.1:8765/ws/events", headers={"origin": origin}
                     ) as websocket:
                         self.assertTrue(websocket.accepted_subprotocol is None)
 
     def test_event_websocket_accepts_repeated_prefix_filters(self) -> None:
         app = main.create_app()
-        with TestClient(app, base_url="http://127.0.0.1") as client:
+        with TestClient(app, base_url="http://127.0.0.1:8765") as client:
             self.event_bus.bus.publish("chat:next", {"content": "excluded"})
             self.event_bus.bus.publish("conductor:status", {"text": "included"})
             with client.websocket_connect(
-                "/ws/events?prefix=agent:&prefix=conductor:&replay=2",
+                "ws://127.0.0.1:8765/ws/events?prefix=agent:&prefix=conductor:&replay=2",
                 headers={"origin": "http://127.0.0.1:8765"},
             ) as websocket:
                 event = websocket.receive_json()
@@ -266,13 +266,13 @@ class BackendApiSmokeTests(unittest.TestCase):
             "http://localhost/#fragment",
         ):
             with self.subTest(origin=origin):
-                self.assertFalse(is_allowed_ui_origin(origin))
+                self.assertFalse(is_allowed_ui_origin(origin, "127.0.0.1:8765"))
 
         app = main.create_app()
-        with TestClient(app, base_url="http://127.0.0.1") as client:
+        with TestClient(app, base_url="http://127.0.0.1:8765") as client:
             with self.assertRaises(WebSocketDisconnect) as rejected:
                 with client.websocket_connect(
-                    "/ws/events?replay=5",
+                    "ws://127.0.0.1:8765/ws/events?replay=5",
                     headers={"origin": "https://evil.example"},
                 ):
                     self.fail("external origin must not reach the EventBus")

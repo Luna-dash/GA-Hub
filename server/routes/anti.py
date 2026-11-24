@@ -207,7 +207,7 @@ def _call(method, *args):
 
 
 def _require_action(request: Request, action: str, missing_detail: str) -> None:
-    if not is_allowed_ui_origin(request.headers.get("origin")):
+    if not is_allowed_ui_origin(request.headers.get("origin"), request.headers.get("host")):
         raise HTTPException(403, "Untrusted UI origin")
     if request.headers.get("x-ga-hub-action") != action:
         raise HTTPException(403, missing_detail)
@@ -217,7 +217,7 @@ def _require_action(request: Request, action: str, missing_detail: str) -> None:
 def daemon_status(request: Request):
     verify = (
         request.headers.get("x-ga-hub-action") == "verify-anti-auth"
-        and is_allowed_ui_origin(request.headers.get("origin"))
+        and is_allowed_ui_origin(request.headers.get("origin"), request.headers.get("host"))
     )
     try:
         return asdict(daemon.status(verify_auth=verify))

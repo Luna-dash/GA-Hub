@@ -29,7 +29,7 @@ def _event_frame(event: Event) -> dict:
 async def ws_events(ws: WebSocket):
     """Stream bus events to clients from the local GA-Hub UI."""
     origin = ws.headers.get("origin")
-    if not is_allowed_ui_origin(origin):
+    if not is_allowed_ui_origin(origin, ws.headers.get("host")):
         log.warning("eventbus_ws_rejected origin=%r", origin)
         await ws.close(code=1008, reason="Forbidden origin")
         return

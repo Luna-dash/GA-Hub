@@ -5,12 +5,16 @@ import argparse
 import hashlib
 import json
 import subprocess
+import sys
 import tomllib
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from desktop.sidecar_archive import verify_sidecar_archive
 
 
 def package(root: Path, output: Path, tag: str | None = None) -> Path:
@@ -32,6 +36,7 @@ def package(root: Path, output: Path, tag: str | None = None) -> Path:
     for path in files:
         if not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f"Missing/empty build artifact: {path}")
+    verify_sidecar_archive(files[1])
     metadata = {
         "version": version, "commit": commit, "dirty": dirty,
         "channel": "stable" if tag else "preview", "tag": tag,

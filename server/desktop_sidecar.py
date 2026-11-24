@@ -6,6 +6,8 @@ process it starts.
 """
 from __future__ import annotations
 
+import hashlib
+
 import argparse
 import asyncio
 import json
@@ -272,8 +274,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.owned_stdin:
             app.state.desktop_instance_token = token
 
+        proof = hashlib.sha256(token.encode("utf-8")).hexdigest()
+
         async def desktop_ready() -> dict[str, object]:
-            return {"ok": True, "instance_token": token, "pid": os.getpid(), "port": port}
+            return {"ok": True, "instance_proof": proof, "pid": os.getpid(), "port": port}
 
         # server.main ends with an SPA catch-all when webui/dist exists.  Insert the
         # shell identity route first so production builds cannot shadow it.
@@ -312,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
             except (ValueError, OSError):
                 pass
 
-        _emit("starting", host=args.host, port=port, instance_token=token, pid=os.getpid())
+        _emit("starting", host=args.host, port=port, instance_proof=proof, pid=os.getpid())
         if stop_thread is not None:
             stop_thread.start()
         try:

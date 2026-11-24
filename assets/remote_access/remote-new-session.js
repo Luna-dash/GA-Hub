@@ -12,10 +12,7 @@ export function initNewSession({ api, loadSessions, select, notice }) {
     const box = dialog.getBoundingClientRect();
     if (event.target === dialog && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom)) close();
   });
-  $('newSession').onclick = async () => {
-    if (dialog.open || loading) return;
-    dialog.showModal();
-    if (pending) { state.textContent = '上次创建尚未确认，请重试；不会重复创建。'; confirm.textContent = '重试'; lock(false); return; }
+  const refreshProjects = async () => {
     loading = true; lock(true); state.textContent = '正在读取项目…'; confirm.textContent = '确定';
     project.replaceChildren(new Option('自由会话', ''));
     try {
@@ -26,6 +23,12 @@ export function initNewSession({ api, loadSessions, select, notice }) {
       state.textContent = '项目读取失败，可创建自由会话；重新打开可重试读取。';
     } finally { loading = false; lock(false); project.focus(); }
   };
+  $('newSession').onclick = async () => {
+    if (dialog.open || loading) return;
+    dialog.showModal();
+    if (pending) { state.textContent = '上次创建尚未确认，请重试；不会重复创建。'; confirm.textContent = '重试'; lock(false); return; }
+    await refreshProjects();
+  };
   $('newSessionForm').onsubmit = async event => {
     event.preventDefault();
     if (busy) return;
@@ -35,6 +38,29 @@ export function initNewSession({ api, loadSessions, select, notice }) {
     try {
       const response = await fetch('/api/sessions', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(pending) });
       if (response.status === 401) { location.href = '/_gateway/login'; return; }
+      if (response.status === 409 && response.headers.get('content-type')?.includes('application/json')) {
+        const conflict = await response.json();
+        if (conflict.code === 'project_unavailable' || conflict.code === 'request_conflict') {
+          pending = null;
+          await refreshProjects();
+          state.textContent = '项目已不可用或请求冲突，请重新选择项目后提交。';
+          return;
+        }
+        if (conflict.code === 'creation_unknown' || conflict.code === 'binding_unavailable') {
+          pending = null;
+          dialog.close();
+          const message = conflict.code === 'binding_unavailable'
+            ? '会话已创建，但项目已不可用。'
+            : '创建结果未确认，请先检查会话列表，避免重复创建。';
+          try { await loadSessions(); } catch (error) { notice(error); }
+          if (conflict.session_id) {
+            try { await select(conflict.session_id); } catch (error) { notice(error); }
+          }
+          notice(message);
+          return;
+        }
+        throw Error('创建未完成，请重试');
+      }
       if (!response.ok) throw Error((await response.text()).slice(0, 280) || '创建失败，请重试');
       session = await response.json();
       if (!session.id) throw Error('创建结果未确认，请重试');

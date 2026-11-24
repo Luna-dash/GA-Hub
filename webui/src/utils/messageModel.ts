@@ -471,12 +471,20 @@ export function settleSnapshot(msgs: ChatMsg[], event: Extract<ChatWSOut, { type
   // Old servers placed terminal identity only at the top level.
   const completedRunId = event.runtime?.completed_run_id ?? event.completed_run_id
   const outcome = event.runtime?.outcome ?? event.outcome
-  return applyEvent(msgs, {
+  const settled = applyEvent(msgs, {
     type: 'session_runtime', session_id: event.session_id || '',
     status: state.status || '', run_id: state.run_id || '', stream_id: state.stream_id || null,
     completed_run_id: completedRunId,
     outcome,
   })
+  // A reconnect can miss more than one terminal event. Only the authoritative
+  // idle snapshot can retire leftover live indicators without inventing outcomes.
+  if (event.runtime?.status !== 'idle' || event.active_message && !event.active_message.done
+      || event.streams?.some((stream) => !stream.done)) return settled
+  return settled.map((message) => message.role === 'assistant' && message.streaming ? {
+    ...message, streaming: false, finishedAt: message.finishedAt ?? Date.now(),
+    recoveryNotice: undefined, recoveryOffset: undefined, recoveryStreamId: undefined,
+  } : message)
 }
 
 // ── store 外的运行时单例 ────────────────────────────────────────────────

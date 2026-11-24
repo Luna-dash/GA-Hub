@@ -1,5 +1,7 @@
 """Black-box lifecycle tests for the Tauri-owned Python sidecar."""
 from __future__ import annotations
+
+import hashlib
 import io
 import json
 import os
@@ -323,10 +325,12 @@ class DesktopSidecarTests(unittest.TestCase):
     def test_ready_identity_and_graceful_stdin_shutdown(self) -> None:
         self._spawn()
         self.assertEqual(self.event["event"], "starting")
-        self.assertEqual(self.event["instance_token"], "test-token")
+        self.assertNotIn("instance_token", self.event)
+        self.assertEqual(self.event["instance_proof"], hashlib.sha256("test-token".encode()).hexdigest())
         self.assertGreater(self.event["port"], 0)
         ready = self._wait_ready()
-        self.assertEqual(ready["instance_token"], "test-token")
+        self.assertNotIn("instance_token", ready)
+        self.assertEqual(ready["instance_proof"], hashlib.sha256("test-token".encode()).hexdigest())
         self.proc.stdin.write("\n")
         self.proc.stdin.flush()
         self.assertEqual(self.proc.wait(timeout=10), 0)
@@ -337,7 +341,8 @@ class DesktopSidecarTests(unittest.TestCase):
     def test_owner_pipe_eof_stops_sidecar_without_leaving_a_process(self) -> None:
         self._spawn()
         ready = self._wait_ready()
-        self.assertEqual(ready["instance_token"], "test-token")
+        self.assertNotIn("instance_token", ready)
+        self.assertEqual(ready["instance_proof"], hashlib.sha256("test-token".encode()).hexdigest())
 
         self.proc.stdin.close()
         self.proc.stdin = None
@@ -417,7 +422,8 @@ class DesktopSidecarTests(unittest.TestCase):
         self._spawn(strip_pythonpath=True, instance_token="setup-boot-token")
         self.assertEqual(self.event["event"], "starting")
         ready = self._wait_ready()
-        self.assertEqual(ready["instance_token"], "setup-boot-token")
+        self.assertNotIn("instance_token", ready)
+        self.assertEqual(ready["instance_proof"], hashlib.sha256("setup-boot-token".encode()).hexdigest())
         self.proc.stdin.write("\n")
         self.proc.stdin.flush()
         self.assertEqual(self.proc.wait(timeout=10), 0)
@@ -467,14 +473,16 @@ class DesktopSidecarTests(unittest.TestCase):
 
     def test_packaged_sidecar_preserves_owner_stdin_shutdown(self) -> None:
         ready = self._spawn_packaged_sidecar()
-        self.assertEqual(ready["instance_token"], "packaged-test-token")
+        self.assertNotIn("instance_token", ready)
+        self.assertEqual(ready["instance_proof"], hashlib.sha256("packaged-test-token".encode()).hexdigest())
         self.proc.stdin.write(b"\n")
         self.proc.stdin.flush()
         self.assertEqual(self.proc.wait(timeout=15), 0)
 
     def test_packaged_sidecar_exits_when_owner_pipe_closes(self) -> None:
         ready = self._spawn_packaged_sidecar()
-        self.assertEqual(ready["instance_token"], "packaged-test-token")
+        self.assertNotIn("instance_token", ready)
+        self.assertEqual(ready["instance_proof"], hashlib.sha256("packaged-test-token".encode()).hexdigest())
         self.proc.stdin.close()
         self.proc.stdin = None
         self.assertEqual(self.proc.wait(timeout=15), 0)

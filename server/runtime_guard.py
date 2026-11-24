@@ -40,7 +40,7 @@ class CoreContractGuard:
             except CoreRuntimeUnavailable as exc:
                 if scope["type"] == "websocket":
                     ws = WebSocket(scope, receive, send)
-                    if not is_allowed_ui_origin(ws.headers.get("origin")):
+                    if not is_allowed_ui_origin(ws.headers.get("origin"), ws.headers.get("host")):
                         await ws.close(code=1008, reason="Forbidden origin")
                     else:
                         await ws.accept()

@@ -2,6 +2,7 @@
 """Build the target-specific, self-contained Tauri production sidecar."""
 from __future__ import annotations
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from desktop.runtime_dependencies import (
     hidden_import_args, conda_runtime_binary_args, runtime_binary_args,
 )
 from desktop.node_runtime import stage_node
+from desktop.sidecar_archive import EXCLUDED_MODULES, verify_sidecar_archive
 
 # Desktop Nova only needs the shared gateway core. Standalone deployment/UI,
 # tests, build scripts, docs and caches remain in the source/connector package.
@@ -80,6 +82,7 @@ def main() -> int:
                "--name", "ga-hub-sidecar", "--paths", str(ROOT),
                "--workpath", str(workpath), "--distpath", str(distpath),
                "--specpath", str(specpath), "--collect-submodules", "server",
+               *(arg for name in EXCLUDED_MODULES for arg in ("--exclude-module", name)),
                "--collect-all", "websockets",
                "--collect-all", "aiohttp",
                *hidden_import_args(sys.platform),
@@ -95,7 +98,10 @@ def main() -> int:
     built = distpath / f"ga-hub-sidecar{suffix}"
     # Never let a previous successful build masquerade as this run's output.
     built.unlink(missing_ok=True)
-    result = subprocess.run(command, cwd=ROOT)
+    env = os.environ.copy()
+    for name in ("PYTHONPATH", "PYTHONHOME", "GA_ROOT"):
+        env.pop(name, None)
+    result = subprocess.run(command, cwd=ROOT, env=env)
     if result.returncode:
         return result.returncode
     if not built.is_file():
@@ -103,6 +109,11 @@ def main() -> int:
         return 2
     if built.stat().st_size == 0:
         print(f"PyInstaller output is empty: {built}", file=sys.stderr)
+        return 2
+    try:
+        verify_sidecar_archive(built)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
         return 2
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Stage next to destination and atomically replace: a failed copy never

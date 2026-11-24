@@ -5,6 +5,7 @@ is disposable; no production config/credentials are copied or read.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
@@ -65,6 +66,14 @@ def preflight(store: UpdateStore, plan_id: str, *, timeout: float = 90) -> dict:
         if check.returncode != 0:
             raise ValueError(f"Frozen sidecar selftest failed ({check.returncode}); see {run_dir}")
         token = secrets.token_hex(32)
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+        def matches_identity(message: dict) -> bool:
+            if "instance_proof" in message:
+                return message["instance_proof"] == digest
+            # Previous candidate builds echoed the disposable preflight token.
+            return message.get("instance_token") == token
+
         proc = subprocess.Popen([str(executable), "--port", "0", "--owned-stdin",
                                  "--admin-data", str(admin), "--instance-token", token],
                                 cwd=run_dir, env=env, stdin=subprocess.PIPE,
@@ -93,7 +102,7 @@ def preflight(store: UpdateStore, plan_id: str, *, timeout: float = 90) -> dict:
                 except queue.Empty:
                     continue
                 with (run_dir / "sidecar.stdout").open("ab") as output:
-                    output.write(raw)
+                    output.write(raw.replace(token.encode("ascii"), b"[redacted]"))
                 try:
                     event = json.loads(raw)
                 except (ValueError, UnicodeError):
@@ -101,7 +110,7 @@ def preflight(store: UpdateStore, plan_id: str, *, timeout: float = 90) -> dict:
                 if event.get("event") == "starting":
                     proof = event
                     break
-            if not proof or proof.get("instance_token") != token:
+            if not proof or not matches_identity(proof):
                 raise ValueError("Candidate has no matching starting receipt")
             pid, port = int(proof["pid"]), int(proof["port"])
             children = psutil.Process(proc.pid).children(recursive=True)
@@ -116,7 +125,7 @@ def preflight(store: UpdateStore, plan_id: str, *, timeout: float = 90) -> dict:
                     status = json.loads(get(port, "/api/status"))
                     updates = json.loads(get(port, "/api/updates"))
                     page = get(port, "/").decode("utf8")
-                    if ready.get("pid") != pid or ready.get("instance_token") != token:
+                    if ready.get("pid") != pid or not matches_identity(ready):
                         raise ValueError("HTTP instance identity mismatch")
                     if status.get("mode") != "setup" or updates.get("plan", {}).get("state") != "idle":
                         raise ValueError("Candidate did not honor disposable setup isolation")

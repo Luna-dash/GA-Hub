@@ -897,15 +897,11 @@ fn spawn_sidecar(port: u16, token: &str) -> Result<OwnedProcess, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     record_startup_diagnostic(&format!(
-        "spawn_sidecar program={} cwd={} args={:?}",
+        "spawn_sidecar program={} cwd={} port={port}",
         command.get_program().to_string_lossy(),
         sidecar_working_dir()
             .map(|path| path.display().to_string())
-            .unwrap_or_else(|error| format!("<{error}>")),
-        command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
+            .unwrap_or_else(|error| format!("<{error}>"))
     ));
     OwnedProcess::spawn(command)
 }
@@ -923,16 +919,12 @@ fn ready_response_matches(response: &str, token: &str) -> bool {
     {
         return false;
     }
-    serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("instance_token")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        })
-        .as_deref()
-        == Some(token)
+    use sha2::{Digest, Sha256};
+    let proof = format!("{:x}", Sha256::digest(token.as_bytes()));
+    serde_json::from_str::<serde_json::Value>(body).is_ok_and(|value| {
+        value.get("ok").and_then(serde_json::Value::as_bool) == Some(true)
+            && value.get("instance_proof").and_then(serde_json::Value::as_str) == Some(proof.as_str())
+    })
 }
 
 enum ReadinessWait {
@@ -1845,16 +1837,16 @@ mod tests {
     }
 
     #[test]
-    fn readiness_response_requires_an_exact_json_token() {
+    fn readiness_response_requires_an_exact_json_proof() {
         let token = "expected-token";
-        let ok = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"ok\":true,\"instance_token\":\"expected-token\"}";
+        let ok = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"ok\":true,\"instance_proof\":\"cc40540534101aa1ee8f46ba295095c0cecc4fc8dc97fb58be0eaefc51c4f9d7\"}";
         assert!(ready_response_matches(ok, token));
 
         let token_elsewhere =
-            "HTTP/1.1 200 OK\r\n\r\n{\"instance_token\":\"other\",\"message\":\"expected-token\"}";
+            "HTTP/1.1 200 OK\r\n\r\n{\"instance_proof\":\"other\",\"message\":\"expected-token\"}";
         assert!(!ready_response_matches(token_elsewhere, token));
         assert!(!ready_response_matches(
-            "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"instance_token\":\"expected-token\"}",
+            "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"instance_proof\":\"cc40540534101aa1ee8f46ba295095c0cecc4fc8dc97fb58be0eaefc51c4f9d7\"}",
             token,
         ));
         assert!(!ready_response_matches(

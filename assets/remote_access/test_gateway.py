@@ -26,7 +26,11 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         app = web.Application()
         self.created = 0
         self.bind_fail = False
+        self.project_available = True
+        self.invalid_creation_response = False
         async def projects(request):
+            if not self.project_available:
+                return web.json_response({'items': []})
             return web.json_response({'items':[
                 {'name':'demo','display_name':'示例项目','path':'D:/demo','memory_path':'private'},
                 {'name':'gone','path':'D:/gone','dangling':True}]})
@@ -34,6 +38,8 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             self.created += 1
             self.calls.append((request.path,await request.json(),request.headers.get('Origin')))
             await asyncio.sleep(.05)
+            if self.invalid_creation_response:
+                return web.json_response({},status=201)
             return web.json_response({'id':'new-session','title':'新会话'},status=201)
         async def bind(request):
             self.calls.append((request.path,await request.json(),request.headers.get('Origin')))
@@ -365,6 +371,40 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls[-1][1],{'name':'demo','path':'D:/demo'})
         r=await self.client.post('/api/sessions',json={**body,'project_id':None},headers=self.headers)
         self.assertEqual(r.status,409)
+        self.assertEqual(await r.json(), {'code': 'request_conflict'})
+
+    async def test_project_disappears_before_creation(self):
+        catalog = await (await self.client.get('/api/projects', headers=self.headers)).json()
+        self.project_available = False
+        body = {'request_id': 'missing-project-123', 'project_id': catalog['items'][0]['id']}
+        response = await self.client.post('/api/sessions', json=body, headers=self.headers)
+        self.assertEqual(response.status, 409)
+        self.assertEqual(await response.json(), {'code': 'project_unavailable'})
+        self.assertEqual(self.created, 0)
+
+    async def test_project_disappears_after_creation(self):
+        catalog = await (await self.client.get('/api/projects', headers=self.headers)).json()
+        body = {'request_id': 'missing-binding-123', 'project_id': catalog['items'][0]['id']}
+        self.bind_fail = True
+        first = await self.client.post('/api/sessions', json=body, headers=self.headers)
+        self.assertEqual(first.status, 409)
+        await first.read()
+        self.project_available = False
+        response = await self.client.post('/api/sessions', json=body, headers=self.headers)
+        self.assertEqual(response.status, 409)
+        self.assertEqual(await response.json(), {'code': 'binding_unavailable', 'session_id': 'new-session'})
+        self.assertEqual(self.created, 1)
+
+    async def test_unknown_creation_result_does_not_create_again(self):
+        self.invalid_creation_response = True
+        body = {'request_id': 'unknown-creation-123', 'project_id': None}
+        first = await self.client.post('/api/sessions', json=body, headers=self.headers)
+        self.assertEqual(first.status, 502)
+        await first.read()
+        response = await self.client.post('/api/sessions', json=body, headers=self.headers)
+        self.assertEqual(response.status, 409)
+        self.assertEqual(await response.json(), {'code': 'creation_unknown'})
+        self.assertEqual(self.created, 1)
 
     async def test_create_security(self):
         body={'request_id':'secure-request-123','project_id':None}

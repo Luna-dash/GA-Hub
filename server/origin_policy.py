@@ -36,20 +36,6 @@ LOOPBACK_HTTP_ORIGIN_REGEX = (
 )
 
 
-def is_allowed_ui_origin(origin: str | None) -> bool:
-    """Return whether a browser Origin may access GA-Hub WebSockets.
-
-    ``None`` identifies non-browser clients, which are allowed.  Opaque
-    origins (``null``), file pages, credential-bearing URLs, and origins with
-    paths/query strings/fragments are rejected.
-    """
-    if origin is None:
-        return True
-    if origin in TAURI_UI_ORIGINS:
-        return True
-    return re.fullmatch(LOOPBACK_HTTP_ORIGIN_REGEX, origin) is not None
-
-
 def _authority_port(authority: str, default_port: int = 80) -> int | None:
     raw = (authority or "").strip()
     if not raw:
@@ -74,13 +60,13 @@ def _authority_port(authority: str, default_port: int = 80) -> int | None:
     return port if 0 <= port <= 65535 else None
 
 
-def is_allowed_mutating_http_origin(
+def is_allowed_ui_origin(
     origin: str | None,
     host_header: str | None,
     *,
     frozen: bool | None = None,
 ) -> bool:
-    """Validate ``Origin`` on mutating HTTP requests (POST/PUT/PATCH/DELETE).
+    """Validate browser origins at HTTP and WebSocket entrypoints.
 
     Rejects cross-site browser requests (e.g. ``https://evil.example``, ``null``)
     and unrelated local ports (e.g. ``http://localhost:3000``), while allowing:
@@ -96,7 +82,7 @@ def is_allowed_mutating_http_origin(
     is_frozen = getattr(sys, "frozen", False) if frozen is None else frozen
     allow_dev = not is_frozen
     if allow_dev and origin in {"http://testserver", "https://testserver"}:
-        return True
+        return host_header == "testserver"
     if re.fullmatch(LOOPBACK_HTTP_ORIGIN_REGEX, origin) is None:
         return False
     parsed = urlsplit(origin)
@@ -108,3 +94,6 @@ def is_allowed_mutating_http_origin(
     if allow_dev and origin_port in DEV_VITE_PORTS:
         return True
     return False
+
+# Compatibility for existing callers of the original HTTP-only guard.
+is_allowed_mutating_http_origin = is_allowed_ui_origin

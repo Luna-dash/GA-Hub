@@ -216,3 +216,14 @@ describe('structured reconnect and archive parity', () => {
     expect(history[0].turnSegments).toEqual(replies[0].turnSegments);
   });
 });
+
+
+it('retires an orphaned live bubble only on an authoritative idle reconnect snapshot', () => {
+  const existing: ChatMsg[] = [{ role: 'assistant', content: 'partial',
+    runId: 'old-run', streaming: true }]
+  const partial = { type: 'snapshot' as const, status: 'idle' }
+  expect(mergeSessionSnapshot(existing, partial)[0].streaming).toBe(true)
+  const full = { ...partial, runtime: { status: 'idle', run_id: null, stream_id: null, error: null }, active_message: null, streams: [] }
+  expect(mergeSessionSnapshot(existing, full)[0]).toMatchObject({ content: 'partial', streaming: false })
+  expect(mergeSessionSnapshot(existing, full)[0].outcome).toBeUndefined()
+})
