@@ -540,15 +540,18 @@ class FontManager:
                         }
                         atomic_json(self.task_path, task)
                         ready.set()
-                        last_flush = [0.0]
+                        progress_lock = threading.Lock()
+                        last_flush = 0.0
 
                         def on_chunk(n: int) -> None:
-                            task["received_bytes"] += n
-                            now = time.time()
-                            if now - last_flush[0] >= 0.2:
-                                task["updated_at"] = now
-                                atomic_json(self.task_path, task)
-                                last_flush[0] = now
+                            nonlocal last_flush
+                            with progress_lock:
+                                task["received_bytes"] += n
+                                now = time.monotonic()
+                                if now - last_flush >= 0.2:
+                                    task["updated_at"] = time.time()
+                                    atomic_json(self.task_path, task)
+                                    last_flush = now
 
                         with tempfile.TemporaryDirectory(prefix=f"{pack_id}-", dir=self.root) as tmp:
                             stage = Path(tmp)

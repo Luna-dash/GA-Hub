@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
@@ -131,3 +134,53 @@ def test_latin_only_download_verifies_sha256_and_installs(tmp_path):
         assert len(manifest["faces"]) == 3
         for item in patched_assets:
             assert (stage / item["file"]).is_file()
+
+
+def test_concurrent_misans_chunks_serialize_progress_writes(tmp_path, monkeypatch):
+    mgr = font_service.FontManager(tmp_path / "fonts")
+    atomic_json = font_service.atomic_json
+    in_write = threading.Lock()
+    mid_download = threading.Event()
+    all_workers_ready = threading.Barrier(6)
+    done = threading.Event()
+    totals = []
+
+    def record_json(path, data):
+        if path == mgr.task_path and mid_download.is_set():
+            assert in_write.acquire(blocking=False), "overlapping progress writes"
+            try:
+                original = data["received_bytes"]
+                time.sleep(0.03)
+                assert data["received_bytes"] == original, "progress mutated mid-write"
+                totals.append(original)
+                return atomic_json(path, data)
+            finally:
+                in_write.release()
+        result = atomic_json(path, data)
+        if path == mgr.task_path and data.get("phase") in {"ready", "error"}:
+            done.set()
+        return result
+
+    def install(_stage, on_chunk):
+        def download(_):
+            all_workers_ready.wait(timeout=3)
+            on_chunk(8)
+
+        mid_download.set()
+        try:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                list(pool.map(download, range(6)))
+            time.sleep(0.21)  # Allow a final in-progress snapshot after throttling.
+            on_chunk(0)
+        finally:
+            mid_download.clear()
+        return {"faces": []}
+
+    monkeypatch.setattr(font_service, "atomic_json", record_json)
+    monkeypatch.setitem(font_service._INSTALLERS, "misans", install)
+    mgr.start_download("misans")
+    assert done.wait(5), mgr.download_status()
+    task = mgr.download_status()
+    assert task["phase"] == "ready", task
+    assert totals[0] == 8
+    assert totals[-1] == 48
