@@ -187,6 +187,25 @@ def test_raster_image_is_served_inline_for_preview(tmp_path, monkeypatch):
     assert response.headers["x-content-type-options"] == "nosniff"
 
 
+def test_upload_download_rejects_file_resolved_outside_uploads(tmp_path, monkeypatch):
+    client, uploads = _client(tmp_path, monkeypatch)
+    apparent = uploads / "file.txt"
+    outside = tmp_path / "outside.txt"
+    outside.touch()
+    realpath = upload.os.path.realpath
+
+    def resolve(value, *args, **kwargs):
+        return str(outside) if str(value) == str(apparent) else realpath(value, *args, **kwargs)
+
+    monkeypatch.setattr(upload.os.path, "realpath", resolve)
+    assert client.get("/api/files/file.txt").status_code == 404
+
+
+def test_upload_download_rejects_windows_stream_syntax(tmp_path, monkeypatch):
+    client, _ = _client(tmp_path, monkeypatch)
+    assert client.get("/api/files/document.txt%3Adata").status_code == 400
+
+
 def test_upload_publishes_only_after_atomic_replace(tmp_path, monkeypatch):
     client, uploads = _client(tmp_path, monkeypatch)
     original = upload.os.replace

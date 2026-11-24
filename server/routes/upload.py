@@ -291,16 +291,27 @@ async def upload(file: UploadFile = File(...)) -> UploadResp:
     }
 
 
+def _resolve_uploaded_file(fname: str) -> str:
+    # Accept a filename only, not platform-specific path or stream syntax.
+    if not fname or fname == "." or any(part in fname for part in ("/", "\\", "..", ":", "\x00")):
+        raise HTTPException(400, "bad name")
+    root = os.path.realpath(os.path.abspath(_upload_dir()))
+    try:
+        resolved = os.path.realpath(os.path.join(root, fname), strict=True)
+    except OSError:
+        raise HTTPException(404, "not found") from None
+    try:
+        inside = os.path.normcase(os.path.commonpath((root, resolved))) == os.path.normcase(root)
+    except ValueError:
+        inside = False
+    if not inside or not os.path.isfile(resolved):
+        raise HTTPException(404, "not found")
+    return resolved
+
+
 @router.get("/api/files/{fname}")
 async def get_file(fname: str):
-    # Reject any separator or traversal token. Backslash matters on Windows
-    # where it is a valid path separator, so guard against both forms.
-    if "/" in fname or "\\" in fname or ".." in fname or os.sep in fname:
-        raise HTTPException(400, "bad name")
-    p = os.path.join(_upload_dir(), fname)
-    if not await asyncio.to_thread(os.path.isfile, p):
-        raise HTTPException(404, "not found")
-    return _file_response(p)
+    return _file_response(await asyncio.to_thread(_resolve_uploaded_file, fname))
 
 
 def _show_in_file_manager(path: Path) -> None:
