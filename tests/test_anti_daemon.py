@@ -43,6 +43,30 @@ def test_runtime_status_start_stop_restart_without_external_daemon(tmp_path, mon
     assert restarted["state"] == "ready"
 
 
+def test_first_status_version_probe_is_detached_on_windows(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return SimpleNamespace(returncode=0, stdout="1.5.16\n", stderr="")
+
+    monkeypatch.setattr(agy_runtime.subprocess, "run", fake_run)
+    client = make_client(monkeypatch)
+    for _ in range(2):
+        response = client.get("/api/anti/status")
+        assert response.json()["version"] == "1.5.16"
+    assert len(calls) == 1
+    cmd, kwargs = calls[0]
+    assert cmd == ["C:/fake/agy.exe", "--version"]
+    assert kwargs["capture_output"] and kwargs["stdin"] == subprocess.DEVNULL
+    if sys.platform == "win32":
+        assert kwargs["creationflags"] == subprocess.DETACHED_PROCESS
+    else:
+        assert "creationflags" not in kwargs
+
+
 def test_missing_agy_binary_surfaces_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
     monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: None)
@@ -531,6 +555,11 @@ def test_models_parses_agy_tsv_without_json_flag_and_default_env_preserves_keyri
 
     def fake_run(cmd, *a, **kw):
         captured_cmd.append(cmd)
+        assert kw["capture_output"] and kw["stdin"] == subprocess.DEVNULL
+        if sys.platform == "win32":
+            assert kw["creationflags"] == subprocess.DETACHED_PROCESS
+        else:
+            assert "creationflags" not in kw
         return SimpleNamespace(
             returncode=0,
             stdout="gemini-4-neon-high\tGemini 4 Neon (High)\nclaude-opus-5-5-high\tClaude Opus 5.5 (High)\n",

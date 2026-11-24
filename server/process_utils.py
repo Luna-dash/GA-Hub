@@ -16,27 +16,31 @@ from typing import Any
 
 
 _CREATE_NO_WINDOW = 0x08000000
+_DETACHED_PROCESS = 0x00000008
 
 
 def hidden_process_kwargs(
     *,
     new_process_group: bool = False,
     existing_creationflags: int = 0,
+    detach_console: bool = False,
 ) -> dict[str, Any]:
     """Return platform-safe kwargs that suppress Windows console windows.
 
-    ``CREATE_NO_WINDOW`` prevents conhost allocation.  ``SW_HIDE`` is kept as
-    a second layer for executables that still inspect ``STARTUPINFO``.  The
-    returned mapping is empty on non-Windows platforms.
+    ``CREATE_NO_WINDOW`` is the default for normal child processes. Use
+    ``detach_console`` for piped CLI probes that must start without a console
+    (Windows ignores ``CREATE_NO_WINDOW`` when ``DETACHED_PROCESS`` is set).
+    ``SW_HIDE`` supplies an additional window visibility hint. The returned
+    mapping is empty on non-Windows platforms.
     """
     if os.name != "nt":
         return {}
 
-    flags = existing_creationflags | getattr(
-        subprocess,
-        "CREATE_NO_WINDOW",
-        _CREATE_NO_WINDOW,
-    )
+    no_window = getattr(subprocess, "CREATE_NO_WINDOW", _CREATE_NO_WINDOW)
+    if detach_console:
+        flags = (existing_creationflags & ~no_window) | getattr(subprocess, "DETACHED_PROCESS", _DETACHED_PROCESS)
+    else:
+        flags = existing_creationflags | no_window
     if new_process_group:
         flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
