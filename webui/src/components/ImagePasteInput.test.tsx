@@ -45,10 +45,48 @@ describe('ImagePasteInput slash command ownership', () => {
 
     const option = container.querySelector<HTMLButtonElement>('[role="option"]')
     expect(option?.textContent).toContain('/new')
+    const cmdLabel = option?.querySelector<HTMLElement>('span')
+    expect(cmdLabel?.className).toContain('text-xs')
+    expect(cmdLabel?.className).not.toContain('text-sm')
     act(() => option?.click())
 
     expect(onSlashCommand).toHaveBeenCalledWith('/new')
     expect(onText).not.toHaveBeenCalled()
+  })
+
+  it('renders compact external slash menu with footerHint when folded commands exist', () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    act(() => {
+      root?.render(
+        <ImagePasteInput
+          text="/"
+          onText={vi.fn()}
+          attachments={[]}
+          onAttachments={vi.fn()}
+          onSubmit={vi.fn()}
+          slashAutocomplete={{
+            open: true,
+            ariaLabel: 'Agy 原生命令',
+            items: [{ name: 'plan', displayName: '/plan', hint: '<目标>', description: '先调研并生成结构化方案' }],
+            itemCount: 1,
+            activeIndex: 0,
+            onActiveIndexChange: vi.fn(),
+            onSelectIndex: vi.fn(),
+            onClose: vi.fn(),
+            footerHint: '已折叠 2 个低频命令，继续输入关键词可搜索',
+          }}
+        />,
+      )
+    })
+
+    const menu = container.querySelector<HTMLElement>('[role="listbox"][aria-label="Agy 原生命令"]')
+    expect(menu?.textContent).toContain('/plan')
+    expect(menu?.textContent).toContain('已折叠 2 个低频命令，继续输入关键词可搜索')
+    const cmdLabel = menu?.querySelector<HTMLElement>('[role="option"] span')
+    expect(cmdLabel?.className).toContain('text-xs')
   })
 
   it('offers /btw only when a session runtime owns the composer', () => {

@@ -932,7 +932,11 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
   const eventsCalled: string[] = []
   let calibratedPct: number | null = null
   let codeSubmitted = ''
-  let commandItems = [{ name: 'plan', description: '先生成方案', hint: '<goal>' }]
+  let commandItems = [
+    { name: 'plan', description: '先生成方案', hint: '<goal>' },
+    { name: 'teamwork', description: 'Coordinate multiple autonomous agents together' },
+    { name: 'schedule', description: 'Run a scheduled prompt' },
+  ]
   const approvalCalls: Record<string, unknown>[] = []
   let usageCalls = 0
 
@@ -1089,14 +1093,21 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     expect(calibratedPct).toBe(88)
     expect(document.body.textContent).toContain('已校准剩余 88%')
 
-    // 4. Native slash command picker (click + typing '/' filter + Enter) & interaction_* question card
+    // 4. Native slash command picker (typing '/' filters blocked/low-frequency items & Enter selects) & interaction_* question card
+    expect(host.querySelector('button[aria-label="插入原生命令"]')).toBeNull()
     const textarea = host.querySelector('textarea')!
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '/')
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    await flush()
-    expect(host.querySelector('[role="listbox"][aria-label="Agy 原生命令"]')?.textContent).toContain('/plan')
+    await vi.waitFor(async () => {
+      await flush()
+      const menuText = host.querySelector('[role="listbox"][aria-label="Agy 原生命令"]')?.textContent ?? ''
+      expect(menuText).toContain('/plan')
+      expect(menuText).toContain('已折叠 1 个低频命令')
+      expect(menuText).not.toContain('/schedule')
+      expect(menuText).not.toContain('/teamwork')
+    })
 
     for (const key of ['Enter', 'Tab']) {
       const combo = new KeyboardEvent('keydown', { key, shiftKey: true, bubbles: true, cancelable: true })
@@ -1104,6 +1115,14 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
       expect(combo.defaultPrevented).toBe(false)
       expect(textarea.value).toBe('/')
     }
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '/team')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+    expect(host.querySelector('[role="listbox"][aria-label="Agy 原生命令"]')?.textContent).toContain('/teamwork')
+    expect(host.querySelector('[role="listbox"][aria-label="Agy 原生命令"]')?.textContent).toContain('多 Agent 协作拆解大型任务')
 
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '/pl')
@@ -1116,8 +1135,10 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     await flush()
     expect(textarea.value).toBe('/plan ')
 
-    const slashBtn = host.querySelector<HTMLButtonElement>('button[aria-label="插入原生命令"]')!
-    await act(async () => { slashBtn.click() })
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '/')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
     await flush()
     const planOption = [...host.querySelectorAll('[role="listbox"][aria-label="Agy 原生命令"] button')].find(b => b.textContent?.includes('/plan')) as HTMLButtonElement
     await act(async () => { planOption.click() })
@@ -1125,12 +1146,27 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     expect(textarea.value).toBe('/plan ')
 
     commandItems = []
-    await act(async () => { slashBtn.click() })
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '/')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await vi.waitFor(async () => {
+      await flush()
+      const emptyMenu = host.querySelector('[role="listbox"][aria-label="Agy 原生命令"]')
+      expect(emptyMenu?.textContent).toContain('当前没有可用的原生命令')
+      expect(emptyMenu?.querySelector('[role="option"]')).toBeNull()
+    })
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
     await flush()
-    const emptyMenu = host.querySelector('[role="listbox"][aria-label="Agy 原生命令"]')
-    expect(emptyMenu?.textContent).toContain('当前没有可用的原生命令')
-    expect(emptyMenu?.querySelector('[role="option"]')).toBeNull()
-    await act(async () => { slashBtn.click() })
+    expect(host.querySelector('[role="listbox"][aria-label="Agy 原生命令"]')).toBeNull()
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '/plan ')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
 
     const sendBtn = host.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!
     await act(async () => { sendBtn.click() })
@@ -2006,18 +2042,20 @@ it('converges UI to single-account mode with account pill, backup quota refresh,
       expect(called.some(c => c.method === 'DELETE' && c.path === `/api/anti/sessions/${session.id}/grants`)).toBe(true)
     })
 
-    // 2. Compact action stays available in '/' native command menu without cluttering header
+    // 2. Compact action stays available via typing '/' without cluttering header or input bar
     expect(host.querySelector('button[aria-label="压缩会话上下文"]')).toBeNull()
-    const slashMenuBtn = host.querySelector<HTMLButtonElement>('button[aria-label="插入原生命令"]')!
-    await act(async () => { slashMenuBtn.click() })
+    expect(host.querySelector('button[aria-label="插入原生命令"]')).toBeNull()
+    const textarea = host.querySelector('textarea')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '/')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
     await vi.waitFor(async () => {
       await flush()
       expect(host.querySelector('[role="listbox"][aria-label="Agy 原生命令"]')?.textContent).toContain('/compact')
     })
-    await act(async () => { slashMenuBtn.click() })
 
     // 3. Submit triggers 429 -> one-click failover switches active account via /switch & retries run in same session
-    const textarea = host.querySelector('textarea')!
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Retry after 429')
       textarea.dispatchEvent(new Event('input', { bubbles: true }))

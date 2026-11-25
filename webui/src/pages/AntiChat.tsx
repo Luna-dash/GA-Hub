@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import type { TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
-import { Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, Slash, SlidersHorizontal, X } from 'lucide-react'
+import { Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, SlidersHorizontal, X } from 'lucide-react'
 import { RotateCw, Square } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/components/ChatLayout'
 import { ConversationCollapseControl, ConversationCollapseProvider } from '@/components/ConversationCollapse'
@@ -13,6 +13,7 @@ import { TranscriptNavDock } from '@/components/TranscriptNavDock'
 import { bubbleTone } from '@/components/bubbleTone'
 import { Z_LAYERS } from '@/config/zLayers'
 import { ImagePasteInput } from '@/components/ImagePasteInput'
+import { DEFAULT_ANTI_COMMANDS, filterAntiSlashCommands } from '@/components/antiSlashCommands'
 import { AntiDaemonControl, useAntiDaemonStatus } from '@/components/AntiDaemonControl'
 import { AntiAgyProfiles, useAgyProfiles } from '@/components/AntiAgyProfiles'
 import { AntiAccountUsageButton } from '@/components/AntiAccountUsageButton'
@@ -117,16 +118,6 @@ const EXECUTION_POLICIES: readonly ExecutionPolicyOption[] = [
     description: '自动允许所有文件与命令操作，无需逐次审批',
   },
 ]
-
-const DEFAULT_ANTI_COMMANDS: readonly {
-  name: string
-  description?: string | null
-  hint?: string | null
-}[] = [
-    { name: 'plan', description: '先进行调研并生成结构化方案', hint: '<目标>' },
-    { name: 'compact', description: '压缩当前对话上下文以节省额度' },
-    { name: 'review', description: '审查工作区改动与潜在问题' },
-  ]
 
 const EMPTY_ATTACHMENTS: PasteAttachment[] = []
 const TRANSFER_PREFIX = 'transfer:'
@@ -446,7 +437,6 @@ function Conversation({ session, headerActions, profileId, profilesData, support
   const [preferredEffort, setEffort] = usePageState('antiChat.effort', DEFAULT_EFFORT)
   const [mode, setMode] = usePageState<AntiMode>('antiChat.mode', 'plan')
   const [permissionMode, setPermissionMode] = usePageState<AntiPermissionMode>('antiChat.permissionMode', 'approval-required')
-  const [commandsOpen, setCommandsOpen] = useState(false)
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null)
   const [policyOpen, setPolicyOpen] = useState(false)
@@ -643,9 +633,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
   })
   const slashMatch = /^\/(\S*)$/.exec(prompt.trimStart())
   const slashQuery = slashMatch ? slashMatch[1].toLowerCase() : ''
-  const showSlashMenu = !current && !pending && (
-    commandsOpen || (Boolean(slashMatch) && dismissedSlashText !== prompt)
-  )
+  const showSlashMenu = !current && !pending && Boolean(slashMatch) && dismissedSlashText !== prompt
   const commands = useQuery({
     queryKey: ['anti-commands', effectiveProfileId],
     enabled: Boolean(effectiveProfileId && (showSlashMenu || session.has_conversation)),
@@ -658,20 +646,21 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     if (showSlashMenu && effectiveProfileId) void refetchCommands()
   }, [showSlashMenu, effectiveProfileId, refetchCommands])
   const rawCommands = commands.data?.items ?? DEFAULT_ANTI_COMMANDS
-  const filteredCommands = slashQuery
-    ? rawCommands.filter(cmd =>
-      cmd.name.toLowerCase().includes(slashQuery)
-      || (cmd.description ?? '').toLowerCase().includes(slashQuery),
-    )
-    : rawCommands
+  const {
+    items: filteredCommands,
+    hiddenCount: hiddenCommandCount,
+    totalAvailable: availableCommandCount,
+  } = useMemo(
+    () => filterAntiSlashCommands(rawCommands, slashQuery),
+    [rawCommands, slashQuery],
+  )
 
   useEffect(() => {
     setSlashActiveIndex(0)
-  }, [prompt, commandsOpen])
+  }, [prompt])
 
   const applySlashCommand = (cmdName: string) => {
     setPrompt(`/${cmdName} `)
-    setCommandsOpen(false)
     setDismissedSlashText(null)
     requestAnimationFrame(() => composerWrapRef.current?.querySelector('textarea')?.focus())
   }
@@ -1468,9 +1457,12 @@ function Conversation({ session, headerActions, profileId, profilesData, support
               hint: cmd.hint,
               description: cmd.description,
             })),
-            emptyMessage: rawCommands.length === 0
+            emptyMessage: availableCommandCount === 0
               ? '当前没有可用的原生命令，按 Esc 关闭'
               : `未找到匹配 /${slashQuery} 的原生命令，按 Esc 关闭或继续输入`,
+            footerHint: hiddenCommandCount > 0
+              ? `已折叠 ${hiddenCommandCount} 个低频命令，继续输入关键词可搜索`
+              : undefined,
             itemCount: filteredCommands.length,
             activeIndex: slashActiveIndex,
             onActiveIndexChange: setSlashActiveIndex,
@@ -1479,26 +1471,11 @@ function Conversation({ session, headerActions, profileId, profilesData, support
               if (picked) applySlashCommand(picked.name)
             },
             onClose: () => {
-              setCommandsOpen(false)
               setDismissedSlashText(prompt)
             },
           }}
           submitAccessory={
             <div className="mb-0.5 flex shrink-0 items-center gap-1.5">
-              <button
-                type="button"
-                disabled={Boolean(current || pending)}
-                aria-label="插入原生命令"
-                aria-expanded={showSlashMenu}
-                title="查看并插入 Agy ACP 原生命令（也可直接输入 /）"
-                onClick={() => {
-                  setCommandsOpen(v => !v)
-                  requestAnimationFrame(() => composerWrapRef.current?.querySelector('textarea')?.focus())
-                }}
-                className={`ga-btn inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl p-0 ${showSlashMenu ? 'border-accent/65 bg-accent-soft/60 text-accent-deep' : 'text-ink-muted'}`}
-              >
-                <Slash size={14} aria-hidden="true" />
-              </button>
               <div ref={policyAnchorRef} className="relative shrink-0">
                 <button
                   type="button"

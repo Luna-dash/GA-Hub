@@ -61,6 +61,7 @@ interface Props {
       description?: string | null
     }[]
     emptyMessage?: string
+    footerHint?: string
   }
   placeholder?: string
   inputLabel?: string
@@ -463,41 +464,54 @@ export function ImagePasteInput({
           id="slash-command-menu"
           role="listbox"
           aria-label={menuAriaLabel}
-          className="absolute bottom-[calc(100%+0.5rem)] left-3 right-3 z-30 max-h-64 overflow-y-auto rounded-2xl border border-line bg-bg-card p-1.5 shadow-[0_-8px_28px_rgba(54,42,28,0.22)]"
+          className="absolute bottom-[calc(100%+0.5rem)] left-3 right-3 sm:right-auto sm:w-[27rem] sm:max-w-[calc(100%-1.5rem)] z-30 max-h-56 overflow-y-auto rounded-xl border border-line bg-bg-card p-1 shadow-[0_-6px_22px_rgba(54,42,28,0.18)]"
         >
-          {menuList.length > 0 ? menuList.map((command, index) => (
-            <button
-              key={command.name}
-              id={`slash-command-${index}`}
-              type="button"
-              role="option"
-              aria-selected={index === menuActiveIndex}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                if (externalMenuOpen) {
-                  slashAutocomplete?.onSelectIndex(index)
-                } else {
-                  const builtin = slashCommands[index]
-                  if (builtin) selectSlashCommand(builtin)
-                }
-              }}
-              onMouseEnter={() => {
-                if (externalMenuOpen) slashAutocomplete?.onActiveIndexChange(index)
-                else setSlashActiveIndex(index)
-              }}
-              className={clsx(
-                'flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition',
-                index === menuActiveIndex
-                  ? 'bg-accent/15 text-ink'
-                  : 'text-ink hover:bg-ink/5',
+          {menuList.length > 0 ? (
+            <>
+              {menuList.map((command, index) => (
+                <button
+                  key={command.name}
+                  id={`slash-command-${index}`}
+                  type="button"
+                  role="option"
+                  aria-selected={index === menuActiveIndex}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    if (externalMenuOpen) {
+                      slashAutocomplete?.onSelectIndex(index)
+                    } else {
+                      const builtin = slashCommands[index]
+                      if (builtin) selectSlashCommand(builtin)
+                    }
+                  }}
+                  onMouseEnter={() => {
+                    if (externalMenuOpen) slashAutocomplete?.onActiveIndexChange(index)
+                    else setSlashActiveIndex(index)
+                  }}
+                  className={clsx(
+                    'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition',
+                    index === menuActiveIndex
+                      ? 'bg-accent/15 text-ink'
+                      : 'text-ink hover:bg-ink/5',
+                  )}
+                >
+                  <span className="min-w-[5.75rem] shrink-0 font-mono text-xs font-medium leading-4 text-accent">{command.displayName}</span>
+                  {command.hint && <span className="shrink-0 font-mono text-[10px] leading-4 text-ink-faint">{command.hint}</span>}
+                  {command.description && (
+                    <span className="min-w-0 truncate text-[11px] leading-4 text-ink-muted" title={command.description}>
+                      {command.description}
+                    </span>
+                  )}
+                </button>
+              ))}
+              {externalMenuOpen && slashAutocomplete?.footerHint && (
+                <div className="mt-0.5 border-t border-line/60 px-2.5 py-1 text-[10px] leading-4 text-ink-faint">
+                  {slashAutocomplete.footerHint}
+                </div>
               )}
-            >
-              <span className="min-w-20 shrink-0 font-mono text-sm font-semibold text-accent">{command.displayName}</span>
-              {command.hint && <span className="shrink-0 font-mono text-[11px] text-ink-faint">{command.hint}</span>}
-              {command.description && <span className="min-w-0 truncate text-xs text-ink-muted">{command.description}</span>}
-            </button>
-          )) : (
-            <div className="px-3 py-2 text-xs text-ink-faint">
+            </>
+          ) : (
+            <div className="px-2.5 py-1.5 text-[11px] leading-4 text-ink-faint">
               {slashAutocomplete?.emptyMessage}
             </div>
           )}
