@@ -1124,11 +1124,22 @@ class AgyLedger:
             db.execute("DELETE FROM quota_state WHERE profile_id=?", (profile_id,))
             db.execute("DELETE FROM usage_ledger WHERE profile_id=?", (profile_id,))
 
-    def stats(self, window_hours: int = 24, profile_id: str = agy_profile.DEFAULT) -> dict[str, Any]:
+    def stats(
+        self,
+        window_hours: int = 24,
+        profile_id: str = agy_profile.DEFAULT,
+        *,
+        today: bool = False,
+    ) -> dict[str, Any]:
         pid = profile_id or agy_profile.DEFAULT
         clauses = ["profile_id = ?"]
         params: list[Any] = [pid]
-        if window_hours > 0:
+        if today:
+            local_midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+            cutoff = local_midnight.astimezone(timezone.utc).isoformat()
+            clauses.append("created_at >= ?")
+            params.append(cutoff)
+        elif window_hours > 0:
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
             clauses.append("created_at >= ?")
             params.append(cutoff)
@@ -1158,7 +1169,7 @@ class AgyLedger:
             cost += float(r["estimated_cost_usd"])
         ratio = min(1.0, round(cached / inp, 4)) if inp > 0 else 0.0
         return {
-            "window_hours": window_hours,
+            "window_hours": 0 if today else window_hours,
             "total_runs": total,
             "success_runs": success,
             "failed_runs": failed,

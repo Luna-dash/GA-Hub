@@ -83,7 +83,7 @@ it('starts Anti on demand from the page header without leaving the chat', async 
       })
     }
     if (path === '/api/anti/quota') return reply([])
-    if (path === '/api/anti/stats?window_hours=24') {
+    if (path === '/api/anti/stats?today=true') {
       return reply({
         window_hours: 24, total_runs: 0, success_runs: 0, failed_runs: 0,
         rate_limited_runs: 0, total_tokens: 0, cache_hit_ratio: 0, estimated_cost_usd: 0,
@@ -490,7 +490,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     if (path === '/api/anti/quota') {
       return reply(pools)
     }
-    if (path === '/api/anti/stats?window_hours=24') {
+    if (path === '/api/anti/stats?today=true') {
       return reply({
         window_hours: 24,
         total_runs: 5,
@@ -549,7 +549,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
       expect(document.body.textContent).toContain('65%')
       expect(document.body.textContent).toContain('触发 429 冷却')
       expect(document.body.textContent).toContain('Gemini 4 30s')
-      expect(document.body.textContent).toContain('近 24h 5 轮（成功 4）')
+      expect(document.body.textContent).toContain('今日 5 轮（成功 4）')
       expect(document.body.textContent).toContain('12k tok · 缓存 40%')
     })
     expect(document.body.textContent).not.toContain('查看本地配额池')
@@ -559,7 +559,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await vi.waitFor(async () => {
       await flush()
       expect(document.body.querySelector('[data-anti-cooldown-alert]')).toBeNull()
-      expect(document.body.textContent).toContain('近 24h 5 轮（成功 4）')
+      expect(document.body.textContent).toContain('今日 5 轮（成功 4）')
     })
 
     await act(async () => { usageBtn.click() })
@@ -1027,7 +1027,7 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
         estimated_cost_7d_usd: 0.42,
       }])
     }
-    if (path === '/api/anti/stats?window_hours=24') {
+    if (path === '/api/anti/stats?today=true') {
       return reply({
         window_hours: 24, total_runs: 2, success_runs: 2, failed_runs: 0,
         rate_limited_runs: 0, total_tokens: 150, cache_hit_ratio: 0.5, estimated_cost_usd: 0.12,
@@ -1090,7 +1090,7 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     await act(async () => { usageBtn.click() })
     await flush()
     expect(document.body.textContent).toContain('满额未消耗')
-    expect(document.body.textContent).toContain('近 24h 2 轮（成功 2）')
+    expect(document.body.textContent).toContain('今日 2 轮（成功 2）')
     expect(document.body.textContent).toContain('150 tok · 缓存 50%')
     expect(document.body.querySelector('[data-anti-cooldown-alert]')).toBeNull()
     expect(document.body.textContent).not.toContain('查看本地配额池')
@@ -2428,7 +2428,7 @@ it('auto-refreshes usage after 10 minutes of visible dwell, pauses when hidden, 
       }
     }
     if (path === '/api/anti/quota') return { ok: true, status: 200, json: async () => [] }
-    if (path === '/api/anti/stats?window_hours=24') {
+    if (path === '/api/anti/stats?today=true') {
       return {
         ok: true,
         status: 200,

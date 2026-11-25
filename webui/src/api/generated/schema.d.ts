@@ -11199,6 +11199,7 @@ export interface operations {
             query?: {
                 window_hours?: number;
                 profile_id?: string | null;
+                today?: boolean;
             };
             header?: never;
             path?: never;

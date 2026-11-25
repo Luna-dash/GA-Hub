@@ -770,15 +770,21 @@ export const antiApi = {
       },
       { headers: { 'X-GA-Hub-Action': 'manage-anti-gateway' } },
     ),
-  stats: (windowHours = 24, signal?: AbortSignal, profileId?: string) =>
-    antiHttp<AntiUsageStats>(
+  stats: (windowHours = 24, signal?: AbortSignal, profileId?: string, today = false) => {
+    const query = new URLSearchParams()
+    if (today) {
+      query.set('today', 'true')
+    } else {
+      query.set('window_hours', String(windowHours))
+    }
+    if (profileId) query.set('profile_id', profileId)
+    return antiHttp<AntiUsageStats>(
       'GET',
-      profileId
-        ? `/api/anti/stats?window_hours=${windowHours}&profile_id=${encodeURIComponent(profileId)}`
-        : `/api/anti/stats?window_hours=${windowHours}`,
+      `/api/anti/stats?${query.toString()}`,
       undefined,
       { signal },
-    ),
+    )
+  },
   models: (signal?: AbortSignal, profileId?: string) =>
     // Allow the gateway attempt (2s connect + 23s read) and the 24s CLI fallback.
     antiHttp<AntiModels>(

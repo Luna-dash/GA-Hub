@@ -683,10 +683,11 @@ def calibrate_gateway_quota(
 def gateway_stats(
     window_hours: int = Query(default=24, ge=0, le=8760),
     profile_id: str | None = Query(default=None),
+    today: bool = Query(default=False),
 ):
     try:
         target_id = _resolve_target_profile(profile_id)
-        data = AntiSessions().ledger.stats(window_hours, profile_id=target_id)
+        data = AntiSessions().ledger.stats(window_hours, profile_id=target_id, today=today)
         return AntiUsageStats.model_validate(data)
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
