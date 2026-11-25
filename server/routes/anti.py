@@ -15,7 +15,7 @@ from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, Validat
 
 from ..origin_policy import is_allowed_ui_origin
 from ..schemas import AttachmentRef
-from ..services import agy_usage, anti_engine, anti_profiles
+from ..services import agy_models, agy_profile, agy_usage, anti_engine, anti_profiles
 from ..services.anti_daemon import AntiAuthState, AntiDaemonState, daemon
 from ..services.anti_engine import DEFAULT_EFFORT, DEFAULT_MODEL, AntiError, AntiSessions
 from ..services.agy_usage import AgyLedger
@@ -36,6 +36,30 @@ class AntiDaemonStatus(BaseModel):
     port: int | None = None
     version: str | None = None
     max_concurrency: int | None = None
+    supports_steering: bool | None = None
+
+
+class AntiWorkerItem(BaseModel):
+    profile_id: str
+    profile_name: str = ""
+    session_id: str
+    session_title: str = ""
+    project: str = ""
+    workspace: str
+    pid: int | None = None
+    alive: bool = False
+    busy: bool = False
+    state: Literal["running", "retiring", "idle", "stopped"] = "idle"
+    active_run_id: str | None = None
+    idle_seconds: int = 0
+    idle_ttl: int = 0
+    dirty: bool = False
+    retired: bool = False
+    exit_pending: bool = False
+
+
+class AntiWorkerList(BaseModel):
+    items: list[AntiWorkerItem]
 
 
 class AntiDaemonLogsResp(BaseModel):
@@ -58,10 +82,59 @@ class AntiAccountUsage(BaseModel):
 class AntiModelItem(BaseModel):
     id: str
     display_name: str
+    efforts: list[str] | None = None
+    default_effort: str | None = None
+    is_default: bool | None = None
+    is_orchestrator: bool | None = None
 
 
 class AntiModelList(BaseModel):
     items: list[AntiModelItem]
+    synced_at: str | None = None
+    next_sync_at: str | None = None
+    stale: bool | None = None
+    default_model: str | None = None
+    default_effort: str | None = None
+
+
+class AntiQuotaRule(BaseModel):
+    pattern: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
+    group: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+
+
+class AntiModelsConfigResp(BaseModel):
+    config_path: str
+    auto_sync: bool = True
+    schedule_hours: list[int] = Field(default_factory=lambda: [0, 6, 12, 18])
+    last_synced_at: str | None = None
+    next_sync_at: str | None = None
+    last_error: str | None = None
+    default_model: str = DEFAULT_MODEL
+    default_effort: str = DEFAULT_EFFORT
+    allow_auto_fallback: bool = True
+    aliases: dict[str, str] = Field(default_factory=dict)
+    quota_rules: list[AntiQuotaRule] = Field(default_factory=list)
+
+
+class AntiModelsConfigPatch(BaseModel):
+    auto_sync: bool | None = None
+    schedule_hours: list[int] | None = None
+    default_model: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)] | None = None
+    default_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
+    allow_auto_fallback: bool | None = None
+    aliases: dict[str, str] | None = None
+    quota_rules: list[AntiQuotaRule] | None = None
+
+
+class AgyOrchestratorSettings(BaseModel):
+    profile_id: str
+    planner: str | None = None
+    executor: str | None = None
+
+
+class AgyOrchestratorUpdate(BaseModel):
+    planner: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None
+    executor: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None
 
 
 class AntiCommandItem(BaseModel):
@@ -85,6 +158,8 @@ class AntiSessionResp(BaseModel):
     active_run_id: str | None = None
     has_conversation: bool | None = None
     acp_connected: bool | None = None
+    profile_id: str | None = None
+    grants: list[str] = Field(default_factory=list)
     engine: Literal["anti"] = "anti"
 
 
@@ -130,11 +205,18 @@ class AntiRunResp(BaseModel):
     answer: str | None = None
     error: str | None = None
     error_detail: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    effective_model: str | None = None
+    fallback_notice: str | None = None
     mode: Literal["plan", "accept-edits"] = "plan"
     permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] = "approval-required"
     approval: AntiApprovalPrompt | None = None
     usage: AntiRunUsage | None = None
     attachments: list[AttachmentRef] = Field(default_factory=list)
+    started_at: str | None = None
+    finished_at: str | None = None
+    progress_messages: list[str] = Field(default_factory=list)
 
 
 class AntiSessionCreate(BaseModel):
@@ -154,15 +236,40 @@ class AntiFileReference(BaseModel):
 class AntiRunCreate(BaseModel):
     operation: Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9_-]{1,80}$")]
     prompt: Annotated[str, StringConstraints(max_length=24000)] = ""
-    model: Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$")] = DEFAULT_MODEL
-    effort: Literal["low", "medium", "high", "xhigh", "max"] = DEFAULT_EFFORT
+    model: Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$")] | None = None
+    effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
     references: list[AntiFileReference] = Field(default_factory=list, max_length=8)
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=256)
     mode: Literal["plan", "accept-edits"] = "plan"
     permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] | None = None
+    profile_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)] | None = None
 
     @model_validator(mode="after")
     def _require_input(self) -> "AntiRunCreate":
+        if not (self.prompt.strip() or self.references or self.attachments):
+            raise ValueError("请输入内容或添加附件")
+        return self
+
+
+class AntiSessionProfileUpdate(BaseModel):
+    profile_id: str | None = Field(default=None, max_length=64)
+
+
+class AntiSessionCompactReq(BaseModel):
+    model: Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$")] | None = None
+    effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
+    mode: Literal["plan", "accept-edits"] = "plan"
+    permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] | None = None
+    profile_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)] | None = None
+
+
+class AntiRunSteer(BaseModel):
+    prompt: Annotated[str, StringConstraints(max_length=24000)] = ""
+    references: list[AntiFileReference] = Field(default_factory=list, max_length=8)
+    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=256)
+
+    @model_validator(mode="after")
+    def _require_input(self) -> "AntiRunSteer":
         if not (self.prompt.strip() or self.references or self.attachments):
             raise ValueError("请输入内容或添加附件")
         return self
@@ -199,9 +306,9 @@ class AntiStepUpdate(BaseModel):
 AntiEvent = Annotated[AntiMessageDelta | AntiStepUpdate, Field(discriminator="type")]
 
 
-def _call(method, *args):
+def _call(method, *args, **kwargs):
     try:
-        return getattr(AntiSessions(), method)(*args)
+        return getattr(AntiSessions(), method)(*args, **kwargs)
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
@@ -235,18 +342,24 @@ def start_daemon(request: Request):
 
 
 @router.post("/stop", response_model=AntiDaemonStatus)
-def stop_daemon(request: Request):
+def stop_daemon(request: Request, force: bool = Query(default=False)):
     _require_action(request, "stop-anti", "Missing Anti stop action")
     try:
+        if force:
+            AntiSessions().force_cancel_all_active()
+            return asdict(daemon.stop(force=True))
         return asdict(daemon.stop())
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
 
 @router.post("/restart", response_model=AntiDaemonStatus)
-def restart_daemon(request: Request):
+def restart_daemon(request: Request, force: bool = Query(default=False)):
     _require_action(request, "restart-anti", "Missing Anti restart action")
     try:
+        if force:
+            AntiSessions().force_cancel_all_active()
+            return asdict(daemon.restart(force=True))
         return asdict(daemon.restart())
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
@@ -256,6 +369,11 @@ def restart_daemon(request: Request):
 def daemon_logs(lines: int = Query(default=80, ge=1, le=500)):
     tail, log_path = daemon.tail_logs(lines)
     return {"lines": tail, "log_path": log_path}
+
+
+@router.get("/workers", response_model=AntiWorkerList)
+def daemon_workers():
+    return {"items": _call("workers")}
 
 
 class AgyProfileUsageSnapshot(BaseModel):
@@ -417,6 +535,23 @@ def delete_agy_profile(profile_id: str, request: Request):
         raise HTTPException(exc.status, str(exc)) from exc
 
 
+@router.get("/profiles/{profile_id}/orchestrator", response_model=AgyOrchestratorSettings)
+def get_profile_orchestrator(profile_id: str):
+    try:
+        return agy_profile.get_orchestrator_settings(profile_id)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.patch("/profiles/{profile_id}/orchestrator", response_model=AgyOrchestratorSettings)
+def update_profile_orchestrator(profile_id: str, body: AgyOrchestratorUpdate, request: Request):
+    _profile_action(request)
+    try:
+        return daemon.set_profile_orchestrator(profile_id, planner=body.planner, executor=body.executor)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
 @router.post("/profiles/{profile_id}/login", status_code=204)
 def login_agy_profile(profile_id: str, request: Request):
     _profile_action(request)
@@ -538,14 +673,39 @@ def gateway_stats(window_hours: int = Query(default=24, ge=0, le=8760)):
         raise HTTPException(502, "返回了无法识别的统计信息。") from exc
 
 
-@router.get("/models", response_model=AntiModelList)
-def models():
-    return _call("models")
+@router.get("/models", response_model=AntiModelList, response_model_exclude_none=True)
+def models(profile_id: str | None = Query(default=None)):
+    return _call("models", profile_id=profile_id) if profile_id else _call("models")
+
+
+@router.post("/models/sync", response_model=AntiModelList, response_model_exclude_none=True)
+def sync_models(profile_id: str | None = Query(default=None)):
+    return _call("sync_models", profile_id=profile_id) if profile_id else _call("sync_models")
+
+
+@router.get("/models/config", response_model=AntiModelsConfigResp)
+def models_config():
+    return agy_models.public_config_view()
+
+
+@router.patch("/models/config", response_model=AntiModelsConfigResp)
+def update_models_config(body: AntiModelsConfigPatch, request: Request):
+    _require_action(request, "manage-anti-gateway", "Missing Anti gateway action")
+    agy_models.patch_user_config(
+        auto_sync=body.auto_sync,
+        schedule_hours=body.schedule_hours,
+        default_model=body.default_model,
+        default_effort=body.default_effort,
+        allow_auto_fallback=body.allow_auto_fallback,
+        aliases=body.aliases,
+        quota_rules=[r.model_dump() for r in body.quota_rules] if body.quota_rules is not None else None,
+    )
+    return agy_models.public_config_view()
 
 
 @router.get("/commands", response_model=AntiCommandList)
-def commands():
-    return _call("commands")
+def commands(profile_id: str | None = Query(default=None)):
+    return _call("commands", profile_id=profile_id) if profile_id else _call("commands")
 
 
 @router.get("/sessions", response_model=list[AntiSessionResp])
@@ -564,8 +724,8 @@ def rename_session(sid: str, body: AntiSessionRename):
 
 
 @router.post("/sessions/{sid}/reset", response_model=AntiSessionResp)
-def reset_session(sid: str):
-    return _call("reset_runtime", sid)
+def reset_session(sid: str, force: bool = Query(default=False)):
+    return _call("reset_runtime", sid, force=True) if force else _call("reset_runtime", sid)
 
 
 @router.delete("/sessions/{sid}", status_code=204)
@@ -578,10 +738,49 @@ def runs(sid: str):
     return _call("history", sid)
 
 
+def _submission_ctx(profile_id: str | None):
+    if profile_id is not None:
+        try:
+            return daemon.submission(profile_id)
+        except TypeError:
+            pass
+    return daemon.submission()
+
+
+@router.patch("/sessions/{sid}/profile", response_model=AntiSessionResp)
+def set_session_profile(sid: str, body: AntiSessionProfileUpdate):
+    return _call("set_session_profile", sid, body.profile_id)
+
+
+@router.delete("/sessions/{sid}/grants", response_model=AntiSessionResp)
+def clear_session_grants(sid: str, kind: str | None = Query(default=None)):
+    return _call("clear_session_grants", sid, kind)
+
+
+@router.post("/sessions/{sid}/compact", response_model=AntiRunResp)
+def compact_session(sid: str, body: AntiSessionCompactReq | None = None):
+    req = body or AntiSessionCompactReq()
+    try:
+        target_profile = _call("resolve_session_profile", sid, req.profile_id)
+        with _submission_ctx(target_profile) as profile_id:
+            return _call(
+                "compact",
+                sid,
+                profile_id=target_profile or profile_id,
+                model=req.model,
+                effort=req.effort,
+                mode=req.mode,
+                permission_mode=req.permission_mode,
+            )
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
 @router.post("/sessions/{sid}/runs", response_model=AntiRunResp)
 def submit_run(sid: str, body: AntiRunCreate):
     try:
-        with daemon.submission() as profile_id:
+        target_profile = _call("resolve_session_profile", sid, body.profile_id)
+        with _submission_ctx(target_profile) as profile_id:
             return _call(
                 "submit",
                 sid,
@@ -590,7 +789,7 @@ def submit_run(sid: str, body: AntiRunCreate):
                 body.model,
                 body.effort,
                 [(ref.id, ref.path) for ref in body.references],
-                profile_id,
+                target_profile or profile_id,
                 [att.model_dump() for att in body.attachments],
                 body.mode,
                 body.permission_mode,
@@ -647,8 +846,20 @@ async def events_stream(sid: str, rid: str, request: Request):
 
 
 @router.post("/sessions/{sid}/runs/{rid}/cancel", response_model=AntiRunResp)
-def cancel(sid: str, rid: str):
-    return _call("cancel", sid, rid)
+def cancel(sid: str, rid: str, force: bool = Query(default=False)):
+    return _call("cancel", sid, rid, force=True) if force else _call("cancel", sid, rid)
+
+
+@router.post("/sessions/{sid}/runs/{rid}/steer", response_model=AntiRunResp)
+def steer_run(sid: str, rid: str, body: AntiRunSteer):
+    return _call(
+        "steer",
+        sid,
+        rid,
+        body.prompt,
+        [(ref.id, ref.path) for ref in body.references],
+        [att.model_dump() for att in body.attachments],
+    )
 
 
 class AntiApprovalDecision(BaseModel):

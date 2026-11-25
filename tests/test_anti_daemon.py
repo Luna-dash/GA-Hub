@@ -808,3 +808,1001 @@ def test_code_login_expiration_explicit_cancel_and_reaper_restart(tmp_path, monk
     assert mgr._shutdown_event.is_set()
     mgr.restart()
     assert not mgr._shutdown_event.is_set()
+
+
+def test_cancel_during_pending_permission_replies_cancelled_outcome(tmp_path, monkeypatch):
+    import json
+    import threading
+    import time
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    sent_frames: list[dict] = []
+    sent_lock = threading.Lock()
+    prompt_seen = threading.Event()
+    perm_replied = threading.Event()
+    finish_prompt = threading.Event()
+
+    worker = agy_runtime.AgySessionWorker(
+        profile_id="default",
+        session_id="s-perm-cancel",
+        workspace=tmp_path,
+        executable="agy",
+        version=None,
+    )
+    worker.acp_session_id = "acp-s1"
+    worker.init_result = {"agentInfo": {"version": "1.5.14"}}
+    worker.setup_result = {"sessionId": "acp-s1"}
+    worker.proc = SimpleNamespace(pid=999, stdin=None, stdout=None, poll=lambda: None)
+    monkeypatch.setattr(worker, "ensure_started", lambda **kw: "acp-s1")
+
+    def fake_send_frame(frame):
+        with sent_lock:
+            sent_frames.append(frame)
+        method = frame.get("method")
+        if method == "session/prompt":
+            prompt_seen.set()
+        elif "id" in frame and method is not None:
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(frame["id"], None)
+            if entry is not None:
+                entry[1]["result"] = {}
+                entry[0].set()
+        elif "result" in frame and "outcome" in frame["result"]:
+            perm_replied.set()
+        elif method == "session/cancel":
+            finish_prompt.set()
+
+    monkeypatch.setattr(worker, "_send_frame", fake_send_frame)
+
+    box: dict = {}
+
+    def run_worker():
+        box["result"] = worker.run_turn(
+            run_id="r-perm",
+            prompt_text="edit file",
+            model="gemini-4-hydrogen-high",
+            effort="high",
+            mode="accept-edits",
+            permission_mode="approval-required",
+            resume_conversation=None,
+            add_dirs=(),
+            staged_paths=[],
+            attachments=[],
+            allowed_roots=[tmp_path],
+            on_event=lambda evt: None,
+        )
+
+    thread = threading.Thread(target=run_worker, daemon=True)
+    thread.start()
+    try:
+        assert prompt_seen.wait(2.0)
+        perm_thread = threading.Thread(
+            target=worker._handle_incoming_request,
+            args=(
+                77,
+                "session/request_permission",
+                {
+                    "toolCall": {"toolCallId": "tc1", "kind": "edit", "title": "Edit note", "locations": [{"path": "a.txt"}]},
+                    "options": [
+                        {"optionId": "allow_1", "kind": "allow_once", "name": "Allow"},
+                        {"optionId": "reject_1", "kind": "reject_once", "name": "Reject"},
+                    ],
+                },
+            ),
+            daemon=True,
+        )
+        perm_thread.start()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and (worker.active_turn is None or worker.active_turn.current_approval() is None):
+            time.sleep(0.01)
+        assert worker.active_turn is not None and worker.active_turn.current_approval() is not None
+
+        worker.cancel_turn()
+        assert perm_replied.wait(2.0)
+        assert finish_prompt.wait(2.0)
+        # Complete the prompt RPC after cancel arrives.
+        with worker._rpc_lock:
+            for req_id, (ev, rpc_box, *_rest) in list(worker._pending_rpcs.items()):
+                rpc_box["result"] = {"stopReason": "cancelled"}
+                ev.set()
+                worker._pending_rpcs.pop(req_id, None)
+        if worker.active_turn is not None:
+            worker.active_turn.wake_event.set()
+        thread.join(timeout=3.0)
+        perm_thread.join(timeout=2.0)
+    finally:
+        worker.close(force=True)
+
+    assert box["result"]["status"] == "cancelled"
+    perm_reply = next(f for f in sent_frames if f.get("id") == 77)
+    assert perm_reply["result"] == {"outcome": {"outcome": "cancelled"}}
+    assert any(f.get("method") == "session/cancel" for f in sent_frames)
+
+
+def test_soft_cancel_grace_timeout_auto_retires_dirty_worker(tmp_path, monkeypatch):
+    import threading
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.14")
+    monkeypatch.setattr(agy_runtime, "CANCEL_GRACE_TIMEOUT", 0.12)
+    monkeypatch.setattr(agy_runtime.child_job, "terminate_tree", lambda pid: False)
+    monkeypatch.setattr(agy_runtime.child_job, "forget", lambda pid: None)
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    db = tmp_path / "sessions.db"
+    worker = mgr.get_worker(str(db), "default", "s-grace", tmp_path)
+    worker.acp_session_id = "acp-grace"
+    worker.init_result = {"agentInfo": {"version": "1.5.14"}}
+    worker.setup_result = {"sessionId": "acp-grace"}
+    exited = threading.Event()
+    worker.proc = SimpleNamespace(
+        pid=5151, stdin=None, stdout=None,
+        poll=lambda: 0 if exited.is_set() else None,
+        wait=exited.wait,
+    )
+    monkeypatch.setattr(worker, "ensure_started", lambda **kw: "acp-grace")
+    prompt_sent = threading.Event()
+    closed_calls: list[bool] = []
+
+    def fake_send(frame):
+        method = frame.get("method")
+        if method == "session/prompt":
+            prompt_sent.set()
+        elif "id" in frame and method is not None:
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(frame["id"], None)
+            if entry is not None:
+                entry[1]["result"] = {}
+                entry[0].set()
+
+    orig_close = worker.close
+
+    def tracked_close(*, force=False):
+        closed_calls.append(force)
+        exited.set()
+        return orig_close(force=force)
+
+    monkeypatch.setattr(worker, "_send_frame", fake_send)
+    monkeypatch.setattr(worker, "close", tracked_close)
+
+    box: dict = {}
+    mgr.register_turn(db, "r-grace", worker)
+    thread = threading.Thread(
+        target=lambda: box.setdefault("result", worker.run_turn(
+            run_id="r-grace", prompt_text="hang", model="gemini-4-hydrogen-high",
+            effort="high", mode="plan", permission_mode="approval-required",
+            resume_conversation=None, add_dirs=(), staged_paths=[], attachments=[],
+            allowed_roots=[tmp_path], on_event=lambda e: None,
+        )),
+        daemon=True,
+    )
+    try:
+        thread.start()
+        assert prompt_sent.wait(2.0)
+        assert mgr.cancel_turn(db, "r-grace") is True
+        thread.join(timeout=3.0)
+        assert not thread.is_alive()
+    finally:
+        exited.set()
+        mgr.unregister_turn(db, "r-grace")
+
+    assert box["result"]["status"] == "cancelled"
+    assert worker._dirty is True
+    assert True in closed_calls
+    replacement = mgr.get_worker(str(db), "default", "s-grace", tmp_path)
+    assert replacement is not worker
+    mgr.shutdown()
+
+
+def test_cancel_turn_aborts_hung_handshake_without_deadlock(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: sys.executable)
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.14")
+    monkeypatch.setattr(agy_profile, "acp_spawn_command", lambda exe, pid, **kw: [exe, "-u", "-c", "import sys; sys.stdin.read()"])
+    monkeypatch.setattr(agy_profile, "clean_agy_env", lambda pid, **kw: None)
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    db = tmp_path / "sessions.db"
+    worker = mgr.get_worker(str(db), "default", "s-init-hang", tmp_path)
+    mgr.register_turn(db, "r-init", worker)
+
+    box: dict = {}
+    thread = threading.Thread(
+        target=lambda: box.setdefault("result", worker.run_turn(
+            run_id="r-init", prompt_text="hello", model="gemini-4-hydrogen-high",
+            effort="high", mode="plan", permission_mode="approval-required",
+            resume_conversation=None, add_dirs=(), staged_paths=[], attachments=[],
+            allowed_roots=[tmp_path], on_event=lambda e: None,
+        )),
+        daemon=True,
+    )
+    try:
+        thread.start()
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and worker.proc is None:
+            time.sleep(0.02)
+        assert worker.proc is not None
+
+        t0 = time.monotonic()
+        assert mgr.cancel_turn(db, "r-init") is True
+        assert time.monotonic() - t0 < 2.0
+        thread.join(timeout=4.0)
+        assert not thread.is_alive()
+    finally:
+        mgr.unregister_turn(db, "r-init")
+        mgr.shutdown()
+
+    assert box["result"]["status"] == "cancelled"
+    assert mgr.session_connected(str(db), "s-init-hang") is False
+
+
+def test_inactivity_timeout_retires_worker_and_resets_process(tmp_path, monkeypatch):
+    import threading
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.14")
+    monkeypatch.setattr(agy_runtime, "INACTIVITY_TIMEOUT", 0.12)
+    monkeypatch.setattr(agy_runtime.child_job, "terminate_tree", lambda pid: False)
+    monkeypatch.setattr(agy_runtime.child_job, "forget", lambda pid: None)
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    db = tmp_path / "sessions.db"
+    worker = mgr.get_worker(str(db), "default", "s-inact", tmp_path)
+    worker.acp_session_id = "acp-inact"
+    worker.init_result = {"agentInfo": {"version": "1.5.14"}}
+    worker.setup_result = {"sessionId": "acp-inact"}
+    worker.proc = SimpleNamespace(pid=6161, stdin=None, stdout=None, poll=lambda: 0)
+    monkeypatch.setattr(worker, "ensure_started", lambda **kw: "acp-inact")
+    def fake_send(frame):
+        method = frame.get("method")
+        if method != "session/prompt" and "id" in frame and method is not None:
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(frame["id"], None)
+            if entry is not None:
+                entry[1]["result"] = {}
+                entry[0].set()
+
+    monkeypatch.setattr(worker, "_send_frame", fake_send)
+
+    mgr.register_turn(db, "r-inact", worker)
+    try:
+        res = worker.run_turn(
+            run_id="r-inact", prompt_text="silent", model="gemini-4-hydrogen-high",
+            effort="high", mode="plan", permission_mode="approval-required",
+            resume_conversation=None, add_dirs=(), staged_paths=[], attachments=[],
+            allowed_roots=[tmp_path], on_event=lambda e: None,
+        )
+    finally:
+        mgr.unregister_turn(db, "r-inact")
+
+    assert res["status"] == "timeout"
+    assert "已重置后台进程" in res["error"]
+    assert worker._closed is True
+    replacement = mgr.get_worker(str(db), "default", "s-inact", tmp_path)
+    assert replacement is not worker
+    mgr.shutdown()
+
+
+def test_manager_force_stop_and_restart_override_409(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.14")
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    monkeypatch.setattr(mgr, "status", lambda **kw: agy_runtime.AntiDaemonStatus(state="ready"))
+    db = tmp_path / "sessions.db"
+    worker = mgr.get_worker(str(db), "default", "s-force", tmp_path)
+    aborted: list[str] = []
+    orig_abort = worker.force_abort
+    monkeypatch.setattr(worker, "force_abort", lambda reason="": aborted.append(reason) or orig_abort(reason))
+    mgr.register_turn(db, "r-force", worker)
+
+    with pytest.raises(agy_profile.AgyProfileError) as blocked_stop:
+        mgr.stop()
+    assert blocked_stop.value.status == 409
+    with pytest.raises(agy_profile.AgyProfileError) as blocked_restart:
+        mgr.restart()
+    assert blocked_restart.value.status == 409
+
+    mgr.restart(force=True)
+    assert aborted
+    assert mgr._stopped_manually is False
+    mgr.unregister_turn(db, "r-force")
+
+    worker2 = mgr.get_worker(str(db), "default", "s-force", tmp_path)
+    mgr.register_turn(db, "r-force-2", worker2)
+    mgr.stop(force=True)
+    assert mgr._stopped_manually is True
+    mgr.unregister_turn(db, "r-force-2")
+    mgr.shutdown()
+
+
+def test_steer_turn_carries_prompt_across_end_turn_and_rejects_legacy_agy(tmp_path, monkeypatch):
+    import threading
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.14")
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    db = tmp_path / "sessions.db"
+
+    # Legacy agy < 1.5.0 must reject steering cleanly with 409.
+    legacy = mgr.get_worker(str(db), "default", "s-legacy", tmp_path)
+    legacy.acp_session_id = "acp-legacy"
+    legacy.version = "1.4.9"
+    legacy.init_result = {"agentInfo": {"version": "1.4.9"}}
+    legacy.setup_result = {"sessionId": "acp-legacy"}
+    legacy.proc = SimpleNamespace(pid=7101, stdin=None, stdout=None, poll=lambda: None)
+    legacy.active_turn = agy_runtime._ActiveTurn("r-leg", "plan", "approval-required", tmp_path, [tmp_path], lambda e: None)
+    legacy.active_turn.prompt_queued.set()
+    with pytest.raises(agy_profile.AgyProfileError) as legacy_err:
+        legacy.steer_turn(prompt_text="steer", staged_paths=[], attachments=[], allowed_roots=[tmp_path])
+    assert legacy_err.value.status == 409
+    legacy.active_turn = None
+    legacy.close(force=True)
+
+    # agy >= 1.5.0 keeps turn alive while prompt1 ends with end_turn and prompt2 completes.
+    worker = mgr.get_worker(str(db), "default", "s-steer", tmp_path)
+    worker.acp_session_id = "acp-steer"
+    worker.init_result = {"agentInfo": {"version": "1.5.14"}}
+    worker.setup_result = {"sessionId": "acp-steer"}
+    worker.proc = SimpleNamespace(pid=7102, stdin=None, stdout=None, poll=lambda: None)
+    monkeypatch.setattr(worker, "ensure_started", lambda **kw: "acp-steer")
+
+    prompt_ids: list[int] = []
+    prompt1_seen = threading.Event()
+    prompt2_seen = threading.Event()
+    events: list[dict] = []
+
+    def fake_send(frame):
+        method = frame.get("method")
+        rid = frame.get("id")
+        if method == "session/prompt":
+            prompt_ids.append(rid)
+            if len(prompt_ids) == 1:
+                prompt1_seen.set()
+            elif len(prompt_ids) == 2:
+                prompt2_seen.set()
+        elif rid is not None and method is not None:
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(rid, None)
+            if entry is not None:
+                entry[1]["result"] = {}
+                entry[0].set()
+
+    monkeypatch.setattr(worker, "_send_frame", fake_send)
+    box: dict = {}
+    mgr.register_turn(db, "r-steer", worker)
+    t = threading.Thread(
+        target=lambda: box.setdefault("result", worker.run_turn(
+            run_id="r-steer", prompt_text="initial prompt", model="gemini-4-hydrogen-high",
+            effort="high", mode="plan", permission_mode="approval-required",
+            resume_conversation=None, add_dirs=(), staged_paths=[], attachments=[],
+            allowed_roots=[tmp_path], on_event=events.append,
+        )),
+        daemon=True,
+    )
+    t.start()
+    try:
+        assert prompt1_seen.wait(2.0)
+        worker._handle_session_update({"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "阶段输出A"}}})
+        steer_res = mgr.steer_turn(db, "r-steer", prompt_text="请补充单测", staged_paths=[], attachments=[], allowed_roots=[tmp_path])
+        assert steer_res["steered"] is True
+        assert prompt2_seen.wait(2.0)
+
+        # Resolve prompt 1 (superseded) and verify turn keeps waiting for prompt 2.
+        with worker._rpc_lock:
+            e1 = worker._pending_rpcs.pop(prompt_ids[0], None)
+        assert e1 is not None
+        e1[1]["result"] = {"stopReason": "end_turn", "usage": {"inputTokens": 40, "outputTokens": 10}}
+        e1[0].set()
+        if len(e1) > 2 and e1[2] is not None:
+            e1[2].set()
+
+        t.join(timeout=0.08)
+        assert t.is_alive()
+
+        worker._handle_session_update({"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "最终补充完成"}}})
+        with worker._rpc_lock:
+            e2 = worker._pending_rpcs.pop(prompt_ids[1], None)
+        assert e2 is not None
+        e2[1]["result"] = {"stopReason": "end_turn", "usage": {"inputTokens": 60, "outputTokens": 20}}
+        e2[0].set()
+        if len(e2) > 2 and e2[2] is not None:
+            e2[2].set()
+
+        t.join(timeout=2.0)
+        assert not t.is_alive()
+    finally:
+        mgr.unregister_turn(db, "r-steer")
+
+    res = box["result"]
+    assert res["status"] == "success"
+    assert res["progress_messages"] == ["阶段输出A"]
+    assert res["answer"] == "最终补充完成"
+    assert res["usage"] == {"input_tokens": 100, "output_tokens": 30}
+    assert any(e.get("step", {}).get("kind") == "user_steer" and e.get("step", {}).get("detail") == "请补充单测" for e in events)
+    mgr.shutdown()
+
+
+def test_inactivity_paused_during_active_tool_and_ignores_metadata(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.14")
+    monkeypatch.setattr(agy_runtime, "INACTIVITY_TIMEOUT", 0.12)
+    monkeypatch.setattr(agy_runtime, "ACTIVE_TOOL_SILENT_TIMEOUT", 0.6)
+    monkeypatch.setattr(agy_runtime.child_job, "terminate_tree", lambda pid: True)
+    monkeypatch.setattr(agy_runtime.child_job, "forget", lambda pid: None)
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    db = tmp_path / "sessions.db"
+    worker = mgr.get_worker(str(db), "default", "s-pause", tmp_path)
+    worker.acp_session_id = "acp-pause"
+    worker.init_result = {"agentInfo": {"version": "1.5.14"}}
+    worker.setup_result = {"sessionId": "acp-pause"}
+    worker.proc = SimpleNamespace(pid=7201, stdin=None, stdout=None, poll=lambda: 0)
+    monkeypatch.setattr(worker, "ensure_started", lambda **kw: "acp-pause")
+
+    prompt_sent = threading.Event()
+
+    def fake_send(frame):
+        method = frame.get("method")
+        if method == "session/prompt":
+            prompt_sent.set()
+        elif "id" in frame and method is not None:
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(frame["id"], None)
+            if entry is not None:
+                entry[1]["result"] = {}
+                entry[0].set()
+
+    monkeypatch.setattr(worker, "_send_frame", fake_send)
+    box: dict = {}
+    mgr.register_turn(db, "r-pause", worker)
+    t = threading.Thread(
+        target=lambda: box.setdefault("result", worker.run_turn(
+            run_id="r-pause", prompt_text="long tool", model="gemini-4-hydrogen-high",
+            effort="high", mode="plan", permission_mode="approval-required",
+            resume_conversation=None, add_dirs=(), staged_paths=[], attachments=[],
+            allowed_roots=[tmp_path], on_event=lambda e: None,
+        )),
+        daemon=True,
+    )
+    t.start()
+    try:
+        assert prompt_sent.wait(2.0)
+        # Open long-running tool pauses 0.12s INACTIVITY_TIMEOUT.
+        worker._handle_session_update({
+            "update": {"sessionUpdate": "tool_call", "toolCallId": "tool-long", "kind": "execute", "title": "run_command", "status": "in_progress"}
+        })
+        time.sleep(0.18)
+        assert t.is_alive()
+
+        # Completing the tool resumes INACTIVITY_TIMEOUT; metadata update must NOT reset it.
+        worker._handle_session_update({
+            "update": {"sessionUpdate": "tool_call_update", "toolCallId": "tool-long", "status": "completed"}
+        })
+        worker._handle_session_update({"update": {"sessionUpdate": "available_commands_update", "availableCommands": []}})
+        t.join(timeout=2.0)
+        assert not t.is_alive()
+    finally:
+        mgr.unregister_turn(db, "r-pause")
+
+    assert box["result"]["status"] == "timeout"
+    mgr.shutdown()
+
+
+def test_post_settle_continuation_and_terminal_stream_wait(tmp_path, monkeypatch):
+    import base64
+    import threading
+    import time
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.14")
+    monkeypatch.setattr(agy_runtime, "POST_SETTLE_DEBOUNCE", 0.08)
+    monkeypatch.setattr(agy_runtime, "POST_SETTLE_REPLY_QUIET_LIMIT", 0.5)
+    monkeypatch.setattr(agy_runtime, "POST_SETTLE_COMMAND_HOLD_TIMEOUT", 0.5)
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    db = tmp_path / "sessions.db"
+    worker = mgr.get_worker(str(db), "default", "s-post", tmp_path)
+    worker.acp_session_id = "acp-post"
+    worker.init_result = {"agentInfo": {"version": "1.5.14"}}
+    worker.setup_result = {"sessionId": "acp-post"}
+    worker.proc = SimpleNamespace(pid=7301, stdin=None, stdout=None, poll=lambda: None)
+    monkeypatch.setattr(worker, "ensure_started", lambda **kw: "acp-post")
+
+    prompt_req: list[int] = []
+    prompt_sent = threading.Event()
+    events: list[dict] = []
+
+    def fake_send(frame):
+        method = frame.get("method")
+        if method == "session/prompt":
+            prompt_req.append(frame["id"])
+            prompt_sent.set()
+        elif "id" in frame and method is not None:
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(frame["id"], None)
+            if entry is not None:
+                entry[1]["result"] = {}
+                entry[0].set()
+
+    monkeypatch.setattr(worker, "_send_frame", fake_send)
+    box: dict = {}
+    mgr.register_turn(db, "r-post", worker)
+    t = threading.Thread(
+        target=lambda: box.setdefault("result", worker.run_turn(
+            run_id="r-post", prompt_text="bg work", model="gemini-4-hydrogen-high",
+            effort="high", mode="plan", permission_mode="approval-required",
+            resume_conversation=None, add_dirs=(), staged_paths=[], attachments=[],
+            allowed_roots=[tmp_path], on_event=events.append,
+        )),
+        daemon=True,
+    )
+    t.start()
+    try:
+        assert prompt_sent.wait(2.0)
+        worker._handle_session_update({"update": {"sessionUpdate": "terminal_update", "terminalId": "term-bg", "command": "pytest"}})
+        worker._handle_session_update({
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-bg",
+                "kind": "execute",
+                "title": "run_command",
+                "status": "in_progress",
+                "rawInput": {"CommandLine": "pytest", "IsDaemon": True},
+                "content": [{"type": "terminal", "terminalId": "term-bg"}],
+            }
+        })
+        # Prompt settles on wire while background command is still active.
+        with worker._rpc_lock:
+            e = worker._pending_rpcs.pop(prompt_req[0], None)
+        assert e is not None
+        e[1]["result"] = {"stopReason": "end_turn"}
+        e[0].set()
+        if len(e) > 2 and e[2] is not None:
+            e[2].set()
+
+        time.sleep(0.06)
+        assert t.is_alive()
+
+        # Late terminal output chunk and post-settle agent wake reply.
+        worker._handle_session_update({
+            "update": {
+                "sessionUpdate": "terminal_output_chunk",
+                "terminalId": "term-bg",
+                "data": base64.b64encode(b"build ok\n").decode("ascii"),
+            }
+        })
+        worker._handle_session_update({"update": {"sessionUpdate": "terminal_update", "terminalId": "term-bg", "exitStatus": {"exitCode": 0}}})
+        worker._handle_session_update({"update": {"sessionUpdate": "tool_call_update", "toolCallId": "tc-bg", "status": "completed"}})
+        worker._handle_session_update({"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "后台任务已完成"}}})
+        worker._handle_session_update({"update": {"sessionUpdate": "usage_update", "inputTokens": 88, "outputTokens": 19}})
+
+        t.join(timeout=2.0)
+        assert not t.is_alive()
+    finally:
+        mgr.unregister_turn(db, "r-post")
+
+    res = box["result"]
+    assert res["status"] == "success"
+    assert res["answer"] == "后台任务已完成"
+    assert res["usage"] == {"input_tokens": 88, "output_tokens": 19}
+    assert any(e.get("step", {}).get("output") == "build ok\n" for e in events)
+    mgr.shutdown()
+
+
+def test_manager_list_workers_and_supports_steering_flag(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.14")
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=120)
+    assert mgr.status(verify_auth=False).supports_steering is True
+
+    db = tmp_path / "sessions.db"
+    w_idle = mgr.get_worker(str(db), "default", "s-idle", tmp_path)
+    w_idle.acp_session_id = "acp-idle"
+    w_idle.proc = SimpleNamespace(pid=8001, stdin=None, stdout=None, poll=lambda: None)
+
+    w_busy = mgr.get_worker(str(db), "default", "s-busy", tmp_path)
+    w_busy.acp_session_id = "acp-busy"
+    w_busy.proc = SimpleNamespace(pid=8002, stdin=None, stdout=None, poll=lambda: None)
+    w_busy.active_turn = agy_runtime._ActiveTurn("r-busy", "plan", "approval-required", tmp_path, [tmp_path], lambda e: None)
+
+    listed = mgr.list_workers(str(db))
+    assert [item["session_id"] for item in listed] == ["s-busy", "s-idle"]
+    assert listed[0]["state"] == "running" and listed[0]["pid"] == 8002 and listed[0]["active_run_id"] == "r-busy"
+    assert listed[1]["state"] == "idle" and listed[1]["pid"] == 8001 and listed[1]["idle_ttl"] == 120
+
+    w_busy.active_turn = None
+    mgr.shutdown()
+
+
+def test_rejected_model_keeps_acp_worker_alive_and_clean(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.14")
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    db = tmp_path / "sessions.db"
+    worker = mgr.get_worker(str(db), "default", "s-reject", tmp_path)
+    close_calls = []
+
+    worker.setup_result = {"models": {"availableModels": [{"modelId": "gemini-4-hydrogen-low"}]}}
+    monkeypatch.setattr(worker, "ensure_started", lambda **kwargs: "conv-reject")
+    monkeypatch.setattr(worker, "_rpc", lambda method, params, **kwargs: {})
+    monkeypatch.setattr(worker, "is_alive", lambda: True)
+    monkeypatch.setattr(worker, "close", lambda **kwargs: close_calls.append(kwargs))
+
+    try:
+        res1 = worker.run_turn(
+            run_id="r-rej-catalog",
+            prompt_text="hello",
+            model="nonexistent-model",
+            effort="high",
+            mode="plan",
+            permission_mode="approval-required",
+            resume_conversation=None,
+            add_dirs=(),
+            staged_paths=[],
+            attachments=[],
+            allowed_roots=[tmp_path],
+            on_event=lambda e: None,
+            allow_auto_fallback=False,
+        )
+        assert res1["status"] == "rejected"
+        assert worker._dirty is False
+        assert worker._closed is False
+        assert worker.active_turn is None
+        assert close_calls == []
+
+        def fail_set_model(method, params, **kwargs):
+            if method == "session/set_model":
+                raise agy_profile.AgyProfileError(400, "model rejected by runtime")
+            return {}
+
+        monkeypatch.setattr(worker, "_rpc", fail_set_model)
+        res2 = worker.run_turn(
+            run_id="r-rej-rpc",
+            prompt_text="hello",
+            model="gemini-4-hydrogen-low",
+            effort="low",
+            mode="plan",
+            permission_mode="approval-required",
+            resume_conversation=None,
+            add_dirs=(),
+            staged_paths=[],
+            attachments=[],
+            allowed_roots=[tmp_path],
+            on_event=lambda e: None,
+            allow_auto_fallback=False,
+        )
+        assert res2["status"] == "rejected"
+        assert worker._dirty is False
+        assert worker._closed is False
+        assert worker.active_turn is None
+        assert close_calls == []
+    finally:
+        mgr.shutdown()
+
+
+def test_switch_profile_decoupled_from_active_turns_and_grant_controls(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.14")
+    monkeypatch.setattr(agy_profile, "has_local_credentials", lambda pid: True)
+
+    secondary = agy_profile.add("备用账号")
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    db = tmp_path / "sessions.db"
+
+    w_busy = mgr.get_worker(str(db), "default", "s-busy", tmp_path)
+    w_busy.proc = SimpleNamespace(pid=9101, poll=lambda: None, stdin=None, stdout=None)
+    w_busy.active_turn = SimpleNamespace(run_id="r-busy")
+    w_busy.grants.allow_all_kinds.update({"read", "edit"})
+    mgr.register_turn(db, "r-busy", w_busy)
+
+    w_idle = mgr.get_worker(str(db), "default", "s-idle", tmp_path)
+    idle_closed = []
+    monkeypatch.setattr(w_idle, "close", lambda **kwargs: idle_closed.append(kwargs))
+
+    try:
+        assert mgr.session_grants(str(db), "s-busy") == ["edit", "read"]
+
+        # Global switch succeeds while another session is mid-turn, retiring idle workers only.
+        mgr.switch_profile(secondary.id)
+        assert agy_profile.snapshot()[0] == secondary.id
+        assert len(idle_closed) == 1
+        assert w_busy.active_turn is not None and w_busy.active_turn.run_id == "r-busy"
+        assert (db, "r-busy") in mgr._active_turns
+
+        with mgr.submission(profile_id="default") as pid_default:
+            assert pid_default == "default"
+        with mgr.submission(profile_id=secondary.id) as pid_sec:
+            assert pid_sec == secondary.id
+
+        assert mgr.clear_session_grants(str(db), "s-busy", kind="read") == ["edit"]
+        assert mgr.session_grants(str(db), "s-busy") == ["edit"]
+        assert mgr.clear_session_grants(str(db), "s-busy") == []
+        assert mgr.session_grants(str(db), "s-busy") == []
+    finally:
+        mgr.unregister_turn(db, "r-busy")
+        w_busy.active_turn = None
+        w_busy.proc = None
+        mgr.shutdown()
+
+
+def test_orchestrator_neon_switches_without_spurious_thought_level_notice(tmp_path, monkeypatch):
+    import threading
+    from server.services import agy_models
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    agy_models.reset_cache()
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.16")
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    db = tmp_path / "sessions.db"
+    worker = mgr.get_worker(str(db), "default", "s-orch", tmp_path)
+    worker.init_result = {"agentCapabilities": {"promptCapabilities": {}}}
+    worker.setup_result = {
+        "configOptions": [
+            {
+                "id": "model",
+                "category": "model",
+                "type": "select",
+                "currentValue": "gemini-4-neon",
+                "options": [
+                    {"value": "gemini-4-neon", "name": "Gemini 4 Neon"},
+                    {"value": "gemini-pro-orchestrator-neon", "name": "Orchestrator (Neon)"},
+                ],
+            },
+            {
+                "id": "thought_level",
+                "category": "thought_level",
+                "type": "select",
+                "currentValue": "high",
+                "options": [{"value": "low"}, {"value": "medium"}, {"value": "high"}, {"value": "xhigh"}],
+            },
+        ],
+    }
+
+    rpc_calls = []
+    events = []
+
+    def fake_rpc(method, params, **kwargs):
+        rpc_calls.append((method, params))
+        if method == "session/set_config_option" and params.get("configId") == "model":
+            return {
+                "configOptions": [
+                    {
+                        "id": "model",
+                        "category": "model",
+                        "type": "select",
+                        "currentValue": "gemini-pro-orchestrator-neon",
+                        "options": [
+                            {"value": "gemini-4-neon", "name": "Gemini 4 Neon"},
+                            {"value": "gemini-pro-orchestrator-neon", "name": "Orchestrator (Neon)"},
+                        ],
+                    }
+                ]
+            }
+        return {}
+
+    def fake_send_frame(frame):
+        if frame.get("method") == "session/prompt":
+            req_id = frame["id"]
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(req_id, None)
+            if entry is not None:
+                entry[1]["result"] = {}
+                entry[0].set()
+
+    monkeypatch.setattr(worker, "ensure_started", lambda **kwargs: "conv-orch")
+    monkeypatch.setattr(worker, "_rpc", fake_rpc)
+    monkeypatch.setattr(worker, "_send_frame", fake_send_frame)
+
+    try:
+        res = worker.run_turn(
+            run_id="r-orch",
+            prompt_text="run orchestrator",
+            model="gemini-pro-orchestrator-neon",
+            effort="high",
+            mode="accept-edits",
+            permission_mode="auto",
+            resume_conversation=None,
+            add_dirs=(),
+            staged_paths=[],
+            attachments=[],
+            allowed_roots=[tmp_path],
+            on_event=events.append,
+        )
+    finally:
+        mgr.shutdown()
+
+    assert res["status"] == "success"
+    assert res["effective_model"] == "gemini-pro-orchestrator-neon"
+    assert res["fallback_notice"] is None
+    assert not any(
+        m == "session/set_config_option" and p.get("configId") == "thought_level"
+        for m, p in rpc_calls
+    )
+    assert not any((e.get("step") or {}).get("tool") == "runtime_notice" for e in events)
+
+
+def test_auto_fallback_to_default_model_and_local_config_hot_reload(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timezone
+    from server.services import agy_models
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    agy_models.reset_cache()
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.16")
+
+    # Verify 6-hour clock boundary math (00/06/12/18 local clock)
+    sample = datetime(2026, 11, 25, 11, 45, 0).astimezone()
+    assert agy_models.latest_scheduled_slot(sample).hour == 6
+    assert agy_models.next_scheduled_slot(sample).hour == 12
+    early = datetime(2026, 11, 25, 4, 15, 0).astimezone()
+    assert agy_models.latest_scheduled_slot(early).hour == 0
+    assert agy_models.next_scheduled_slot(early).hour == 6
+
+    # Write local config directly and confirm hot-reload without restarting
+    agy_models.patch_user_config(
+        default_model="gemini-4-hydrogen-high",
+        aliases={"old-hybrid": "gemini-4-hydrogen-high"},
+        quota_rules=[{"pattern": "custom-hybrid", "group": "claude-3p"}],
+        allow_auto_fallback=True,
+    )
+    assert agy_usage._model_group("custom-hybrid-v2") == "claude-3p"
+    raw = json.loads(agy_models.config_path().read_text(encoding="utf-8"))
+    assert raw["defaults"]["model"] == "gemini-4-hydrogen-high"
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    db = tmp_path / "sessions.db"
+    worker = mgr.get_worker(str(db), "default", "s-fb", tmp_path)
+    worker.init_result = {"agentCapabilities": {"promptCapabilities": {}}}
+    worker.setup_result = {
+        "models": {
+            "currentModelId": "gemini-4-hydrogen-high",
+            "availableModels": [{"modelId": "gemini-4-hydrogen-high", "name": "Gemini 4 Hydrogen (High)"}],
+        }
+    }
+
+    events = []
+    rpc_models = []
+
+    def fake_rpc(method, params, **kwargs):
+        if method == "session/set_model":
+            rpc_models.append(params.get("modelId"))
+        return {}
+
+    def fake_send_frame(frame):
+        if frame.get("method") == "session/prompt":
+            req_id = frame["id"]
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(req_id, None)
+            if entry is not None:
+                entry[1]["result"] = {}
+                entry[0].set()
+
+    monkeypatch.setattr(worker, "ensure_started", lambda **kwargs: "conv-fb")
+    monkeypatch.setattr(worker, "_rpc", fake_rpc)
+    monkeypatch.setattr(worker, "_send_frame", fake_send_frame)
+
+    try:
+        res = worker.run_turn(
+            run_id="r-fb",
+            prompt_text="run fallback",
+            model="retired-model-x",
+            effort="high",
+            mode="plan",
+            permission_mode="approval-required",
+            resume_conversation=None,
+            add_dirs=(),
+            staged_paths=[],
+            attachments=[],
+            allowed_roots=[tmp_path],
+            on_event=events.append,
+        )
+    finally:
+        mgr.shutdown()
+
+    assert res["status"] == "success"
+    assert res["effective_model"] == "gemini-4-hydrogen-high"
+    assert rpc_models == ["gemini-4-hydrogen-high"]
+    assert res["fallback_notice"] and "retired-model-x" in res["fallback_notice"] and "gemini-4-hydrogen-high" in res["fallback_notice"]
+    assert any(
+        (e.get("step") or {}).get("tool") == "runtime_notice" and "gemini-4-hydrogen-high" in ((e.get("step") or {}).get("detail") or "")
+        for e in events
+    )
+
+
+def test_models_sync_cloudcode_merge_and_orchestrator_settings_endpoints(tmp_path, monkeypatch):
+    import json
+    from server.services import agy_models
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    agy_models.reset_cache()
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(agy_profile.Path, "home", staticmethod(lambda: fake_home))
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+    monkeypatch.setattr(
+        agy_runtime.subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(
+            returncode=0,
+            stdout="gemini-4-neon-high\tGemini 4 Neon (High)\ngemini-pro-orchestrator-neon\tOrchestrator (Neon)\n",
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr(
+        agy_usage,
+        "probe_available_models",
+        lambda pid: {
+            "state": "authenticated",
+            "items": [
+                {"id": "gemini-4-hydrogen", "display_name": "Gemini 4 Hydrogen", "efforts": ["low", "medium", "high"], "is_default": True},
+                {"id": "gemini-pro-orchestrator-neon", "display_name": "Orchestrator (Neon)", "is_orchestrator": True},
+            ],
+        },
+    )
+
+    client = make_client(monkeypatch)
+    synced = client.post("/api/anti/models/sync")
+    assert synced.status_code == 200
+    body = synced.json()
+    ids = [m["id"] for m in body["items"]]
+    assert "gemini-4-neon-high" in ids and "gemini-4-hydrogen" in ids and "gemini-pro-orchestrator-neon" in ids
+    assert body["synced_at"] and body["next_sync_at"]
+    assert agy_models.config_path().is_file()
+
+    cfg_patch = client.patch(
+        "/api/anti/models/config",
+        json={"schedule_hours": [0, 6, 12, 18], "default_model": "gemini-4-hydrogen-high", "aliases": {"neon": "gemini-4-neon-high"}},
+        headers={"X-GA-Hub-Action": "manage-anti-gateway"},
+    )
+    assert cfg_patch.status_code == 200 and cfg_patch.json()["aliases"] == {"neon": "gemini-4-neon-high"}
+
+    # Preserve unrelated keys in ~/.gemini/antigravity-cli/settings.json while editing flat orchestrator keys
+    default_settings = agy_profile.profile_app_data_dir("default") / "settings.json"
+    default_settings.parent.mkdir(parents=True, exist_ok=True)
+    default_settings.write_text(json.dumps({"colorScheme": "tokyo night"}), encoding="utf-8")
+
+    headers = {"X-GA-Hub-Action": "manage-agy-profiles"}
+    assert client.get("/api/anti/profiles/default/orchestrator").json() == {"profile_id": "default", "planner": None, "executor": None}
+
+    updated = client.patch(
+        "/api/anti/profiles/default/orchestrator",
+        json={"planner": "gemini-4-neon-xhigh", "executor": "gemini-4-hydrogen-high"},
+        headers=headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json() == {"profile_id": "default", "planner": "gemini-4-neon-xhigh", "executor": "gemini-4-hydrogen-high"}
+    saved_json = json.loads(default_settings.read_text(encoding="utf-8"))
+    assert saved_json["colorScheme"] == "tokyo night"
+    assert saved_json["orchestrator"] == {"planner": "gemini-4-neon-xhigh", "executor": "gemini-4-hydrogen-high"}
+
+    cleared = client.patch(
+        "/api/anti/profiles/default/orchestrator",
+        json={"planner": None, "executor": None},
+        headers=headers,
+    )
+    assert cleared.status_code == 200
+    cleared_json = json.loads(default_settings.read_text(encoding="utf-8"))
+    assert "orchestrator" not in cleared_json and cleared_json["colorScheme"] == "tokyo night"
+
+

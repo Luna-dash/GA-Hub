@@ -23,9 +23,11 @@ from uuid import uuid4
 
 from .. import _paths
 from ..process_utils import hidden_process_kwargs
-from . import agy_profile, child_job
+from . import agy_models, agy_profile, agy_usage, child_job
 from .agy_profile import AgyProfileError, CodeLoginFlow
 from .agy_protocol import (
+    AgyModelSelectionError,
+    PROMPT_ACTIVITY_UPDATES,
     RuntimeGrants,
     ReadRepair,
     SessionUpdateNormalizer,
@@ -33,12 +35,18 @@ from .agy_protocol import (
     client_info_for_version,
     default_permission_mode,
     evaluate_permission,
+    extract_enriched_model_catalog_from_setup,
     extract_model_catalog_from_setup,
     extract_permission_prompt,
+    extract_usage_fields,
     handle_read_text_file,
+    parse_version,
     read_pre_edit_file,
+    resolve_model_target,
+    select_effort_call_for_config,
     select_model_and_effort_calls,
     session_mode_for_policy,
+    supports_prompt_steering,
     supports_system_prompt_append,
 )
 
@@ -48,14 +56,28 @@ AntiDaemonState = Literal["stopped", "starting", "ready", "unavailable"]
 AntiAuthState = Literal["checking", "authenticated", "login_required", "unverified"]
 
 INACTIVITY_TIMEOUT = 900.0
+ACTIVE_TOOL_SILENT_TIMEOUT = 1800.0
+POST_SETTLE_DEBOUNCE = 3.0
+POST_SETTLE_REPLY_QUIET_LIMIT = 120.0
+POST_SETTLE_COMMAND_HOLD_TIMEOUT = 1800.0
 APPROVAL_TIMEOUT = 900.0
 INIT_TIMEOUT = 120.0
 IDLE_SESSION_TTL = 1800.0
+CANCEL_GRACE_TIMEOUT = 8.0
+INACTIVITY_SLICE = 60.0
+HOST_SLEEP_TOLERANCE = 30.0
 
 _SYSTEM_PROMPT_APPEND = (
     "You are running inside GA-Hub via Antigravity ACP. "
     "Use workspace tools cleanly and respect user permission confirmations."
 )
+
+
+def _merge_prompt_usage(acc: dict[str, int], payload: Any) -> None:
+    delta: dict[str, int] = {}
+    extract_usage_fields(payload, delta)
+    for key, val in delta.items():
+        acc[key] = acc.get(key, 0) + val
 
 
 @dataclass(frozen=True)
@@ -69,6 +91,7 @@ class AntiDaemonStatus:
     port: int | None = None
     version: str | None = None
     max_concurrency: int | None = None
+    supports_steering: bool | None = None
 
 
 def _log_path() -> Path:
@@ -138,14 +161,68 @@ class _ActiveTurn:
         self.on_event = on_event
         self.normalizer = SessionUpdateNormalizer(read_pre_edit_file)
         self.read_repair = ReadRepair()
-        self.last_activity = time.monotonic()
+        now = time.monotonic()
+        self.last_activity = now
+        self.last_progress_at = now
         self.cancelled = False
+        self.force_cancelled = False
+        self.cancel_event = threading.Event()
+        self.wake_event = threading.Event()
+        self.prompt_queued = threading.Event()
+        self.event_lock = threading.Lock()
+        self.prompt_lock = threading.Lock()
+        self.prompt_seq = 0
+        self.current_prompt_req_id: int | None = None
+        self.current_prompt_event: threading.Event | None = None
+        self.current_prompt_box: dict[str, Any] = {}
+        self.superseded_prompts: list[tuple[int, threading.Event, dict[str, Any]]] = []
         self._perm_lock = threading.Lock()
+        self._open_incoming_requests = 0
         self.pending_permission: _PendingPermission | None = None
         self.done_event = threading.Event()
 
     def touch(self) -> None:
-        self.last_activity = time.monotonic()
+        now = time.monotonic()
+        self.last_activity = now
+        self.last_progress_at = now
+        self.wake_event.set()
+
+    def touch_progress(self) -> None:
+        self.last_progress_at = time.monotonic()
+
+    def begin_incoming_request(self) -> None:
+        with self._perm_lock:
+            self._open_incoming_requests += 1
+            self.last_progress_at = time.monotonic()
+        self.wake_event.set()
+
+    def end_incoming_request(self) -> None:
+        with self._perm_lock:
+            if self._open_incoming_requests > 0:
+                self._open_incoming_requests -= 1
+            self.last_progress_at = time.monotonic()
+        self.wake_event.set()
+
+    def inactivity_paused(self) -> bool:
+        with self._perm_lock:
+            has_pending = self.pending_permission is not None
+            has_open_req = self._open_incoming_requests > 0
+        return has_pending or has_open_req or self.normalizer.has_active_tools()
+
+    def has_post_settle_work(self) -> bool:
+        with self._perm_lock:
+            has_pending = self.pending_permission is not None
+            has_open_req = self._open_incoming_requests > 0
+        return has_pending or has_open_req or self.normalizer.has_outliving_background_work()
+
+    def current_prompt_state(self) -> tuple[int | None, threading.Event | None, dict[str, Any], int]:
+        with self.prompt_lock:
+            return (
+                self.current_prompt_req_id,
+                self.current_prompt_event,
+                self.current_prompt_box,
+                self.prompt_seq,
+            )
 
     def current_approval(self) -> dict[str, Any] | None:
         with self._perm_lock:
@@ -162,14 +239,27 @@ class _ActiveTurn:
             pending.event.set()
             return True
 
-    def cancel_pending(self) -> None:
+    def cancel_pending(self, *, force: bool = False) -> None:
         self.cancelled = True
+        if force:
+            self.force_cancelled = True
         with self._perm_lock:
             pending = self.pending_permission
             if pending is not None:
-                pending.decision = "reject"
+                pending.decision = "cancel"
                 self.pending_permission = None
                 pending.event.set()
+        self.cancel_event.set()
+        self.wake_event.set()
+
+    def wake_on_disconnect(self) -> None:
+        with self._perm_lock:
+            pending = self.pending_permission
+            if pending is not None:
+                pending.decision = "cancel"
+                self.pending_permission = None
+                pending.event.set()
+        self.wake_event.set()
 
 
 class AgySessionWorker:
@@ -185,6 +275,7 @@ class AgySessionWorker:
         version: str | None,
         on_models: Callable[[list[dict[str, str]]], None] | None = None,
         on_commands: Callable[[list[dict[str, Any]]], None] | None = None,
+        on_retire: Callable[["AgySessionWorker"], None] | None = None,
     ):
         self.profile_id = profile_id
         self.session_id = session_id
@@ -193,14 +284,17 @@ class AgySessionWorker:
         self.version = version
         self._on_models = on_models
         self._on_commands = on_commands
+        self._on_retire = on_retire
 
         self._lock = threading.Lock()
+        self._proc_lock = threading.Lock()
         self._write_lock = threading.Lock()
         self._rpc_lock = threading.Lock()
         self._next_id = 1
-        self._pending_rpcs: dict[int, tuple[threading.Event, dict[str, Any]]] = {}
+        self._pending_rpcs: dict[int, tuple[threading.Event, dict[str, Any], threading.Event | None]] = {}
 
         self.proc: subprocess.Popen | None = None
+        self._process_group: child_job.ProcessGroupHandle | None = None
         self.temp_dir: Path | None = None
         self._profile_lock_held = False
         self.acp_session_id: str | None = None
@@ -212,6 +306,8 @@ class AgySessionWorker:
         self.last_used = time.monotonic()
         self._closed = False
         self._retired = False
+        self._dirty = False
+        self._abort_event = threading.Event()
         self._exit_pending: threading.Event | None = None
         self._reader_thread: threading.Thread | None = None
 
@@ -230,22 +326,63 @@ class AgySessionWorker:
             except OSError as exc:
                 raise AgyProfileError(503, "Agy ACP 输入通道已断开") from exc
 
-    def _rpc(self, method: str, params: dict[str, Any], timeout: float = INIT_TIMEOUT) -> dict[str, Any]:
+    def _wake_pending_rpcs(self, message: str) -> None:
+        with self._rpc_lock:
+            items = list(self._pending_rpcs.values())
+            self._pending_rpcs.clear()
+        for entry in items:
+            ev, box = entry[0], entry[1]
+            wake_ev = entry[2] if len(entry) > 2 else None
+            box.setdefault("error", {"code": -32000, "message": message})
+            ev.set()
+            if wake_ev is not None:
+                wake_ev.set()
+
+    def _rpc(
+        self,
+        method: str,
+        params: dict[str, Any],
+        timeout: float = INIT_TIMEOUT,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> dict[str, Any]:
+        if self._abort_event.is_set() or (cancel_event is not None and cancel_event.is_set()):
+            self._dirty = True
+            raise AgyProfileError(499, "Agy 任务已取消")
+        wake_ev = threading.Event()
         with self._rpc_lock:
             req_id = self._next_id
             self._next_id += 1
             ev = threading.Event()
             box: dict[str, Any] = {}
-            self._pending_rpcs[req_id] = (ev, box)
-        self._send_frame({"jsonrpc": "2.0", "id": req_id, "method": method, "params": params})
-        if not ev.wait(timeout):
+            self._pending_rpcs[req_id] = (ev, box, wake_ev)
+        try:
+            self._send_frame({"jsonrpc": "2.0", "id": req_id, "method": method, "params": params})
+        except BaseException:
             with self._rpc_lock:
                 self._pending_rpcs.pop(req_id, None)
-            raise AgyProfileError(504, f"Agy ACP {method} 超时")
+            raise
+        deadline = time.monotonic() + timeout
+        while not ev.is_set():
+            if self._abort_event.is_set() or (cancel_event is not None and cancel_event.is_set()):
+                with self._rpc_lock:
+                    self._pending_rpcs.pop(req_id, None)
+                self._dirty = True
+                raise AgyProfileError(499, "Agy 任务已取消")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                with self._rpc_lock:
+                    self._pending_rpcs.pop(req_id, None)
+                raise AgyProfileError(504, f"Agy ACP {method} 超时")
+            step = min(remaining, 0.05 if cancel_event is not None else 0.2)
+            ev.wait(step)
         if "error" in box:
             err = box["error"]
             msg = err.get("message") if isinstance(err, dict) else str(err)
             code = err.get("code") if isinstance(err, dict) else None
+            if self._abort_event.is_set() or (cancel_event is not None and cancel_event.is_set()):
+                self._dirty = True
+                raise AgyProfileError(499, "Agy 任务已取消")
             raise AgyProfileError(502, f"Agy ACP {method} 失败 ({code}): {msg}")
         return box.get("result") or {}
 
@@ -280,12 +417,15 @@ class AgySessionWorker:
                     with self._rpc_lock:
                         entry = self._pending_rpcs.pop(rid, None)
                     if entry is not None:
-                        ev, box = entry
+                        ev, box = entry[0], entry[1]
+                        wake_ev = entry[2] if len(entry) > 2 else None
                         if "error" in frame:
                             box["error"] = frame["error"]
                         else:
                             box["result"] = frame.get("result")
                         ev.set()
+                        if wake_ev is not None:
+                            wake_ev.set()
                     continue
 
                 method = frame.get("method")
@@ -303,106 +443,149 @@ class AgySessionWorker:
             pass
         finally:
             # Wake any pending RPC callers on unexpected exit.
-            with self._rpc_lock:
-                items = list(self._pending_rpcs.values())
-                self._pending_rpcs.clear()
-            for ev, box in items:
-                box.setdefault("error", {"code": -32000, "message": "Agy ACP 连接已关闭"})
-                ev.set()
+            self._wake_pending_rpcs("Agy ACP 连接已关闭")
             turn = self.active_turn
             if turn is not None:
-                turn.cancel_pending()
+                if self._abort_event.is_set():
+                    turn.cancel_pending(force=True)
+                else:
+                    turn.wake_on_disconnect()
 
     def _handle_session_update(self, params: dict[str, Any]) -> None:
         update = params.get("update")
         if not isinstance(update, dict):
             return
         # Command snapshots may arrive before, during, or between active turns.
-        if update.get("sessionUpdate") == "available_commands_update":
+        update_kind = update.get("sessionUpdate")
+        if update_kind == "available_commands_update":
             cmds = update.get("availableCommands")
             if isinstance(cmds, list) and self._on_commands:
                 self._on_commands(cmds)
         turn = self.active_turn
         if turn is None:
             return
-        turn.touch()
-        repaired = turn.read_repair.track_update(update)
-        for evt in turn.normalizer.normalize(repaired):
-            try:
-                turn.on_event(evt)
-            except Exception:
-                log.debug("Failed to deliver ACP session update", exc_info=True)
+        if update_kind in PROMPT_ACTIVITY_UPDATES:
+            turn.touch()
+        lock = getattr(turn, "event_lock", None)
+        if lock is not None:
+            with lock:
+                repaired = turn.read_repair.track_update(update)
+                for evt in turn.normalizer.normalize(repaired):
+                    try:
+                        turn.on_event(evt)
+                    except Exception:
+                        log.debug("Failed to deliver ACP session update", exc_info=True)
+        else:
+            repaired = turn.read_repair.track_update(update)
+            for evt in turn.normalizer.normalize(repaired):
+                try:
+                    turn.on_event(evt)
+                except Exception:
+                    log.debug("Failed to deliver ACP session update", exc_info=True)
+        if update_kind == "usage_update" and getattr(turn.normalizer, "prompt_settled", False):
+            wake_ev = getattr(turn, "wake_event", None)
+            if wake_ev is not None:
+                wake_ev.set()
 
     def _handle_incoming_request(self, req_id: Any, method: Any, params: dict[str, Any]) -> None:
         turn = self.active_turn
         if method == "fs/read_text_file":
-            roots = turn.allowed_roots if turn else [self.workspace]
-            res, err = handle_read_text_file(params, roots)
-            target_path = str(params.get("path") or "")
-            if turn is not None and target_path:
-                completed_tid = turn.read_repair.attempted(target_path, err is None)
-                if completed_tid:
-                    for evt in turn.normalizer.normalize({
-                        "sessionUpdate": "tool_call_update",
-                        "toolCallId": completed_tid,
-                        "status": "completed",
-                    }):
-                        turn.on_event(evt)
-            self._reply(req_id, result=res, error=err)
+            if turn is not None:
+                turn.begin_incoming_request()
+            try:
+                roots = turn.allowed_roots if turn else [self.workspace]
+                res, err = handle_read_text_file(params, roots)
+                target_path = str(params.get("path") or "")
+                if turn is not None and target_path:
+                    lock = getattr(turn, "event_lock", None)
+                    if lock is not None:
+                        with lock:
+                            completed_tid = turn.read_repair.attempted(target_path, err is None)
+                            if completed_tid:
+                                for evt in turn.normalizer.normalize({
+                                    "sessionUpdate": "tool_call_update",
+                                    "toolCallId": completed_tid,
+                                    "status": "completed",
+                                }):
+                                    turn.on_event(evt)
+                    else:
+                        completed_tid = turn.read_repair.attempted(target_path, err is None)
+                        if completed_tid:
+                            for evt in turn.normalizer.normalize({
+                                "sessionUpdate": "tool_call_update",
+                                "toolCallId": completed_tid,
+                                "status": "completed",
+                            }):
+                                turn.on_event(evt)
+                self._reply(req_id, result=res, error=err)
+            finally:
+                if turn is not None:
+                    turn.end_incoming_request()
             return
 
         if method == "session/request_permission":
-            if turn is None:
-                options = [o for o in (params.get("options") or []) if isinstance(o, dict)]
-                reject = next((o["optionId"] for o in options if o.get("kind") == "reject_once"), None)
-                fallback = reject or (options[-1]["optionId"] if options else "reject")
-                self._reply(req_id, result={"outcome": {"outcome": "selected", "optionId": fallback}})
+            if turn is None or turn.cancelled or self._closed:
+                if not self._closed:
+                    self._reply(req_id, result={"outcome": {"outcome": "cancelled"}})
                 return
 
-            disposition = evaluate_permission(
-                turn.mode,
-                turn.permission_mode,
-                params,
-                self.grants,
-                turn.workspace,
-                turn.allowed_roots[1:],
-            )
-            prompt_info = extract_permission_prompt(params, read_pre_edit_file)
-            option_map = prompt_info["option_map"]
+            turn.begin_incoming_request()
+            try:
+                disposition = evaluate_permission(
+                    turn.mode,
+                    turn.permission_mode,
+                    params,
+                    self.grants,
+                    turn.workspace,
+                    turn.allowed_roots[1:],
+                )
+                prompt_info = extract_permission_prompt(params, read_pre_edit_file)
+                option_map = prompt_info["option_map"]
 
-            if disposition == "allow" and option_map.get("allow"):
-                self._reply(req_id, result={"outcome": {"outcome": "selected", "optionId": option_map["allow"]}})
-                return
-            if disposition == "deny":
-                oid = prompt_info.get("default_option") or "reject"
-                self._reply(req_id, result={"outcome": {"outcome": "selected", "optionId": oid}})
-                return
+                if disposition == "allow" and option_map.get("allow"):
+                    self._reply(req_id, result={"outcome": {"outcome": "selected", "optionId": option_map["allow"]}})
+                    return
+                if disposition == "deny":
+                    oid = prompt_info.get("default_option") or "reject"
+                    self._reply(req_id, result={"outcome": {"outcome": "selected", "optionId": oid}})
+                    return
 
-            pending = _PendingPermission(prompt_info)
-            with turn._perm_lock:
-                turn.pending_permission = pending
-            turn.touch()
-            turn.on_event({"seq": 0, "type": "approval.requested", "approval": pending.public_view()})
+                pending = _PendingPermission(prompt_info)
+                with turn._perm_lock:
+                    turn.pending_permission = pending
+                turn.touch()
+                turn.on_event({"seq": 0, "type": "approval.requested", "approval": pending.public_view()})
 
-            pending.event.wait(APPROVAL_TIMEOUT)
-            with turn._perm_lock:
-                if turn.pending_permission is pending:
-                    turn.pending_permission = None
-            turn.touch()
+                pending.event.wait(APPROVAL_TIMEOUT)
+                with turn._perm_lock:
+                    if turn.pending_permission is pending:
+                        turn.pending_permission = None
+                turn.touch()
 
-            chosen_oid: str | None = None
-            if pending.option_id and pending.option_id in option_map:
-                chosen_oid = option_map[pending.option_id]
-            elif pending.decision == "allow_always":
-                chosen_oid = option_map.get("allow_always") or option_map.get("allow")
-                if chosen_oid:
-                    self.grants.record(str(prompt_info.get("tool_kind") or "other"))
-            elif pending.decision == "allow":
-                chosen_oid = option_map.get("allow") or option_map.get("allow_always")
-            if not chosen_oid:
-                chosen_oid = prompt_info.get("default_option") or "reject"
+                if pending.decision == "cancel" or turn.cancelled or self._closed:
+                    if not self._closed:
+                        self._reply(req_id, result={"outcome": {"outcome": "cancelled"}})
+                    return
 
-            self._reply(req_id, result={"outcome": {"outcome": "selected", "optionId": chosen_oid}})
+                chosen_oid: str | None = None
+                if pending.option_id and pending.option_id in option_map:
+                    chosen_oid = option_map[pending.option_id]
+                elif pending.decision == "allow_always":
+                    chosen_oid = option_map.get("allow_always") or option_map.get("allow")
+                    if chosen_oid:
+                        self.grants.record(str(prompt_info.get("tool_kind") or "other"))
+                elif pending.decision == "allow":
+                    chosen_oid = option_map.get("allow") or option_map.get("allow_always")
+                elif pending.decision is None and not pending.option_id:
+                    if not self._closed:
+                        self._reply(req_id, result={"outcome": {"outcome": "cancelled"}})
+                    return
+                if not chosen_oid:
+                    chosen_oid = prompt_info.get("default_option") or "reject"
+
+                self._reply(req_id, result={"outcome": {"outcome": "selected", "optionId": chosen_oid}})
+            finally:
+                turn.end_incoming_request()
             return
 
         self._reply(req_id, error={"code": -32601, "message": f"Method not implemented: {method}"})
@@ -410,7 +593,10 @@ class AgySessionWorker:
     def ensure_started(self, *, resume_conversation: str | None, add_dirs: tuple[str, ...]) -> str:
         """Start (or reuse) the persistent ACP process and return the native sessionId."""
         with self._lock:
-            if self._retired or self.exit_pending():
+            if self._abort_event.is_set():
+                self._dirty = True
+                raise AgyProfileError(499, "Agy 任务已取消")
+            if self._retired or self.exit_pending() or self._closed:
                 raise AgyProfileError(409, "Agy 正在关闭旧会话，请稍后重试")
             if self.is_alive() and set(add_dirs).issubset(set(self.add_dirs)):
                 self.last_used = time.monotonic()
@@ -445,7 +631,7 @@ class AgySessionWorker:
                     log_fp = None
 
                 try:
-                    self.proc = child_job.spawn(
+                    proc = child_job.spawn(
                         cmd,
                         kind="agy-acp",
                         marker=self.executable,
@@ -459,6 +645,10 @@ class AgySessionWorker:
                         bufsize=1,
                         **hidden_process_kwargs(),
                     )
+                    group = child_job.create_process_group(proc)
+                    with self._proc_lock:
+                        self.proc = proc
+                        self._process_group = group
                 except OSError as exc:
                     if self.temp_dir:
                         shutil.rmtree(self.temp_dir, ignore_errors=True)
@@ -490,6 +680,8 @@ class AgySessionWorker:
                 try:
                     self._rpc("authenticate", {"methodId": "oauth-personal"}, timeout=60.0)
                 except AgyProfileError as exc:
+                    if exc.status == 499 or self._abort_event.is_set():
+                        raise
                     msg = str(exc)
                     if "-32000" in msg or "-32603" in msg or "login" in msg.lower() or "auth" in msg.lower():
                         raise AgyProfileError(409, "Agy 账号未登录或凭据已失效，请先完成登录。") from exc
@@ -516,6 +708,8 @@ class AgySessionWorker:
                         if not isinstance(started.get("sessionId"), str) or not started["sessionId"]:
                             started = {"sessionId": resume_conversation, **started}
                     except AgyProfileError as exc:
+                        if exc.status == 499 or self._abort_event.is_set():
+                            raise
                         _append_log(f"session/resume fallback to session/new ({resume_conversation}): {exc}")
                         started = None
 
@@ -527,15 +721,331 @@ class AgySessionWorker:
                     raise AgyProfileError(502, "Agy ACP 未返回有效的 sessionId")
                 self.acp_session_id = sid
                 self.setup_result = started
-                models = extract_model_catalog_from_setup(started)
+                models = extract_enriched_model_catalog_from_setup(started)
                 if models and self._on_models:
                     self._on_models(models)
                 self.last_used = time.monotonic()
                 return sid
             except BaseException:
-                self._teardown_locked()
+                self._teardown_locked(force=self._abort_event.is_set())
                 raise
 
+
+    def _retire(self, *, force: bool = True) -> None:
+        if self._on_retire is not None:
+            self._on_retire(self)
+        else:
+            self.close(force=force)
+
+    def _dispatch_prompt(
+        self,
+        turn: _ActiveTurn,
+        acp_sid: str,
+        blocks: list[dict[str, Any]],
+    ) -> tuple[int, threading.Event, dict[str, Any]]:
+        with self._rpc_lock:
+            req_id = self._next_id
+            self._next_id += 1
+            ev = threading.Event()
+            box: dict[str, Any] = {}
+            self._pending_rpcs[req_id] = (ev, box, turn.wake_event)
+
+        with turn.prompt_lock:
+            prev = (
+                (turn.current_prompt_req_id, turn.current_prompt_event, turn.current_prompt_box)
+                if turn.current_prompt_req_id is not None and turn.current_prompt_event is not None
+                else None
+            )
+            if prev is not None:
+                turn.superseded_prompts.append(prev)
+            prev_seq = turn.prompt_seq
+            prev_settled = turn.normalizer.prompt_settled
+            prev_reply_open = turn.normalizer.reply_open
+            turn.prompt_seq += 1
+            turn.current_prompt_req_id = req_id
+            turn.current_prompt_event = ev
+            turn.current_prompt_box = box
+            turn.normalizer.prompt_settled = False
+            turn.normalizer.reply_open = False
+
+        try:
+            self._send_frame({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "method": "session/prompt",
+                "params": {"sessionId": acp_sid, "prompt": blocks},
+            })
+        except BaseException:
+            with self._rpc_lock:
+                self._pending_rpcs.pop(req_id, None)
+            with turn.prompt_lock:
+                if turn.current_prompt_req_id == req_id:
+                    if prev is not None:
+                        if turn.superseded_prompts and turn.superseded_prompts[-1][0] == prev[0]:
+                            turn.superseded_prompts.pop()
+                        turn.current_prompt_req_id, turn.current_prompt_event, turn.current_prompt_box = prev
+                    else:
+                        turn.current_prompt_req_id = None
+                        turn.current_prompt_event = None
+                        turn.current_prompt_box = {}
+                    turn.prompt_seq = prev_seq
+                    turn.normalizer.prompt_settled = prev_settled
+                    turn.normalizer.reply_open = prev_reply_open
+            raise
+
+        turn.prompt_queued.set()
+        turn.touch()
+        return req_id, ev, box
+
+    def steer_turn(
+        self,
+        *,
+        prompt_text: str,
+        staged_paths: list[Path],
+        attachments: list[dict[str, Any]],
+        allowed_roots: list[Path],
+    ) -> dict[str, Any]:
+        """Steer the active ACP turn via a new `session/prompt` (`agy >= 1.5.0`)."""
+        if self._closed or self._abort_event.is_set() or not self.is_alive() or not self.acp_session_id:
+            raise AgyProfileError(409, "当前会话进程未运行，请重试或重连会话。")
+        turn = self.active_turn
+        if turn is None or turn.cancelled or not turn.prompt_queued.is_set():
+            raise AgyProfileError(409, "当前任务尚未就绪或已结束，请直接发送新消息。")
+
+        init_info = self.init_result.get("agentInfo") if isinstance(self.init_result, dict) else None
+        probe_init = (
+            self.init_result
+            if isinstance(init_info, dict) and isinstance(init_info.get("version"), str) and init_info.get("version")
+            else {"agentInfo": {"version": self.version}}
+        )
+        if not supports_prompt_steering(probe_init):
+            raise AgyProfileError(409, "当前 agy 版本不支持运行中插话纠偏，请加入排队等待本轮结束。")
+
+        with turn._perm_lock:
+            for root in allowed_roots:
+                if root not in turn.allowed_roots:
+                    turn.allowed_roots.append(root)
+
+        caps = self.init_result.get("agentCapabilities") if isinstance(self.init_result, dict) else {}
+        prompt_caps = caps.get("promptCapabilities") if isinstance(caps, dict) else {}
+        blocks = build_prompt_blocks(prompt_text, staged_paths, attachments, prompt_caps)
+
+        lock = getattr(turn, "event_lock", None)
+        if lock is not None:
+            with lock:
+                for evt in turn.normalizer.emit_steer(prompt_text):
+                    turn.on_event(evt)
+        else:
+            for evt in turn.normalizer.emit_steer(prompt_text):
+                turn.on_event(evt)
+
+        self._dispatch_prompt(turn, self.acp_session_id, blocks)
+        return {"steered": True, "prompt_seq": turn.prompt_seq}
+
+    def _switch_model_rpc(
+        self,
+        acp_sid: str,
+        model_id: str,
+        config_option_id: str | None,
+        turn: _ActiveTurn,
+    ) -> None:
+        if config_option_id:
+            res = self._rpc(
+                "session/set_config_option",
+                {"sessionId": acp_sid, "configId": config_option_id, "value": model_id},
+                timeout=20.0,
+                cancel_event=turn.cancel_event,
+            )
+            if isinstance(res, dict) and isinstance(res.get("configOptions"), list):
+                self.setup_result = {**self.setup_result, "configOptions": res["configOptions"]}
+                with turn.event_lock:
+                    turn.normalizer.config_options = res["configOptions"]
+        else:
+            res = self._rpc(
+                "session/set_model",
+                {"sessionId": acp_sid, "modelId": model_id},
+                timeout=20.0,
+                cancel_event=turn.cancel_event,
+            )
+            if isinstance(res, dict) and isinstance(res.get("configOptions"), list):
+                self.setup_result = {**self.setup_result, "configOptions": res["configOptions"]}
+                with turn.event_lock:
+                    turn.normalizer.config_options = res["configOptions"]
+
+    def _apply_model_and_effort(
+        self,
+        turn: _ActiveTurn,
+        acp_sid: str,
+        model: str,
+        effort: str,
+        allow_auto_fallback: bool | None,
+        notices: list[str],
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        cfg = agy_models.load_models_config()
+        defs = cfg.get("defaults") or {}
+        auto_fb = bool(defs.get("allow_auto_fallback", True)) if allow_auto_fallback is None else bool(allow_auto_fallback)
+        default_model = str(defs.get("model") or agy_models.DEFAULT_MODEL_ID)
+        aliases = cfg.get("aliases") or {}
+
+        try:
+            plan = resolve_model_target(
+                self.setup_result,
+                model,
+                effort,
+                default_model=default_model,
+                aliases=aliases,
+                allow_auto_fallback=auto_fb,
+            )
+        except AgyModelSelectionError as exc:
+            _append_log(f"model selection rejected ({model}): {exc}")
+            with turn.event_lock:
+                for evt in turn.normalizer.finish_turn():
+                    turn.on_event(evt)
+            return None, {
+                "status": "rejected",
+                "conversation_id": acp_sid,
+                "answer": None,
+                "progress_messages": [],
+                "error": str(exc),
+                "effective_model": model,
+                "fallback_notice": None,
+                "usage": {},
+            }
+
+        target_model = str(plan["target_model"])
+        resolved_effort = str(plan["resolved_effort"])
+        use_cfg_id: str | None = plan["use_config_option_id"]
+        if plan["alias_from"]:
+            msg = f"模型「{plan['alias_from']}」已按本地映射切换为「{target_model}」"
+            notices.append(msg)
+            evt = turn.normalizer.emit_notice("runtime_notice", msg)
+            with turn.event_lock:
+                turn.on_event(evt)
+        if plan["fallback_reason"]:
+            msg = f"{plan['fallback_reason']}，已自动回退至「{target_model}」执行"
+            notices.append(msg)
+            _append_log(f"model auto-fallback: {model} -> {target_model} ({plan['fallback_reason']})")
+            evt = turn.normalizer.emit_notice("runtime_notice", msg)
+            with turn.event_lock:
+                turn.on_event(evt)
+
+        if turn.cancelled or self._abort_event.is_set():
+            return None, {
+                "status": "cancelled",
+                "conversation_id": acp_sid,
+                "answer": None,
+                "progress_messages": [],
+                "effective_model": target_model,
+                "fallback_notice": "；".join(notices) if notices else None,
+                "usage": {},
+            }
+
+        effective_model = target_model
+        try:
+            self._switch_model_rpc(acp_sid, target_model, use_cfg_id, turn)
+        except AgyProfileError as exc:
+            if exc.status == 499 or turn.cancelled or self._abort_event.is_set():
+                self._dirty = True
+                return None, {
+                    "status": "cancelled",
+                    "conversation_id": acp_sid,
+                    "answer": None,
+                    "progress_messages": [],
+                    "effective_model": effective_model,
+                    "fallback_notice": "；".join(notices) if notices else None,
+                    "usage": {},
+                }
+            switched_fb = False
+            if auto_fb:
+                for fb in plan["fallback_candidates"]:
+                    if turn.cancelled or self._abort_event.is_set():
+                        break
+                    try:
+                        self._switch_model_rpc(acp_sid, fb, use_cfg_id, turn)
+                    except AgyProfileError as fb_exc:
+                        if fb_exc.status == 499 or turn.cancelled or self._abort_event.is_set():
+                            self._dirty = True
+                            return None, {
+                                "status": "cancelled",
+                                "conversation_id": acp_sid,
+                                "answer": None,
+                                "progress_messages": [],
+                                "effective_model": fb,
+                                "fallback_notice": "；".join(notices) if notices else None,
+                                "usage": {},
+                            }
+                        continue
+                    effective_model = fb
+                    switched_fb = True
+                    msg = f"模型「{target_model}」切换失败，已自动回退至「{fb}」执行（{exc}）"
+                    notices.append(msg)
+                    _append_log(f"session/set_model fallback {target_model} -> {fb}: {exc}")
+                    evt = turn.normalizer.emit_notice("runtime_notice", msg)
+                    with turn.event_lock:
+                        turn.on_event(evt)
+                    break
+            if not switched_fb:
+                _append_log(f"session/set_model({target_model}) rejected: {exc}")
+                with turn.event_lock:
+                    for evt in turn.normalizer.finish_turn():
+                        turn.on_event(evt)
+                return None, {
+                    "status": "rejected",
+                    "conversation_id": acp_sid,
+                    "answer": None,
+                    "progress_messages": [],
+                    "error": f"当前账号拒绝使用模型「{model}」：{exc}。请切换其他可用模型后重试。",
+                    "effective_model": model,
+                    "fallback_notice": None,
+                    "usage": {},
+                }
+
+        live_config = turn.normalizer.config_options or self.setup_result.get("configOptions")
+        effort_call, effort_notice = select_effort_call_for_config(live_config, effective_model, resolved_effort)
+        if effort_notice:
+            notices.append(effort_notice)
+            _append_log(effort_notice)
+            evt = turn.normalizer.emit_notice("runtime_notice", effort_notice)
+            with turn.event_lock:
+                turn.on_event(evt)
+        if effort_call is not None:
+            if turn.cancelled or self._abort_event.is_set():
+                return None, {
+                    "status": "cancelled",
+                    "conversation_id": acp_sid,
+                    "answer": None,
+                    "progress_messages": [],
+                    "effective_model": effective_model,
+                    "fallback_notice": "；".join(notices) if notices else None,
+                    "usage": {},
+                }
+            rpc_method, rpc_params = effort_call
+            try:
+                self._rpc(
+                    rpc_method,
+                    {"sessionId": acp_sid, **rpc_params},
+                    timeout=20.0,
+                    cancel_event=turn.cancel_event,
+                )
+            except AgyProfileError as exc:
+                if exc.status == 499 or turn.cancelled or self._abort_event.is_set():
+                    self._dirty = True
+                    return None, {
+                        "status": "cancelled",
+                        "conversation_id": acp_sid,
+                        "answer": None,
+                        "progress_messages": [],
+                        "effective_model": effective_model,
+                        "fallback_notice": "；".join(notices) if notices else None,
+                        "usage": {},
+                    }
+                msg = f"模型「{effective_model}」不支持思考档位「{resolved_effort}」，已沿用模型默认档位（{exc}）"
+                notices.append(msg)
+                _append_log(f"{rpc_method} skipped: {exc}")
+                evt = turn.normalizer.emit_notice("runtime_notice", msg)
+                with turn.event_lock:
+                    turn.on_event(evt)
+        return effective_model, None
 
     def run_turn(
         self,
@@ -552,9 +1062,37 @@ class AgySessionWorker:
         attachments: list[dict[str, Any]],
         allowed_roots: list[Path],
         on_event: Callable[[dict[str, Any]], None],
+        allow_auto_fallback: bool | None = None,
     ) -> dict[str, Any]:
         """Execute a complete conversational/editing turn inside the persistent ACP session."""
-        acp_sid = self.ensure_started(resume_conversation=resume_conversation, add_dirs=add_dirs)
+        if self._abort_event.is_set() or self._closed:
+            self._dirty = True
+            self._retire(force=True)
+            return {
+                "status": "cancelled",
+                "conversation_id": resume_conversation,
+                "answer": None,
+                "progress_messages": [],
+                "effective_model": model,
+                "fallback_notice": None,
+                "usage": {},
+            }
+        try:
+            acp_sid = self.ensure_started(resume_conversation=resume_conversation, add_dirs=add_dirs)
+        except AgyProfileError as exc:
+            if exc.status == 499 or self._abort_event.is_set():
+                self._dirty = True
+                self._retire(force=True)
+                return {
+                    "status": "cancelled",
+                    "conversation_id": resume_conversation,
+                    "answer": None,
+                    "progress_messages": [],
+                    "effective_model": model,
+                    "fallback_notice": None,
+                    "usage": {},
+                }
+            raise
         turn = _ActiveTurn(
             run_id=run_id,
             mode=mode,
@@ -564,7 +1102,22 @@ class AgySessionWorker:
             on_event=on_event,
         )
         self.active_turn = turn
+        notices: list[str] = []
+        effective_model = model
         try:
+            if self._abort_event.is_set() or self._closed:
+                turn.cancel_pending(force=True)
+                self._dirty = True
+                return {
+                    "status": "cancelled",
+                    "conversation_id": acp_sid,
+                    "answer": None,
+                    "progress_messages": [],
+                    "effective_model": effective_model,
+                    "fallback_notice": None,
+                    "usage": {},
+                }
+
             avail_modes = (
                 self.setup_result.get("modes", {}).get("availableModes")
                 if isinstance(self.setup_result.get("modes"), dict)
@@ -572,75 +1125,237 @@ class AgySessionWorker:
             )
             wire_mode = session_mode_for_policy(mode, permission_mode, avail_modes)
             try:
-                self._rpc("session/set_mode", {"sessionId": acp_sid, "modeId": wire_mode}, timeout=20.0)
-            except AgyProfileError as exc:
-                _append_log(f"session/set_mode({wire_mode}) skipped: {exc}")
-                turn.on_event(
-                    turn.normalizer.emit_notice(
-                        "runtime_notice",
-                        f"上游未接受模式 {wire_mode}，已沿用默认模式（工具权限仍由 GA-Hub 策略拦截控制）",
-                    )
+                self._rpc(
+                    "session/set_mode",
+                    {"sessionId": acp_sid, "modeId": wire_mode},
+                    timeout=20.0,
+                    cancel_event=turn.cancel_event,
                 )
+            except AgyProfileError as exc:
+                if exc.status == 499 or turn.cancelled or self._abort_event.is_set():
+                    self._dirty = True
+                    return {
+                        "status": "cancelled",
+                        "conversation_id": acp_sid,
+                        "answer": None,
+                        "progress_messages": [],
+                        "effective_model": effective_model,
+                        "fallback_notice": None,
+                        "usage": {},
+                    }
+                _append_log(f"session/set_mode({wire_mode}) skipped: {exc}")
+                mode_msg = f"上游未接受模式「{wire_mode}」，已沿用默认模式（工具权限仍由 GA-Hub 策略拦截控制）"
+                notices.append(mode_msg)
+                notice_evt = turn.normalizer.emit_notice("runtime_notice", mode_msg)
+                with turn.event_lock:
+                    turn.on_event(notice_evt)
 
-            for rpc_method, rpc_params in select_model_and_effort_calls(self.setup_result, model, effort):
-                try:
-                    self._rpc(rpc_method, {"sessionId": acp_sid, **rpc_params}, timeout=20.0)
-                except AgyProfileError as exc:
-                    _append_log(f"{rpc_method} skipped: {exc}")
-                    turn.on_event(
-                        turn.normalizer.emit_notice("runtime_notice", f"参数切换 {rpc_method} 已跳过: {exc}")
-                    )
+            resolved_model, early_result = self._apply_model_and_effort(
+                turn, acp_sid, model, effort, allow_auto_fallback, notices,
+            )
+            if early_result is not None:
+                return early_result
+            assert resolved_model is not None
+            effective_model = resolved_model
 
             caps = self.init_result.get("agentCapabilities") if isinstance(self.init_result, dict) else {}
             prompt_caps = caps.get("promptCapabilities") if isinstance(caps, dict) else {}
             blocks = build_prompt_blocks(prompt_text, staged_paths, attachments, prompt_caps)
 
-            with self._rpc_lock:
-                req_id = self._next_id
-                self._next_id += 1
-                ev = threading.Event()
-                box: dict[str, Any] = {}
-                self._pending_rpcs[req_id] = (ev, box)
+            if turn.cancelled or self._abort_event.is_set():
+                return {
+                    "status": "cancelled",
+                    "conversation_id": acp_sid,
+                    "answer": None,
+                    "progress_messages": [],
+                    "effective_model": effective_model,
+                    "fallback_notice": "；".join(notices) if notices else None,
+                    "usage": {},
+                }
 
-            self._send_frame({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "method": "session/prompt",
-                "params": {"sessionId": acp_sid, "prompt": blocks},
-            })
+            self._dispatch_prompt(turn, acp_sid, blocks)
 
-            while not ev.wait(1.0):
-                if turn.cancelled:
-                    break
-                # Pause inactivity countdown while waiting for user approval / question input.
-                if turn.current_approval() is not None:
-                    turn.touch()
+            timed_out = False
+            wall_mono_gap = time.time() - time.monotonic()
+            while True:
+                req_id, ev, box, cur_seq = turn.current_prompt_state()
+                assert req_id is not None and ev is not None
+                while not ev.is_set():
+                    if turn.cancelled or self._abort_event.is_set():
+                        break
+                    _, _, _, latest_seq = turn.current_prompt_state()
+                    if latest_seq != cur_seq:
+                        break
+                    turn.wake_event.clear()
+                    if ev.is_set() or turn.cancelled or self._abort_event.is_set():
+                        break
+                    _, _, _, latest_seq = turn.current_prompt_state()
+                    if latest_seq != cur_seq:
+                        break
+                    # Pause inactivity countdown while waiting for user approval / question input.
+                    if turn.current_approval() is not None:
+                        turn.touch()
+                        turn.wake_event.wait(min(1.0, INACTIVITY_SLICE))
+                        wall_mono_gap = time.time() - time.monotonic()
+                        continue
+                    now_wall = time.time()
+                    now_mono = time.monotonic()
+                    cur_gap = now_wall - now_mono
+                    if abs(cur_gap - wall_mono_gap) > HOST_SLEEP_TOLERANCE:
+                        turn.touch()
+                    wall_mono_gap = cur_gap
+                    if turn.inactivity_paused():
+                        turn.last_activity = now_mono
+                        silent_tool = now_mono - turn.last_progress_at
+                        if silent_tool > ACTIVE_TOOL_SILENT_TIMEOUT:
+                            timed_out = True
+                            self._dirty = True
+                            turn.cancel_pending(force=True)
+                            break
+                        remaining = ACTIVE_TOOL_SILENT_TIMEOUT - silent_tool
+                        turn.wake_event.wait(min(1.0, max(0.05, remaining)))
+                        continue
+                    elapsed = now_mono - turn.last_activity
+                    if elapsed > INACTIVITY_TIMEOUT:
+                        timed_out = True
+                        self._dirty = True
+                        turn.cancel_pending(force=True)
+                        break
+                    remaining = INACTIVITY_TIMEOUT - elapsed
+                    turn.wake_event.wait(min(1.0, max(0.05, remaining)))
+
+                _, _, _, latest_seq = turn.current_prompt_state()
+                if not timed_out and not turn.cancelled and not self._abort_event.is_set() and latest_seq != cur_seq:
                     continue
-                if time.monotonic() - turn.last_activity > INACTIVITY_TIMEOUT:
-                    self.cancel_turn()
-                    return {
-                        "status": "timeout",
-                        "conversation_id": acp_sid,
-                        "answer": "".join(turn.normalizer.answer_chunks) or None,
-                        "error": "Agy 任务响应超时",
-                        "usage": dict(turn.normalizer.usage),
-                    }
 
-            if turn.cancelled and not ev.is_set():
-                ev.wait(5.0)
+                if timed_out or turn.cancelled or self._abort_event.is_set() or "error" in box:
+                    break
+
+                if not turn.has_post_settle_work():
+                    break
+
+                turn.normalizer.prompt_settled = True
+                settled_seq = cur_seq
+                turn.touch_progress()
+                steered_during_hold = False
+                while not turn.cancelled and not self._abort_event.is_set() and not self._closed:
+                    _, _, _, seq_now = turn.current_prompt_state()
+                    if seq_now > settled_seq:
+                        turn.normalizer.prompt_settled = False
+                        steered_during_hold = True
+                        break
+                    now_wall = time.time()
+                    now_mono = time.monotonic()
+                    cur_gap = now_wall - now_mono
+                    if abs(cur_gap - wall_mono_gap) > HOST_SLEEP_TOLERANCE:
+                        turn.touch()
+                    wall_mono_gap = cur_gap
+
+                    with turn._perm_lock:
+                        has_open_req = turn.pending_permission is not None or turn._open_incoming_requests > 0
+                    if has_open_req:
+                        turn.touch_progress()
+                        wait_for = 0.25
+                    elif turn.normalizer.has_outliving_background_work():
+                        silent = now_mono - turn.last_progress_at
+                        if silent >= POST_SETTLE_COMMAND_HOLD_TIMEOUT:
+                            break
+                        wait_for = min(0.25, max(0.05, POST_SETTLE_COMMAND_HOLD_TIMEOUT - silent))
+                    else:
+                        debounce = (
+                            POST_SETTLE_REPLY_QUIET_LIMIT
+                            if turn.normalizer.reply_open
+                            else POST_SETTLE_DEBOUNCE
+                        )
+                        quiet = now_mono - turn.last_progress_at
+                        if quiet >= debounce:
+                            break
+                        wait_for = min(0.25, max(0.05, debounce - quiet))
+
+                    turn.wake_event.clear()
+                    _, _, _, seq_now = turn.current_prompt_state()
+                    if seq_now > settled_seq:
+                        turn.normalizer.prompt_settled = False
+                        steered_during_hold = True
+                        break
+                    if turn.cancelled or self._abort_event.is_set() or self._closed:
+                        break
+                    turn.wake_event.wait(wait_for)
+
+                if steered_during_hold:
+                    continue
+                break
+
+            req_id, ev, box, _ = turn.current_prompt_state()
+            assert req_id is not None and ev is not None
+
+            if timed_out:
                 with self._rpc_lock:
                     self._pending_rpcs.pop(req_id, None)
+                    for sup_id, _, _ in turn.superseded_prompts:
+                        self._pending_rpcs.pop(sup_id, None)
+                with turn.event_lock:
+                    for evt in turn.normalizer.finish_turn():
+                        turn.on_event(evt)
+                self._retire(force=True)
+                return {
+                    "status": "timeout",
+                    "conversation_id": acp_sid,
+                    "answer": turn.normalizer.final_answer or None,
+                    "progress_messages": list(turn.normalizer.progress_messages),
+                    "error": "Agy 任务响应超时，已重置后台进程，可继续发送消息续接上下文",
+                    "effective_model": effective_model,
+                    "fallback_notice": "；".join(notices) if notices else None,
+                    "usage": dict(turn.normalizer.usage),
+                }
 
-            for evt in turn.normalizer.finish_turn():
-                turn.on_event(evt)
+            if turn.cancelled and not ev.is_set():
+                if not turn.force_cancelled and not self._abort_event.is_set():
+                    grace_deadline = time.monotonic() + CANCEL_GRACE_TIMEOUT
+                    while not ev.is_set() and not turn.force_cancelled and not self._abort_event.is_set():
+                        rem = grace_deadline - time.monotonic()
+                        if rem <= 0:
+                            break
+                        turn.wake_event.clear()
+                        if ev.is_set() or turn.force_cancelled or self._abort_event.is_set():
+                            break
+                        turn.wake_event.wait(min(0.25, rem))
+                if not ev.is_set():
+                    with self._rpc_lock:
+                        self._pending_rpcs.pop(req_id, None)
+                        for sup_id, _, _ in turn.superseded_prompts:
+                            self._pending_rpcs.pop(sup_id, None)
+                    self._dirty = True
 
-            answer = "".join(turn.normalizer.answer_chunks)
+            with turn.event_lock:
+                for evt in turn.normalizer.finish_turn():
+                    turn.on_event(evt)
+
+            with turn.prompt_lock:
+                superseded_boxes = [b for _, e, b in turn.superseded_prompts if e.is_set()]
+            if superseded_boxes:
+                prompt_usage: dict[str, int] = {}
+                for sb in superseded_boxes:
+                    _merge_prompt_usage(prompt_usage, sb.get("result"))
+                if ev.is_set() and "result" in box:
+                    _merge_prompt_usage(prompt_usage, box.get("result"))
+                for k, v in prompt_usage.items():
+                    turn.normalizer.usage[k] = v
+            elif ev.is_set():
+                extract_usage_fields(box.get("result"), turn.normalizer.usage)
+
+            answer = turn.normalizer.final_answer
+            progress_messages = list(turn.normalizer.progress_messages)
             usage = dict(turn.normalizer.usage)
+            notice_text = "；".join(notices) if notices else None
             if turn.cancelled:
                 return {
                     "status": "cancelled",
                     "conversation_id": acp_sid,
                     "answer": answer or None,
+                    "progress_messages": progress_messages,
+                    "effective_model": effective_model,
+                    "fallback_notice": notice_text,
                     "usage": usage,
                 }
             if "error" in box:
@@ -655,25 +1370,57 @@ class AgySessionWorker:
                     "status": status,
                     "conversation_id": acp_sid,
                     "answer": answer or None,
+                    "progress_messages": progress_messages,
                     "error": str(msg),
+                    "effective_model": effective_model,
+                    "fallback_notice": notice_text,
                     "usage": usage,
                 }
             return {
                 "status": "success",
                 "conversation_id": acp_sid,
                 "answer": answer,
+                "progress_messages": progress_messages,
+                "effective_model": effective_model,
+                "fallback_notice": notice_text,
                 "usage": usage,
             }
         finally:
             self.active_turn = None
             turn.done_event.set()
             self.last_used = time.monotonic()
+            if self._dirty or self._abort_event.is_set():
+                self._retire(force=True)
 
-    def cancel_turn(self) -> None:
+    def force_abort(self, reason: str = "Agy 任务已强制终止") -> None:
+        """Immediately abort active RPCs, approvals, and child processes without waiting on `_lock`."""
+        self._closed = True
+        self._retired = True
+        self._dirty = True
+        self._abort_event.set()
         turn = self.active_turn
         if turn is not None:
-            turn.cancel_pending()
-        if self.acp_session_id and self.is_alive():
+            turn.cancel_pending(force=True)
+        self._wake_pending_rpcs(reason)
+        with self._proc_lock:
+            proc = self.proc
+            group = self._process_group
+            self._process_group = None
+        if group is not None:
+            group.terminate(getattr(proc, "pid", None))
+        elif proc is not None and proc.poll() is None:
+            child_job.terminate_tree(getattr(proc, "pid", None))
+
+    def cancel_turn(self, *, force: bool = False) -> None:
+        if force:
+            self.force_abort("Agy 任务已强制终止")
+            return
+        turn = self.active_turn
+        if turn is None:
+            self.force_abort("Agy 启动阶段已取消")
+            return
+        turn.cancel_pending(force=False)
+        if turn.prompt_queued.is_set() and self.acp_session_id and self.is_alive():
             try:
                 self._send_frame({
                     "jsonrpc": "2.0",
@@ -683,18 +1430,25 @@ class AgySessionWorker:
             except AgyProfileError:
                 pass
 
-    def _teardown_locked(self) -> None:
+    def _teardown_locked(self, *, force: bool = False) -> None:
         try:
             self._closed = True
+            if force:
+                self._retired = True
+                self._abort_event.set()
             turn = self.active_turn
             if turn is not None:
-                turn.cancel_pending()
-            proc = self.proc
-            self.proc = None
+                turn.cancel_pending(force=force)
+            self._wake_pending_rpcs("Agy ACP 会话已关闭")
+            with self._proc_lock:
+                proc = self.proc
+                self.proc = None
+                group = self._process_group
+                self._process_group = None
             sid = self.acp_session_id
             self.acp_session_id = None
             if proc is not None:
-                if sid and proc.stdin and proc.poll() is None:
+                if not force and sid and proc.stdin and proc.poll() is None:
                     try:
                         proc.stdin.write(json.dumps({
                             "jsonrpc": "2.0",
@@ -705,7 +1459,16 @@ class AgySessionWorker:
                         proc.stdin.flush()
                     except OSError:
                         pass
-                if proc.poll() is None:
+                if group is not None:
+                    if force or proc.poll() is None:
+                        group.terminate(proc.pid)
+                        for _ in range(10):
+                            if proc.poll() is not None:
+                                break
+                            time.sleep(0.01)
+                    else:
+                        group.close()
+                elif proc.poll() is None:
                     child_job.terminate_tree(proc.pid)
                 if proc.poll() is None:
                     # The worker may already have been evicted. Transfer its
@@ -716,9 +1479,18 @@ class AgySessionWorker:
                     self._profile_lock_held = False
                     self.temp_dir = None
                     exited = self._exit_pending = threading.Event()
+                    for stream in (proc.stdin, proc.stdout):
+                        close_fn = getattr(stream, "close", None)
+                        if callable(close_fn):
+                            try:
+                                close_fn()
+                            except OSError:
+                                pass
 
                     def wait_for_exit() -> None:
-                        proc.wait()
+                        wait_fn = getattr(proc, "wait", None)
+                        if callable(wait_fn):
+                            wait_fn()
                         child_job.forget(proc.pid)
                         if temp_dir is not None:
                             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -732,12 +1504,15 @@ class AgySessionWorker:
                         log.error("Cannot monitor Agy worker exit; retaining profile lock for %s", profile_id)
                     return
                 for stream in (proc.stdin, proc.stdout):
-                    if stream:
+                    close_fn = getattr(stream, "close", None)
+                    if callable(close_fn):
                         try:
-                            stream.close()
+                            close_fn()
                         except OSError:
                             pass
                 child_job.forget(proc.pid)
+            elif group is not None:
+                group.close()
             if self.temp_dir is not None:
                 shutil.rmtree(self.temp_dir, ignore_errors=True)
                 self.temp_dir = None
@@ -751,9 +1526,42 @@ class AgySessionWorker:
         exited = self._exit_pending
         return exited is not None and not exited.is_set()
 
-    def close(self) -> None:
+    def close(self, *, force: bool = False) -> None:
+        if force:
+            self.force_abort()
         with self._lock:
-            self._teardown_locked()
+            self._teardown_locked(force=force)
+
+    def snapshot(self, *, now: float | None = None) -> dict[str, Any]:
+        current = time.monotonic() if now is None else now
+        with self._proc_lock:
+            pid = getattr(self.proc, "pid", None) if self.proc is not None else None
+            proc_alive = self.proc is not None and self.proc.poll() is None
+        turn = self.active_turn
+        exit_pending = self.exit_pending()
+        busy = turn is not None
+        if self._retired or exit_pending:
+            state = "retiring"
+        elif busy:
+            state = "running"
+        elif self.is_alive():
+            state = "idle"
+        else:
+            state = "stopped"
+        return {
+            "profile_id": self.profile_id,
+            "session_id": self.session_id,
+            "workspace": str(self.workspace),
+            "pid": int(pid) if isinstance(pid, int) and not isinstance(pid, bool) else None,
+            "alive": bool(proc_alive and not self._closed),
+            "busy": busy,
+            "state": state,
+            "active_run_id": turn.run_id if turn is not None else None,
+            "idle_seconds": max(0, int(current - self.last_used)) if not busy else 0,
+            "dirty": bool(self._dirty),
+            "retired": bool(self._retired),
+            "exit_pending": bool(exit_pending),
+        }
 
 
 class AgyRuntimeManager:
@@ -790,6 +1598,7 @@ class AgyRuntimeManager:
         )
         self._shutdown_event = threading.Event()
         self._reaper_thread: threading.Thread | None = None
+        self._model_sync_thread: threading.Thread | None = None
 
     def _probe_version_once(self, executable: str) -> str | None:
         with self._lock:
@@ -826,6 +1635,11 @@ class AgyRuntimeManager:
     def _auth_state_fast(self, profile_id: str) -> AntiAuthState:
         return "authenticated" if agy_profile.has_local_credentials(profile_id) else "login_required"
 
+    @staticmethod
+    def _supports_steering_for_version(version: str | None) -> bool | None:
+        parsed = parse_version(version)
+        return parsed >= (1, 5, 0) if parsed is not None else None
+
     def status(self, *, verify_auth: bool = False) -> AntiDaemonStatus:
         """Fast, non-spawning runtime snapshot (T3 Code health-check discipline)."""
         executable = agy_profile.agy_executable_or_none()
@@ -837,12 +1651,14 @@ class AgyRuntimeManager:
                 active_count=0,
                 auth_state="unverified" if verify_auth else None,
                 managed=True,
+                supports_steering=None,
             )
         with self._lock:
             stopped = self._stopped_manually
             version = self._cached_version
         if not stopped and version is None:
             version = self._probe_version_once(executable)
+        steering = self._supports_steering_for_version(version)
         with self._lock:
             if self._stopped_manually:
                 return AntiDaemonStatus(
@@ -853,6 +1669,7 @@ class AgyRuntimeManager:
                     auth_state=None,
                     managed=True,
                     version=version,
+                    supports_steering=steering,
                 )
             active_id = agy_profile.snapshot()[0]
             return AntiDaemonStatus(
@@ -863,6 +1680,7 @@ class AgyRuntimeManager:
                 auth_state=self._auth_state_fast(active_id) if verify_auth else None,
                 managed=True,
                 version=version,
+                supports_steering=steering,
             )
 
     def panel_status(self) -> AntiDaemonStatus:
@@ -879,6 +1697,7 @@ class AgyRuntimeManager:
             self._cached_version = None
             self._version_checked = False
             self._version_epoch += 1
+            self._ensure_model_sync_locked()
             _append_log("Agy ACP runtime enabled")
         return self.status(verify_auth=True)
 
@@ -886,25 +1705,31 @@ class AgyRuntimeManager:
         if self._draining_workers:
             raise AgyProfileError(409, "Agy 正在关闭旧会话，请稍后重试")
 
-    def stop(self) -> AntiDaemonStatus:
-        return self._stop_or_restart(restart=False)
+    def stop(self, *, force: bool = False) -> AntiDaemonStatus:
+        return self._stop_or_restart(restart=False, force=force)
 
-    def restart(self) -> AntiDaemonStatus:
-        return self._stop_or_restart(restart=True)
+    def restart(self, *, force: bool = False) -> AntiDaemonStatus:
+        return self._stop_or_restart(restart=True, force=force)
 
-    def _stop_or_restart(self, *, restart: bool) -> AntiDaemonStatus:
+    def _stop_or_restart(self, *, restart: bool, force: bool = False) -> AntiDaemonStatus:
         with self._lifecycle_lock:
             with self._lock:
                 # Include registered runs that have not entered worker.run yet.
-                if self._active_turns:
+                if self._active_turns and not force:
                     raise AgyProfileError(409, "当前有正在运行的 Anti 任务，请先停止或等待任务结束")
+                active_workers = list(dict.fromkeys(self._active_turns.values())) if force else []
                 self._draining_workers = True
                 workers = self._detach_workers_locked(list(self._workers))
                 code_login = self._code_login
                 self._code_login = None
             try:
+                for active_worker in active_workers:
+                    try:
+                        active_worker.force_abort("Agy 运行时已强制重置" if restart else "Agy 运行时已强制停止")
+                    except Exception:
+                        log.debug("Failed to force_abort active worker", exc_info=True)
                 try:
-                    self._close_detached(workers)
+                    self._close_detached(workers, force=force)
                 finally:
                     if code_login is not None:
                         code_login.cancel()
@@ -937,11 +1762,23 @@ class AgyRuntimeManager:
             detached.append(entry)
         return detached
 
-    def _close_detached(self, workers: list[tuple[AgySessionWorker, threading.Event]]) -> None:
+    def _close_detached(
+        self,
+        workers: list[tuple[AgySessionWorker, threading.Event]],
+        *,
+        force: bool = False,
+    ) -> None:
         first_error = None
         for worker, closed in workers:
             try:
-                worker.close()
+                if force:
+                    try:
+                        worker.close(force=True)
+                    except TypeError:
+                        worker.force_abort()
+                        worker.close()
+                else:
+                    worker.close()
             except Exception as exc:
                 # Fail closed for this key, but still attempt to close the rest.
                 log.exception("Failed to close Agy session %s", worker.session_id)
@@ -994,6 +1831,54 @@ class AgyRuntimeManager:
             daemon=True,
         )
         self._reaper_thread.start()
+        self._ensure_model_sync_locked()
+
+    def _sync_models_if_due(self) -> None:
+        with self._lock:
+            if self._stopped_manually:
+                return
+            active_id, _ = agy_profile.snapshot()
+        if agy_profile.agy_executable_or_none() is None:
+            return
+        if not agy_models.is_profile_catalog_stale(active_id):
+            return
+        try:
+            self.sync_models(active_id)
+        except Exception:
+            log.debug("Scheduled Agy upstream model sync failed", exc_info=True)
+
+    def _model_sync_loop(self) -> None:
+        while not self._shutdown_event.is_set():
+            cfg = agy_models.load_models_config()
+            if not cfg.get("sync", {}).get("auto_sync", True):
+                if self._shutdown_event.wait(60.0):
+                    return
+                continue
+            now = agy_models._local_now()
+            hours = cfg.get("sync", {}).get("schedule_hours")
+            target = agy_models.next_scheduled_slot(now, hours)
+            wait_sec = max(1.0, (target - now).total_seconds())
+            while wait_sec > 0 and not self._shutdown_event.is_set():
+                step = min(60.0, wait_sec)
+                if self._shutdown_event.wait(step):
+                    return
+                now = agy_models._local_now()
+                wait_sec = (target - now).total_seconds()
+            if self._shutdown_event.is_set():
+                return
+            self._sync_models_if_due()
+
+    def _ensure_model_sync_locked(self) -> None:
+        if self._idle_ttl <= 0 or self._shutdown_event.is_set():
+            return
+        if self._model_sync_thread is not None and self._model_sync_thread.is_alive():
+            return
+        self._model_sync_thread = threading.Thread(
+            target=self._model_sync_loop,
+            name="agy-model-sync",
+            daemon=True,
+        )
+        self._model_sync_thread.start()
 
     def shutdown(self) -> None:
         with self._lifecycle_lock:
@@ -1010,6 +1895,8 @@ class AgyRuntimeManager:
             self._login_profile = None
             reaper = self._reaper_thread
             self._reaper_thread = None
+            sync_thread = self._model_sync_thread
+            self._model_sync_thread = None
         try:
             try:
                 self._close_detached(workers)
@@ -1021,6 +1908,8 @@ class AgyRuntimeManager:
                     child_job.forget(login.pid)
                 if reaper is not None and reaper.is_alive() and threading.current_thread() is not reaper:
                     reaper.join(timeout=1.0)
+                if sync_thread is not None and sync_thread.is_alive() and threading.current_thread() is not sync_thread:
+                    sync_thread.join(timeout=1.0)
         finally:
             with self._lock:
                 self._stopped_manually = True
@@ -1073,14 +1962,20 @@ class AgyRuntimeManager:
             return None
 
     @contextmanager
-    def submission(self):
+    def submission(self, profile_id: str | None = None):
         with self._lock:
-            profile_id = agy_profile.snapshot()[0]
-            self._require_login_closed(profile_id)
+            active, profiles = agy_profile.snapshot()
+            if profile_id is not None:
+                if not any(p.id == profile_id for p in profiles):
+                    raise AgyProfileError(404, "找不到指定的 Agy 账号")
+                target = profile_id
+            else:
+                target = active
+            self._require_login_closed(target)
             if self._stopped_manually:
                 raise AgyProfileError(409, "Agy 运行时已停止，请先在顶部状态栏重新启用")
             agy_profile.agy_executable()
-            yield profile_id
+            yield target
 
     def _require_session_available_locked(self, db_key: str, profile_id: str, session_id: str) -> None:
         self._require_login_closed(profile_id)
@@ -1112,6 +2007,7 @@ class AgyRuntimeManager:
                         version=version,
                         on_models=lambda models, pid=profile_id: self._record_models(pid, models),
                         on_commands=lambda cmds, pid=profile_id: self._record_commands(pid, cmds),
+                        on_retire=lambda w, key_db=db_key: self.retire_worker(key_db, w),
                     )
                     self._workers[key] = worker
                     self._ensure_reaper_locked()
@@ -1123,10 +2019,16 @@ class AgyRuntimeManager:
                 detached = self._detach_workers_locked([key])
             self._close_detached(detached)
 
-    def _record_models(self, profile_id: str, items: list[dict[str, str]]) -> None:
+    def _record_models(self, profile_id: str, items: list[dict[str, Any]]) -> None:
+        if not items:
+            return
+        try:
+            saved = agy_models.save_profile_catalog(profile_id, items, source="acp", merge_existing=True)
+        except OSError:
+            saved = [dict(i) for i in items]
         with self._lock:
-            if items:
-                self._cached_models[profile_id] = items
+            if saved:
+                self._cached_models[profile_id] = saved
 
     def _record_commands(self, profile_id: str, commands: list[dict[str, Any]]) -> None:
         cleaned: list[dict[str, Any]] = []
@@ -1149,6 +2051,11 @@ class AgyRuntimeManager:
         with self._lock:
             self._cached_commands[profile_id] = cleaned
 
+    def has_cached_commands(self, profile_id: str | None = None) -> bool:
+        pid = profile_id or agy_profile.snapshot()[0]
+        with self._lock:
+            return pid in self._cached_commands
+
     def commands(self, profile_id: str | None = None) -> list[dict[str, Any]]:
         pid = profile_id or agy_profile.snapshot()[0]
         with self._lock:
@@ -1167,6 +2074,24 @@ class AgyRuntimeManager:
                 k[0] == db_key and k[2] == session_id and w.is_alive()
                 for k, w in self._workers.items()
             )
+
+    def session_grants(self, db_key: str, session_id: str) -> list[str]:
+        grants: set[str] = set()
+        with self._lock:
+            for (w_db, _, w_sid), worker in self._workers.items():
+                if w_db == db_key and w_sid == session_id:
+                    snap = worker.grants.snapshot()
+                    if "*" in snap:
+                        return ["*"]
+                    grants.update(snap)
+        return sorted(grants)
+
+    def clear_session_grants(self, db_key: str, session_id: str, kind: str | None = None) -> list[str]:
+        with self._lock:
+            for (w_db, _, w_sid), worker in self._workers.items():
+                if w_db == db_key and w_sid == session_id:
+                    worker.grants.clear(kind)
+        return self.session_grants(db_key, session_id)
 
     def register_turn(self, db_path: Path, run_id: str, worker: AgySessionWorker) -> None:
         with self._lock:
@@ -1200,21 +2125,115 @@ class AgyRuntimeManager:
             return False
         return turn.decide(approval_id, decision, option_id=option_id)
 
-    def cancel_turn(self, db_path: Path, run_id: str) -> bool:
+    def retire_worker(self, db_key: str, worker: AgySessionWorker, *, force: bool = True) -> None:
+        key = (db_key, worker.profile_id, worker.session_id)
+        with self._lock:
+            detached = self._detach_workers_locked([key]) if self._workers.get(key) is worker else []
+        if detached:
+            self._close_detached(detached, force=force)
+        else:
+            if force:
+                try:
+                    worker.close(force=True)
+                except TypeError:
+                    worker.force_abort()
+                    worker.close()
+            else:
+                worker.close()
+
+    def cancel_turn(self, db_path: Path, run_id: str, *, force: bool = False) -> bool:
+        with self._lock:
+            worker = self._active_turns.get((db_path, run_id))
+            if worker is None:
+                return False
+            key = (str(db_path), worker.profile_id, worker.session_id)
+            detached = (
+                self._detach_workers_locked([key])
+                if force and self._workers.get(key) is worker
+                else []
+            )
+        if force:
+            worker.force_abort("Agy 任务已强制终止")
+            if detached:
+                self._close_detached(detached, force=True)
+            else:
+                self.retire_worker(str(db_path), worker, force=True)
+            return True
+        worker.cancel_turn(force=False)
+        if worker._dirty:
+            threading.Thread(
+                target=self.retire_worker,
+                args=(str(db_path), worker),
+                kwargs={"force": True},
+                daemon=True,
+            ).start()
+        return True
+
+    def close_session(self, db_key: str, session_id: str, *, force: bool = False) -> None:
+        with self._lock:
+            keys = [k for k in self._workers if k[0] == db_key and k[2] == session_id]
+            active_workers = [
+                self._workers[k]
+                for k in keys
+                if self._workers[k] in self._active_turns.values()
+            ]
+            if active_workers and not force:
+                raise AgyProfileError(409, "当前有正在运行的任务，请先停止后再重连会话。")
+            workers = self._detach_workers_locked(keys)
+        if force:
+            for active_worker in active_workers:
+                active_worker.force_abort("Agy 会话已强制重连")
+        self._close_detached(workers, force=force)
+
+    def steer_turn(
+        self,
+        db_path: Path,
+        run_id: str,
+        *,
+        prompt_text: str,
+        staged_paths: list[Path],
+        attachments: list[dict[str, Any]],
+        allowed_roots: list[Path],
+    ) -> dict[str, Any]:
         with self._lock:
             worker = self._active_turns.get((db_path, run_id))
         if worker is None:
-            return False
-        worker.cancel_turn()
-        return True
+            raise AgyProfileError(409, "当前任务已结束，请直接发送新消息。")
+        return worker.steer_turn(
+            prompt_text=prompt_text,
+            staged_paths=staged_paths,
+            attachments=attachments,
+            allowed_roots=allowed_roots,
+        )
 
-    def close_session(self, db_key: str, session_id: str) -> None:
+    def list_workers(self, db_key: str | None = None, *, now: float | None = None) -> list[dict[str, Any]]:
+        current = time.monotonic() if now is None else now
+        items: list[dict[str, Any]] = []
+        seen_workers: set[int] = set()
         with self._lock:
-            workers = self._detach_workers_locked([k for k in self._workers if k[0] == db_key and k[2] == session_id])
-        self._close_detached(workers)
+            self._prune_retiring_locked()
+            for (w_db, _, _), worker in list(self._workers.items()):
+                if db_key is not None and w_db != db_key:
+                    continue
+                seen_workers.add(id(worker))
+                snap = worker.snapshot(now=current)
+                snap["idle_ttl"] = int(self._idle_ttl)
+                items.append(snap)
+            for (w_db, _, _), (worker, _) in list(self._retiring.items()):
+                if db_key is not None and w_db != db_key:
+                    continue
+                if id(worker) in seen_workers:
+                    continue
+                snap = worker.snapshot(now=current)
+                snap["state"] = "retiring"
+                snap["idle_ttl"] = int(self._idle_ttl)
+                items.append(snap)
+        order = {"running": 0, "retiring": 1, "idle": 2, "stopped": 3}
+        items.sort(key=lambda item: (order.get(item["state"], 9), -item["idle_seconds"]))
+        return items
 
     @staticmethod
-    def _parse_models_output(stdout: str) -> list[dict[str, str]]:
+    def _parse_models_output(stdout: str) -> list[dict[str, Any]]:
         stripped = (stdout or "").strip()
         if not stripped:
             return []
@@ -1242,21 +2261,18 @@ class AgyRuntimeManager:
                 label = label.strip() or mid
                 if mid:
                     rows.append((mid, label))
-        items: list[dict[str, str]] = []
+        items: list[dict[str, Any]] = []
         seen: set[str] = set()
         for mid, label in rows:
             if mid not in seen:
                 seen.add(mid)
-                items.append({"id": mid, "display_name": label})
+                entry: dict[str, Any] = {"id": mid, "display_name": label}
+                if agy_models.is_orchestrator_model(mid):
+                    entry["is_orchestrator"] = True
+                items.append(entry)
         return items
 
-    def models(self, profile_id: str | None = None) -> list[dict[str, str]]:
-        pid = profile_id or agy_profile.snapshot()[0]
-        with self._lock:
-            self._require_login_closed(pid)
-            cached = self._cached_models.get(pid)
-            if cached:
-                return list(cached)
+    def _fetch_cli_models(self, pid: str) -> list[dict[str, Any]]:
         executable = agy_profile.agy_executable()
         temp_dir = agy_profile.make_runtime_temp_dir(pid)
         try:
@@ -1284,11 +2300,92 @@ class AgyRuntimeManager:
             raise AgyProfileError(503, "读取 Agy 模型目录失败，请检查 agy 安装和登录状态") from exc
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
-
         if not items:
             raise AgyProfileError(502, "Agy 返回了空的模型目录")
-        self._record_models(pid, items)
         return items
+
+    def models(
+        self,
+        profile_id: str | None = None,
+        *,
+        force_refresh: bool = False,
+        include_cloudcode: bool = False,
+    ) -> list[dict[str, Any]]:
+        pid = profile_id or agy_profile.snapshot()[0]
+        with self._lock:
+            self._require_login_closed(pid)
+            self._ensure_model_sync_locked()
+            cached = self._cached_models.get(pid)
+        disk_items, meta = agy_models.profile_catalog(pid)
+        if not force_refresh:
+            if disk_items and not meta["stale"]:
+                with self._lock:
+                    self._cached_models[pid] = list(disk_items)
+                return list(disk_items)
+            if cached and not disk_items:
+                return list(cached)
+
+        cli_items: list[dict[str, Any]] = []
+        cli_error: AgyProfileError | None = None
+        try:
+            cli_items = self._fetch_cli_models(pid)
+        except AgyProfileError as exc:
+            cli_error = exc
+
+        cloud_items: list[dict[str, Any]] = []
+        if include_cloudcode or cli_error is not None:
+            try:
+                cloud_res = agy_usage.probe_available_models(pid)
+                if isinstance(cloud_res, dict) and isinstance(cloud_res.get("items"), list):
+                    cloud_items = [dict(i) for i in cloud_res["items"] if isinstance(i, dict)]
+            except Exception:
+                log.debug("CloudCode model probe failed for %s", pid, exc_info=True)
+
+        merged = agy_models.merge_catalog_items(cli_items, cloud_items) if (cli_items or cloud_items) else []
+        if merged:
+            src = "cli+cloudcode" if cli_items and cloud_items else ("cloudcode" if cloud_items else "cli")
+            try:
+                saved = agy_models.save_profile_catalog(pid, merged, source=src, merge_existing=True)
+            except OSError:
+                saved = merged
+            with self._lock:
+                self._cached_models[pid] = list(saved)
+            return list(saved)
+
+        if cli_error is not None:
+            try:
+                agy_models.record_sync_error(str(cli_error))
+            except OSError:
+                pass
+            if not force_refresh and disk_items:
+                with self._lock:
+                    self._cached_models[pid] = list(disk_items)
+                return list(disk_items)
+            raise cli_error
+        raise AgyProfileError(502, "Agy 返回了空的模型目录")
+
+    def models_catalog_info(
+        self,
+        profile_id: str | None = None,
+        *,
+        force_refresh: bool = False,
+        include_cloudcode: bool = False,
+    ) -> dict[str, Any]:
+        pid = profile_id or agy_profile.snapshot()[0]
+        items = self.models(pid, force_refresh=force_refresh, include_cloudcode=include_cloudcode)
+        _, meta = agy_models.profile_catalog(pid)
+        return {
+            "items": items,
+            "synced_at": meta.get("synced_at"),
+            "next_sync_at": meta.get("next_sync_at"),
+            "stale": bool(meta.get("stale")),
+            "default_model": meta.get("default_model"),
+            "default_effort": meta.get("default_effort"),
+        }
+
+    def sync_models(self, profile_id: str | None = None) -> dict[str, Any]:
+        pid = profile_id or agy_profile.snapshot()[0]
+        return self.models_catalog_info(pid, force_refresh=True, include_cloudcode=True)
 
     # ── Profile management operations ──
 
@@ -1334,6 +2431,28 @@ class AgyRuntimeManager:
     def delete_profile(self, profile_id: str) -> None:
         with self._profile_change(profile_id):
             agy_profile.delete(profile_id)
+        try:
+            agy_models.clear_profile_catalog(profile_id)
+        except OSError:
+            pass
+
+    def set_profile_orchestrator(
+        self,
+        profile_id: str,
+        *,
+        planner: str | None = None,
+        executor: str | None = None,
+    ) -> dict[str, str | None]:
+        saved = agy_profile.set_orchestrator_settings(profile_id, planner=planner, executor=executor)
+        with self._lock:
+            registered = set(self._active_turns.values())
+            idle_keys = [
+                k for k, w in self._workers.items()
+                if k[1] == profile_id and w not in registered and w.active_turn is None
+            ]
+            workers = self._detach_workers_locked(idle_keys)
+        self._close_detached(workers)
+        return saved
 
     def clear_profile_credentials(self, profile_id: str) -> dict[str, Any]:
         with self._profile_change(profile_id):
@@ -1347,14 +2466,17 @@ class AgyRuntimeManager:
             if active == profile_id:
                 return
             self._require_login_closed(active, profile_id)
-            if self._active_turn_count() > 0:
-                raise AgyProfileError(409, "请等当前 Agy 任务全部结束后再切换账号")
             agy_profile.select(profile_id)
-            workers = self._detach_workers_locked(list(self._workers))
-            self._cached_models.clear()
-            self._cached_commands.clear()
+            registered = set(self._active_turns.values())
+            idle_keys = [
+                k for k, w in self._workers.items()
+                if w not in registered and w.active_turn is None
+            ]
+            workers = self._detach_workers_locked(idle_keys)
+            self._cached_models.pop(profile_id, None)
+            self._cached_commands.pop(profile_id, None)
         self._close_detached(workers)
-        _append_log(f"Switched active Agy profile to {profile_id}")
+        _append_log(f"Switched global default Agy profile to {profile_id}")
 
     @staticmethod
     def _watch_login_process(

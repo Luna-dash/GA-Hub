@@ -80,6 +80,7 @@ class FakeWorker:
             "status": "success",
             "conversation_id": self.manager.next_conv(self.profile_id, run_id),
             "answer": "完整结果",
+            **({"progress_messages": ["阶段一：检查文件", "阶段二：应用修改"]} if resume_conversation else {}),
             "usage": {"input_tokens": 120, "output_tokens": 30, "cache_read_tokens": 60},
         }
 
@@ -177,6 +178,9 @@ def test_unified_acp_round_trip_mode_switch_and_resume(tmp_path, monkeypatch):
         runs = f"{sessions}/{session['id']}/runs"
         body = {"operation": "message1", "prompt": "check structure"}
         run = client.post(runs, json=body).json()
+        assert run["started_at"]
+        if run["status"] in engine.ACTIVE:
+            assert run["finished_at"] is None
         path = f"{runs}/{run['id']}"
         assert client.post(runs, json=body).json()["id"] == run["id"]
         assert client.post(runs, json=body | {"prompt": "changed"}).status_code == 409
@@ -184,7 +188,10 @@ def test_unified_acp_round_trip_mode_switch_and_resume(tmp_path, monkeypatch):
 
         completed = _wait_terminal(client, path)
         assert completed["status"] == "success"
+        assert completed["started_at"] == run["started_at"]
+        assert completed["finished_at"]
         assert completed["answer"] == "完整结果"
+        assert completed["progress_messages"] == []
         assert runtime.calls[0]["mode"] == "plan"
         assert runtime.calls[0]["conversation"] is None
 
@@ -206,6 +213,8 @@ def test_unified_acp_round_trip_mode_switch_and_resume(tmp_path, monkeypatch):
         }).json()
         done2 = _wait_terminal(client, f"{runs}/{second['id']}")
         assert done2["status"] == "success"
+        assert done2["progress_messages"] == ["阶段一：检查文件", "阶段二：应用修改"]
+        assert client.get(runs).json()[-1]["progress_messages"] == ["阶段一：检查文件", "阶段二：应用修改"]
         assert done2["usage"] == {"input_tokens": 120, "output_tokens": 30, "cache_read_tokens": 60, "thinking_tokens": 0}
         assert runtime.calls[-1]["mode"] == "accept-edits"
         assert runtime.calls[-1]["permission_mode"] == "auto-accept-edits"
@@ -490,3 +499,362 @@ def test_connect_initializes_schema_once_with_wal_and_ephemeral_is_non_destructi
     assert engine._EVENT_BUS.ephemeral_after(key, cur_a) == (1, [])
     engine._EVENT_BUS.notify(key, finished=True)
     assert engine._EVENT_BUS.ephemeral_after(key, 0) == (0, [])
+
+
+def test_force_cancel_and_force_reset_converge_stuck_run_and_keep_conversation(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path / "data")
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+    db = tmp_path / "anti_force.sqlite"
+
+    class ForceAwareRuntime(FakeRuntime):
+        def __init__(self):
+            super().__init__(hold_turn=False)
+            self.force_calls: list[tuple[str, bool]] = []
+
+        def cancel_turn(self, db_path, run_id, *, force=False):
+            self.force_calls.append((run_id, force))
+            if not force:
+                # Simulate an unresponsive upstream ignoring soft cancel.
+                return True
+            return super().cancel_turn(db_path, run_id)
+
+    runtime = ForceAwareRuntime()
+    monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(db, runtime))
+    monkeypatch.setattr(anti.daemon, "submission", lambda: __import__("contextlib").nullcontext("default"))
+    app = FastAPI()
+    app.include_router(anti.router)
+    with TestClient(app) as client:
+        sid = client.post("/api/anti/sessions", json={"project": "project"}).json()["id"]
+        runs = f"/api/anti/sessions/{sid}/runs"
+
+        # 1. Establish a saved conversation id via a normal completed run.
+        first = client.post(runs, json={"operation": "op0", "prompt": "init"}).json()
+        assert _wait_terminal(client, f"{runs}/{first['id']}")["status"] == "success"
+
+        # 2. Switch to wedged turns where soft cancel hangs and normal reset raises 409.
+        entered = threading.Event()
+        orig_run_turn = FakeWorker.run_turn
+
+        def hooked_run_turn(self, **kwargs):
+            if self.manager.hold_turn:
+                self.perm_event.clear()
+                entered.set()
+            return orig_run_turn(self, **kwargs)
+
+        monkeypatch.setattr(FakeWorker, "run_turn", hooked_run_turn)
+        runtime.hold_turn = True
+        wedged1 = client.post(runs, json={"operation": "op1", "prompt": "stuck 1"}).json()
+        assert entered.wait(2.0)
+
+        ticks = iter([0.0, 0.0, 3.5])
+
+        class FastClock:
+            @staticmethod
+            def monotonic():
+                return next(ticks)
+
+            @staticmethod
+            def sleep(_seconds):
+                pass
+
+        with monkeypatch.context() as clock:
+            clock.setattr(engine, "time", FastClock)
+            soft_resp = client.post(f"{runs}/{wedged1['id']}/cancel")
+        assert soft_resp.status_code == 200
+        assert soft_resp.json()["status"] in engine.ACTIVE
+        assert client.post(f"/api/anti/sessions/{sid}/reset").status_code == 409
+
+        force_resp = client.post(f"{runs}/{wedged1['id']}/cancel?force=true")
+        assert force_resp.status_code == 200
+        assert force_resp.json()["status"] == "cancelled"
+        assert (wedged1["id"], True) in runtime.force_calls
+
+        # 3. A second wedged run can be force-reset while preserving conversation resume capability.
+        entered.clear()
+        wedged2 = client.post(runs, json={"operation": "op2", "prompt": "stuck 2"}).json()
+        assert entered.wait(2.0)
+        reset_resp = client.post(f"/api/anti/sessions/{sid}/reset?force=true")
+        assert reset_resp.status_code == 200
+        assert reset_resp.json()["has_conversation"] is True
+        assert reset_resp.json()["active_run_id"] is None
+        assert client.get(f"{runs}/{wedged2['id']}").json()["status"] == "cancelled"
+
+
+def test_workers_listing_and_mid_turn_steer_endpoint(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path / "data")
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+    db = tmp_path / "anti_steer.sqlite"
+
+    class SteerRuntime(FakeRuntime):
+        def __init__(self):
+            super().__init__(hold_turn=True)
+            self.steers: list[dict] = []
+
+        def list_workers(self, db_key=None):
+            return [
+                {
+                    "profile_id": "default",
+                    "session_id": sid,
+                    "workspace": str(workspace),
+                    "pid": 9101,
+                    "alive": True,
+                    "busy": bool(self.workers.get(("turn", active_id))),
+                    "state": "running",
+                    "active_run_id": active_id,
+                    "idle_seconds": 0,
+                    "idle_ttl": 1800,
+                    "dirty": False,
+                    "retired": False,
+                    "exit_pending": False,
+                }
+            ]
+
+        def steer_turn(self, db_path, run_id, *, prompt_text, staged_paths, attachments, allowed_roots):
+            self.steers.append({
+                "run_id": run_id,
+                "prompt_text": prompt_text,
+                "allowed_roots": list(allowed_roots),
+            })
+            return {"steered": True, "prompt_seq": 2}
+
+    runtime = SteerRuntime()
+    monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(db, runtime))
+    monkeypatch.setattr(anti.daemon, "submission", lambda: __import__("contextlib").nullcontext("default"))
+    app = FastAPI()
+    app.include_router(anti.router)
+    with TestClient(app) as client:
+        sid = client.post("/api/anti/sessions", json={"project": "project", "title": "Steer 会话"}).json()["id"]
+        runs = f"/api/anti/sessions/{sid}/runs"
+        entered = threading.Event()
+        orig_run_turn = FakeWorker.run_turn
+
+        def hooked_run_turn(self, **kwargs):
+            self.perm_event.clear()
+            entered.set()
+            return orig_run_turn(self, **kwargs)
+
+        monkeypatch.setattr(FakeWorker, "run_turn", hooked_run_turn)
+        run = client.post(runs, json={"operation": "op-steer", "prompt": "start task"}).json()
+        active_id = run["id"]
+        assert entered.wait(2.0)
+
+        workers_resp = client.get("/api/anti/workers")
+        assert workers_resp.status_code == 200
+        items = workers_resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["project"] == "project"
+        assert items[0]["session_title"] == "Steer 会话"
+        assert items[0]["pid"] == 9101
+        assert items[0]["active_run_id"] == active_id
+
+        steer_resp = client.post(f"{runs}/{active_id}/steer", json={"prompt": "优先补单测"})
+        assert steer_resp.status_code == 200
+        assert runtime.steers[-1]["run_id"] == active_id
+        assert "优先补单测" in runtime.steers[-1]["prompt_text"]
+
+        runtime.workers[(str(db.resolve()), "default", sid)].perm_event.set()
+        assert _wait_terminal(client, f"{runs}/{active_id}")["status"] == "success"
+
+        done_steer = client.post(f"{runs}/{active_id}/steer", json={"prompt": "late"})
+        assert done_steer.status_code == 409
+
+
+def test_session_profile_binding_grants_and_compact_endpoints(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from server.services import agy_profile
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", data_dir)
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", data_dir)
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+
+    alt = agy_profile.add("备用账号")
+
+    class Phase3Runtime(FakeRuntime):
+        def __init__(self):
+            super().__init__(require_approval=True)
+            self._has_cached = True
+            self._commands = [{"name": "plan", "description": "规划", "hint": None}]
+            self._grants: dict[str, set[str]] = {}
+            self.model_profile_queries: list[str | None] = []
+            self.command_profile_queries: list[str | None] = []
+            self.closed_sessions: list[tuple[str, str]] = []
+
+        def models(self, profile_id=None):
+            self.model_profile_queries.append(profile_id)
+            return [{"id": f"model-{profile_id or 'default'}", "display_name": f"Model {profile_id or 'default'}"}]
+
+        def commands(self, profile_id=None):
+            self.command_profile_queries.append(profile_id)
+            return list(self._commands)
+
+        def has_cached_commands(self, profile_id=None):
+            return self._has_cached
+
+        def session_grants(self, db_path, session_id):
+            return sorted(self._grants.get(session_id, set()))
+
+        def clear_session_grants(self, db_path, session_id, kind=None):
+            current = self._grants.setdefault(session_id, set())
+            if kind:
+                current.discard(kind)
+            else:
+                current.clear()
+            return sorted(current)
+
+        def close_session(self, db_path, session_id, *, force=False):
+            self.closed_sessions.append((str(db_path), session_id))
+            super().close_session(db_path, session_id)
+
+    runtime = Phase3Runtime()
+    db = tmp_path / "anti.sqlite"
+    monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(db, runtime))
+    monkeypatch.setattr(anti.daemon, "submission", lambda profile_id=None: nullcontext(profile_id or "default"))
+
+    app = FastAPI()
+    app.include_router(anti.router)
+    with TestClient(app) as client:
+        assert client.get(f"/api/anti/models?profile_id={alt.id}").json()["items"][0]["id"] == f"model-{alt.id}"
+        assert client.get(f"/api/anti/commands?profile_id={alt.id}").json()["items"][0]["name"] == "plan"
+        assert runtime.model_profile_queries[-1] == alt.id
+        assert runtime.command_profile_queries[-1] == alt.id
+
+        session = client.post("/api/anti/sessions", json={"project": "project"}).json()
+        sid = session["id"]
+        assert session["profile_id"] is None
+        assert session["grants"] == []
+
+        # Unknown profile -> 404; compact without conversation -> 409
+        assert client.patch(f"/api/anti/sessions/{sid}/profile", json={"profile_id": "nonexistent"}).status_code == 404
+        assert client.post(f"/api/anti/sessions/{sid}/compact", json={}).status_code == 409
+
+        # Bind session to alt profile
+        bound = client.patch(f"/api/anti/sessions/{sid}/profile", json={"profile_id": alt.id})
+        assert bound.status_code == 200
+        assert bound.json()["profile_id"] == alt.id
+        assert (str(db.resolve()), sid) in runtime.closed_sessions or any(s == sid for _, s in runtime.closed_sessions)
+
+        # Start an active run on alt profile; switching this session's profile while active -> 409
+        run = client.post(
+            f"/api/anti/sessions/{sid}/runs",
+            json={"operation": "op-bind", "prompt": "check", "mode": "accept-edits", "permission_mode": "approval-required"},
+        ).json()
+        rid = run["id"]
+        deadline = time.monotonic() + 2.0
+        while (str(db.resolve()), alt.id, sid) not in runtime.workers and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert (str(db.resolve()), alt.id, sid) in runtime.workers
+        assert client.patch(f"/api/anti/sessions/{sid}/profile", json={"profile_id": "default"}).status_code == 409
+
+        runtime._grants[sid] = {"edit", "execute"}
+        runtime.workers[(str(db.resolve()), alt.id, sid)].perm_event.set()
+        assert _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{rid}")["status"] == "success"
+
+        # Session lists accumulated grants and supports per-kind / full revoke
+        listed = next(item for item in client.get("/api/anti/sessions").json() if item["id"] == sid)
+        assert listed["profile_id"] == alt.id
+        assert listed["grants"] == ["edit", "execute"]
+
+        revoked_one = client.delete(f"/api/anti/sessions/{sid}/grants?kind=edit")
+        assert revoked_one.status_code == 200 and revoked_one.json()["grants"] == ["execute"]
+        revoked_all = client.delete(f"/api/anti/sessions/{sid}/grants")
+        assert revoked_all.status_code == 200 and revoked_all.json()["grants"] == []
+
+        # Compact checks cached commands list when available, then submits /compact
+        assert client.post(f"/api/anti/sessions/{sid}/compact", json={}).status_code == 409
+        runtime._commands.append({"name": "compact", "description": "压缩上下文", "hint": None})
+        compact_resp = client.post(f"/api/anti/sessions/{sid}/compact", json={})
+        assert compact_resp.status_code == 200
+        compact_run = compact_resp.json()
+        assert compact_run["prompt"] == "/compact"
+        deadline = time.monotonic() + 2.0
+        while runtime.workers[(str(db.resolve()), alt.id, sid)].perm_event.is_set() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        runtime.workers[(str(db.resolve()), alt.id, sid)].perm_event.set()
+        assert _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{compact_run['id']}")["status"] == "success"
+
+        # Unbind back to global active account
+        unbound = client.patch(f"/api/anti/sessions/{sid}/profile", json={"profile_id": None})
+        assert unbound.status_code == 200 and unbound.json()["profile_id"] is None
+
+
+def test_models_config_sync_and_run_effective_model_persistence(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from server.services import agy_models, agy_profile
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", data_dir)
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", data_dir)
+    agy_models.reset_cache()
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+
+    class ModelSyncRuntime(FakeRuntime):
+        def models_catalog_info(self, profile_id=None, *, force_refresh=False, include_cloudcode=False):
+            return {
+                "items": [{"id": "gemini-4-hydrogen-high", "display_name": "Gemini 4 Hydrogen (High)"}],
+                "synced_at": "2026-11-25T06:00:00+08:00",
+                "next_sync_at": "2026-11-25T12:00:00+08:00",
+                "stale": False,
+                "default_model": "gemini-4-hydrogen-high",
+                "default_effort": "high",
+            }
+
+        def sync_models(self, profile_id=None):
+            return {
+                "items": [
+                    {"id": "gemini-4-hydrogen-high", "display_name": "Gemini 4 Hydrogen (High)"},
+                    {"id": "gemini-pro-orchestrator-neon", "display_name": "Orchestrator (Neon)", "is_orchestrator": True},
+                ],
+                "synced_at": "2026-11-25T09:00:00+08:00",
+                "next_sync_at": "2026-11-25T12:00:00+08:00",
+                "stale": False,
+                "default_model": "gemini-4-hydrogen-high",
+                "default_effort": "high",
+            }
+
+    runtime = ModelSyncRuntime()
+
+    def fallback_turn(**kwargs):
+        return {
+            "status": "success",
+            "conversation_id": "conv-fb",
+            "answer": "ok",
+            "progress_messages": [],
+            "effective_model": "gemini-4-hydrogen-high",
+            "fallback_notice": "当前账号不支持模型「old-hybrid」，已自动回退至「gemini-4-hydrogen-high」执行",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+
+    runtime.run_turn_hook = fallback_turn
+    monkeypatch.setattr(FakeWorker, "run_turn", lambda self, **kw: runtime.run_turn_hook(**kw))
+
+    db = tmp_path / "anti.sqlite"
+    monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(db, runtime))
+    monkeypatch.setattr(anti.daemon, "submission", lambda profile_id=None: nullcontext(profile_id or "default"))
+
+    app = FastAPI()
+    app.include_router(anti.router)
+    with TestClient(app) as client:
+        assert client.post("/api/anti/models/sync").json()["items"][1]["is_orchestrator"] is True
+        cfg = client.get("/api/anti/models/config").json()
+        assert cfg["schedule_hours"] == [0, 6, 12, 18]
+        assert cfg["allow_auto_fallback"] is True
+
+        sid = client.post("/api/anti/sessions", json={"project": "project"}).json()["id"]
+        run = client.post(
+            f"/api/anti/sessions/{sid}/runs",
+            json={"operation": "op-fb", "prompt": "hi", "model": "old-hybrid", "effort": "high"},
+        ).json()
+        done = _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{run['id']}")
+        assert done["effective_model"] == "gemini-4-hydrogen-high"
+        assert "old-hybrid" in (done.get("fallback_notice") or "")
+
+

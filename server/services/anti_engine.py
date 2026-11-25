@@ -15,7 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 from .. import _paths
-from . import agy_profile
+from . import agy_models, agy_profile
 from .agy_profile import AgyProfileError as AntiError
 from .agy_protocol import PERMISSION_MODES, default_permission_mode
 from .agy_runtime import AgyRuntimeManager, runtime as default_runtime
@@ -106,6 +106,7 @@ _EVENT_BUS = _RunEventBus()
 
 class AntiSessions:
     _local_runs: set[tuple[Path, str]] = set()
+    _extra_staging_dirs: dict[tuple[Path, str], list[Path]] = {}
     _local_lock = threading.RLock()
     _schema_lock = threading.Lock()
     _initialized_dbs: dict[Path, int] = {}
@@ -122,7 +123,7 @@ class AntiSessions:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY, project TEXT NOT NULL, workspace TEXT NOT NULL,
-                title TEXT NOT NULL, conversation TEXT, updated_at TEXT
+                title TEXT NOT NULL, conversation TEXT, updated_at TEXT, profile_id TEXT
             );
             CREATE TABLE IF NOT EXISTS profile_conversations (
                 session_id TEXT NOT NULL, profile_id TEXT NOT NULL, conversation TEXT NOT NULL,
@@ -134,6 +135,8 @@ class AntiSessions:
                 artifact TEXT, sha256 TEXT, error TEXT, model TEXT, effort TEXT,
                 references_json TEXT, error_detail TEXT, profile_id TEXT,
                 attachments_json TEXT, mode TEXT, permission_mode TEXT, usage_json TEXT,
+                started_at TEXT, finished_at TEXT, progress_messages_json TEXT,
+                effective_model TEXT, fallback_notice TEXT,
                 UNIQUE(session_id, operation)
             );
             CREATE TABLE IF NOT EXISTS run_events (
@@ -147,6 +150,8 @@ class AntiSessions:
         run_columns = (
             "model", "effort", "references_json", "error_detail",
             "profile_id", "attachments_json", "mode", "permission_mode", "usage_json",
+            "started_at", "finished_at", "progress_messages_json",
+            "effective_model", "fallback_notice",
         )
         if not set(run_columns).issubset(columns):
             with conn:
@@ -156,12 +161,14 @@ class AntiSessions:
                     if column not in columns:
                         conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
         session_columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
-        if "conversation" not in session_columns or "updated_at" not in session_columns:
+        if "conversation" not in session_columns or "updated_at" not in session_columns or "profile_id" not in session_columns:
             with conn:
                 conn.execute("BEGIN IMMEDIATE")
                 session_columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
                 if "conversation" not in session_columns:
                     conn.execute("ALTER TABLE sessions ADD COLUMN conversation TEXT")
+                if "profile_id" not in session_columns:
+                    conn.execute("ALTER TABLE sessions ADD COLUMN profile_id TEXT")
                 if "updated_at" not in session_columns:
                     conn.execute("ALTER TABLE sessions ADD COLUMN updated_at TEXT")
                     for sid, first_prompt in conn.execute("""
@@ -190,16 +197,59 @@ class AntiSessions:
             conn.execute("PRAGMA synchronous=NORMAL")
         return closing(conn)
 
-    def models(self, allow_fallback: bool = True) -> dict:  # noqa: ARG002
+    @staticmethod
+    def _validate_optional_profile(profile_id: str | None) -> str | None:
+        if profile_id is None:
+            return None
+        cleaned = profile_id.strip()
+        if not cleaned:
+            return None
+        _, profiles = agy_profile.snapshot()
+        if not any(p.id == cleaned for p in profiles):
+            raise AntiError(404, "找不到指定的 Agy 账号")
+        return cleaned
+
+    def models(self, allow_fallback: bool = True, profile_id: str | None = None, *, force_refresh: bool = False) -> dict:  # noqa: ARG002
+        pid = self._validate_optional_profile(profile_id)
+        info_fn = getattr(self.runtime, "models_catalog_info", None)
+        if callable(info_fn):
+            return info_fn(profile_id=pid, force_refresh=force_refresh)
+        if pid is not None:
+            try:
+                return {"items": self.runtime.models(profile_id=pid)}
+            except TypeError:
+                pass
         return {"items": self.runtime.models()}
 
-    def commands(self) -> dict:
+    def sync_models(self, profile_id: str | None = None) -> dict:
+        pid = self._validate_optional_profile(profile_id)
+        sync_fn = getattr(self.runtime, "sync_models", None)
+        if callable(sync_fn):
+            return sync_fn(profile_id=pid)
+        return self.models(profile_id=pid, force_refresh=True)
+
+    def commands(self, profile_id: str | None = None) -> dict:
+        pid = self._validate_optional_profile(profile_id)
         fn = getattr(self.runtime, "commands", None)
-        return {"items": fn() if callable(fn) else []}
+        if not callable(fn):
+            return {"items": []}
+        if pid is not None:
+            try:
+                return {"items": fn(profile_id=pid)}
+            except TypeError:
+                pass
+        return {"items": fn()}
 
     def _enrich_session(self, item: dict) -> dict:
         fn = getattr(self.runtime, "session_connected", None)
         item["acp_connected"] = bool(fn(str(self._db_key), item["id"])) if callable(fn) else False
+        pid = item.get("profile_id")
+        if pid:
+            _, profiles = agy_profile.snapshot()
+            if not any(p.id == pid for p in profiles):
+                item["profile_id"] = None
+        grants_fn = getattr(self.runtime, "session_grants", None)
+        item["grants"] = list(grants_fn(str(self._db_key), item["id"])) if callable(grants_fn) else []
         return item
 
     def list(self) -> list[dict]:
@@ -213,7 +263,7 @@ class AntiSessions:
         where = "WHERE s.id=?" if sid is not None else ""
         params = (*statuses, sid) if sid is not None else statuses
         rows = db.execute(f"""
-            SELECT s.id, s.project, s.title, s.workspace, s.updated_at,
+            SELECT s.id, s.project, s.title, s.workspace, s.updated_at, s.profile_id,
                 (s.conversation IS NOT NULL OR EXISTS(
                     SELECT 1 FROM profile_conversations pc WHERE pc.session_id=s.id
                 )) AS has_conversation,
@@ -237,13 +287,13 @@ class AntiSessions:
                     "INSERT INTO sessions (id,project,workspace,title,updated_at) VALUES (?,?,?,?,?)",
                     (sid, name, str(root), title or "", _now()),
                 )
-                return self._public_sessions(db, sid)[0]
+                return self._enrich_session(self._public_sessions(db, sid)[0])
 
     def rename(self, sid: str, title: str) -> dict:
         with self.connect() as db, db:
             if not db.execute("UPDATE sessions SET title=? WHERE id=?", (title, sid)).rowcount:
                 raise AntiError(404, "Anti session not found")
-            return self._public_sessions(db, sid)[0]
+            return self._enrich_session(self._public_sessions(db, sid)[0])
 
     def delete(self, sid: str) -> None:
         with self.connect() as db, db:
@@ -257,19 +307,111 @@ class AntiSessions:
             db.execute("DELETE FROM runs WHERE session_id=?", (sid,))
         self.runtime.close_session(str(self._db_key), sid)
 
-    def reset_runtime(self, sid: str) -> dict:
+    def _close_session_runtime(self, sid: str, *, force: bool = False) -> None:
+        if force:
+            try:
+                self.runtime.close_session(str(self._db_key), sid, force=True)
+            except TypeError:
+                self.runtime.close_session(str(self._db_key), sid)
+        else:
+            self.runtime.close_session(str(self._db_key), sid)
+
+    def reset_runtime(self, sid: str, *, force: bool = False) -> dict:
         """Close the live ACP child process for this session while keeping conversation resume ID."""
         self.session(sid)
+        placeholders = ",".join("?" * len(ACTIVE))
         with self.connect() as db:
-            if any(row[0] in ACTIVE for row in db.execute("SELECT status FROM runs WHERE session_id=?", (sid,))):
+            active_ids = [
+                row[0]
+                for row in db.execute(
+                    f"SELECT id FROM runs WHERE session_id=? AND status IN ({placeholders})",
+                    (sid, *ACTIVE),
+                )
+            ]
+        if active_ids:
+            if not force:
                 raise AntiError(409, "当前有正在运行的任务，请先停止后再重连会话。")
-        self.runtime.close_session(str(self._db_key), sid)
+            for rid in active_ids:
+                self.cancel(sid, rid, force=True)
+        self._close_session_runtime(sid, force=force)
         with self.connect() as db:
             return self._enrich_session(self._public_sessions(db, sid)[0])
 
     def delete_profile_conversations(self, profile_id: str) -> None:
         with self.connect() as db, db:
             db.execute("DELETE FROM profile_conversations WHERE profile_id=?", (profile_id,))
+            db.execute("UPDATE sessions SET profile_id=NULL WHERE profile_id=?", (profile_id,))
+
+    def resolve_session_profile(self, sid: str, explicit_profile_id: str | None = None) -> str | None:
+        explicit = self._validate_optional_profile(explicit_profile_id)
+        if explicit is not None:
+            return explicit
+        bound = self.session(sid).get("profile_id")
+        if not isinstance(bound, str) or not bound.strip():
+            return None
+        _, profiles = agy_profile.snapshot()
+        return bound if any(p.id == bound for p in profiles) else None
+
+    def set_session_profile(self, sid: str, profile_id: str | None) -> dict:
+        self.session(sid)
+        normalized = self._validate_optional_profile(profile_id)
+        placeholders = ",".join("?" * len(ACTIVE))
+        with self.connect() as db:
+            busy = db.execute(
+                f"SELECT 1 FROM runs WHERE session_id=? AND status IN ({placeholders}) LIMIT 1",
+                (sid, *ACTIVE),
+            ).fetchone()
+        if busy is not None:
+            raise AntiError(409, "当前会话有正在运行的任务，请等待结束后再切换本会话账号。")
+        with self.connect() as db, db:
+            db.execute("UPDATE sessions SET profile_id=?, updated_at=? WHERE id=?", (normalized, _now(), sid))
+        self._close_session_runtime(sid)
+        with self.connect() as db:
+            return self._enrich_session(self._public_sessions(db, sid)[0])
+
+    def clear_session_grants(self, sid: str, kind: str | None = None) -> dict:
+        self.session(sid)
+        clear_fn = getattr(self.runtime, "clear_session_grants", None)
+        if callable(clear_fn):
+            clear_fn(str(self._db_key), sid, kind)
+        with self.connect() as db:
+            return self._enrich_session(self._public_sessions(db, sid)[0])
+
+    def compact(
+        self,
+        sid: str,
+        *,
+        profile_id: str = "default",
+        model: str | None = None,
+        effort: str | None = None,
+        mode: str = "plan",
+        permission_mode: str | None = None,
+    ) -> dict:
+        def_model, def_effort = agy_models.default_model_and_effort()
+        resolved_model = model or def_model
+        resolved_effort = effort or def_effort
+        self.session(sid)
+        with self.connect() as db:
+            row = self._public_sessions(db, sid)[0]
+        if not row.get("has_conversation"):
+            raise AntiError(409, "当前会话尚无多轮上下文，无需压缩。")
+        has_cached_fn = getattr(self.runtime, "has_cached_commands", None)
+        if callable(has_cached_fn) and has_cached_fn(profile_id):
+            cmds = {str(c.get("name") or "") for c in self.commands(profile_id=profile_id).get("items", [])}
+            if "compact" not in cmds:
+                raise AntiError(409, "当前 Agy 会话未宣告支持 /compact 上下文压缩命令。")
+        return self.submit(
+            sid,
+            f"compact_{uuid4().hex[:12]}",
+            "/compact",
+            resolved_model,
+            resolved_effort,
+            [],
+            profile_id,
+            [],
+            mode,
+            permission_mode,
+        )
 
     def session(self, sid: str) -> dict:
         with self.connect() as db:
@@ -296,6 +438,19 @@ class AntiSessions:
                 item["usage"] = json.loads(raw_usage)
             except ValueError:
                 item["usage"] = None
+        raw_progress = item.get("progress_messages_json")
+        if raw_progress:
+            try:
+                parsed_progress = json.loads(raw_progress)
+                item["progress_messages"] = (
+                    [str(entry) for entry in parsed_progress if isinstance(entry, str) and entry.strip()]
+                    if isinstance(parsed_progress, list)
+                    else []
+                )
+            except ValueError:
+                item["progress_messages"] = []
+        else:
+            item["progress_messages"] = []
         if not item.get("mode"):
             item["mode"] = "plan"
         if not item.get("permission_mode"):
@@ -418,7 +573,9 @@ class AntiSessions:
                         log.warning("Could not close the Agy event writer for run %s", rid, exc_info=True)
             if registered:
                 self.runtime.unregister_turn(self._db_key, rid)
-            for directory in staging_dirs:
+            with self._local_lock:
+                extra_dirs = self._extra_staging_dirs.pop(key, [])
+            for directory in [*staging_dirs, *extra_dirs]:
                 shutil.rmtree(directory, ignore_errors=True)
 
         status = result.get("status", "cli_error")
@@ -427,6 +584,14 @@ class AntiSessions:
         conv_id = result.get("conversation_id")
         usage = result.get("usage") or {}
         usage_json = json.dumps(usage, ensure_ascii=False) if usage else None
+        progress_messages = [
+            str(m).strip()
+            for m in (result.get("progress_messages") or [])
+            if isinstance(m, str) and m.strip()
+        ]
+        progress_messages_json = json.dumps(progress_messages, ensure_ascii=False) if progress_messages else None
+        effective_model = result.get("effective_model") or model
+        fallback_notice = result.get("fallback_notice")
         error_detail = None
         if isinstance(error, str) and ("login" in error.lower() or "auth" in error.lower()):
             error_detail = "请先在顶部账号管理完成官方 Agy 登录后再试。"
@@ -442,9 +607,12 @@ class AntiSessions:
                     if profile_id == agy_profile.DEFAULT:
                         db.execute("UPDATE sessions SET conversation=? WHERE id=?", (conv_id, sid))
                 db.execute(
-                    "UPDATE runs SET status=?, answer=?, error=?, error_detail=?, usage_json=? WHERE id=? "
+                    "UPDATE runs SET status=?, answer=?, error=?, error_detail=?, usage_json=?, finished_at=?, progress_messages_json=?, effective_model=?, fallback_notice=? WHERE id=? "
                     "AND status IN ('submitting','queued','running','unknown')",
-                    (status, answer, error, error_detail, usage_json, rid),
+                    (
+                        status, answer, error, error_detail, usage_json, _now(),
+                        progress_messages_json, effective_model, fallback_notice, rid,
+                    ),
                 )
         finally:
             with self._local_lock:
@@ -454,7 +622,7 @@ class AntiSessions:
         cooldown = 60 if status == "rate_limited" else 0
         self.ledger.record_run(
             rid,
-            model,
+            effective_model,
             status,
             profile_id=profile_id,
             input_tokens=int(usage.get("input_tokens") or 0),
@@ -469,8 +637,8 @@ class AntiSessions:
         sid: str,
         operation: str,
         prompt: str,
-        model: str = DEFAULT_MODEL,
-        effort: str = DEFAULT_EFFORT,
+        model: str | None = None,
+        effort: str | None = None,
         references: list[tuple[int, str]] | None = None,
         profile_id: str = "default",
         attachments: list[dict] | None = None,
@@ -479,6 +647,9 @@ class AntiSessions:
     ) -> dict:
         if mode not in {"plan", "accept-edits"}:
             raise AntiError(422, "不支持的 Anti 运行模式")
+        def_model, def_effort = agy_models.default_model_and_effort()
+        model = model or def_model
+        effort = effort or def_effort
         resolved_permission = default_permission_mode(mode, permission_mode)
         if resolved_permission not in PERMISSION_MODES:
             raise AntiError(422, "不支持的权限策略")
@@ -533,6 +704,7 @@ class AntiSessions:
                 ).fetchone()
                 conversation = conv_row[0] if conv_row else (session["conversation"] if profile_id == "default" else None)
 
+                now = _now()
                 run = {
                     "id": rid,
                     "session_id": sid,
@@ -551,16 +723,17 @@ class AntiSessions:
                     "attachments_json": attachments_json,
                     "mode": mode,
                     "permission_mode": resolved_permission,
+                    "started_at": now,
+                    "finished_at": None,
                 }
                 db.execute(
                     """
                     INSERT INTO runs
-                    (id,session_id,operation,prompt,status,model,effort,references_json,profile_id,attachments_json,mode,permission_mode)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                    (id,session_id,operation,prompt,status,model,effort,references_json,profile_id,attachments_json,mode,permission_mode,started_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
-                    (rid, sid, operation, prompt, "running", model, effort, refs_json, profile_id, attachments_json, mode, resolved_permission),
+                    (rid, sid, operation, prompt, "running", model, effort, refs_json, profile_id, attachments_json, mode, resolved_permission, now),
                 )
-                now = _now()
                 if not session["title"]:
                     title_source = prompt or (attachments[0].get("name") if attachments else "") or "附件消息"
                     db.execute("UPDATE sessions SET title=?, updated_at=? WHERE id=?", (_prompt_title(title_source), now, sid))
@@ -626,8 +799,8 @@ class AntiSessions:
             return run
         with self.connect() as db, db:
             db.execute(
-                "UPDATE runs SET status=?, error=? WHERE id=? AND status IN ('submitting','queued','running','unknown')",
-                ("cli_error", "原 Agy 会话已断开，可继续发送消息自动恢复上下文", rid),
+                "UPDATE runs SET status=?, error=?, finished_at=? WHERE id=? AND status IN ('submitting','queued','running','unknown')",
+                ("cli_error", "原 Agy 会话已断开，可继续发送消息自动恢复上下文", _now(), rid),
             )
         return self.run(sid, rid)
 
@@ -688,19 +861,141 @@ class AntiSessions:
             if done:
                 return
 
-    def cancel(self, sid: str, rid: str) -> dict:
+    def workers(self) -> list[dict[str, Any]]:
+        list_fn = getattr(self.runtime, "list_workers", None)
+        raw = list_fn(str(self._db_key)) if callable(list_fn) else []
+        if not raw:
+            return []
+        _, profiles = agy_profile.snapshot()
+        profile_names = {p.id: p.name for p in profiles}
+        sids = {str(item["session_id"]) for item in raw if item.get("session_id")}
+        sessions_meta: dict[str, tuple[str, str]] = {}
+        if sids:
+            placeholders = ",".join("?" * len(sids))
+            with self.connect() as db:
+                for row in db.execute(
+                    f"SELECT id, project, title FROM sessions WHERE id IN ({placeholders})",
+                    tuple(sids),
+                ):
+                    sessions_meta[row["id"]] = (row["project"], row["title"])
+        enriched: list[dict[str, Any]] = []
+        for item in raw:
+            sid = str(item.get("session_id") or "")
+            pid = str(item.get("profile_id") or "default")
+            proj, title = sessions_meta.get(sid, ("", ""))
+            enriched.append({
+                **item,
+                "project": proj,
+                "session_title": title,
+                "profile_name": profile_names.get(pid, pid),
+            })
+        return enriched
+
+    def steer(
+        self,
+        sid: str,
+        rid: str,
+        prompt: str,
+        references: list[tuple[int, str]] | None = None,
+        attachments: list[dict] | None = None,
+    ) -> dict:
+        session = self.session(sid)
+        run = self.run(sid, rid)
+        if run["status"] not in ACTIVE:
+            raise AntiError(409, "当前任务已结束，请直接发送新消息。")
+        workspace_dir = Path(session["workspace"])
+        if not workspace_dir.is_dir():
+            raise AntiError(409, "Project directory is unavailable")
+        _, artifacts = project(session["project"])
+        references = references or []
+        attachments = attachments or []
+        staging = artifacts / "references" / f"{rid}_steer_{uuid4().hex[:8]}"
+        try:
+            staged, staging_dirs, staged_attachments = prepare_inputs(references, attachments, workspace_dir, staging)
+        except ReferenceError as exc:
+            raise AntiError(422, str(exc)) from exc
+        cli_prompt = self._build_cli_prompt(prompt, staged_attachments, staged, workspace_dir)
+        steer_fn = getattr(self.runtime, "steer_turn", None)
+        if not callable(steer_fn):
+            for directory in staging_dirs:
+                shutil.rmtree(directory, ignore_errors=True)
+            raise AntiError(409, "当前运行时不支持运行中插话纠偏。")
+        try:
+            steer_fn(
+                self._db_key,
+                rid,
+                prompt_text=cli_prompt,
+                staged_paths=staged,
+                attachments=staged_attachments,
+                allowed_roots=[workspace_dir, *staging_dirs],
+            )
+        except Exception:
+            for directory in staging_dirs:
+                shutil.rmtree(directory, ignore_errors=True)
+            raise
+        if staging_dirs:
+            key = (self._db_key, rid)
+            with self._local_lock:
+                if key in self._local_runs:
+                    self._extra_staging_dirs.setdefault(key, []).extend(staging_dirs)
+        return self.refresh(sid, rid)
+
+    def _force_finalize_cancelled(self, rid: str, reason: str = "已强制终止任务") -> None:
+        key = (self._db_key, rid)
+        with self._local_lock:
+            self._local_runs.discard(key)
+        with self.connect() as db, db:
+            db.execute(
+                "UPDATE runs SET status=?, error=?, finished_at=? WHERE id=? "
+                "AND status IN ('submitting','queued','running','unknown')",
+                ("cancelled", reason, _now(), rid),
+            )
+        _EVENT_BUS.notify(key, finished=True)
+
+    def force_cancel_all_active(self) -> int:
+        placeholders = ",".join("?" * len(ACTIVE))
+        with self.connect() as db:
+            rows = db.execute(
+                f"SELECT session_id, id FROM runs WHERE status IN ({placeholders})",
+                tuple(ACTIVE),
+            ).fetchall()
+        count = 0
+        for sid, rid in rows:
+            self.cancel(sid, rid, force=True)
+            count += 1
+        return count
+
+    def cancel(self, sid: str, rid: str, *, force: bool = False) -> dict:
         run = self.run(sid, rid)
         if run["status"] in TERMINAL:
             return run
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + (5.0 if force else 3.0)
         sent = False
         while True:
             current = self.run(sid, rid)
             if current["status"] in TERMINAL:
                 return current
             if not sent:
-                sent = self.runtime.cancel_turn(self._db_key, rid)
+                if force:
+                    try:
+                        sent = self.runtime.cancel_turn(self._db_key, rid, force=True)
+                    except TypeError:
+                        sent = self.runtime.cancel_turn(self._db_key, rid)
+                        self._close_session_runtime(sid, force=True)
+                    if not sent:
+                        with self._local_lock:
+                            alive = (self._db_key, rid) in self._local_runs
+                        if not alive:
+                            self._close_session_runtime(sid, force=True)
+                            self._force_finalize_cancelled(rid)
+                            return self.run(sid, rid)
+                else:
+                    sent = self.runtime.cancel_turn(self._db_key, rid)
             if time.monotonic() >= deadline:
+                if force:
+                    self._close_session_runtime(sid, force=True)
+                    self._force_finalize_cancelled(rid)
+                    return self.run(sid, rid)
                 # A live worker still owns the turn until it commits the result.
                 return self.refresh(sid, rid)
             time.sleep(0.05)
