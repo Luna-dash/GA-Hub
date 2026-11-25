@@ -5144,6 +5144,18 @@
         ],
         "summary": "Stop Daemon",
         "operationId": "stop_daemon_api_anti_stop_post",
+        "parameters": [
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -5151,6 +5163,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AntiDaemonStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -5165,6 +5187,18 @@
         ],
         "summary": "Restart Daemon",
         "operationId": "restart_daemon_api_anti_restart_post",
+        "parameters": [
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -5172,6 +5206,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AntiDaemonStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -5217,6 +5261,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/workers": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Daemon Workers",
+        "operationId": "daemon_workers_api_anti_workers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiWorkerList"
                 }
               }
             }
@@ -5438,6 +5503,98 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/profiles/{profile_id}/orchestrator": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Get Profile Orchestrator",
+        "operationId": "get_profile_orchestrator_api_anti_profiles__profile_id__orchestrator_get",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyOrchestratorSettings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Update Profile Orchestrator",
+        "operationId": "update_profile_orchestrator_api_anti_profiles__profile_id__orchestrator_patch",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgyOrchestratorUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyOrchestratorSettings"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -5880,6 +6037,24 @@
         ],
         "summary": "Models",
         "operationId": "models_api_anti_models_get",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -5887,6 +6062,125 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AntiModelList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/models/sync": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Sync Models",
+        "operationId": "sync_models_api_anti_models_sync_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiModelList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/models/config": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Models Config",
+        "operationId": "models_config_api_anti_models_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiModelsConfigResp"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Update Models Config",
+        "operationId": "update_models_config_api_anti_models_config_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntiModelsConfigPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiModelsConfigResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -5901,6 +6195,24 @@
         ],
         "summary": "Commands",
         "operationId": "commands_api_anti_commands_get",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -5908,6 +6220,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AntiCommandList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -6080,6 +6402,16 @@
               "type": "string",
               "title": "Sid"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
+            }
           }
         ],
         "responses": {
@@ -6174,6 +6506,175 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AntiRunCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiRunResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/profile": {
+      "patch": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Set Session Profile",
+        "operationId": "set_session_profile_api_anti_sessions__sid__profile_patch",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntiSessionProfileUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiSessionResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/grants": {
+      "delete": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Clear Session Grants",
+        "operationId": "clear_session_grants_api_anti_sessions__sid__grants_delete",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiSessionResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/compact": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Compact Session",
+        "operationId": "compact_session_api_anti_sessions__sid__compact_post",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AntiSessionCompactReq"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
               }
             }
           }
@@ -6407,8 +6908,79 @@
               "type": "string",
               "title": "Rid"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
+            }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiRunResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/runs/{rid}/steer": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Steer Run",
+        "operationId": "steer_run_api_anti_sessions__sid__runs__rid__steer_post",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          },
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Rid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntiRunSteer"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -6907,6 +7479,71 @@
           "code"
         ],
         "title": "AgyCodeLoginSubmit"
+      },
+      "AgyOrchestratorSettings": {
+        "properties": {
+          "profile_id": {
+            "type": "string",
+            "title": "Profile Id"
+          },
+          "planner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planner"
+          },
+          "executor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "profile_id"
+        ],
+        "title": "AgyOrchestratorSettings"
+      },
+      "AgyOrchestratorUpdate": {
+        "properties": {
+          "planner": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planner"
+          },
+          "executor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executor"
+          }
+        },
+        "type": "object",
+        "title": "AgyOrchestratorUpdate"
       },
       "AgyProfile": {
         "properties": {
@@ -7447,6 +8084,17 @@
               }
             ],
             "title": "Max Concurrency"
+          },
+          "supports_steering": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supports Steering"
           }
         },
         "type": "object",
@@ -7520,6 +8168,53 @@
           "display_name": {
             "type": "string",
             "title": "Display Name"
+          },
+          "efforts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Efforts"
+          },
+          "default_effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Effort"
+          },
+          "is_default": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Default"
+          },
+          "is_orchestrator": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Orchestrator"
           }
         },
         "type": "object",
@@ -7537,6 +8232,61 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "synced_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Synced At"
+          },
+          "next_sync_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Sync At"
+          },
+          "stale": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stale"
+          },
+          "default_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Model"
+          },
+          "default_effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Effort"
           }
         },
         "type": "object",
@@ -7544,6 +8294,194 @@
           "items"
         ],
         "title": "AntiModelList"
+      },
+      "AntiModelsConfigPatch": {
+        "properties": {
+          "auto_sync": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Sync"
+          },
+          "schedule_hours": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Hours"
+          },
+          "default_model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Model"
+          },
+          "default_effort": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Effort"
+          },
+          "allow_auto_fallback": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Auto Fallback"
+          },
+          "aliases": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aliases"
+          },
+          "quota_rules": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AntiQuotaRule"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quota Rules"
+          }
+        },
+        "type": "object",
+        "title": "AntiModelsConfigPatch"
+      },
+      "AntiModelsConfigResp": {
+        "properties": {
+          "config_path": {
+            "type": "string",
+            "title": "Config Path"
+          },
+          "auto_sync": {
+            "type": "boolean",
+            "title": "Auto Sync",
+            "default": true
+          },
+          "schedule_hours": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Schedule Hours"
+          },
+          "last_synced_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Synced At"
+          },
+          "next_sync_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Sync At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "default_model": {
+            "type": "string",
+            "title": "Default Model",
+            "default": "gemini-4-hydrogen-high"
+          },
+          "default_effort": {
+            "type": "string",
+            "title": "Default Effort",
+            "default": "high"
+          },
+          "allow_auto_fallback": {
+            "type": "boolean",
+            "title": "Allow Auto Fallback",
+            "default": true
+          },
+          "aliases": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Aliases"
+          },
+          "quota_rules": {
+            "items": {
+              "$ref": "#/components/schemas/AntiQuotaRule"
+            },
+            "type": "array",
+            "title": "Quota Rules"
+          }
+        },
+        "type": "object",
+        "required": [
+          "config_path"
+        ],
+        "title": "AntiModelsConfigResp"
       },
       "AntiQuestionOption": {
         "properties": {
@@ -7670,6 +8608,28 @@
         ],
         "title": "AntiQuotaPool"
       },
+      "AntiQuotaRule": {
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Pattern"
+          },
+          "group": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Group"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pattern",
+          "group"
+        ],
+        "title": "AntiQuotaRule"
+      },
       "AntiRunCreate": {
         "properties": {
           "operation": {
@@ -7684,24 +8644,36 @@
             "default": ""
           },
           "model": {
-            "type": "string",
-            "maxLength": 128,
-            "minLength": 1,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$",
-            "title": "Model",
-            "default": "gemini-4-hydrogen-high"
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
           },
           "effort": {
-            "type": "string",
-            "enum": [
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Effort",
-            "default": "high"
+            "title": "Effort"
           },
           "references": {
             "items": {
@@ -7744,6 +8716,19 @@
               }
             ],
             "title": "Permission Mode"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
           }
         },
         "type": "object",
@@ -7803,6 +8788,50 @@
             ],
             "title": "Error Detail"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effort"
+          },
+          "effective_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Model"
+          },
+          "fallback_notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Notice"
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -7849,6 +8878,35 @@
             },
             "type": "array",
             "title": "Attachments"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "progress_messages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Progress Messages"
           }
         },
         "additionalProperties": true,
@@ -7860,6 +8918,34 @@
           "prompt"
         ],
         "title": "AntiRunResp"
+      },
+      "AntiRunSteer": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "maxLength": 24000,
+            "title": "Prompt",
+            "default": ""
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/AntiFileReference"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "References"
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentRef"
+            },
+            "type": "array",
+            "maxItems": 256,
+            "title": "Attachments"
+          }
+        },
+        "type": "object",
+        "title": "AntiRunSteer"
       },
       "AntiRunUsage": {
         "properties": {
@@ -7886,6 +8972,83 @@
         },
         "type": "object",
         "title": "AntiRunUsage"
+      },
+      "AntiSessionCompactReq": {
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "effort": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effort"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "accept-edits"
+            ],
+            "title": "Mode",
+            "default": "plan"
+          },
+          "permission_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "approval-required",
+                  "auto-accept-edits",
+                  "auto",
+                  "full-access"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permission Mode"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          }
+        },
+        "type": "object",
+        "title": "AntiSessionCompactReq"
       },
       "AntiSessionCreate": {
         "properties": {
@@ -7914,6 +9077,24 @@
           "project"
         ],
         "title": "AntiSessionCreate"
+      },
+      "AntiSessionProfileUpdate": {
+        "properties": {
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          }
+        },
+        "type": "object",
+        "title": "AntiSessionProfileUpdate"
       },
       "AntiSessionRename": {
         "properties": {
@@ -7991,6 +9172,24 @@
               }
             ],
             "title": "Acp Connected"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          },
+          "grants": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Grants"
           },
           "engine": {
             "type": "string",
@@ -8207,6 +9406,128 @@
           "window_hours"
         ],
         "title": "AntiUsageStats"
+      },
+      "AntiWorkerItem": {
+        "properties": {
+          "profile_id": {
+            "type": "string",
+            "title": "Profile Id"
+          },
+          "profile_name": {
+            "type": "string",
+            "title": "Profile Name",
+            "default": ""
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "session_title": {
+            "type": "string",
+            "title": "Session Title",
+            "default": ""
+          },
+          "project": {
+            "type": "string",
+            "title": "Project",
+            "default": ""
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "alive": {
+            "type": "boolean",
+            "title": "Alive",
+            "default": false
+          },
+          "busy": {
+            "type": "boolean",
+            "title": "Busy",
+            "default": false
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "running",
+              "retiring",
+              "idle",
+              "stopped"
+            ],
+            "title": "State",
+            "default": "idle"
+          },
+          "active_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Run Id"
+          },
+          "idle_seconds": {
+            "type": "integer",
+            "title": "Idle Seconds",
+            "default": 0
+          },
+          "idle_ttl": {
+            "type": "integer",
+            "title": "Idle Ttl",
+            "default": 0
+          },
+          "dirty": {
+            "type": "boolean",
+            "title": "Dirty",
+            "default": false
+          },
+          "retired": {
+            "type": "boolean",
+            "title": "Retired",
+            "default": false
+          },
+          "exit_pending": {
+            "type": "boolean",
+            "title": "Exit Pending",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "profile_id",
+          "session_id",
+          "workspace"
+        ],
+        "title": "AntiWorkerItem"
+      },
+      "AntiWorkerList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AntiWorkerItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "AntiWorkerList"
       },
       "AppStatusResp": {
         "properties": {
