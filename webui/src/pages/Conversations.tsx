@@ -815,7 +815,7 @@ export default function Conversations() {
           })()}
         </div>
         {active && detail && navTargets.length > 0 && (
-          <div className="pointer-events-none absolute inset-y-2 right-1.5 z-10 flex w-10 flex-col items-center gap-2">
+          <div className="pointer-events-none absolute inset-y-2 right-1.5 z-10 flex w-12 flex-col items-center gap-2">
             <div className="flex min-h-0 flex-1 items-center justify-center">
               <ConversationTurnMinimap
                 items={navTargets}
