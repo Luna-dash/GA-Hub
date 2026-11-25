@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
 import { Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, SlidersHorizontal, X } from 'lucide-react'
 import { RotateCw, Square } from '@/components/ActionIcons'
-import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/components/ChatLayout'
+import { ChatComposerFrame, ChatUtilityDock, TranscriptUtilityRail, chatTranscriptClass } from '@/components/ChatLayout'
 import { ConversationCollapseControl, ConversationCollapseProvider } from '@/components/ConversationCollapse'
 import { ConversationTurnMinimap } from '@/components/ConversationTurnMinimap'
 import { TranscriptNavDock } from '@/components/TranscriptNavDock'
@@ -1113,31 +1113,28 @@ function Conversation({ session, headerActions, profileId, profilesData, support
         },
       }}>
         {runs.length > 0 && (
-          <aside
-            ref={utilityRailRef}
-            className="pointer-events-auto flex min-h-0 w-14 flex-1 flex-col items-center gap-2"
-            aria-label="对话功能区"
+          <TranscriptUtilityRail
+            railRef={utilityRailRef}
             onPointerDown={(event) => focusChatScrollFromUtilityRail(event, transcript.current)}
-          >
-            {runs.length > 1 && (
-              <div className="pointer-events-none flex min-h-0 w-full flex-1 items-center justify-center">
-                <ConversationTurnMinimap
-                  items={minimapTurns}
-                  activeIndex={activeTurn >= 0 ? activeTurn : (stuckBottom ? Math.max(0, runs.length - 1) : 0)}
-                  onSelect={jumpToTurnIndex}
-                />
-              </div>
+            minimap={runs.length > 1 ? (
+              <ConversationTurnMinimap
+                items={minimapTurns}
+                activeIndex={activeTurn >= 0 ? activeTurn : (stuckBottom ? Math.max(0, runs.length - 1) : 0)}
+                onSelect={jumpToTurnIndex}
+              />
+            ) : null}
+            navDock={(
+              <TranscriptNavDock
+                stuckBottom={stuckBottom}
+                canPrev={activeTurn > 0}
+                canNext={activeTurn >= 0 && activeTurn < runs.length - 1}
+                unread={unreadRuns}
+                onJumpToBottom={jumpToBottom}
+                onPrev={() => jumpToTurn(-1)}
+                onNext={() => jumpToTurn(1)}
+              />
             )}
-            <TranscriptNavDock
-              stuckBottom={stuckBottom}
-              canPrev={activeTurn > 0}
-              canNext={activeTurn >= 0 && activeTurn < runs.length - 1}
-              unread={unreadRuns}
-              onJumpToBottom={jumpToBottom}
-              onPrev={() => jumpToTurn(-1)}
-              onNext={() => jumpToTurn(1)}
-            />
-          </aside>
+          />
         )}
       </ChatUtilityDock>
       <ConversationCollapseControl />

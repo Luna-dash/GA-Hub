@@ -8,6 +8,8 @@ import {
   MAX_DIRECT_MINIMAP_SLOTS,
   type MinimapTurnItem,
 } from './ConversationTurnMinimap'
+import { TranscriptUtilityRail } from './ChatLayout'
+import { TranscriptNavDock } from './TranscriptNavDock'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -148,5 +150,66 @@ describe('ConversationTurnMinimap', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
     expect(el.querySelector('[data-turn-directory-popover]')).toBeNull()
+  })
+
+  it('reuses slot button DOM nodes smoothly instead of remounting when activeIndex crosses ends', () => {
+    const items = makeTurns(30)
+    const { host: el } = mount(items, 15)
+    const beforeButtons = [...el.querySelectorAll<HTMLButtonElement>('[aria-label="多轮会话选择器"] button')]
+    expect(beforeButtons).toHaveLength(MAX_DIRECT_MINIMAP_SLOTS)
+
+    act(() => {
+      root!.render(<ConversationTurnMinimap items={items} activeIndex={29} onSelect={vi.fn()} />)
+    })
+    const atBottomButtons = [...el.querySelectorAll<HTMLButtonElement>('[aria-label="多轮会话选择器"] button')]
+    atBottomButtons.forEach((btn, idx) => {
+      expect(btn).toBe(beforeButtons[idx])
+    })
+
+    act(() => {
+      root!.render(<ConversationTurnMinimap items={items} activeIndex={0} onSelect={vi.fn()} />)
+    })
+    const atTopButtons = [...el.querySelectorAll<HTMLButtonElement>('[aria-label="多轮会话选择器"] button')]
+    atTopButtons.forEach((btn, idx) => {
+      expect(btn).toBe(beforeButtons[idx])
+    })
+  })
+
+  it('keeps fixed bottom dock reserve space even when TranscriptNavDock hides at stuckBottom', () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    const items = makeTurns(6)
+    const renderAt = (stuckBottom: boolean) => act(() => {
+      root!.render(
+        <TranscriptUtilityRail
+          minimap={<ConversationTurnMinimap items={items} activeIndex={5} onSelect={vi.fn()} />}
+          navDock={(
+            <TranscriptNavDock
+              stuckBottom={stuckBottom}
+              canPrev
+              canNext={false}
+              onJumpToBottom={vi.fn()}
+              onPrev={vi.fn()}
+              onNext={vi.fn()}
+            />
+          )}
+        />,
+      )
+    })
+
+    renderAt(true)
+    expect(host.querySelector('[aria-label="对话位置导航"]')).toBeNull()
+    const aside = host.querySelector<HTMLElement>('aside[aria-label="对话功能区"]')!
+    const bottomSlotStuck = aside.lastElementChild as HTMLElement
+    expect(bottomSlotStuck.className).toContain('h-[132px]')
+    expect(bottomSlotStuck.className).toContain('shrink-0')
+    expect(bottomSlotStuck.className).toContain('pointer-events-none')
+
+    renderAt(false)
+    expect(host.querySelector('[aria-label="对话位置导航"]')).not.toBeNull()
+    const bottomSlotFree = aside.lastElementChild as HTMLElement
+    expect(bottomSlotFree).toBe(bottomSlotStuck)
+    expect(bottomSlotFree.className).toContain('h-[132px]')
   })
 })

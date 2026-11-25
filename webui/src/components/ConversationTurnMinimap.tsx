@@ -252,7 +252,7 @@ export function ConversationTurnMinimap({
 
           return (
             <button
-              key={item.id}
+              key={slotIdx}
               type="button"
               onClick={() => {
                 if (suppressClickRef.current) {
@@ -300,7 +300,7 @@ export function ConversationTurnMinimap({
             return next
           })
         }}
-        className={`inline-flex h-5 max-w-full items-center justify-center rounded-full border px-1.5 text-[10px] font-medium leading-none tabular-nums shadow-[inset_0_1px_0_rgba(255,250,232,0.78),0_2px_8px_rgba(45,34,22,0.08)] backdrop-blur-md transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+        className={`inline-flex h-5 min-w-9 max-w-full items-center justify-center rounded-full border px-1.5 text-[10px] font-medium leading-none tabular-nums shadow-[inset_0_1px_0_rgba(255,250,232,0.78),0_2px_8px_rgba(45,34,22,0.08)] backdrop-blur-md transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
           directoryOpen
             ? 'border-accent/65 bg-accent-soft/85 text-accent-deep'
             : 'border-line/70 bg-bg-card/90 text-ink-muted hover:border-accent/55 hover:text-ink'

@@ -10,6 +10,7 @@ import { MessageContent } from '@/components/MessageContent'
 import { ReplyActions } from '@/components/ReplyActions'
 import { bubbleTone } from '@/components/bubbleTone'
 import { ConversationIndexRail } from '@/components/ConversationIndexRail'
+import { TranscriptUtilityRail } from '@/components/ChatLayout'
 import { ConversationTurnMinimap } from '@/components/ConversationTurnMinimap'
 import { TranscriptNavDock } from '@/components/TranscriptNavDock'
 import { VirtualMessageList, type VirtualMessageListHandle } from '@/components/VirtualMessageList'
@@ -815,23 +816,26 @@ export default function Conversations() {
           })()}
         </div>
         {active && detail && navTargets.length > 0 && (
-          <div className="pointer-events-none absolute inset-y-2 right-1.5 z-10 flex w-12 flex-col items-center gap-2">
-            <div className="flex min-h-0 flex-1 items-center justify-center">
+          <TranscriptUtilityRail
+            className="pointer-events-none absolute inset-y-3 right-2 z-10 flex w-14 flex-col items-center gap-2 pt-[52px]"
+            minimap={(
               <ConversationTurnMinimap
                 items={navTargets}
                 activeIndex={detailActiveTurn}
                 onSelect={jumpToDetailTurn}
               />
-            </div>
-            <TranscriptNavDock
-              stuckBottom={detailStuckBottom}
-              canPrev={detailActiveTurn > 0}
-              canNext={detailActiveTurn < navTargets.length - 1}
-              onJumpToBottom={jumpToDetailBottom}
-              onPrev={() => stepDetailTurn(-1)}
-              onNext={() => stepDetailTurn(1)}
-            />
-          </div>
+            )}
+            navDock={(
+              <TranscriptNavDock
+                stuckBottom={detailStuckBottom}
+                canPrev={detailActiveTurn > 0}
+                canNext={detailActiveTurn < navTargets.length - 1}
+                onJumpToBottom={jumpToDetailBottom}
+                onPrev={() => stepDetailTurn(-1)}
+                onNext={() => stepDetailTurn(1)}
+              />
+            )}
+          />
         )}
         </div>
       </div>

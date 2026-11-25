@@ -1,4 +1,4 @@
-import { ChatUtilityDock, chatTranscriptClass } from './ChatLayout'
+import { ChatUtilityDock, TranscriptUtilityRail, chatTranscriptClass } from './ChatLayout'
 import type { FileTransferBoxProps } from './FileTransferBox'
 import {
   forwardRef,
@@ -693,13 +693,10 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         <ConversationCollapseControl />
         <ChatUtilityDock fileTransfer={fileTransfer}>
           {(scheduledChats.length > 0 || turnCount > 0) && (
-            <aside
-              ref={utilityRailRef}
-              className="pointer-events-auto flex min-h-0 w-14 flex-1 flex-col items-center gap-2"
-              aria-label="对话功能区"
+            <TranscriptUtilityRail
+              railRef={utilityRailRef}
               onPointerDown={(event) => focusChatScrollFromUtilityRail(event, scrollRef.current)}
-            >
-              {scheduledChats.length > 0 && (
+              topSlot={scheduledChats.length > 0 ? (
                 <div data-chat-wheel-independent className="min-h-0 max-h-[42%] w-full space-y-1.5 overflow-y-auto overscroll-contain pr-0.5" aria-label="待发送定时消息">
                   {scheduledChats.map((task) => {
                     const countdown = formatCompactScheduleCountdown(task.scheduled_for, scheduleNow)
@@ -730,22 +727,15 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
                     )
                   })}
                 </div>
-              )}
-
-              {turnCount > 1 && (
-                <div className="pointer-events-none flex min-h-0 w-full flex-1 items-center justify-center">
-                  <ConversationTurnMinimap
-                    items={minimapTurns}
-                    activeIndex={activeTurn >= 0 ? activeTurn : (stuckBottom ? Math.max(0, turnCount - 1) : 0)}
-                    onSelect={jumpToTurnIndex}
-                  />
-                </div>
-              )}
-
-              {/* 底部导航组：仅在离开底部时渲染，保证 上节/下节 在可见期间
-                  屏幕位置恒定（底部按钮置于其上方，不随 stuckBottom 翻转挤动），
-                  到达最底后整组隐藏，避免角落误触。 */}
-              {turnCount > 0 && (
+              ) : undefined}
+              minimap={turnCount > 1 ? (
+                <ConversationTurnMinimap
+                  items={minimapTurns}
+                  activeIndex={activeTurn >= 0 ? activeTurn : (stuckBottom ? Math.max(0, turnCount - 1) : 0)}
+                  onSelect={jumpToTurnIndex}
+                />
+              ) : null}
+              navDock={turnCount > 0 ? (
                 <TranscriptNavDock
                   stuckBottom={stuckBottom}
                   canPrev={activeTurn > 0}
@@ -755,8 +745,8 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
                   onPrev={() => jumpToTurn(-1)}
                   onNext={() => jumpToTurn(1)}
                 />
-              )}
-            </aside>
+              ) : null}
+            />
           )}
         </ChatUtilityDock>
 
