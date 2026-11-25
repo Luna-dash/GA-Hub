@@ -82,6 +82,13 @@ it('starts Anti on demand from the page header without leaving the chat', async 
         }]
       })
     }
+    if (path === '/api/anti/quota') return reply([])
+    if (path === '/api/anti/stats?window_hours=24') {
+      return reply({
+        window_hours: 24, total_runs: 0, success_runs: 0, failed_runs: 0,
+        rate_limited_runs: 0, total_tokens: 0, cache_hit_ratio: 0, estimated_cost_usd: 0,
+      })
+    }
     if (path === '/api/anti/sessions') return reply([])
     throw new Error(`Unexpected request: ${path}`)
   })
@@ -534,23 +541,26 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await act(async () => { restartBtn.click() })
     await flush()
 
-    // Quota button displays cached percentage when opened & allows pool/breaker inspection
+    // Quota button displays cached percentage, auto-loads usage stats, and surfaces 429 cooldown unlock only when cooling down
     const usageBtn = host.querySelector('button[aria-label="检测反重力额度"]') as HTMLButtonElement
     await act(async () => { usageBtn.click() })
-    await flush()
-    expect(document.body.textContent).toContain('65%')
-    const checkPoolsBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '查看本地配额池 / 熔断') as HTMLButtonElement
-    await act(async () => { checkPoolsBtn.click() })
-    await flush()
-    expect(document.body.textContent).toContain('冷却 30s')
-    expect(document.body.textContent).toContain('5h 窗口 64%')
-    expect(document.body.textContent).toContain('7d 窗口 28%')
-    expect(document.body.textContent).toContain('24h 5 次')
-    expect(document.body.textContent).toContain('12k tok · 缓存 40%')
-    const resetBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '重置熔断') as HTMLButtonElement
-    await act(async () => { resetBtn.click() })
-    await flush()
-    expect(document.body.textContent).toContain('正常')
+    await vi.waitFor(async () => {
+      await flush()
+      expect(document.body.textContent).toContain('65%')
+      expect(document.body.textContent).toContain('触发 429 冷却')
+      expect(document.body.textContent).toContain('Gemini 4 30s')
+      expect(document.body.textContent).toContain('近 24h 5 轮（成功 4）')
+      expect(document.body.textContent).toContain('12k tok · 缓存 40%')
+    })
+    expect(document.body.textContent).not.toContain('查看本地配额池')
+    expect(document.body.textContent).not.toContain('5h 窗口 64%')
+    const unlockBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '提前解锁') as HTMLButtonElement
+    await act(async () => { unlockBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(document.body.querySelector('[data-anti-cooldown-alert]')).toBeNull()
+      expect(document.body.textContent).toContain('近 24h 5 轮（成功 4）')
+    })
 
     await act(async () => { usageBtn.click() })
 
@@ -1075,33 +1085,21 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     expect(host.querySelector('button[aria-label="压缩会话上下文"]')).toBeNull()
     expect(host.querySelector('button[aria-label="同步上游模型"]')).toBeNull()
 
-    // 3. Quota popover untouched reset display ("满额未消耗"), manual refresh button & detail diagnostic
+    // 3. Quota popover untouched reset display ("满额未消耗"), manual refresh button, detail diagnostic & compact 24h stats without cooldown alert
     const usageBtn = host.querySelector<HTMLButtonElement>('button[aria-label="检测反重力额度"]')!
     await act(async () => { usageBtn.click() })
     await flush()
     expect(document.body.textContent).toContain('满额未消耗')
+    expect(document.body.textContent).toContain('近 24h 2 轮（成功 2）')
+    expect(document.body.textContent).toContain('150 tok · 缓存 50%')
+    expect(document.body.querySelector('[data-anti-cooldown-alert]')).toBeNull()
+    expect(document.body.textContent).not.toContain('查看本地配额池')
     const refreshQuotaBtn = document.body.querySelector<HTMLButtonElement>('button[aria-label="刷新反重力额度"]')!
     expect(refreshQuotaBtn).not.toBeNull()
     await act(async () => { refreshQuotaBtn.click() })
     await flush()
     expect(usageCalls).toBe(2)
     expect(document.body.textContent).toContain('本地登录凭据已过期')
-    const checkPools = [...document.body.querySelectorAll('button')].find(b => b.textContent === '查看本地配额池 / 熔断') as HTMLButtonElement
-    await act(async () => { checkPools.click() })
-    await flush()
-    const calBtn = document.body.querySelector<HTMLButtonElement>('button[aria-label="校准 Gemini 4"]')!
-    await act(async () => { calBtn.click() })
-    await flush()
-    const pctInput = document.body.querySelector<HTMLInputElement>('input[aria-label="Gemini 4 剩余百分比"]')!
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(pctInput, '88')
-      pctInput.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    const saveCalBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '保存') as HTMLButtonElement
-    await act(async () => { saveCalBtn.click() })
-    await flush()
-    expect(calibratedPct).toBe(88)
-    expect(document.body.textContent).toContain('已校准剩余 88%')
 
     // 4. Native slash command picker (typing '/' filters blocked/low-frequency items & Enter selects) & interaction_* question card
     expect(host.querySelector('button[aria-label="插入原生命令"]')).toBeNull()
@@ -2426,6 +2424,17 @@ it('auto-refreshes usage after 10 minutes of visible dwell, pauses when hidden, 
         json: async () => ({
           state: 'authenticated',
           rows: [{ model: 'Gemini', limit: 'Weekly Limit Remaining', remaining_pct: 90, resets_at: '2026-11-30T08:00:00Z' }],
+        }),
+      }
+    }
+    if (path === '/api/anti/quota') return { ok: true, status: 200, json: async () => [] }
+    if (path === '/api/anti/stats?window_hours=24') {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          window_hours: 24, total_runs: 0, success_runs: 0, failed_runs: 0,
+          rate_limited_runs: 0, total_tokens: 0, cache_hit_ratio: 0, estimated_cost_usd: 0,
         }),
       }
     }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { Gauge, LoaderCircle, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
 import {
@@ -9,7 +9,6 @@ import {
   HttpTimeoutError,
   type AgyProfileUsageSnapshot,
   type AntiAccountUsage,
-  type AntiQuotaPool,
 } from '@/api/client'
 
 export const AUTO_USAGE_REFRESH_INTERVAL_MS = 10 * 60 * 1000
@@ -73,23 +72,6 @@ function limitLabel(limit: string) {
   if (limit === 'Five Hour Limit Remaining') return '5 小时额度'
   if (limit.endsWith(' Weekly Limit')) return '每周额度'
   return limit
-}
-
-function poolStatusView(pool: AntiQuotaPool) {
-  if (pool.status === 'cooling_down' || (pool.cooldown_remaining_seconds ?? 0) > 0) {
-    return {
-      cooling: true,
-      label: `冷却 ${pool.cooldown_remaining_seconds ?? 0}s`,
-      tone: 'text-status-danger',
-    }
-  }
-  if (pool.status === 'HARD_LIMIT') {
-    return { cooling: true, label: '已达上限', tone: 'text-status-danger' }
-  }
-  if (pool.status === 'WARN') {
-    return { cooling: false, label: '接近上限', tone: 'text-status-warning' }
-  }
-  return { cooling: false, label: '正常', tone: 'text-ink' }
 }
 
 export function AntiAccountUsageButton({
@@ -201,28 +183,26 @@ export function AntiAccountUsageButton({
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [running, dwellKey, autoTimerEpoch])
-  const pools = useMutation({ mutationFn: () => antiApi.quota(undefined, profileId) })
-  const stats = useMutation({ mutationFn: () => antiApi.stats(24, undefined, profileId) })
+  const [open, setOpen] = useState(false)
+  const pools = useQuery({
+    queryKey: ['anti-quota', profileId ?? '__active__'],
+    queryFn: ({ signal }) => antiApi.quota(signal, profileId),
+    enabled: open && running,
+    retry: false,
+  })
+  const stats = useQuery({
+    queryKey: ['anti-stats', 24, profileId ?? '__active__'],
+    queryFn: ({ signal }) => antiApi.stats(24, signal, profileId),
+    enabled: open && running,
+    retry: false,
+  })
   const resetBreaker = useMutation({
     mutationFn: (modelGroup?: string) => antiApi.resetBreaker(modelGroup, profileId),
-    onSuccess: () => { pools.mutate() },
-  })
-  const calibrate = useMutation({
-    mutationFn: ({ modelGroup, remainingPct, note }: { modelGroup: string; remainingPct: number; note?: string }) =>
-      antiApi.calibrateQuota(modelGroup, remainingPct, note, profileId),
-    onSuccess: updated => {
-      pools.reset()
-      pools.mutate()
-      setCalibrating(null)
-      if (updated) {
-        setCalibratePct(String(updated.calibrated_remaining_pct ?? ''))
-      }
+    onSuccess: () => {
+      void pools.refetch()
+      onChecked()
     },
   })
-  const [calibrating, setCalibrating] = useState<string | null>(null)
-  const [calibratePct, setCalibratePct] = useState('100')
-  const [calibrateNote, setCalibrateNote] = useState('')
-  const [open, setOpen] = useState(false)
   const popoverId = useId()
   const button = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
@@ -271,8 +251,9 @@ export function AntiAccountUsageButton({
   const liveRows = running ? usage.data?.rows : undefined
   const fallbackRows = !running || (!usage.data && !usage.isError) ? cachedUsage?.rows : undefined
   const rows = liveRows ?? fallbackRows
-  const poolRows = pools.data
-  const coolingPools = poolRows?.filter(p => poolStatusView(p).cooling) ?? []
+  const coolingPools = (pools.data ?? []).filter(
+    p => p.status === 'cooling_down' || (p.cooldown_remaining_seconds ?? 0) > 0,
+  )
   const message = !running ? '请先启用 Agy 运行时。'
     : usage.isPending ? '正在检测官方额度…'
       : usage.isError ? usage.error.message
@@ -326,7 +307,11 @@ export function AntiAccountUsageButton({
                     aria-label="刷新反重力额度"
                     title="重新检测官方额度"
                     disabled={usage.isPending}
-                    onClick={() => { if (!usage.isPending) triggerUsageRefresh() }}
+                    onClick={() => {
+                      if (!usage.isPending) triggerUsageRefresh()
+                      void pools.refetch()
+                      void stats.refetch()
+                    }}
                   >
                     <RefreshCw size={12} aria-hidden="true" className={clsx(usage.isPending && 'motion-safe:animate-spin')} />
                     <span>{usage.isPending ? '检测中' : '刷新'}</span>
@@ -356,134 +341,31 @@ export function AntiAccountUsageButton({
             {!running && rows?.length && (
               <p className="mt-1 text-[11px] text-ink-muted">Agy 运行时已停止；启用后点击图标即可刷新实时额度。</p>
             )}
-            {running && (
+            {running && (coolingPools.length > 0 || resetBreaker.isError || stats.data) && (
               <div className="mt-2 space-y-1.5 border-t border-line/70 pt-2">
-                <div className="flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    className="ga-btn-link px-0.5 py-0"
-                    disabled={pools.isPending}
-                    onClick={() => {
-                      pools.mutate()
-                      stats.mutate()
-                    }}
+                {coolingPools.length > 0 && (
+                  <div
+                    data-anti-cooldown-alert
+                    role="status"
+                    className="flex items-center justify-between gap-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-[11px] text-status-danger"
                   >
-                    {pools.isPending ? '正在查询本地配额池…' : '查看本地配额池 / 熔断'}
-                  </button>
-                  {coolingPools.length > 0 && (
+                    <span className="min-w-0">
+                      触发 429 冷却（{coolingPools.map(p => `${p.display_name} ${p.cooldown_remaining_seconds ?? 0}s`).join('、')}）
+                    </span>
                     <button
                       type="button"
-                      className="ga-btn-link px-0.5 py-0 text-status-danger hover:bg-status-danger-soft hover:text-status-danger-strong"
+                      className="ga-btn-link shrink-0 px-1 py-0 text-[11px] font-semibold text-status-danger hover:underline"
                       disabled={resetBreaker.isPending}
                       onClick={() => resetBreaker.mutate(undefined)}
                     >
-                      {resetBreaker.isPending ? '重置中…' : '重置熔断'}
+                      {resetBreaker.isPending ? '解锁中…' : '提前解锁'}
                     </button>
-                  )}
-                </div>
-                {pools.isError && <p className="text-status-danger">{pools.error.message}</p>}
-                {resetBreaker.isError && <p className="text-status-danger">{resetBreaker.error.message}</p>}
-                {calibrate.isError && <p className="text-status-danger">{calibrate.error.message}</p>}
-                {poolRows && poolRows.length > 0 && (
-                  <ul className="space-y-1.5 text-[11px] text-ink-muted">
-                    {poolRows.map(pool => {
-                      const view = poolStatusView(pool)
-                      const isCalibrating = calibrating === pool.model_group
-                      return (
-                        <li key={pool.model_group} className="space-y-1 rounded-md bg-bg-soft/70 px-2 py-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="truncate font-medium text-ink">{pool.display_name}</span>
-                            <div className="flex shrink-0 items-center gap-1.5">
-                              <span className={clsx('font-medium tabular-nums', view.tone)}>
-                                {view.label}
-                              </span>
-                              <button
-                                type="button"
-                                className="ga-btn-link px-1 py-0 text-[11px]"
-                                aria-label={`校准 ${pool.display_name}`}
-                                onClick={() => {
-                                  if (isCalibrating) {
-                                    setCalibrating(null)
-                                  } else {
-                                    setCalibrating(pool.model_group)
-                                    setCalibratePct(String(pool.calibrated_remaining_pct ?? 100))
-                                    setCalibrateNote('')
-                                  }
-                                }}
-                              >
-                                {isCalibrating ? '取消' : '校准'}
-                              </button>
-                              {view.cooling && (
-                                <button
-                                  type="button"
-                                  className="ga-btn-link px-1 py-0 text-[11px] disabled:opacity-40"
-                                  disabled={resetBreaker.isPending}
-                                  aria-label={`重置 ${pool.display_name} 熔断`}
-                                  onClick={() => resetBreaker.mutate(pool.model_group)}
-                                >
-                                  重置
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                          {(pool.window_5h_pct != null || pool.window_7d_pct != null) && (
-                            <div className="flex items-center justify-between gap-2 text-[11px] tabular-nums">
-                              <span>5h 窗口 {pool.window_5h_pct != null ? `${pool.window_5h_pct.toFixed(0)}%` : '—'}</span>
-                              <span>7d 窗口 {pool.window_7d_pct != null ? `${pool.window_7d_pct.toFixed(0)}%` : '—'}</span>
-                            </div>
-                          )}
-                          {(pool.calibrated_remaining_pct != null || (pool.estimated_cost_7d_usd ?? 0) > 0) && (
-                            <div className="flex items-center justify-between gap-2 text-[11px] tabular-nums">
-                              <span>{pool.calibrated_remaining_pct != null ? `已校准剩余 ${pool.calibrated_remaining_pct}%` : ''}</span>
-                              {(pool.estimated_cost_7d_usd ?? 0) > 0 && <span>7d ~${pool.estimated_cost_7d_usd!.toFixed(2)}</span>}
-                            </div>
-                          )}
-                          {isCalibrating && (
-                            <form
-                              className="flex flex-wrap items-center gap-1.5 pt-1"
-                              onSubmit={e => {
-                                e.preventDefault()
-                                const pct = Number(calibratePct)
-                                if (!Number.isFinite(pct) || pct < 0 || pct > 100) return
-                                calibrate.mutate({ modelGroup: pool.model_group, remainingPct: pct, note: calibrateNote.trim() || undefined })
-                              }}
-                            >
-                              <input
-                                type="number"
-                                min={0}
-                                max={100}
-                                step="1"
-                                value={calibratePct}
-                                onChange={e => setCalibratePct(e.target.value)}
-                                aria-label={`${pool.display_name} 剩余百分比`}
-                                className="w-14 rounded-md border border-line/80 bg-bg-card px-1.5 py-0.5 text-xs text-ink outline-none focus:border-accent"
-                              />
-                              <span className="text-[11px]">%</span>
-                              <input
-                                type="text"
-                                value={calibrateNote}
-                                onChange={e => setCalibrateNote(e.target.value)}
-                                placeholder="备注"
-                                aria-label="校准备注"
-                                className="min-w-0 flex-1 rounded-md border border-line/80 bg-bg-card px-1.5 py-0.5 text-xs text-ink outline-none focus:border-accent"
-                              />
-                              <button
-                                type="submit"
-                                className="ga-btn-sm-primary px-2 py-0.5 text-[11px]"
-                                disabled={calibrate.isPending}
-                              >
-                                {calibrate.isPending ? '保存中' : '保存'}
-                              </button>
-                            </form>
-                          )}
-                        </li>
-                      )
-                    })}
-                  </ul>
+                  </div>
                 )}
+                {resetBreaker.isError && <p className="text-[11px] text-status-danger">{resetBreaker.error.message}</p>}
                 {stats.data && (
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-t border-line/50 pt-1.5 text-[11px] tabular-nums text-ink-muted">
-                    <span>24h {stats.data.total_runs} 次（成功 {stats.data.success_runs}）</span>
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[11px] tabular-nums text-ink-muted">
+                    <span>近 24h {stats.data.total_runs} 轮（成功 {stats.data.success_runs}）</span>
                     <span title={`${stats.data.total_tokens.toLocaleString('en-US')} tokens`}>
                       {formatCompactTokens(stats.data.total_tokens)} tok · 缓存 {Math.min(100, Math.round(stats.data.cache_hit_ratio * 100))}%
                       {stats.data.estimated_cost_usd > 0 ? ` · ~$${stats.data.estimated_cost_usd.toFixed(2)}` : ''}
