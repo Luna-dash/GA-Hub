@@ -261,37 +261,34 @@ export function AntiModelSelector({
           </div>
           {hasEffort && (
             <div className="shrink-0 border-t border-line/60 bg-bg-soft/50 px-2.5 py-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[11px] font-medium text-ink-muted">思考强度</span>
-                <div role="radiogroup" aria-label="思考等级" className="flex flex-wrap items-center gap-1">
-                  {effortOptions.map(option => {
-                    const active = option.key === effort
-                    return (
-                      <button
-                        key={option.key}
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        aria-label={option.name}
-                        title={`思考强度：${option.name}`}
-                        data-anti-effort-option={option.key}
-                        onClick={() => {
-                          onSelectEffort(option.key)
-                          setOpen(false)
-                          triggerRef.current?.focus()
-                        }}
-                        className={clsx(
-                          'rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors',
-                          active
-                            ? 'bg-accent text-white shadow-sm'
-                            : 'border border-line/70 bg-bg-card text-ink-muted hover:border-accent/60 hover:text-ink',
-                        )}
-                      >
-                        {EFFORT_SHORT_LABELS[option.key] ?? option.name}
-                      </button>
-                    )
-                  })}
-                </div>
+              <div role="radiogroup" aria-label="思考等级" className="flex flex-wrap items-center justify-center gap-1">
+                {effortOptions.map(option => {
+                  const active = option.key === effort
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      aria-label={option.name}
+                      title={option.name}
+                      data-anti-effort-option={option.key}
+                      onClick={() => {
+                        onSelectEffort(option.key)
+                        setOpen(false)
+                        triggerRef.current?.focus()
+                      }}
+                      className={clsx(
+                        'rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors',
+                        active
+                          ? 'bg-accent text-white shadow-sm'
+                          : 'border border-line/70 bg-bg-card text-ink-muted hover:border-accent/60 hover:text-ink',
+                      )}
+                    >
+                      {EFFORT_SHORT_LABELS[option.key] ?? option.name}
+                    </button>
+                  )
+                })}
               </div>
             </div>
           )}
