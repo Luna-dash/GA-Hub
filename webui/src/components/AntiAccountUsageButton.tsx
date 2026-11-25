@@ -1,33 +1,41 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation } from '@tanstack/react-query'
-import { Gauge, LoaderCircle } from 'lucide-react'
+import { Gauge, LoaderCircle, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
-import type { components } from '@/api/generated/schema'
-import { antiApi, type AgyProfileUsageSnapshot, type AntiQuotaPool } from '@/api/client'
-import { resolveApiUrl } from '@/runtime/runtimeConfig'
+import {
+  antiApi,
+  HttpError,
+  HttpTimeoutError,
+  type AgyProfileUsageSnapshot,
+  type AntiAccountUsage,
+  type AntiQuotaPool,
+} from '@/api/client'
 
-type Usage = components['schemas']['AntiAccountUsage']
-
-async function checkUsage(): Promise<Usage> {
-  const response = await fetch(resolveApiUrl('/api/anti/account-usage'), {
-    method: 'POST',
-    headers: { 'X-GA-Hub-Action': 'check-anti-usage' },
-  })
-  if (!response.ok) {
-    if (response.status === 404 || response.status === 405) {
-      throw new Error('当前 GA-Hub 后端版本不支持额度检测，请更新后端后重试。')
+async function checkUsage(profileId?: string): Promise<AntiAccountUsage> {
+  try {
+    return await antiApi.accountUsage(profileId)
+  } catch (error) {
+    if (error instanceof HttpTimeoutError) {
+      throw new Error('检测官方额度超时，请检查网络或代理设置后重试。')
     }
-    if (response.status === 403) throw new Error('当前页面无权发起额度检测，请从 GA-Hub 页面重试。')
-    const report = await response.json().catch(() => null)
-    throw new Error(typeof report?.detail === 'string' ? report.detail : '检测失败，请重试。')
+    if (error instanceof HttpError) {
+      if (error.status === 404 || error.status === 405) {
+        throw new Error('当前 GA-Hub 后端版本不支持额度检测，请更新后端后重试。')
+      }
+      if (error.status === 403) {
+        throw new Error('当前页面无权发起额度检测，请从 GA-Hub 页面重试。')
+      }
+      const detail = typeof error.body?.detail === 'string' ? error.body.detail : error.message
+      throw new Error(detail || '检测失败，请重试。')
+    }
+    throw error
   }
-  return response.json()
 }
 
 const resetFormat = new Intl.DateTimeFormat('zh-CN', {
   month: 'numeric', day: 'numeric',
-  hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 })
 
 function formatReset(value: string) {
@@ -61,14 +69,18 @@ function poolStatusView(pool: AntiQuotaPool) {
 
 export function AntiAccountUsageButton({
   running,
+  profileId,
+  profileName,
   cachedUsage,
   onChecked,
 }: {
   running: boolean
+  profileId?: string
+  profileName?: string
   cachedUsage?: AgyProfileUsageSnapshot | null
   onChecked: () => void
 }) {
-  const usage = useMutation({ mutationFn: checkUsage, onSettled: onChecked })
+  const usage = useMutation({ mutationFn: () => checkUsage(profileId), onSettled: onChecked })
   const pools = useMutation({ mutationFn: () => antiApi.quota() })
   const stats = useMutation({ mutationFn: () => antiApi.stats(24) })
   const resetBreaker = useMutation({
@@ -100,10 +112,11 @@ export function AntiAccountUsageButton({
     const update = () => {
       const anchor = button.current?.getBoundingClientRect()
       if (!anchor) return
-      const width = Math.min(312, window.innerWidth - 16)
+      const width = Math.min(320, window.innerWidth - 16)
       setPosition({
-        top: anchor.bottom, left: Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8)),
-        maxHeight: Math.max(0, window.innerHeight - anchor.bottom - 16)
+        top: anchor.bottom,
+        left: Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8)),
+        maxHeight: Math.max(0, window.innerHeight - anchor.bottom - 16),
       })
     }
     const outside = (event: PointerEvent) => {
@@ -143,9 +156,10 @@ export function AntiAccountUsageButton({
   const message = !running ? '请先启用 Agy 运行时。'
     : usage.isPending ? '正在检测官方额度…'
       : usage.isError ? usage.error.message
-        : usage.data?.state === 'login_required' ? '请先登录 agy，再重新检测。'
-          : usage.data ? '未能读取官方额度，请重试。'
-            : '点击检测官方剩余额度。'
+        : usage.data?.detail ? usage.data.detail
+          : usage.data?.state === 'login_required' ? '请先登录 agy，再重新检测。'
+            : usage.data ? '未能读取官方额度，请重试。'
+              : '点击检测官方剩余额度。'
   const Icon = usage.isPending ? LoaderCircle : Gauge
 
   return (
@@ -168,15 +182,37 @@ export function AntiAccountUsageButton({
         <Icon size={16} aria-hidden="true" className={clsx(usage.isPending && 'motion-safe:animate-spin')} />
       </button>
       {open && position && createPortal(
-        <div ref={panel} className="fixed z-[60] w-[min(19.5rem,calc(100vw-16px))] pt-2" style={{ top: position.top, left: position.left }}>
+        <div ref={panel} className="fixed z-[60] w-[min(20rem,calc(100vw-16px))] pt-2" style={{ top: position.top, left: position.left }}>
           <div id={popoverId} tabIndex={-1} role="dialog" aria-label="反重力剩余额度" className="ga-paper-popover overflow-y-auto overscroll-contain rounded-xl p-3 text-xs text-ink" style={{ maxHeight: position.maxHeight }}>
             <div className="flex items-center justify-between gap-2">
-              <span className="font-semibold">反重力剩余额度</span>
-              {!liveRows && fallbackRows?.length && cachedUsage?.checked_at ? (
-                <span className="text-[11px] text-ink-muted tabular-nums">
-                  {running ? '缓存' : '离线缓存'} · {formatReset(cachedUsage.checked_at)}
-                </span>
-              ) : null}
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="shrink-0 font-semibold">反重力剩余额度</span>
+                {profileName && (
+                  <span className="truncate rounded bg-bg-soft px-1.5 py-0.5 text-[10px] font-medium text-ink-muted" title={profileName}>
+                    {profileName}
+                  </span>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {!usage.isPending && !liveRows && fallbackRows?.length && cachedUsage?.checked_at ? (
+                  <span className="text-[11px] text-ink-muted tabular-nums">
+                    {running ? '缓存' : '离线缓存'} · {formatReset(cachedUsage.checked_at)}
+                  </span>
+                ) : null}
+                {running && (
+                  <button
+                    type="button"
+                    className="ga-btn-link px-1 py-0 text-[11px]"
+                    aria-label="刷新反重力额度"
+                    title="重新检测官方额度"
+                    disabled={usage.isPending}
+                    onClick={() => { if (!usage.isPending) usage.mutate() }}
+                  >
+                    <RefreshCw size={12} aria-hidden="true" className={clsx(usage.isPending && 'motion-safe:animate-spin')} />
+                    <span>{usage.isPending ? '检测中' : '刷新'}</span>
+                  </button>
+                )}
+              </div>
             </div>
             {rows?.length ? (
               <ul className="mt-1 divide-y divide-line/45">
@@ -185,16 +221,23 @@ export function AntiAccountUsageButton({
                     <span className="min-w-0 break-words font-medium">{row.model}</span>
                     <span className="text-right font-semibold tabular-nums">{row.remaining_pct}%</span>
                     <span className="text-ink-muted">{limitLabel(row.limit)}</span>
-                    <time dateTime={row.resets_at} className="text-right text-ink-muted tabular-nums">{formatReset(row.resets_at)} 重置</time>
+                    {row.resets_at ? (
+                      <time dateTime={row.resets_at} className="text-right text-ink-muted tabular-nums">{formatReset(row.resets_at)} 重置</time>
+                    ) : (
+                      <span className="text-right text-ink-muted">满额未消耗</span>
+                    )}
                   </li>
                 ))}
               </ul>
             ) : <p className="mt-1 text-ink-muted">{message}</p>}
+            {running && usage.isError && rows && rows.length > 0 && (
+              <p className="mt-1 text-[11px] text-status-danger">{usage.error.message}</p>
+            )}
             {!running && rows?.length && (
               <p className="mt-1 text-[11px] text-ink-muted">Agy 运行时已停止；启用后点击图标即可刷新实时额度。</p>
             )}
             {running && (
-              <div className="mt-2 border-t border-line/70 pt-2 space-y-1.5">
+              <div className="mt-2 space-y-1.5 border-t border-line/70 pt-2">
                 <div className="flex items-center justify-between gap-2">
                   <button
                     type="button"
@@ -231,7 +274,7 @@ export function AntiAccountUsageButton({
                           <div className="flex items-center justify-between gap-2">
                             <span className="truncate font-medium text-ink">{pool.display_name}</span>
                             <div className="flex shrink-0 items-center gap-1.5">
-                              <span className={clsx('tabular-nums font-medium', view.tone)}>
+                              <span className={clsx('font-medium tabular-nums', view.tone)}>
                                 {view.label}
                               </span>
                               <button
@@ -319,7 +362,7 @@ export function AntiAccountUsageButton({
                   </ul>
                 )}
                 {stats.data && (
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-t border-line/50 pt-1.5 text-[11px] text-ink-muted tabular-nums">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-t border-line/50 pt-1.5 text-[11px] tabular-nums text-ink-muted">
                     <span>24h {stats.data.total_runs} 次（成功 {stats.data.success_runs}）</span>
                     <span>
                       {stats.data.total_tokens.toLocaleString('en-US')} tok · 缓存 {(stats.data.cache_hit_ratio * 100).toFixed(0)}%

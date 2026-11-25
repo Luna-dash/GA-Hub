@@ -3217,11 +3217,8 @@ export interface components {
             limit: string;
             /** Remaining Pct */
             remaining_pct: number;
-            /**
-             * Resets At
-             * Format: date-time
-             */
-            resets_at: string;
+            /** Resets At */
+            resets_at?: string | null;
         };
         /** AntiAccountUsage */
         AntiAccountUsage: {
@@ -3232,6 +3229,8 @@ export interface components {
             state: "authenticated" | "login_required" | "unverified";
             /** Rows */
             rows: components["schemas"]["AntiAccountQuotaRow"][];
+            /** Detail */
+            detail?: string | null;
         };
         /** AntiApprovalDecision */
         AntiApprovalDecision: {
@@ -11084,7 +11083,9 @@ export interface operations {
     };
     check_account_usage_api_anti_account_usage_post: {
         parameters: {
-            query?: never;
+            query?: {
+                profile_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -11098,6 +11099,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AntiAccountUsage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

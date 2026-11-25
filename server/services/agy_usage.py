@@ -11,26 +11,64 @@ import hashlib
 import json
 import logging
 import os
+import platform
+import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
 from .. import _paths
 from ..process_utils import hidden_process_kwargs
-from . import agy_profile
+from . import agy_profile, child_job
 
 log = logging.getLogger(__name__)
 
+
+def _antigravity_user_agent() -> str:
+    raw_platform = sys.platform
+    os_type = "win32" if raw_platform.startswith("win") else "darwin" if raw_platform == "darwin" else "linux"
+    raw_arch = platform.machine().lower()
+    if raw_arch in {"amd64", "x86_64", "x64"}:
+        arch = "x64"
+    elif raw_arch in {"arm64", "aarch64"}:
+        arch = "arm64"
+    else:
+        arch = raw_arch or "x64"
+    return f"antigravity/hub/2.24.0 (aidev_client; os_type={os_type}; arch={arch}; cl=963137146)"
+
+
 DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com"
 PROD_ENDPOINT = "https://cloudcode-pa.googleapis.com"
-USER_AGENT = "antigravity/hub/2.24.0 (aidev_client; os_type=win32; arch=x64; cl=963137146)"
-PROBE_TIMEOUT = 10.0
+USER_AGENT = _antigravity_user_agent()
+PROBE_CONNECT_TIMEOUT = 4.0
+PROBE_READ_TIMEOUT = 10.0
+PROBE_TIMEOUT: tuple[float, float] = (PROBE_CONNECT_TIMEOUT, PROBE_READ_TIMEOUT)
+CLI_REFRESH_TIMEOUT = 8.0
+_SUMMARY_WINDOW_MINS = {"5h": 5 * 60, "weekly": 7 * 24 * 60}
+
+_token_cache_lock = threading.Lock()
+# fingerprint -> (access_token, project_id, expires_monotonic, profile_id)
+_acp_token_cache: dict[str, tuple[str, str | None, float, str]] = {}
+
+
+def clear_token_cache(profile_id: str | None = None) -> None:
+    """Clear cached CloudCode OAuth access tokens (on logout/delete)."""
+    with _token_cache_lock:
+        if profile_id is None:
+            _acp_token_cache.clear()
+            return
+        stale = [fp for fp, entry in _acp_token_cache.items() if entry[3] == profile_id]
+        for fp in stale:
+            _acp_token_cache.pop(fp, None)
 
 _QUOTA_GROUPS: dict[str, dict[str, Any]] = {
     "gemini-4": {
@@ -110,12 +148,18 @@ def read_windows_cli_credential() -> bytes | None:
         if cred.CredentialBlobSize <= 0 or not cred.CredentialBlob:
             return None
         raw = bytes(cred.CredentialBlob[: cred.CredentialBlobSize])
-        text = raw.decode("utf-8", errors="replace")
+        text = raw.decode("utf-8", errors="replace").strip("\x00 \t\r\n")
         if text.startswith("go-keyring-base64:"):
             import base64
-            return base64.b64decode(text[len("go-keyring-base64:") :])
+            try:
+                return base64.b64decode(text[len("go-keyring-base64:") :])
+            except ValueError:
+                return raw
         if text.startswith("go-keyring-encoded:"):
-            return bytes.fromhex(text[len("go-keyring-encoded:") :])
+            try:
+                return bytes.fromhex(text[len("go-keyring-encoded:") :])
+            except ValueError:
+                return raw
         return raw
     finally:
         advapi32.CredFree(cred_ptr)
@@ -148,40 +192,54 @@ def _parse_iso(raw: str | None) -> datetime | None:
         return None
 
 
-def _iso_utc(raw: str | None) -> str:
+def _iso_utc_optional(raw: str | None) -> str | None:
     parsed = _parse_iso(raw)
     if parsed is not None:
         return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-    return (datetime.now(timezone.utc) + timedelta(days=7)).isoformat().replace("+00:00", "Z")
+    return None
 
 
-def _extract_access_token(profile_id: str) -> tuple[str | None, str | None]:
-    """Return `(access_token, project_id)` for a profile, refreshing if needed."""
+def _iso_utc(raw: str | None) -> str:
+    return _iso_utc_optional(raw) or (datetime.now(timezone.utc) + timedelta(days=7)).isoformat().replace("+00:00", "Z")
+
+
+def _make_http_session() -> requests.Session:
+    """Create a requests session honoring both env and Windows manual proxy settings."""
     session = requests.Session()
     session.trust_env = True
+    try:
+        env = agy_profile.system_proxy_env(dict(os.environ))
+    except Exception:
+        env = {}
+    proxies: dict[str, str] = {}
+    http_proxy = env.get("HTTP_PROXY") or env.get("http_proxy")
+    https_proxy = env.get("HTTPS_PROXY") or env.get("https_proxy")
+    if isinstance(http_proxy, str) and http_proxy:
+        proxies["http"] = http_proxy
+    if isinstance(https_proxy, str) and https_proxy:
+        proxies["https"] = https_proxy
+    if proxies:
+        session.proxies.update(proxies)
+    return session
 
-    acp_tok_path = agy_profile.find_credential_file(profile_id, "acp_token.json")
-    if acp_tok_path is not None:
-        try:
-            tok = json.loads(acp_tok_path.read_text(encoding="utf-8"))
-            res = session.post(
-                "https://oauth2.googleapis.com/token",
-                data={
-                    "client_id": tok["client_id"],
-                    "client_secret": tok["client_secret"],
-                    "refresh_token": tok["refresh_token"],
-                    "grant_type": "refresh_token",
-                },
-                timeout=PROBE_TIMEOUT,
-            )
-            if res.status_code == 200:
-                payload = res.json()
-                access = payload.get("access_token")
-                if isinstance(access, str) and access:
-                    return access, tok.get("project_id")
-        except Exception:
-            log.debug("Failed to refresh acp_token.json", exc_info=True)
 
+def _probe_endpoints(profile_id: str) -> tuple[str, ...]:
+    """Match T3 Code ENDPOINTS priority (`oauth-business` -> prod first, else daily first)."""
+    auth_type = "oauth-personal"
+    try:
+        settings_path = agy_profile.profile_app_data_dir(profile_id) / "settings.json"
+        if settings_path.is_file() and not settings_path.is_symlink():
+            raw = json.loads(settings_path.read_text(encoding="utf-8"))
+            auth_obj = raw.get("auth") if isinstance(raw, dict) else None
+            if isinstance(auth_obj, dict) and auth_obj.get("type") == "oauth-business":
+                auth_type = "oauth-business"
+    except Exception:
+        pass
+    return (PROD_ENDPOINT, DAILY_ENDPOINT) if auth_type == "oauth-business" else (DAILY_ENDPOINT, PROD_ENDPOINT)
+
+
+def _read_cli_token_record(profile_id: str) -> tuple[str | None, datetime | None]:
+    """Read `(access_token, expiry)` from `antigravity-oauth-token` or Windows keyring."""
     cli_tok_path = agy_profile.find_credential_file(profile_id, "antigravity-oauth-token")
     raw_cli: bytes | None = None
     if cli_tok_path is not None:
@@ -191,26 +249,162 @@ def _extract_access_token(profile_id: str) -> tuple[str | None, str | None]:
             raw_cli = None
     elif profile_id == agy_profile.DEFAULT and os.name == "nt":
         raw_cli = read_windows_cli_credential()
+    if not raw_cli:
+        return None, None
+    try:
+        text = raw_cli.decode("utf-8", errors="replace").strip("\x00 \t\r\n")
+        parsed = json.loads(text)
+    except Exception:
+        log.debug("Failed to parse CLI oauth token", exc_info=True)
+        return None, None
+    token_obj = parsed.get("token") if isinstance(parsed, dict) else None
+    if not isinstance(token_obj, dict):
+        return None, None
+    access = token_obj.get("access_token")
+    if not isinstance(access, str) or not access:
+        return None, None
+    return access, _parse_iso(token_obj.get("expiry") if isinstance(token_obj.get("expiry"), str) else None)
 
-    if raw_cli:
+
+def _refresh_cli_token_via_models(profile_id: str, timeout: float = CLI_REFRESH_TIMEOUT) -> bool:
+    """Refresh an expired 1.5.x CLI OAuth token via bounded `agy models` (DEVNULL + Job Object)."""
+    executable = agy_profile.agy_executable_or_none()
+    if not executable:
+        return False
+    temp_dir = agy_profile.make_runtime_temp_dir(profile_id)
+    gemini_dir = agy_profile.profile_gemini_dir(profile_id)
+    proc: subprocess.Popen | None = None
+    group: child_job.ProcessGroupHandle | None = None
+    try:
+        gemini_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        env = agy_profile.clean_agy_env(profile_id, temp_dir=temp_dir)
+        proc = child_job.spawn(
+            [executable, "models"],
+            kind="agy-token-refresh",
+            marker=executable,
+            cwd=str(gemini_dir),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **hidden_process_kwargs(detach_console=True),
+        )
+        group = child_job.create_process_group(proc)
+        proc.wait(timeout=timeout)
+        return proc.returncode == 0
+    except subprocess.TimeoutExpired:
+        if group is not None and proc is not None:
+            group.terminate(proc.pid)
+        elif proc is not None:
+            child_job.terminate_tree(proc.pid)
+        return False
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        if group is not None:
+            group.close()
+        if proc is not None:
+            child_job.forget(proc.pid)
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _resolve_access_token(
+    profile_id: str,
+    *,
+    allow_cli_refresh: bool = True,
+) -> tuple[str | None, str | None, str, str]:
+    """Return `(access_token, project_id, source, status)` with T3 Code caching & CLI renewal."""
+    acp_tok_path = agy_profile.find_credential_file(profile_id, "acp_token.json")
+    if acp_tok_path is not None:
         try:
-            parsed = json.loads(raw_cli.decode("utf-8", errors="replace"))
-            token_obj = parsed.get("token") if isinstance(parsed, dict) else None
-            if isinstance(token_obj, dict):
-                expiry = _parse_iso(token_obj.get("expiry"))
-                access = token_obj.get("access_token")
-                if isinstance(access, str) and access:
-                    if expiry is None or expiry > datetime.now(timezone.utc) + timedelta(seconds=30):
-                        return access, None
+            tok = json.loads(acp_tok_path.read_text(encoding="utf-8"))
+            cid = tok.get("client_id")
+            csecret = tok.get("client_secret")
+            rtok = tok.get("refresh_token")
+            pid = tok.get("project_id") if isinstance(tok.get("project_id"), str) else None
+            if all(isinstance(v, str) and v for v in (cid, csecret, rtok)):
+                fp = hashlib.sha256(f"{cid}\0{rtok}\0{pid or ''}".encode("utf-8")).hexdigest()
+                now_mono = time.monotonic()
+                with _token_cache_lock:
+                    cached = _acp_token_cache.get(fp)
+                    if cached and cached[2] > now_mono + 60.0 and cached[3] == profile_id:
+                        return cached[0], cached[1], "acp_token", "ok"
+                session = _make_http_session()
+                res = session.post(
+                    "https://oauth2.googleapis.com/token",
+                    data={
+                        "client_id": cid,
+                        "client_secret": csecret,
+                        "refresh_token": rtok,
+                        "grant_type": "refresh_token",
+                    },
+                    timeout=PROBE_TIMEOUT,
+                    allow_redirects=False,
+                )
+                if res.status_code == 200:
+                    payload = res.json()
+                    access = payload.get("access_token")
+                    if isinstance(access, str) and access:
+                        try:
+                            expires_in = float(payload.get("expires_in") or 3600)
+                        except (TypeError, ValueError):
+                            expires_in = 3600.0
+                        with _token_cache_lock:
+                            _acp_token_cache[fp] = (access, pid, time.monotonic() + max(60.0, expires_in), profile_id)
+                        return access, pid, "acp_token", "ok"
+                elif res.status_code in (400, 401, 403):
+                    return None, None, "acp_token", "refresh_failed"
+        except requests.RequestException:
+            return None, None, "acp_token", "network_error"
         except Exception:
-            log.debug("Failed to parse CLI oauth token", exc_info=True)
+            log.debug("Failed to refresh acp_token.json", exc_info=True)
 
-    return None, None
+    access, expiry = _read_cli_token_record(profile_id)
+    now = datetime.now(timezone.utc)
+    if access:
+        if expiry is None or expiry > now + timedelta(seconds=60):
+            return access, None, "cli_token", "ok"
+        if allow_cli_refresh and _refresh_cli_token_via_models(profile_id):
+            refreshed_access, refreshed_expiry = _read_cli_token_record(profile_id)
+            now_after = datetime.now(timezone.utc)
+            if refreshed_access and (refreshed_expiry is None or refreshed_expiry > now_after + timedelta(seconds=60)):
+                return refreshed_access, None, "cli_token", "ok"
+        return None, None, "cli_token", "expired"
+
+    return None, None, "none", "missing"
 
 
-def _parse_summary_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
+def _extract_access_token(profile_id: str) -> tuple[str | None, str | None]:
+    """Return `(access_token, project_id)` for a profile without spawning CLI refresh."""
+    access, project_id, _, _ = _resolve_access_token(profile_id, allow_cli_refresh=False)
+    return access, project_id
+
+
+def _summary_reset_time(bucket: dict[str, Any], window: str, requested_at: datetime) -> str | None:
+    """Suppress rolling full-window reset timestamps for untouched 100% buckets (T3 Code)."""
+    raw_reset = bucket.get("resetTime")
+    mins = _SUMMARY_WINDOW_MINS.get(window)
+    frac = bucket.get("remainingFraction")
+    if (
+        frac == 1
+        and bucket.get("description") is None
+        and mins is not None
+        and isinstance(raw_reset, str)
+    ):
+        parsed = _parse_iso(raw_reset)
+        if parsed is not None and abs((parsed - requested_at).total_seconds() - mins * 60) <= 60.0:
+            return None
+    return _iso_utc_optional(raw_reset if isinstance(raw_reset, str) else None)
+
+
+def _parse_summary_rows(
+    data: dict[str, Any],
+    *,
+    requested_at: datetime | None = None,
+) -> list[tuple[str, dict[str, Any]]]:
+    req_at = requested_at or datetime.now(timezone.utc)
+    rows: list[tuple[str, dict[str, Any]]] = []
+    seen_ids: set[str] = set()
     groups = data.get("groups")
     if not isinstance(groups, list) or not any(isinstance(g, dict) and g.get("buckets") for g in groups):
         groups = [{"buckets": data.get("buckets")}]
@@ -221,9 +415,9 @@ def _parse_summary_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
         for bucket in group.get("buckets") or []:
             if not isinstance(bucket, dict) or bucket.get("disabled"):
                 continue
-            bid = str(bucket.get("bucketId") or "")
+            bid = str(bucket.get("bucketId") or "").strip()
             frac = bucket.get("remainingFraction")
-            if not isinstance(frac, (int, float)):
+            if not bid or not isinstance(frac, (int, float)):
                 continue
             pct = round(max(0.0, min(1.0, float(frac))) * 100.0, 1)
             if bid.startswith("gemini-argon-"):
@@ -235,27 +429,39 @@ def _parse_summary_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
             elif bid.startswith("3p-"):
                 family = "Claude & GPT (shared)"
             else:
-                family = display_group or bid or "Antigravity"
+                family = display_group or bid
             win = str(bucket.get("window") or "")
-            limit = "Weekly Limit Remaining" if win == "weekly" else "Five Hour Limit Remaining" if win == "5h" else str(bucket.get("displayName") or "Quota")
-            key = (family, limit)
-            if key in seen:
+            limit = (
+                "Weekly Limit Remaining"
+                if win == "weekly"
+                else "Five Hour Limit Remaining"
+                if win == "5h"
+                else str(bucket.get("displayName") or "Quota").strip() or "Quota"
+            )
+            if bid in seen_ids:
                 continue
-            seen.add(key)
-            rows.append({
-                "model": family,
-                "limit": limit,
-                "remaining_pct": pct,
-                "resets_at": _iso_utc(bucket.get("resetTime")),
-            })
+            seen_ids.add(bid)
+            rows.append((
+                bid,
+                {
+                    "model": family,
+                    "limit": limit,
+                    "remaining_pct": pct,
+                    "resets_at": _summary_reset_time(bucket, win, req_at),
+                },
+            ))
     return rows
 
 
-def _parse_model_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
+def _parse_model_rows(
+    data: dict[str, Any],
+    *,
+    requested_at: datetime | None = None,  # noqa: ARG001
+) -> list[tuple[str, dict[str, Any]]]:
     models = data.get("models")
     if not isinstance(models, dict):
         return []
-    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    merged: dict[str, dict[str, Any]] = {}
     for model_id, info in models.items():
         if not isinstance(info, dict):
             continue
@@ -268,23 +474,26 @@ def _parse_model_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
             family = "GPT"
         else:
             continue
-        for label, quota in (("Reported Quota", info.get("quotaInfo")), ("Weekly Limit Remaining", info.get("weeklyQuotaInfo"))):
+        for suffix, label, quota in (
+            ("quota", "Reported Quota", info.get("quotaInfo")),
+            ("weekly", "Weekly Limit Remaining", info.get("weeklyQuotaInfo")),
+        ):
             if not isinstance(quota, dict):
                 continue
             frac = quota.get("remainingFraction")
             if not isinstance(frac, (int, float)):
                 continue
             pct = round(max(0.0, min(1.0, float(frac))) * 100.0, 1)
-            key = (family, label)
-            prev = merged.get(key)
+            dedup_id = f"{family.lower()}-{suffix}"
+            prev = merged.get(dedup_id)
             if prev is None or pct < prev["remaining_pct"]:
-                merged[key] = {
+                merged[dedup_id] = {
                     "model": family,
                     "limit": label,
                     "remaining_pct": pct,
-                    "resets_at": _iso_utc(quota.get("resetTime")),
+                    "resets_at": _iso_utc_optional(quota.get("resetTime") if isinstance(quota.get("resetTime"), str) else None),
                 }
-    return list(merged.values())
+    return list(merged.items())
 
 
 def _parse_available_model_catalog(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -325,20 +534,25 @@ def _parse_available_model_catalog(data: dict[str, Any]) -> list[dict[str, Any]]
 
 def probe_available_models(profile_id: str) -> dict[str, Any]:
     """Fetch upstream model catalog directly via CloudCode `fetchAvailableModels`."""
-    access_token, project_id = _extract_access_token(profile_id)
+    access_token, project_id, _, _ = _resolve_access_token(profile_id, allow_cli_refresh=False)
     if not access_token:
         return {"state": "login_required", "items": []}
-    session = requests.Session()
-    session.trust_env = True
+    session = _make_http_session()
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "User-Agent": USER_AGENT,
+        "User-Agent": _antigravity_user_agent(),
         "Content-Type": "application/json",
     }
     body = {"project": project_id} if project_id else {}
-    for endpoint in (DAILY_ENDPOINT, PROD_ENDPOINT):
+    for endpoint in _probe_endpoints(profile_id):
         try:
-            res = session.post(f"{endpoint}/v1internal:fetchAvailableModels", headers=headers, json=body, timeout=PROBE_TIMEOUT)
+            res = session.post(
+                f"{endpoint}/v1internal:fetchAvailableModels",
+                headers=headers,
+                json=body,
+                timeout=PROBE_TIMEOUT,
+                allow_redirects=False,
+            )
             if res.status_code != 200:
                 continue
             items = _parse_available_model_catalog(res.json())
@@ -349,104 +563,148 @@ def probe_available_models(profile_id: str) -> dict[str, Any]:
     return {"state": "authenticated", "items": []}
 
 
-def _probe_via_cli_fallback(profile_id: str) -> dict[str, Any] | None:
-    """Last-resort fallback when no readable local OAuth token is present (e.g. expired CLI token)."""
-    import re
-
-    executable = agy_profile.agy_executable_or_none()
-    if not executable:
-        return None
-    temp_dir = agy_profile.make_runtime_temp_dir(profile_id)
-    try:
-        env = agy_profile.clean_agy_env(profile_id, temp_dir=temp_dir)
-        res = subprocess.run(
-            [executable, "-p", "/usage"],
-            cwd=str(agy_profile.profile_gemini_dir(profile_id)),
-            env=env,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=20,
-            **hidden_process_kwargs(),
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    finally:
-        import shutil
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-    text = f"{res.stdout}\n{res.stderr}"
-    if re.search(r"authentication required|not logged in|not signed in|login required|please (?:log|sign) in", text, re.I):
-        return {"state": "login_required", "rows": []}
-    if res.returncode != 0:
-        return None
-    pat = re.compile(r"^(?P<model>[^\t]{1,128})\t(?P<limit>[^\t]*\blimit\b[^\t]*)\t(?P<pct>\d{1,3}(?:\.\d+)?)%\t(?P<reset>\d{4}-\d{2}-\d{2}T\S+)$", re.I)
-    rows = []
-    for line in res.stdout.splitlines():
-        m = pat.fullmatch(line.strip())
-        if not m:
-            continue
-        rows.append({
-            "model": m.group("model").strip(),
-            "limit": m.group("limit").strip(),
-            "remaining_pct": float(m.group("pct")),
-            "resets_at": _iso_utc(m.group("reset")),
-        })
-    return {"state": "authenticated", "rows": rows} if rows else None
-
-
-def probe_account_usage(profile_id: str, *, allow_cli_fallback: bool = True) -> dict[str, Any]:
-    """Query live official quota windows directly from CloudCode APIs (T3 Code method)."""
-    access_token, project_id = _extract_access_token(profile_id)
-    if not access_token:
-        if allow_cli_fallback:
-            fallback = _probe_via_cli_fallback(profile_id)
-            if fallback is not None:
-                return fallback
-        state = "unverified" if agy_profile.has_local_credentials(profile_id) else "login_required"
-        return {"state": state, "rows": []}
-
-    session = requests.Session()
-    session.trust_env = True
+def _fetch_operation_rows(
+    access_token: str,
+    project_id: str | None,
+    endpoints: tuple[str, ...],
+    operation: str,
+    parser: Callable[..., list[tuple[str, dict[str, Any]]]],
+) -> tuple[list[dict[str, Any]], bool, bool]:
+    """Query `endpoints` concurrently in priority order (first endpoint wins per bucket ID)."""
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "User-Agent": USER_AGENT,
+        "User-Agent": _antigravity_user_agent(),
         "Content-Type": "application/json",
     }
     body = {"project": project_id} if project_id else {}
-    unauthorized = False
-    for op, parser in (
-        ("retrieveUserQuotaSummary", _parse_summary_rows),
-        ("fetchAvailableModels", _parse_model_rows),
-    ):
-        collected: list[dict[str, Any]] = []
-        seen: set[tuple[str, str]] = set()
-        for endpoint in (DAILY_ENDPOINT, PROD_ENDPOINT):
-            try:
-                res = session.post(f"{endpoint}/v1internal:{op}", headers=headers, json=body, timeout=PROBE_TIMEOUT)
-                if res.status_code in (401, 403):
-                    unauthorized = True
-                    continue
-                if res.status_code != 200:
-                    continue
-                for row in parser(res.json()):
-                    key = (row["model"], row["limit"])
-                    if key not in seen:
-                        seen.add(key)
-                        collected.append(row)
-            except Exception:
-                continue
-        if collected:
-            return {"state": "authenticated", "rows": collected}
 
-    if unauthorized:
-        return {"state": "login_required", "rows": []}
-    if allow_cli_fallback:
-        fallback = _probe_via_cli_fallback(profile_id)
-        if fallback is not None:
-            return fallback
-    return {"state": "authenticated" if access_token else "unverified", "rows": []}
+    def query_one(endpoint: str) -> tuple[list[tuple[str, dict[str, Any]]], bool, bool]:
+        session = _make_http_session()
+        requested_at = datetime.now(timezone.utc)
+        try:
+            res = session.post(
+                f"{endpoint}/v1internal:{operation}",
+                headers=headers,
+                json=body,
+                timeout=PROBE_TIMEOUT,
+                allow_redirects=False,
+            )
+        except requests.RequestException:
+            return [], False, True
+        if res.status_code in (401, 403):
+            return [], True, False
+        if res.status_code != 200:
+            return [], False, False
+        try:
+            return parser(res.json(), requested_at=requested_at), False, False
+        except Exception:
+            return [], False, False
+
+    if len(endpoints) == 1:
+        results = [query_one(endpoints[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=len(endpoints)) as pool:
+            results = list(pool.map(query_one, endpoints))
+
+    merged: dict[str, dict[str, Any]] = {}
+    unauthorized = False
+    had_network_error = False
+    for rows, unauth, net_err in results:
+        unauthorized = unauthorized or unauth
+        had_network_error = had_network_error or net_err
+        for dedup_id, row in rows:
+            if dedup_id not in merged:
+                merged[dedup_id] = row
+    return list(merged.values()), unauthorized, had_network_error
+
+
+def probe_account_usage(
+    profile_id: str,
+    *,
+    allow_cli_fallback: bool | None = None,
+    allow_cli_refresh: bool = True,
+) -> dict[str, Any]:
+    """Query live official quota windows directly from CloudCode APIs (T3 Code method)."""
+    effective_refresh = allow_cli_refresh if allow_cli_fallback is None else bool(allow_cli_fallback)
+    access_token, project_id, source, token_status = _resolve_access_token(
+        profile_id,
+        allow_cli_refresh=effective_refresh,
+    )
+    if not access_token:
+        if token_status == "expired":
+            return {
+                "state": "unverified",
+                "rows": [],
+                "detail": "本地登录凭据已过期，请先发起一次对话或重新登录以续期，再重新检测额度。",
+            }
+        if token_status == "refresh_failed":
+            return {
+                "state": "login_required",
+                "rows": [],
+                "detail": "当前账号登录态已失效，请重新登录 Agy 账号。",
+            }
+        if token_status == "network_error":
+            return {
+                "state": "unverified",
+                "rows": [],
+                "detail": "连接 Google 鉴权服务超时或网络不可达，请检查网络与代理设置后重试。",
+            }
+        state = "unverified" if agy_profile.has_local_credentials(profile_id) else "login_required"
+        return {
+            "state": state,
+            "rows": [],
+            "detail": "当前账号尚未登录或未找到可用凭据，请先完成登录后再检测额度。",
+        }
+
+    endpoints = _probe_endpoints(profile_id)
+    for attempt in range(2):
+        summary_rows, sum_unauth, sum_net = _fetch_operation_rows(
+            access_token,
+            project_id,
+            endpoints,
+            "retrieveUserQuotaSummary",
+            _parse_summary_rows,
+        )
+        if summary_rows:
+            return {"state": "authenticated", "rows": summary_rows}
+        model_rows, mod_unauth, mod_net = _fetch_operation_rows(
+            access_token,
+            project_id,
+            endpoints,
+            "fetchAvailableModels",
+            _parse_model_rows,
+        )
+        if model_rows:
+            return {"state": "authenticated", "rows": model_rows}
+
+        unauthorized = sum_unauth or mod_unauth
+        had_network_error = sum_net or mod_net
+        if attempt == 0 and unauthorized and source == "cli_token" and effective_refresh:
+            if _refresh_cli_token_via_models(profile_id):
+                new_access, new_expiry = _read_cli_token_record(profile_id)
+                now_after = datetime.now(timezone.utc)
+                if new_access and new_access != access_token and (new_expiry is None or new_expiry > now_after + timedelta(seconds=60)):
+                    access_token = new_access
+                    continue
+        if unauthorized:
+            return {
+                "state": "login_required",
+                "rows": [],
+                "detail": "当前账号登录态已失效，请重新登录 Agy 账号。",
+            }
+        if had_network_error:
+            return {
+                "state": "unverified",
+                "rows": [],
+                "detail": "连接 Google CloudCode 超时或网络不可达，请检查网络与代理设置后重试。",
+            }
+        break
+
+    return {
+        "state": "authenticated",
+        "rows": [],
+        "detail": "Google CloudCode 未返回该账号的可用额度窗口。",
+    }
 
 
 class AgyLedger:

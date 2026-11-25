@@ -71,12 +71,13 @@ class AntiAccountQuotaRow(BaseModel):
     model: str = Field(min_length=1, max_length=128)
     limit: str = Field(min_length=1, max_length=128)
     remaining_pct: float = Field(ge=0, le=100)
-    resets_at: AwareDatetime
+    resets_at: AwareDatetime | None = None
 
 
 class AntiAccountUsage(BaseModel):
     state: Literal["authenticated", "login_required", "unverified"]
     rows: list[AntiAccountQuotaRow]
+    detail: str | None = None
 
 
 class AntiModelItem(BaseModel):
@@ -528,6 +529,7 @@ def delete_agy_profile(profile_id: str, request: Request):
     _profile_action(request)
     try:
         daemon.delete_profile(profile_id)
+        agy_usage.clear_token_cache(profile_id)
         sessions_svc = AntiSessions()
         sessions_svc.delete_profile_conversations(profile_id)
         sessions_svc.ledger.delete_profile(profile_id)
@@ -601,21 +603,25 @@ def logout_agy_profile(profile_id: str, request: Request):
     _profile_action(request)
     try:
         res = daemon.clear_profile_credentials(profile_id)
+        agy_usage.clear_token_cache(profile_id)
         AntiSessions().ledger.clear_quota_state(profile_id)
         return res
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
 
-@router.post("/account-usage", response_model=AntiAccountUsage)
-def check_account_usage(request: Request):
+@router.post("/account-usage", response_model=AntiAccountUsage, response_model_exclude_none=True)
+def check_account_usage(request: Request, profile_id: str | None = Query(default=None)):
     _require_action(request, "check-anti-usage", "Missing Anti usage action")
     try:
-        profile_id = anti_profiles.snapshot()[0]
-        report = agy_usage.probe_account_usage(profile_id)
+        active_id, profiles = anti_profiles.snapshot()
+        target_id = profile_id.strip() if isinstance(profile_id, str) and profile_id.strip() else active_id
+        if not any(p.id == target_id for p in profiles):
+            raise HTTPException(404, "找不到指定的 Agy 账号")
+        report = agy_usage.probe_account_usage(target_id)
         parsed = AntiAccountUsage.model_validate(report)
         anti_profiles.record_usage(
-            profile_id,
+            target_id,
             parsed.state,
             [json.loads(row.model_dump_json()) for row in parsed.rows],
         )

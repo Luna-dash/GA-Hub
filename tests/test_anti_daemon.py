@@ -1806,3 +1806,274 @@ def test_models_sync_cloudcode_merge_and_orchestrator_settings_endpoints(tmp_pat
     assert "orchestrator" not in cleared_json and cleared_json["colorScheme"] == "tokyo night"
 
 
+def test_usage_probe_t3_code_endpoints_proxy_and_untouched_reset_suppression(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
+    agy_usage.clear_token_cache()
+
+    work = agy_profile.add("Business Work")
+    app_dir = agy_profile.profile_app_data_dir(work.id)
+    app_dir.mkdir(parents=True, exist_ok=True)
+    (app_dir / "settings.json").write_text(json.dumps({"auth": {"type": "oauth-business"}}), encoding="utf-8")
+    (app_dir / "antigravity-oauth-token").write_text(
+        json.dumps({
+            "token": {
+                "access_token": "valid-business-token",
+                "expiry": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        agy_profile,
+        "system_proxy_env",
+        lambda env: {**env, "HTTP_PROXY": "http://127.0.0.1:7890", "HTTPS_PROXY": "http://127.0.0.1:7890"},
+    )
+    proxied_session = agy_usage._make_http_session()
+    assert proxied_session.proxies.get("https") == "http://127.0.0.1:7890"
+
+    seen_calls = []
+    now = datetime.now(timezone.utc)
+
+    class FakeResp:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeSession:
+        proxies = {}
+        trust_env = True
+
+        def post(self, url, headers=None, json=None, timeout=None, allow_redirects=True):
+            seen_calls.append((url, timeout, allow_redirects))
+            if url.startswith(agy_usage.PROD_ENDPOINT) and url.endswith(":retrieveUserQuotaSummary"):
+                return FakeResp(200, {
+                    "buckets": [
+                        {
+                            "bucketId": "gemini-5h",
+                            "window": "5h",
+                            "remainingFraction": 1.0,
+                            "resetTime": (now + timedelta(hours=5)).isoformat().replace("+00:00", "Z"),
+                        },
+                        {
+                            "bucketId": "3p-weekly",
+                            "window": "weekly",
+                            "remainingFraction": 0.72,
+                            "resetTime": "2026-11-30T08:00:00Z",
+                        },
+                    ]
+                })
+            if url.startswith(agy_usage.DAILY_ENDPOINT) and url.endswith(":retrieveUserQuotaSummary"):
+                return FakeResp(200, {
+                    "buckets": [
+                        # Duplicate bucketId should lose to PROD_ENDPOINT priority for oauth-business
+                        {
+                            "bucketId": "gemini-5h",
+                            "window": "5h",
+                            "remainingFraction": 0.1,
+                            "resetTime": "2026-11-26T00:00:00Z",
+                        },
+                        {
+                            "bucketId": "gemini-argon-weekly",
+                            "window": "weekly",
+                            "remainingFraction": 0.55,
+                            "resetTime": "2026-11-29T00:00:00Z",
+                        },
+                    ]
+                })
+            return FakeResp(404, {})
+
+    monkeypatch.setattr(agy_usage, "_make_http_session", lambda: FakeSession())
+
+    client = make_client(monkeypatch)
+    resp = client.post(
+        f"/api/anti/account-usage?profile_id={work.id}",
+        headers={"X-GA-Hub-Action": "check-anti-usage"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "authenticated"
+    assert len(seen_calls) == 2
+    assert all(allow_redir is False and isinstance(to, tuple) for _, to, allow_redir in seen_calls)
+    by_model = {(r["model"], r["limit"]): r for r in body["rows"]}
+    # PROD_ENDPOINT priority kept 100.0% and suppressed untouched 5h rolling resetTime -> omitted/None
+    assert by_model[("Gemini", "Five Hour Limit Remaining")]["remaining_pct"] == 100.0
+    assert by_model[("Gemini", "Five Hour Limit Remaining")].get("resets_at") is None
+    assert by_model[("Claude & GPT (shared)", "Weekly Limit Remaining")]["remaining_pct"] == 72.0
+    assert by_model[("Gemini Argon", "Weekly Limit Remaining")]["remaining_pct"] == 55.0
+
+    # Usage snapshot persisted strictly under `work.id`
+    profiles_resp = client.get("/api/anti/profiles").json()
+    work_entry = next(p for p in profiles_resp["profiles"] if p["id"] == work.id)
+    def_entry = next(p for p in profiles_resp["profiles"] if p["id"] == "default")
+    assert work_entry["usage"]["min_remaining_pct"] == 55.0
+    assert "usage" not in def_entry
+
+
+def test_usage_probe_refreshes_expired_cli_token_safely_without_pipe_hang(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+    agy_usage.clear_token_cache()
+
+    prof = agy_profile.add("Expiring CLI")
+    tok_path = agy_profile.profile_app_data_dir(prof.id) / "antigravity-oauth-token"
+    tok_path.parent.mkdir(parents=True, exist_ok=True)
+    tok_path.write_text(
+        json.dumps({
+            "token": {
+                "access_token": "expired-token",
+                "expiry": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    spawn_calls = []
+    terminated = []
+
+    class FakeGroup:
+        def terminate(self, pid):
+            terminated.append(pid)
+            return True
+
+        def close(self):
+            pass
+
+    def spawn_refresh_success(cmd, **kwargs):
+        spawn_calls.append((cmd, kwargs))
+        assert cmd == ["C:/fake/agy.exe", "models"]
+        assert kwargs["stdin"] == subprocess.DEVNULL
+        assert kwargs["stdout"] == subprocess.DEVNULL
+        assert kwargs["stderr"] == subprocess.DEVNULL
+        tok_path.write_text(
+            json.dumps({
+                "token": {
+                    "access_token": "fresh-token",
+                    "expiry": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+                }
+            }),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(pid=7711, returncode=0, wait=lambda timeout=None: 0)
+
+    monkeypatch.setattr(agy_usage.child_job, "spawn", spawn_refresh_success)
+    monkeypatch.setattr(agy_usage.child_job, "create_process_group", lambda proc: FakeGroup())
+    monkeypatch.setattr(agy_usage.child_job, "forget", lambda pid: None)
+
+    class SuccessSession:
+        def post(self, url, headers=None, json=None, timeout=None, allow_redirects=True):
+            assert headers["Authorization"] == "Bearer fresh-token"
+            return SimpleNamespace(
+                status_code=200,
+                json=lambda: {
+                    "buckets": [
+                        {
+                            "bucketId": "gemini-weekly",
+                            "window": "weekly",
+                            "remainingFraction": 0.85,
+                            "resetTime": "2026-11-30T08:00:00Z",
+                        }
+                    ]
+                },
+            )
+
+    monkeypatch.setattr(agy_usage, "_make_http_session", lambda: SuccessSession())
+    report = agy_usage.probe_account_usage(prof.id)
+    assert report["state"] == "authenticated"
+    assert report["rows"][0]["remaining_pct"] == 85.0
+    assert len(spawn_calls) == 1 and terminated == []
+
+    # Timeout during `agy models` must terminate Job Object tree and fail fast with clear detail
+    tok_path.write_text(
+        json.dumps({
+            "token": {
+                "access_token": "expired-token-2",
+                "expiry": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    def spawn_refresh_timeout(cmd, **kwargs):
+        def wait_timeout(timeout=None):
+            raise subprocess.TimeoutExpired(cmd, timeout or 8)
+
+        return SimpleNamespace(pid=7722, returncode=None, wait=wait_timeout)
+
+    monkeypatch.setattr(agy_usage.child_job, "spawn", spawn_refresh_timeout)
+    expired_report = agy_usage.probe_account_usage(prof.id)
+    assert expired_report["state"] == "unverified"
+    assert expired_report["rows"] == []
+    assert "过期" in (expired_report.get("detail") or "")
+    assert terminated == [7722]
+
+
+def test_usage_probe_acp_token_memory_cache_and_logout_invalidation(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
+    agy_usage.clear_token_cache()
+
+    prof = agy_profile.add("ACP Cached")
+    tok_path = agy_profile.profile_app_data_dir(prof.id) / "acp_token.json"
+    tok_path.parent.mkdir(parents=True, exist_ok=True)
+    tok_path.write_text(
+        json.dumps({
+            "client_id": "cid",
+            "client_secret": "csec",
+            "refresh_token": "rtok",
+            "project_id": "proj-1",
+        }),
+        encoding="utf-8",
+    )
+
+    oauth_calls = 0
+
+    class CachingSession:
+        def post(self, url, data=None, headers=None, json=None, timeout=None, allow_redirects=True):
+            nonlocal oauth_calls
+            if url == "https://oauth2.googleapis.com/token":
+                oauth_calls += 1
+                return SimpleNamespace(
+                    status_code=200,
+                    json=lambda: {"access_token": f"acp-tok-{oauth_calls}", "expires_in": 3600},
+                )
+            if url.endswith(":retrieveUserQuotaSummary"):
+                return SimpleNamespace(
+                    status_code=200,
+                    json=lambda: {
+                        "buckets": [{
+                            "bucketId": "gemini-5h",
+                            "window": "5h",
+                            "remainingFraction": 0.9,
+                            "resetTime": "2026-11-26T00:00:00Z",
+                        }]
+                    },
+                )
+            return SimpleNamespace(status_code=404, json=lambda: {})
+
+    monkeypatch.setattr(agy_usage, "_make_http_session", lambda: CachingSession())
+    first = agy_usage.probe_account_usage(prof.id)
+    second = agy_usage.probe_account_usage(prof.id)
+    assert first["state"] == "authenticated" and second["state"] == "authenticated"
+    assert oauth_calls == 1
+
+    agy_usage.clear_token_cache(prof.id)
+    third = agy_usage.probe_account_usage(prof.id)
+    assert third["state"] == "authenticated"
+    assert oauth_calls == 2
+
+
+

@@ -244,12 +244,13 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     await wait(() => {
       expect(host.querySelector('.ga-page-header')?.textContent).not.toContain(session.workspace)
       expect(control('模型').querySelector(':scope > .model-select-label')?.textContent).toBe('Gemini 4 Hydrogen')
-      expect(control('思考等级').querySelector(':scope > .model-select-label')?.textContent).toBe('high')
+      expect(control('模型').querySelector('[data-anti-effort-badge]')?.textContent).toBe('High')
     })
     await wait(() => expect(cache.getQueryState(['anti-models', 'default'])?.status).toBe('success'))
     const header = host.querySelector('.ga-page-header')!
     expect(header.contains(control('模型'))).toBe(true)
-    expect(header.contains(control('思考等级'))).toBe(true)
+    expect(control('模型').querySelector('svg[data-channel]')).toBeNull()
+    expect(control('思考等级')).toBeNull()
     expect(header.contains(control('中转箱'))).toBe(false)
     const transcript = host.querySelector('[data-anti-chat-scroll]')!
     expect(transcript.parentElement?.contains(control('中转箱'))).toBe(true)
@@ -264,9 +265,15 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     expect(transcript.contains(host.querySelector('[data-file-composer]'))).toBe(false)
     expect(host.querySelector('[data-file-composer] textarea')?.getAttribute('aria-label')).toBe('发给 Agy')
     expect(transcript.getAttribute('tabindex')).toBe('-1')
+    async function chooseEffort(level: string) {
+      await act(async () => control('模型').click())
+      const radio = document.querySelector<HTMLButtonElement>(`[role="radiogroup"][aria-label="思考等级"] [role="radio"][data-anti-effort-option="${level}"]`)
+      expect(radio).not.toBeNull()
+      await act(async () => radio!.click())
+    }
     await choose('模型', 'Alternate')
-    expect(control('思考等级').textContent).toContain('low')
-    await choose('思考等级', 'medium')
+    expect(control('模型').querySelector('[data-anti-effort-badge]')?.textContent).toBe('Low')
+    await chooseEffort('medium')
     if (outcome === 'success') {
       await act(async () => {
         focusManager.setFocused(false)
@@ -278,9 +285,9 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
         items: expect.arrayContaining([expect.objectContaining({ id: 'gemini-4-neon-xhigh' })]),
       }))
       expect(control('模型').textContent).toContain('Alternate')
-      expect(control('思考等级').textContent).toContain('medium')
+      expect(control('模型').querySelector('[data-anti-effort-badge]')?.textContent).toBe('Med')
       await choose('模型', 'Gemini 4 Neon')
-      expect(control('思考等级').textContent).toContain('xhigh')
+      expect(control('模型').querySelector('[data-anti-effort-badge]')?.textContent).toBe('XHigh')
     }
     const input = host.querySelector('textarea')!
     await act(async () => {
@@ -903,8 +910,8 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
   let calibratedPct: number | null = null
   let codeSubmitted = ''
   let commandItems = [{ name: 'plan', description: '先生成方案', hint: '<goal>' }]
-  let resetCalls = 0
   const approvalCalls: Record<string, unknown>[] = []
+  let usageCalls = 0
 
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
@@ -913,9 +920,19 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
     if (path === '/api/anti/commands') return reply({ items: commandItems })
     if (path === '/api/anti/sessions') return reply([session])
-    if (path === `/api/anti/sessions/${session.id}/reset`) {
-      resetCalls += 1
-      return reply({ ...session, acp_connected: false })
+    if (path === '/api/anti/account-usage') {
+      usageCalls += 1
+      if (usageCalls === 1) {
+        return reply({
+          state: 'authenticated',
+          rows: [{ model: 'Gemini', limit: 'Five Hour Limit Remaining', remaining_pct: 100, resets_at: null }],
+        })
+      }
+      return reply({
+        state: 'unverified',
+        rows: [],
+        detail: '本地登录凭据已过期，请先发起一次对话或重新登录以续期。',
+      })
     }
     if (path === `/api/anti/sessions/${session.id}/runs` && !init?.body) return reply([...runs])
     if (path === `/api/anti/sessions/${session.id}/runs` && init?.body) {
@@ -1016,16 +1033,22 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     // 1. History run badge & token usage footer
     expect(host.textContent).toContain('120 in · 30 out · 缓存 50%')
 
-    // 2. Session ACP reset button
-    const resetBtn = host.querySelector<HTMLButtonElement>('button[aria-label="重连 ACP 会话"]')!
-    await act(async () => { resetBtn.click() })
-    await flush()
-    expect(resetCalls).toBe(1)
+    // 2. Duplicate header buttons ("重连 ACP 会话", "压缩会话上下文", "同步上游模型") are removed from header
+    expect(host.querySelector('button[aria-label="重连 ACP 会话"]')).toBeNull()
+    expect(host.querySelector('button[aria-label="压缩会话上下文"]')).toBeNull()
+    expect(host.querySelector('button[aria-label="同步上游模型"]')).toBeNull()
 
-    // 3. Quota pool inline calibration
+    // 3. Quota popover untouched reset display ("满额未消耗"), manual refresh button & detail diagnostic
     const usageBtn = host.querySelector<HTMLButtonElement>('button[aria-label="检测反重力额度"]')!
     await act(async () => { usageBtn.click() })
     await flush()
+    expect(document.body.textContent).toContain('满额未消耗')
+    const refreshQuotaBtn = document.body.querySelector<HTMLButtonElement>('button[aria-label="刷新反重力额度"]')!
+    expect(refreshQuotaBtn).not.toBeNull()
+    await act(async () => { refreshQuotaBtn.click() })
+    await flush()
+    expect(usageCalls).toBe(2)
+    expect(document.body.textContent).toContain('本地登录凭据已过期')
     const checkPools = [...document.body.querySelectorAll('button')].find(b => b.textContent === '查看本地配额池 / 熔断') as HTMLButtonElement
     await act(async () => { checkPools.click() })
     await flush()
@@ -1574,7 +1597,10 @@ it('escalates unresponsive soft stop into force stop recovery bar and supports f
     })
     expect(calledPaths).toContain(`/api/anti/sessions/${session.id}/runs/${activeRun.id}/cancel`)
     expect(host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')?.title).toBe('强制终止当前任务并重置 ACP 进程')
-    expect(host.querySelector<HTMLButtonElement>('button[aria-label="强制重连 ACP 会话"]')?.disabled).toBe(false)
+    const recoveryForceResetBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-force-stop-bar] button')].find(
+      b => b.textContent?.includes('强制重连 ACP'),
+    )!
+    expect(recoveryForceResetBtn?.disabled).toBe(false)
 
     // Clicking "强制终止" sends ?force=true and converges the turn to cancelled
     const forceStopBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-force-stop-bar] button')].find(
@@ -1895,13 +1921,15 @@ it('supports session account binding, grant revocation, /compact action, and 429
       expect(called.some(c => c.method === 'DELETE' && c.path === `/api/anti/sessions/${session.id}/grants`)).toBe(true)
     })
 
-    // 2. Header compact action
-    const compactBtn = host.querySelector<HTMLButtonElement>('button[aria-label="压缩会话上下文"]')!
-    await act(async () => { compactBtn.click() })
+    // 2. Compact action stays available in '/' native command menu without cluttering header
+    expect(host.querySelector('button[aria-label="压缩会话上下文"]')).toBeNull()
+    const slashMenuBtn = host.querySelector<HTMLButtonElement>('button[aria-label="插入原生命令"]')!
+    await act(async () => { slashMenuBtn.click() })
     await vi.waitFor(async () => {
       await flush()
-      expect(called.some(c => c.method === 'POST' && c.path === `/api/anti/sessions/${session.id}/compact`)).toBe(true)
+      expect(host.querySelector('[role="listbox"][aria-label="Agy 原生命令"]')?.textContent).toContain('/compact')
     })
+    await act(async () => { slashMenuBtn.click() })
 
     // 3. Submit triggers 429 -> one-click failover button switches session profile & retries run
     const textarea = host.querySelector('textarea')!
@@ -1935,7 +1963,7 @@ it('supports session account binding, grant revocation, /compact action, and 429
   }
 })
 
-it('supports Orchestrator role settings, manual model sync, and displays fallback notices clearly', async () => {
+it('supports Orchestrator quick icon button, profile-consolidated model sync and role settings, and fallback notices', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const session = {
     id: 's-orch-ui',
@@ -1955,6 +1983,7 @@ it('supports Orchestrator role settings, manual model sync, and displays fallbac
     ...initialModels,
     { id: 'gemini-pro-orchestrator', display_name: 'Orchestrator (Carbon)', is_orchestrator: true },
   ]
+  let modelsPayload = initialModels
   let orchestratorState: { profile_id: string; planner: string | null; executor: string | null } = {
     profile_id: 'default',
     planner: null,
@@ -1975,10 +2004,13 @@ it('supports Orchestrator role settings, manual model sync, and displays fallbac
     if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
     if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
     if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认', has_credentials: true, auth_state: 'authenticated' }] })
-    if (path === '/api/anti/models') return reply({ items: initialModels, synced_at: '2026-11-25T06:00:00+08:00' })
-    if (path === '/api/anti/models/sync' && method === 'POST') return reply({ items: syncedModels, synced_at: '2026-11-25T09:30:00+08:00' })
+    if (path === '/api/anti/workers') return reply({ items: [] })
+    if (path === '/api/anti/models') return reply({ items: modelsPayload, synced_at: '2026-11-25T06:00:00+08:00' })
+    if (path === '/api/anti/models/sync' && method === 'POST') {
+      modelsPayload = syncedModels
+      return reply({ items: syncedModels, synced_at: '2026-11-25T09:30:00+08:00' })
+    }
     if (path === '/api/anti/commands') return reply({ items: [] })
-    if (path === '/api/anti/workers') return reply([])
     if (path === '/api/anti/profiles/default/orchestrator' && method === 'GET') return reply(orchestratorState)
     if (path === '/api/anti/profiles/default/orchestrator' && method === 'PATCH') {
       orchestratorState = { profile_id: 'default', ...(body as { planner: string | null; executor: string | null }) }
@@ -2019,16 +2051,15 @@ it('supports Orchestrator role settings, manual model sync, and displays fallbac
       expect(host.querySelector('[data-anti-fallback-notice]')?.textContent).toContain('old-hybrid')
     })
 
-    // 1. Sync upstream models button
-    const syncBtn = host.querySelector<HTMLButtonElement>('button[aria-label="同步上游模型"]')!
-    await act(async () => { syncBtn.click() })
-    await vi.waitFor(async () => {
-      await flush()
-      expect(called.some(c => c.method === 'POST' && c.path === '/api/anti/models/sync')).toBe(true)
-    })
-
-    // 2. Select Orchestrator (Neon) -> hides effort selector, shows Orchestrator role popover
+    // 1. Header is clean: no standalone sync button, no standalone effort select, no Orch icon until selected, no circle mark
+    expect(host.querySelector('button[aria-label="同步上游模型"]')).toBeNull()
+    expect(host.querySelector('button[aria-label="思考等级"]')).toBeNull()
+    expect(host.querySelector('button[aria-label="Orchestrator 角色设置"]')).toBeNull()
     const modelBtn = host.querySelector<HTMLButtonElement>('button[aria-label="模型"]')!
+    expect(modelBtn.querySelector('svg[data-channel]')).toBeNull()
+    expect(modelBtn.querySelector('[data-anti-effort-badge]')?.textContent).toBe('High')
+
+    // 2. Select Orchestrator (Neon) -> hides effort badge and shows Plan B pure-icon Orch trigger in header
     await act(async () => { modelBtn.click() })
     const orchOption = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
       el => el.textContent?.includes('Orchestrator (Neon)'),
@@ -2036,27 +2067,39 @@ it('supports Orchestrator role settings, manual model sync, and displays fallbac
     await act(async () => { orchOption.click() })
     await vi.waitFor(async () => {
       await flush()
-      expect(host.querySelector('button[aria-label="思考等级"]')).toBeNull()
-      expect(host.querySelector('button[aria-label="Orchestrator 角色设置"]')).not.toBeNull()
+      expect(modelBtn.querySelector('[data-anti-effort-badge]')).toBeNull()
+      const orchTrigger = host.querySelector<HTMLButtonElement>('button[aria-label="Orchestrator 角色设置"]')
+      expect(orchTrigger).not.toBeNull()
+      expect(orchTrigger?.textContent?.trim()).toBe('')
     })
 
+    // 3. Click Plan B Orch icon -> opens Account Management modal focused on Model Sync & Orchestrator settings
     const orchTrigger = host.querySelector<HTMLButtonElement>('button[aria-label="Orchestrator 角色设置"]')!
     await act(async () => { orchTrigger.click() })
     await vi.waitFor(async () => {
       await flush()
-      expect(host.querySelector('[data-anti-orchestrator-popover]')).not.toBeNull()
+      expect(document.body.querySelector('[data-anti-models-orch-section]')).not.toBeNull()
     })
 
-    const plannerSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Orchestrator Planner 模型"]')!
-    const executorSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Orchestrator Executor 模型"]')!
+    // Sync upstream models inside Account Management modal
+    const syncBtn = document.body.querySelector<HTMLButtonElement>('[data-anti-models-orch-section] button[aria-label="同步上游模型"]')!
+    await act(async () => { syncBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.method === 'POST' && c.path === '/api/anti/models/sync')).toBe(true)
+    })
+
+    // Save Planner / Executor inside Account Management modal
+    const plannerSelect = document.body.querySelector<HTMLSelectElement>('select[aria-label="Orchestrator Planner 模型"]')!
+    const executorSelect = document.body.querySelector<HTMLSelectElement>('select[aria-label="Orchestrator Executor 模型"]')!
     await act(async () => {
       plannerSelect.value = 'gemini-4-neon-xhigh'
       plannerSelect.dispatchEvent(new Event('change', { bubbles: true }))
       executorSelect.value = 'gemini-4-hydrogen-high'
       executorSelect.dispatchEvent(new Event('change', { bubbles: true }))
     })
-    const saveBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-orchestrator-popover] button')].find(
-      b => b.textContent?.trim() === '保存',
+    const saveBtn = [...document.body.querySelectorAll<HTMLButtonElement>('[data-anti-orchestrator-section] button')].find(
+      b => b.textContent?.trim() === '保存设置',
     )!
     await act(async () => { saveBtn.click() })
     await vi.waitFor(async () => {

@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import type { TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
-import { Brain, Check, ChevronDown, ClipboardList, Minimize2, Pencil, RefreshCw, ShieldAlert, Slash, UserCheck, X } from 'lucide-react'
+import { Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, Slash, SlidersHorizontal, UserCheck, X } from 'lucide-react'
 import { RotateCw, Square } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/components/ChatLayout'
 import { ConversationCollapseControl, ConversationCollapseProvider } from '@/components/ConversationCollapse'
@@ -16,12 +16,19 @@ import { ImagePasteInput } from '@/components/ImagePasteInput'
 import { AntiDaemonControl, useAntiDaemonStatus } from '@/components/AntiDaemonControl'
 import { AntiAgyProfiles, useAgyProfiles } from '@/components/AntiAgyProfiles'
 import { AntiAccountUsageButton } from '@/components/AntiAccountUsageButton'
+import {
+  AntiModelSelector,
+  DEFAULT_EFFORT,
+  DEFAULT_FAMILY,
+  DEFAULT_MODEL,
+  EFFORT_OPTIONS,
+  modelFamilies,
+} from '@/components/AntiModelSelector'
 import { AntiIcon } from '@/components/AntiMark'
 import { MessageContent } from '@/components/MessageContent'
 import { FileLinkContext, FileTransferConclusion } from '@/components/FileCitation'
 import { UserAttachments } from '@/components/MessageBubble'
 import { ReplyActions } from '@/components/ReplyActions'
-import { MainModelSelect } from '@/components/ModelSelect'
 import { PageShell } from '@/components/PageShell'
 import { ProjectSelect } from '@/components/ProjectSelect'
 import { SessionRail } from '@/components/SessionRail'
@@ -37,11 +44,10 @@ import { useDraftStore } from '@/stores/draftStore'
 import { toast } from '@/stores/toastStore'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import { queryKeys } from '@/queries/queryKeys'
-import { ThemedSelect } from '@/components/ThemedSelect'
 import {
   antiApi, api, HttpError,
   type AgyProfiles, type AntiApprovalPrompt, type AntiAttachmentRef, type AntiMode,
-  type AntiModels, type AntiPermissionMode, type AntiRun,
+  type AntiPermissionMode, type AntiRun,
   type AntiSession, type AntiSteerSubmission, type AntiSubmission,
 } from '@/api/client'
 
@@ -49,76 +55,6 @@ type Session = AntiSession
 type Run = AntiRun
 const active = (run: Run) => ['submitting', 'queued', 'running', 'unknown'].includes(run.status)
 const sessionsKey = ['anti-sessions'] as const
-const DEFAULT_FAMILY = 'gemini-4-hydrogen'
-const DEFAULT_MODEL = { id: `${DEFAULT_FAMILY}-high`, display_name: 'Gemini 4 Hydrogen (High)' }
-const DEFAULT_EFFORT = 'high'
-const efforts = [
-  { key: 'low', name: 'low' }, { key: 'medium', name: 'medium' }, { key: 'high', name: 'high' },
-  { key: 'xhigh', name: 'xhigh' }, { key: 'max', name: 'max' },
-]
-type Models = AntiModels
-
-interface AgyModelFamily {
-  key: string
-  name: string
-  variants: Partial<Record<string, string>>
-  plain?: string
-  efforts?: string[]
-  defaultEffort?: string
-  isOrchestrator?: boolean
-}
-
-function modelFamilies(items: Models['items']) {
-  const families = new Map<string, AgyModelFamily>()
-  for (const item of items) {
-    const { id, display_name } = item
-    const isOrch = Boolean(item.is_orchestrator) || /orchestrator/i.test(id)
-    if (isOrch) {
-      const existing = families.get(id) ?? { key: id, name: display_name || id, variants: {}, plain: id, isOrchestrator: true, efforts: [] }
-      existing.isOrchestrator = true
-      existing.plain = id
-      if (display_name) existing.name = display_name
-      families.set(id, existing)
-      continue
-    }
-    const variant = id.match(/^(.+)-(low|medium|high|xhigh|max)$/i)
-    const key = variant?.[1] ?? id
-    const level = variant?.[2].toLowerCase()
-    const label = level ? display_name.replace(/\s*\((low|medium|high|xhigh|max|extra)\)\s*$/i, '') : display_name
-    const family = families.get(key) ?? { key, name: label && label !== id ? label : key, variants: {} }
-    if (level) family.variants[level] = id
-    else family.plain = id
-    if (item.efforts?.length) {
-      const merged = new Set([...(family.efforts ?? []), ...item.efforts.map(e => e.toLowerCase())])
-      family.efforts = [...merged]
-    }
-    if (item.default_effort) family.defaultEffort = item.default_effort.toLowerCase()
-    families.set(key, family)
-  }
-  return [...families.values()]
-}
-
-function buildOrchestratorRoleChoices(items: Models['items']) {
-  const options: Array<{ id: string; label: string }> = []
-  const seen = new Set<string>()
-  const push = (id: string, label: string) => {
-    if (!id || seen.has(id)) return
-    seen.add(id)
-    options.push({ id, label })
-  }
-  for (const item of items) {
-    if (item.is_orchestrator || /orchestrator/i.test(item.id)) continue
-    if (item.efforts?.length && !/-(low|medium|high|xhigh|max)$/i.test(item.id)) {
-      for (const lvl of item.efforts) {
-        const titleLevel = lvl === 'xhigh' ? 'XHigh' : `${lvl.slice(0, 1).toUpperCase()}${lvl.slice(1)}`
-        push(`${item.id}-${lvl}`, `${item.display_name} (${titleLevel})`)
-      }
-    } else {
-      push(item.id, item.display_name || item.id)
-    }
-  }
-  return options
-}
 type Submission = AntiSubmission
 
 const permissionLabels: Record<AntiPermissionMode, string> = {
@@ -324,7 +260,12 @@ export default function AntiChat() {
   const [sid, setSid] = usePageState('antiChat.currentSession', '')
   const [creating, setCreating] = useState(false)
   const [profilesOpen, setProfilesOpen] = useState(false)
+  const [profilesSection, setProfilesSection] = useState<'default' | 'orchestrator'>('default')
   const [headerActions, setHeaderActions] = useState<HTMLDivElement | null>(null)
+  const openProfilesModal = useCallback((section: 'default' | 'orchestrator' = 'default') => {
+    setProfilesSection(section)
+    setProfilesOpen(true)
+  }, [])
   const daemon = useAntiDaemonStatus()
   const profiles = useAgyProfiles()
   const projects = useQuery({ queryKey: queryKeys.projects, queryFn: api.projects })
@@ -372,7 +313,12 @@ export default function AntiChat() {
   }
   const closeCreate = () => { if (!create.isPending) setCreating(false) }
   const selectedProfile = profiles.data?.profiles.find(item => item.id === profiles.data?.active)
-  const cachedUsage = selectedProfile?.usage
+  const effectiveHeaderProfileId = selected?.profile_id ?? profiles.data?.active ?? 'default'
+  const effectiveHeaderProfile = profiles.data?.profiles.find(item => item.id === effectiveHeaderProfileId) ?? selectedProfile
+  const usageOverrideProfileId = selected?.profile_id && selected.profile_id !== profiles.data?.active
+    ? selected.profile_id
+    : undefined
+  const cachedUsage = effectiveHeaderProfile?.usage
   return <PageShell title="Agy 会话" wrapHeader
     titleExtra={<AntiDaemonControl {...daemon} />}
     actions={<>
@@ -382,11 +328,18 @@ export default function AntiChat() {
         refresh={daemon.refresh}
         daemon={daemon}
         open={profilesOpen}
-        onOpenChange={setProfilesOpen}
+        onOpenChange={next => {
+          if (!next) setProfilesSection('default')
+          setProfilesOpen(next)
+        }}
+        targetProfileId={effectiveHeaderProfileId}
+        focusSection={profilesSection}
       />
       <AntiAccountUsageButton
-        key={profiles.data?.active}
+        key={effectiveHeaderProfileId}
         running={daemon.running}
+        profileId={usageOverrideProfileId}
+        profileName={usageOverrideProfileId ? effectiveHeaderProfile?.name : undefined}
         cachedUsage={cachedUsage}
         onChecked={() => {
           daemon.refresh()
@@ -445,7 +398,8 @@ export default function AntiChat() {
           profileId={profiles.data?.active} profileName={selectedProfile?.name}
           profilesData={profiles.data}
           supportsSteering={daemon.status.data?.supports_steering}
-          onOpenProfiles={() => setProfilesOpen(true)} /> :
+          onOpenProfiles={() => openProfilesModal('default')}
+          onOpenOrchestratorSettings={() => openProfilesModal('orchestrator')} /> :
           <div className="relative flex flex-1">
             <ChatUtilityDock fileTransfer={{ canInsert: false, onInsert: () => { } }} />
             <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
@@ -486,8 +440,8 @@ export default function AntiChat() {
   </PageShell>
 }
 
-function Conversation({ session, headerActions, profileId, profileName, profilesData, supportsSteering, onOpenProfiles }: {
-  session: Session; headerActions: HTMLDivElement | null; profileId?: string; profileName?: string; profilesData?: AgyProfiles; supportsSteering?: boolean | null; onOpenProfiles: () => void
+function Conversation({ session, headerActions, profileId, profileName, profilesData, supportsSteering, onOpenProfiles, onOpenOrchestratorSettings }: {
+  session: Session; headerActions: HTMLDivElement | null; profileId?: string; profileName?: string; profilesData?: AgyProfiles; supportsSteering?: boolean | null; onOpenProfiles: () => void; onOpenOrchestratorSettings: () => void
 }) {
   const { id: sid, project, workspace } = session
   const cache = useQueryClient()
@@ -516,11 +470,7 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null)
   const [policyOpen, setPolicyOpen] = useState(false)
-  const [orchestratorOpen, setOrchestratorOpen] = useState(false)
-  const [orchPlannerDraft, setOrchPlannerDraft] = useState('')
-  const [orchExecutorDraft, setOrchExecutorDraft] = useState('')
   const policyAnchorRef = useRef<HTMLDivElement>(null)
-  const orchestratorAnchorRef = useRef<HTMLDivElement>(null)
   const composerWrapRef = useRef<HTMLDivElement>(null)
   const activePolicy = mode === 'plan'
     ? EXECUTION_POLICIES[0]
@@ -541,21 +491,6 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
       window.removeEventListener('keydown', onKeyDown)
     }
   }, [policyOpen])
-  useEffect(() => {
-    if (!orchestratorOpen) return
-    const onPointerDown = (event: PointerEvent) => {
-      if (!orchestratorAnchorRef.current?.contains(event.target as Node)) setOrchestratorOpen(false)
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOrchestratorOpen(false)
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown)
-    }
-  }, [orchestratorOpen])
   const [fontScale, setFontScale] = useState(getChatFontScale)
   useEffect(() => {
     const sync = (event: Event) => setFontScale((event as CustomEvent<number>).detail || getChatFontScale())
@@ -605,8 +540,8 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
   const effortOptions = isOrchestratorSelected
     ? []
     : family?.efforts?.length
-      ? efforts.filter(option => family.efforts!.includes(option.key))
-      : efforts.filter(option => family?.plain || family?.variants[option.key])
+      ? EFFORT_OPTIONS.filter(option => family.efforts!.includes(option.key))
+      : EFFORT_OPTIONS.filter(option => family?.plain || family?.variants[option.key])
   const effort = isOrchestratorSelected
     ? (family?.defaultEffort ?? DEFAULT_EFFORT)
     : (effortOptions.find(option => option.key === preferredEffort)?.key
@@ -617,35 +552,9 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
     : (family?.variants[effort] ?? family?.plain ?? DEFAULT_MODEL.id)
   const orchestratorSettings = useQuery({
     queryKey: ['anti-orchestrator', effectiveProfileId],
-    enabled: Boolean(effectiveProfileId && (isOrchestratorSelected || orchestratorOpen)),
+    enabled: Boolean(effectiveProfileId && isOrchestratorSelected),
     queryFn: ({ signal }) => antiApi.profileOrchestrator(effectiveProfileId, signal),
     retry: false,
-  })
-  useEffect(() => {
-    setOrchPlannerDraft(orchestratorSettings.data?.planner ?? '')
-    setOrchExecutorDraft(orchestratorSettings.data?.executor ?? '')
-  }, [orchestratorSettings.data?.planner, orchestratorSettings.data?.executor, effectiveProfileId])
-  const orchestratorRoleChoices = useMemo(
-    () => buildOrchestratorRoleChoices(models.data?.items ?? [DEFAULT_MODEL]),
-    [models.data?.items],
-  )
-  const updateOrchestrator = useMutation({
-    mutationFn: ({ planner, executor }: { planner: string | null; executor: string | null }) =>
-      antiApi.updateProfileOrchestrator(effectiveProfileId, { planner, executor }),
-    onSuccess: updated => {
-      cache.setQueryData(['anti-orchestrator', effectiveProfileId], updated)
-      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
-      void cache.invalidateQueries({ queryKey: ['anti-workers'] })
-      setOrchestratorOpen(false)
-      toast.success('已保存 Orchestrator 角色设置，空闲进程已刷新')
-    },
-  })
-  const syncModels = useMutation({
-    mutationFn: () => antiApi.syncModels(session.profile_id ?? undefined),
-    onSuccess: synced => {
-      cache.setQueryData(['anti-models', effectiveProfileId], synced)
-      toast.success(`已同步上游模型（${synced.items.length} 个）`)
-    },
   })
   const key = ['anti-runs', sid]
   const history = useQuery({
@@ -1099,25 +1008,6 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
       toast.success(kind ? `已收回本会话「${grantLabels[kind] ?? kind}」授权` : '已收回本会话全部常驻授权')
     },
   })
-  const compact = useMutation({
-    mutationFn: () => {
-      const effectivePermission = mode === 'plan' ? 'approval-required' : permissionMode
-      return antiApi.compactSession(sid, {
-        model,
-        effort,
-        mode,
-        permission_mode: effectivePermission,
-        ...(session.profile_id ? { profile_id: session.profile_id } : {}),
-      })
-    },
-    onSuccess: run => {
-      cache.setQueryData<Run[]>(key, old => [...(old ?? []).filter(row => row.id !== run.id), run])
-      void cache.invalidateQueries({ queryKey: key })
-      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
-      toast.success('已发起上下文压缩（/compact）')
-    },
-  })
-  const supportsCompact = rawCommands.some(cmd => cmd.name === 'compact')
   const isRateLimited = (send.error instanceof HttpError && send.error.status === 429)
     || (!current && runs.at(-1)?.status === 'rate_limited')
   const fallbackProfile = isRateLimited ? pickBestFallbackProfile(profilesData, effectiveProfileId) : null
@@ -1182,177 +1072,46 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
       send.mutate(body)
     }
   }, [activeRunId, createSubmission, pending, queuedPrompt, runs, send])
+  const hasCustomOrchRoles = Boolean(orchestratorSettings.data?.planner || orchestratorSettings.data?.executor)
   return <>
     {headerActions && createPortal(<>
-      <MainModelSelect aria-label="模型" className="min-w-0 max-w-full sm:max-w-[min(400px,100%)]" title={models.error ? '模型列表加载失败' : '模型'}
-        llms={families} value={family?.key} onChange={setFamilyKey} disabled={Boolean(current || pending) || models.isPending} />
-      {isOrchestratorSelected ? (
-        <div ref={orchestratorAnchorRef} className="relative shrink-0">
-          <button
-            type="button"
-            data-anti-orchestrator-trigger
-            disabled={Boolean(current || pending)}
-            aria-label="Orchestrator 角色设置"
-            aria-expanded={orchestratorOpen}
-            title={[
-              'Orchestrator 采用 Planner（规划）+ Executor（执行）协同（默认各自 High）',
-              orchestratorSettings.data?.planner ? `Planner: ${orchestratorSettings.data.planner}` : 'Planner: 默认',
-              orchestratorSettings.data?.executor ? `Executor: ${orchestratorSettings.data.executor}` : 'Executor: 默认',
-            ].join(' · ')}
-            onClick={() => setOrchestratorOpen(v => !v)}
-            className="ga-btn-sm shrink-0"
-          >
-            <Brain size={14} className="text-accent" aria-hidden="true" />
-            <span>
-              {orchestratorSettings.data?.planner || orchestratorSettings.data?.executor
-                ? '角色已自定义'
-                : '角色默认 (High)'}
-            </span>
-            <ChevronDown size={13} className={`shrink-0 text-ink-muted transition-transform ${orchestratorOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
-          </button>
-          {orchestratorOpen && (
-            <div
-              data-anti-orchestrator-popover
-              role="dialog"
-              aria-label="Orchestrator 角色设置面板"
-              style={{ zIndex: Z_LAYERS.contextMenu }}
-              className="ga-paper-popover absolute right-0 top-full mt-2 w-80 space-y-3 rounded-xl p-3 text-xs text-ink"
-            >
-              <div>
-                <div className="font-semibold text-ink">Orchestrator 角色设置（{effectiveProfileName}）</div>
-                <p className="mt-1 text-[11px] leading-relaxed text-ink-muted">
-                  Orchestrator 默认以 High 档分别协同 Planner（规划审查）与 Executor（执行改码）；保存到当前账号的{' '}
-                  <code>settings.json</code>，立即生效于下一次新会话。
-                </p>
-              </div>
-              <div className="space-y-2">
-                <label className="block space-y-1">
-                  <span className="block text-[11px] font-medium text-ink-muted">Planner（规划模型）</span>
-                  <select
-                    aria-label="Orchestrator Planner 模型"
-                    value={orchPlannerDraft}
-                    disabled={orchestratorSettings.isPending || updateOrchestrator.isPending}
-                    onChange={e => setOrchPlannerDraft(e.target.value)}
-                    className="w-full rounded-lg border border-line bg-bg-card px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
-                  >
-                    <option value="">默认（跟随上游 / High）</option>
-                    {orchPlannerDraft && !orchestratorRoleChoices.some(c => c.id === orchPlannerDraft) && (
-                      <option value={orchPlannerDraft}>{orchPlannerDraft}（当前配置）</option>
-                    )}
-                    {orchestratorRoleChoices.map(choice => (
-                      <option key={choice.id} value={choice.id}>{choice.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block space-y-1">
-                  <span className="block text-[11px] font-medium text-ink-muted">Executor（执行模型）</span>
-                  <select
-                    aria-label="Orchestrator Executor 模型"
-                    value={orchExecutorDraft}
-                    disabled={orchestratorSettings.isPending || updateOrchestrator.isPending}
-                    onChange={e => setOrchExecutorDraft(e.target.value)}
-                    className="w-full rounded-lg border border-line bg-bg-card px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
-                  >
-                    <option value="">默认（跟随上游 / High）</option>
-                    {orchExecutorDraft && !orchestratorRoleChoices.some(c => c.id === orchExecutorDraft) && (
-                      <option value={orchExecutorDraft}>{orchExecutorDraft}（当前配置）</option>
-                    )}
-                    {orchestratorRoleChoices.map(choice => (
-                      <option key={choice.id} value={choice.id}>{choice.label}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              {updateOrchestrator.error && (
-                <p className="text-[11px] text-status-danger">
-                  {updateOrchestrator.error instanceof Error ? updateOrchestrator.error.message : '保存失败'}
-                </p>
-              )}
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <button
-                  type="button"
-                  className="ga-btn-sm"
-                  disabled={updateOrchestrator.isPending}
-                  onClick={() => updateOrchestrator.mutate({ planner: null, executor: null })}
-                >
-                  恢复默认
-                </button>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    className="ga-btn-sm"
-                    disabled={updateOrchestrator.isPending}
-                    onClick={() => setOrchestratorOpen(false)}
-                  >
-                    取消
-                  </button>
-                  <button
-                    type="button"
-                    className="ga-btn-sm-primary"
-                    disabled={updateOrchestrator.isPending}
-                    onClick={() => updateOrchestrator.mutate({
-                      planner: orchPlannerDraft || null,
-                      executor: orchExecutorDraft || null,
-                    })}
-                  >
-                    {updateOrchestrator.isPending ? '保存中…' : '保存'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      ) : (
-        <ThemedSelect aria-label="思考等级" title="思考等级" options={effortOptions} value={effort} onChange={setEffort}
-          displayName={option => option.name} placeholder={DEFAULT_EFFORT}
-          renderMark={() => <span className="model-select-mark"><Brain size={16} aria-hidden="true" /></span>}
-          disabled={Boolean(current || pending)} />
-      )}
-      <button
-        type="button"
-        className="ga-btn-icon shrink-0"
-        disabled={Boolean(current || pending) || syncModels.isPending}
-        aria-label="同步上游模型"
-        title={[
-          '立即同步上游可用模型目录（默认每天 00/06/12/18 点整点自动同步）',
-          models.data?.synced_at ? `上次同步: ${formatRunTime(parseIsoMs(models.data.synced_at)) ?? models.data.synced_at}` : undefined,
-        ].filter(Boolean).join(' · ')}
-        onClick={() => syncModels.mutate()}
-      >
-        <RotateCw size={15} className={syncModels.isPending ? 'animate-spin motion-reduce:animate-none' : undefined} aria-hidden="true" />
-      </button>
-      {session.has_conversation && supportsCompact && (
+      <AntiModelSelector
+        families={families}
+        selectedFamilyKey={family?.key}
+        effort={effort}
+        effortOptions={effortOptions}
+        isOrchestrator={isOrchestratorSelected}
+        orchestratorSummary={orchestratorSettings.data}
+        disabled={Boolean(current || pending) || models.isPending}
+        title={models.error ? '模型列表加载失败' : undefined}
+        onSelectFamily={setFamilyKey}
+        onSelectEffort={setEffort}
+        onOpenOrchestratorSettings={onOpenOrchestratorSettings}
+      />
+      {isOrchestratorSelected && (
         <button
           type="button"
-          className="ga-btn-sm shrink-0"
-          disabled={Boolean(current || pending || compact.isPending)}
-          aria-label="压缩会话上下文"
-          title="执行 /compact 压缩当前会话上下文，节省配额与上下文窗口"
-          onClick={() => compact.mutate()}
-        >
-          <Minimize2 size={13} aria-hidden="true" />
-          <span>{compact.isPending ? '压缩中…' : '压缩上下文'}</span>
-        </button>
-      )}
-      {(session.acp_connected || session.has_conversation || showRecoveryBar) && (
-        <button
-          type="button"
+          data-anti-orchestrator-trigger
+          disabled={Boolean(current || pending)}
+          aria-label="Orchestrator 角色设置"
+          title={[
+            `设置 Orchestrator（Planner + Executor）角色（${effectiveProfileName}）`,
+            orchestratorSettings.data?.planner ? `Planner: ${orchestratorSettings.data.planner}` : 'Planner: 默认 (High)',
+            orchestratorSettings.data?.executor ? `Executor: ${orchestratorSettings.data.executor}` : 'Executor: 默认 (High)',
+          ].join(' · ')}
+          onClick={onOpenOrchestratorSettings}
           className={clsx(
-            'ga-btn-sm shrink-0',
-            showRecoveryBar && 'border-status-warning-line text-status-warning',
+            'ga-btn-icon relative h-[35px] w-[35px] shrink-0 rounded-[9px]',
+            hasCustomOrchRoles && 'border-accent/55 text-accent',
           )}
-          disabled={(Boolean(current || pending) && !showRecoveryBar) || resetAcp.isPending}
-          aria-label={showRecoveryBar ? '强制重连 ACP 会话' : '重连 ACP 会话'}
-          title={showRecoveryBar
-            ? '强制终止当前卡住的任务并重启 ACP 进程（保留对话上下文）'
-            : '重启本会话 ACP 进程并保留多轮上下文'}
-          onClick={() => resetAcp.mutate(showRecoveryBar)}
         >
-          <RefreshCw size={13} className={resetAcp.isPending ? 'animate-spin motion-reduce:animate-none' : undefined} aria-hidden="true" />
-          <span>{resetAcp.isPending ? '重连中…' : (showRecoveryBar ? '强制重连' : '重连 ACP')}</span>
+          <SlidersHorizontal size={15} aria-hidden="true" />
+          {hasCustomOrchRoles && (
+            <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-accent" aria-hidden="true" />
+          )}
         </button>
       )}
-      {models.error && <button type="button" className="ga-btn-icon" title="重试加载模型" aria-label="重试加载模型" onClick={() => void models.refetch()}><RotateCw size={16} aria-hidden="true" /></button>}
+      {models.error && <button type="button" className="ga-btn-icon h-[35px] w-[35px] rounded-[9px]" title="重试加载模型" aria-label="重试加载模型" onClick={() => void models.refetch()}><RotateCw size={16} aria-hidden="true" /></button>}
     </>, headerActions)}
     <ConversationCollapseProvider key={sid} onAfterCollapse={collapseToLatest}>
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -1639,8 +1398,6 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
             setSessionProfile.error,
             switchAndRetry.error,
             clearGrants.error,
-            compact.error,
-            syncModels.error,
             cancel.error,
             approve.error,
             resetAcp.error,

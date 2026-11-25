@@ -732,10 +732,16 @@ export const antiApi = {
     antiHttp<AgyProfile>('POST', `/api/anti/profiles/${encodeURIComponent(id)}/logout`, undefined, {
       headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' },
     }),
-  accountUsage: () =>
-    antiHttp<AntiAccountUsage>('POST', '/api/anti/account-usage', undefined, {
-      headers: { 'X-GA-Hub-Action': 'check-anti-usage' },
-    }),
+  accountUsage: (profileId?: string) =>
+    antiHttp<AntiAccountUsage>(
+      'POST',
+      profileId ? `/api/anti/account-usage?profile_id=${encodeURIComponent(profileId)}` : '/api/anti/account-usage',
+      undefined,
+      {
+        headers: { 'X-GA-Hub-Action': 'check-anti-usage' },
+        timeoutMs: 25_000,
+      },
+    ),
   quota: (signal?: AbortSignal) =>
     antiHttp<AntiQuotaPool[]>('GET', '/api/anti/quota', undefined, { signal }),
   resetBreaker: (modelGroup?: string) =>

@@ -5871,6 +5871,24 @@
         ],
         "summary": "Check Account Usage",
         "operationId": "check_account_usage_api_anti_account_usage_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -5878,6 +5896,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AntiAccountUsage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -7705,8 +7733,15 @@
             "title": "Remaining Pct"
           },
           "resets_at": {
-            "type": "string",
-            "format": "date-time",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Resets At"
           }
         },
@@ -7714,8 +7749,7 @@
         "required": [
           "model",
           "limit",
-          "remaining_pct",
-          "resets_at"
+          "remaining_pct"
         ],
         "title": "AntiAccountQuotaRow"
       },
@@ -7736,6 +7770,17 @@
             },
             "type": "array",
             "title": "Rows"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
           }
         },
         "type": "object",

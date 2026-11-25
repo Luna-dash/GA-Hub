@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { RefreshIcon, Trash2, X } from '@/components/ActionIcons'
+import { Brain } from 'lucide-react'
+import { RefreshIcon, RotateCw, Trash2, X } from '@/components/ActionIcons'
 import { UserRound } from 'lucide-react'
 import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
 import { antiApi, type AgyCodeLoginState } from '@/api/client'
+import { buildOrchestratorRoleChoices, DEFAULT_MODEL } from '@/components/AntiModelSelector'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import type { useAntiDaemonStatus } from './AntiDaemonControl'
@@ -67,6 +69,12 @@ function formatIdleSeconds(seconds: number) {
   return `${Math.floor(seconds / 3600)}h`
 }
 
+function formatSyncTime(raw?: string | null) {
+  if (!raw) return null
+  const ms = Date.parse(raw)
+  return Number.isFinite(ms) ? resetTimeFormat.format(ms) : null
+}
+
 export function useAgyProfiles() {
   return useQuery({
     queryKey: key,
@@ -82,12 +90,16 @@ export function AntiAgyProfiles({
   daemon,
   open: controlledOpen,
   onOpenChange,
+  targetProfileId,
+  focusSection = 'default',
 }: {
   profiles: ReturnType<typeof useAgyProfiles>
   refresh: () => void
   daemon?: ReturnType<typeof useAntiDaemonStatus>
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  targetProfileId?: string
+  focusSection?: 'default' | 'orchestrator'
 }) {
   const cache = useQueryClient()
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
@@ -105,7 +117,10 @@ export function AntiAgyProfiles({
   const [message, setMessage] = useState('')
   const [codeLogin, setCodeLogin] = useState<AgyCodeLoginState | null>(null)
   const [authCode, setAuthCode] = useState('')
+  const [orchPlannerDraft, setOrchPlannerDraft] = useState('')
+  const [orchExecutorDraft, setOrchExecutorDraft] = useState('')
   const prevLoginProfile = useRef<string | null | undefined>(undefined)
+  const orchSectionRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
     const current = profiles.data?.login_profile ?? null
@@ -115,6 +130,61 @@ export function AntiAgyProfiles({
     }
     prevLoginProfile.current = current
   }, [profiles.data?.login_profile, refresh])
+
+  const effectivePid = targetProfileId || profiles.data?.active || 'default'
+  const overridePid = targetProfileId && targetProfileId !== profiles.data?.active ? targetProfileId : undefined
+  const effectiveProfileName = profiles.data?.profiles.find(p => p.id === effectivePid)?.name ?? effectivePid
+
+  const modelsQuery = useQuery({
+    queryKey: ['anti-models', effectivePid],
+    enabled: open && Boolean(effectivePid),
+    queryFn: ({ signal }) => antiApi.models(signal, overridePid),
+    staleTime: 60_000,
+    retry: false,
+  })
+  const syncModels = useMutation({
+    mutationFn: () => antiApi.syncModels(overridePid),
+    onMutate: () => {
+      setMessage('')
+    },
+    onSuccess: synced => {
+      cache.setQueryData(['anti-models', effectivePid], synced)
+      void cache.invalidateQueries({ queryKey: ['anti-models'] })
+      setMessage(`已同步上游模型（${synced.items.length} 个）。`)
+    },
+  })
+  const orchestratorSettings = useQuery({
+    queryKey: ['anti-orchestrator', effectivePid],
+    enabled: open && Boolean(effectivePid),
+    queryFn: ({ signal }) => antiApi.profileOrchestrator(effectivePid, signal),
+    retry: false,
+  })
+  useEffect(() => {
+    setOrchPlannerDraft(orchestratorSettings.data?.planner ?? '')
+    setOrchExecutorDraft(orchestratorSettings.data?.executor ?? '')
+  }, [orchestratorSettings.data?.planner, orchestratorSettings.data?.executor, effectivePid])
+  useEffect(() => {
+    if (open && focusSection === 'orchestrator') {
+      requestAnimationFrame(() => orchSectionRef.current?.scrollIntoView?.({ block: 'nearest' }))
+    }
+  }, [open, focusSection])
+  const orchestratorRoleChoices = useMemo(
+    () => buildOrchestratorRoleChoices(modelsQuery.data?.items ?? [DEFAULT_MODEL]),
+    [modelsQuery.data?.items],
+  )
+  const updateOrchestrator = useMutation({
+    mutationFn: ({ planner, executor }: { planner: string | null; executor: string | null }) =>
+      antiApi.updateProfileOrchestrator(effectivePid, { planner, executor }),
+    onMutate: () => {
+      setMessage('')
+    },
+    onSuccess: updated => {
+      cache.setQueryData(['anti-orchestrator', effectivePid], updated)
+      void cache.invalidateQueries({ queryKey: ['anti-sessions'], exact: true })
+      void cache.invalidateQueries({ queryKey: ['anti-workers'] })
+      setMessage('已保存 Orchestrator 角色设置，空闲进程已刷新。')
+    },
+  })
 
   const logs = useQuery({
     queryKey: ['anti-daemon-logs'],
@@ -194,7 +264,11 @@ export function AntiAgyProfiles({
         setMessage(`已清除「${args.profile.name}」的登录凭据与缓存额度，保留了多轮会话记录。`)
       } else if (args.kind === 'check-usage') {
         const usage = await antiApi.accountUsage()
-        setMessage(usage.rows.length > 0 ? `已刷新额度（${usage.rows.length} 项模型）。` : '未读取到额度信息，请确认已登录并重试。')
+        setMessage(
+          usage.rows.length > 0
+            ? `已刷新额度（${usage.rows.length} 项模型）。`
+            : (usage.detail || '未读取到额度信息，请确认已登录并重试。'),
+        )
       } else {
         await request(`/${encodeURIComponent(args.profile.id)}/login`, write)
         setMessage(`已为「${args.profile.name}」打开官方 CLI。请完成登录并关闭该窗口，再回这里切换。`)
@@ -274,7 +348,7 @@ export function AntiAgyProfiles({
     })
   }
   const close = () => {
-    if (action.isPending || codeLoginStart.isPending || codeLoginSubmit.isPending) return
+    if (action.isPending || codeLoginStart.isPending || codeLoginSubmit.isPending || syncModels.isPending || updateOrchestrator.isPending) return
     cancelActiveCodeLogin(codeLogin)
     setOpen(false)
     setEditing(null)
@@ -287,6 +361,8 @@ export function AntiAgyProfiles({
     setMessage('')
     action.reset()
     resetWorker.reset()
+    syncModels.reset()
+    updateOrchestrator.reset()
     codeLoginStart.reset()
     codeLoginSubmit.reset()
   }
@@ -702,6 +778,114 @@ export function AntiAgyProfiles({
             </button>
           </div>
         </form>
+        <section
+          ref={orchSectionRef}
+          data-anti-models-orch-section
+          aria-labelledby="agy-models-orch-title"
+          className={clsx(
+            'space-y-3 rounded-lg border p-3 text-xs',
+            focusSection === 'orchestrator' ? 'border-accent/60 bg-accent-soft/15' : 'border-line/70 bg-bg-soft/45',
+          )}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <h3 id="agy-models-orch-title" className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+                <Brain size={14} className="shrink-0 text-accent" aria-hidden="true" />
+                <span>模型目录与 Orchestrator 设置（{effectiveProfileName}）</span>
+              </h3>
+              <p className="mt-0.5 text-[11px] text-ink-muted">
+                {modelsQuery.data?.items
+                  ? `已加载 ${modelsQuery.data.items.length} 个模型${formatSyncTime(modelsQuery.data.synced_at) ? ` · 上次同步 ${formatSyncTime(modelsQuery.data.synced_at)}` : ''}`
+                  : '默认每天 00/06/12/18 点整点自动同步上游模型目录'}
+              </p>
+            </div>
+            <button
+              type="button"
+              className={secondary}
+              disabled={syncModels.isPending}
+              aria-label="同步上游模型"
+              onClick={() => syncModels.mutate()}
+            >
+              <RotateCw size={12} className={syncModels.isPending ? 'animate-spin motion-reduce:animate-none' : undefined} aria-hidden="true" />
+              <span>{syncModels.isPending ? '同步中…' : '同步上游模型'}</span>
+            </button>
+          </div>
+          {syncModels.error && (
+            <p className="text-[11px] text-status-danger">
+              {syncModels.error instanceof Error ? syncModels.error.message : '同步上游模型失败'}
+            </p>
+          )}
+          <div data-anti-orchestrator-section className="space-y-2 border-t border-line/60 pt-2.5">
+            <p className="text-[11px] leading-relaxed text-ink-muted">
+              Orchestrator 采用 Planner（规划审查）+ Executor（执行改码）协同（默认各自 High 档），保存到当前账号的{' '}
+              <code>settings.json</code>，下一次新会话立即生效。
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="block space-y-1">
+                <span className="block text-[11px] font-medium text-ink-muted">Planner（规划模型）</span>
+                <select
+                  aria-label="Orchestrator Planner 模型"
+                  value={orchPlannerDraft}
+                  disabled={orchestratorSettings.isPending || updateOrchestrator.isPending}
+                  onChange={e => setOrchPlannerDraft(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-bg-card px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                >
+                  <option value="">默认（跟随上游 / High）</option>
+                  {orchPlannerDraft && !orchestratorRoleChoices.some(c => c.id === orchPlannerDraft) && (
+                    <option value={orchPlannerDraft}>{orchPlannerDraft}（当前配置）</option>
+                  )}
+                  {orchestratorRoleChoices.map(choice => (
+                    <option key={choice.id} value={choice.id}>{choice.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-1">
+                <span className="block text-[11px] font-medium text-ink-muted">Executor（执行模型）</span>
+                <select
+                  aria-label="Orchestrator Executor 模型"
+                  value={orchExecutorDraft}
+                  disabled={orchestratorSettings.isPending || updateOrchestrator.isPending}
+                  onChange={e => setOrchExecutorDraft(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-bg-card px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                >
+                  <option value="">默认（跟随上游 / High）</option>
+                  {orchExecutorDraft && !orchestratorRoleChoices.some(c => c.id === orchExecutorDraft) && (
+                    <option value={orchExecutorDraft}>{orchExecutorDraft}（当前配置）</option>
+                  )}
+                  {orchestratorRoleChoices.map(choice => (
+                    <option key={choice.id} value={choice.id}>{choice.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {updateOrchestrator.error && (
+              <p className="text-[11px] text-status-danger">
+                {updateOrchestrator.error instanceof Error ? updateOrchestrator.error.message : '保存 Orchestrator 设置失败'}
+              </p>
+            )}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className={secondary}
+                disabled={updateOrchestrator.isPending}
+                onClick={() => updateOrchestrator.mutate({ planner: null, executor: null })}
+              >
+                恢复默认
+              </button>
+              <button
+                type="button"
+                className="ga-btn-sm-primary shrink-0"
+                disabled={updateOrchestrator.isPending}
+                onClick={() => updateOrchestrator.mutate({
+                  planner: orchPlannerDraft || null,
+                  executor: orchExecutorDraft || null,
+                })}
+              >
+                {updateOrchestrator.isPending ? '保存中…' : '保存设置'}
+              </button>
+            </div>
+          </div>
+        </section>
       </>}
     </ModalOverlay>, document.body)}
   </>
