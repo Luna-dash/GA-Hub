@@ -94,7 +94,7 @@ function sessionTitle(session: HubSession) {
 }
 
 function SessionRailComponent({ projects: projectItems, sessions, runtimes, currentId, onSelect, onCreate, onImportFromHistory, onRename, onDelete, creating, storageScope, deleteDetail }: SessionRailProps) {
-  const [collapsed, setCollapsed] = usePageState(storageScope === 'anti' ? 'antiChat.sessionRailCollapsed' : 'liveChat.sessionRailCollapsed', storageScope !== 'anti')
+  const [collapsed, setCollapsed] = usePageState(storageScope === 'anti' ? 'antiChat.sessionRailCollapsed' : 'liveChat.sessionRailCollapsed', false)
   const terminal_key = storageScope ? `${TERMINAL_KEY}.${storageScope}` : TERMINAL_KEY
   const seen_completed_key = storageScope ? `${SEEN_COMPLETED_KEY}.${storageScope}` : SEEN_COMPLETED_KEY
   const group_collapse_key = storageScope ? `${GROUP_COLLAPSE_KEY}.${storageScope}` : GROUP_COLLAPSE_KEY

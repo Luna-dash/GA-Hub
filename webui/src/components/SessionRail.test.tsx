@@ -480,25 +480,26 @@ describe('SessionRail', () => {
     })
   })
 
-  it('starts collapsed and keeps the user-selected expansion state when the active session changes', () => {
+  it('starts expanded and keeps the user-selected collapse state when the active session changes', () => {
     act(() => root.render(
       <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
     ))
 
-    const toggle = host.querySelector('[aria-label="展开会话管理"]') as HTMLButtonElement
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(host.querySelector('[aria-label="会话工作区"]')?.getAttribute('aria-hidden')).toBe('true')
-    act(() => toggle.click())
+    const toggle = host.querySelector('[aria-label="折叠会话管理"]') as HTMLButtonElement
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(host.querySelector('[aria-label="会话工作区"]')?.getAttribute('aria-hidden')).toBe('false')
     expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('false')
+    act(() => toggle.click())
+    expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('true')
 
     act(() => root.render(
       <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[1].id} onSelect={vi.fn()} />,
     ))
-    expect(host.querySelector('[aria-label="折叠会话管理"]')).not.toBeNull()
-    expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('false')
-
-    act(() => (host.querySelector('[aria-label="折叠会话管理"]') as HTMLButtonElement).click())
+    expect(host.querySelector('[aria-label="展开会话管理"]')).not.toBeNull()
     expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('true')
+
+    act(() => (host.querySelector('[aria-label="展开会话管理"]') as HTMLButtonElement).click())
+    expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('false')
   })
 
   // v3 收折：默认每组最多 3 条、chevron = C↔D、组底链接（仅 N>3）= D↔E、
