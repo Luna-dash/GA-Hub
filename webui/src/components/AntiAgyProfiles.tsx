@@ -61,6 +61,12 @@ function quotaTone(pct: number) {
   return 'text-status-danger'
 }
 
+function formatIdleSeconds(seconds: number) {
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
+  return `${Math.floor(seconds / 3600)}h`
+}
+
 export function useAgyProfiles() {
   return useQuery({
     queryKey: key,
@@ -94,6 +100,8 @@ export function AntiAgyProfiles({
   const [editing, setEditing] = useState<{ profile: Profile; name: string } | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [showLogs, setShowLogs] = useState(false)
+  const [showWorkers, setShowWorkers] = useState(false)
+  const [resettingSid, setResettingSid] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [codeLogin, setCodeLogin] = useState<AgyCodeLoginState | null>(null)
   const [authCode, setAuthCode] = useState('')
@@ -113,6 +121,31 @@ export function AntiAgyProfiles({
     enabled: open && showLogs,
     queryFn: ({ signal }) => antiApi.daemonLogs(80, signal),
     retry: false,
+  })
+  const workers = useQuery({
+    queryKey: ['anti-workers'],
+    enabled: open,
+    queryFn: ({ signal }) => antiApi.workers(signal),
+    refetchInterval: open ? 3_000 : false,
+    retry: false,
+  })
+  const workerItems = Array.isArray(workers.data?.items) ? workers.data.items : []
+  const resetWorker = useMutation({
+    mutationFn: ({ sid, force }: { sid: string; force: boolean }) => antiApi.resetSession(sid, force),
+    onMutate: ({ sid }) => {
+      setMessage('')
+      setResettingSid(sid)
+    },
+    onSuccess: (_, { sid, force }) => {
+      setMessage(force ? '已强制重连该会话 ACP 进程（保留上下文）。' : '已释放该会话空闲 ACP 进程。')
+      void cache.invalidateQueries({ queryKey: ['anti-workers'] })
+      void cache.invalidateQueries({ queryKey: ['anti-sessions'] })
+      void cache.invalidateQueries({ queryKey: ['anti-runs', sid] })
+      daemon?.refresh()
+    },
+    onSettled: () => {
+      setResettingSid(null)
+    },
   })
 
   const action = useMutation({
@@ -247,10 +280,13 @@ export function AntiAgyProfiles({
     setEditing(null)
     setConfirmDeleteId(null)
     setShowLogs(false)
+    setShowWorkers(false)
+    setResettingSid(null)
     setCodeLogin(null)
     setAuthCode('')
     setMessage('')
     action.reset()
+    resetWorker.reset()
     codeLoginStart.reset()
     codeLoginSubmit.reset()
   }
@@ -332,7 +368,7 @@ export function AntiAgyProfiles({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 id="agy-accounts-title" className="text-base font-semibold">Agy CLI 账号</h2>
-          <p className="mt-1 text-sm text-ink-muted">「系统默认」沿用当前系统的 agy 登录。其他账号各自隔离凭据与历史，切换只影响 GA-Hub。</p>
+          <p className="mt-1 text-sm text-ink-muted">「系统默认」沿用当前系统的 agy 登录。各账号各自隔离凭据与历史；切换全局默认不影响其他会话进行中的任务，也可在会话底部单独绑定账号。</p>
         </div>
         <button type="button" className={secondary} onClick={close} disabled={action.isPending}><X className="h-3.5 w-3.5" aria-hidden="true" /><span>关闭</span></button>
       </div>
@@ -360,16 +396,98 @@ export function AntiAgyProfiles({
                 <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.start.mutate()}>启用 Agy</button>
               )}
               {(daemon.running || daemon.state === 'unavailable') && daemon.managed && (
-                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.restart.mutate()}>重置运行时</button>
+                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.restart.mutate(false)}>重置运行时</button>
               )}
               {daemon.running && daemon.managed && (
-                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.stop.mutate()}>停止运行时</button>
+                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.stop.mutate(false)}>停止运行时</button>
               )}
+              <button type="button" className={secondary} onClick={() => setShowWorkers(v => !v)}>
+                {showWorkers ? '隐藏进程' : `活跃进程${workerItems.length > 0 ? ` (${workerItems.length})` : ''}`}
+              </button>
               <button type="button" className={secondary} onClick={() => setShowLogs(v => !v)}>
                 {showLogs ? '隐藏日志' : 'ACP 日志'}
               </button>
             </div>
           </div>
+          {daemon.forceConflict && daemon.managed && (
+            <div
+              data-anti-modal-force-bar
+              role="status"
+              className="flex flex-wrap items-center justify-between gap-2 rounded border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-[11px] text-status-danger"
+            >
+              <span>仍有活跃任务，常规{daemon.forceConflict === 'restart' ? '重置' : '停止'}已拦截；可强制中断所有活动任务。</span>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  className="ga-btn-sm-danger"
+                  disabled={daemon.busy}
+                  onClick={() => (daemon.forceConflict === 'restart' ? daemon.restart.mutate(true) : daemon.stop.mutate(true))}
+                >
+                  {daemon.forceConflict === 'restart' ? '强制重置运行时' : '强制停止运行时'}
+                </button>
+                <button type="button" className={secondary} onClick={() => daemon.clearForceConflict()}>
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
+          {showWorkers && (
+            <div data-anti-workers-panel className="space-y-1.5 border-t border-line/60 pt-2">
+              <div className="flex items-center justify-between text-[11px] text-ink-muted">
+                <span>活跃 ACP 会话进程池（{workerItems.length}）</span>
+                <button type="button" className="ga-btn-link" disabled={workers.isFetching} onClick={() => void workers.refetch()}>
+                  <RefreshIcon spinning={workers.isFetching} size={11} />
+                  <span>{workers.isFetching ? '刷新中…' : '刷新'}</span>
+                </button>
+              </div>
+              {workers.error ? (
+                <p className="text-[11px] text-status-danger">{workers.error.message}</p>
+              ) : workerItems.length > 0 ? (
+                <ul className="space-y-1">
+                  {workerItems.map(worker => {
+                    const forceReset = worker.busy || worker.exit_pending || worker.dirty
+                    const stateLabel = worker.state === 'running' ? '运行中'
+                      : worker.state === 'retiring' ? '退出中'
+                      : worker.state === 'idle' ? `空闲 ${formatIdleSeconds(worker.idle_seconds)}`
+                      : '已停止'
+                    const stateTone = worker.state === 'running' ? 'text-accent font-medium'
+                      : worker.state === 'retiring' ? 'text-status-warning font-medium'
+                      : 'text-ink-muted'
+                    const isResetting = resetWorker.isPending && resettingSid === worker.session_id
+                    return (
+                      <li key={`${worker.profile_id}:${worker.session_id}`} className="flex flex-wrap items-center justify-between gap-2 rounded bg-bg-card px-2 py-1.5">
+                        <div className="min-w-0 flex-1 space-y-0.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="truncate font-medium text-ink" title={worker.workspace}>
+                              {worker.session_title || worker.project || worker.session_id.slice(0, 8)}
+                            </span>
+                            {worker.project && worker.session_title && (
+                              <span className="rounded bg-bg-soft px-1 py-0.5 text-[10px] text-ink-muted">{worker.project}</span>
+                            )}
+                            <span className="rounded bg-bg-soft px-1 py-0.5 text-[10px] text-ink-muted">{worker.profile_name || worker.profile_id}</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-muted tabular-nums">
+                            <span>PID {worker.pid ?? '—'}</span>
+                            <span className={stateTone}>{stateLabel}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className={forceReset ? 'ga-btn-sm-danger shrink-0' : secondary}
+                          disabled={resetWorker.isPending}
+                          onClick={() => resetWorker.mutate({ sid: worker.session_id, force: forceReset })}
+                        >
+                          {isResetting ? '处理中…' : (forceReset ? '强制重连' : '释放进程')}
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              ) : (
+                <p className="text-[11px] text-ink-muted">{workers.isPending ? '正在查询进程池…' : '当前没有常驻 Agy ACP 进程。'}</p>
+              )}
+            </div>
+          )}
           {showLogs && (
             <div className="border-t border-line/60 pt-2">
               <div className="mb-1 flex items-center justify-between text-[11px] text-ink-muted">
@@ -393,9 +511,9 @@ export function AntiAgyProfiles({
         </div>
       )}
       <div role="status" className="text-sm text-ink-muted empty:hidden">{action.isPending ? pendingLabel : message}</div>
-      {(action.error || daemonError || codeLoginStart.error || codeLoginSubmit.error) && (
+      {(action.error || daemonError || codeLoginStart.error || codeLoginSubmit.error || resetWorker.error) && (
         <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft p-2 text-sm text-status-danger">
-          {(action.error ?? daemonError ?? codeLoginStart.error ?? codeLoginSubmit.error)!.message}
+          {(action.error ?? daemonError ?? codeLoginStart.error ?? codeLoginSubmit.error ?? resetWorker.error)!.message}
         </p>
       )}
       {codeLogin && (

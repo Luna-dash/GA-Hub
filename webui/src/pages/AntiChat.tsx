@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
+import clsx from 'clsx'
 import type { TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
-import { Brain, Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, Slash, UserCheck } from 'lucide-react'
-import { CloseIconButton, RotateCw } from '@/components/ActionIcons'
+import { Brain, Check, ChevronDown, ClipboardList, Minimize2, Pencil, RefreshCw, ShieldAlert, Slash, UserCheck, X } from 'lucide-react'
+import { RotateCw, Square } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/components/ChatLayout'
+import { ConversationCollapseControl, ConversationCollapseProvider } from '@/components/ConversationCollapse'
 import { ConversationTurnMinimap } from '@/components/ConversationTurnMinimap'
 import { TranscriptNavDock } from '@/components/TranscriptNavDock'
 import { bubbleTone } from '@/components/bubbleTone'
@@ -25,19 +27,22 @@ import { ProjectSelect } from '@/components/ProjectSelect'
 import { SessionRail } from '@/components/SessionRail'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import type { HubSession, PasteAttachment, SessionRuntime } from '@/api/types'
-import { usePageState } from '@/utils/pageState'
+import { readPageState, usePageState, writePageState } from '@/utils/pageState'
 import { routeChatWheel } from '@/utils/chatWheel'
+import { createRafScheduler } from '@/utils/rafScheduler'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
 import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
+import { useDraftStore } from '@/stores/draftStore'
+import { toast } from '@/stores/toastStore'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import { queryKeys } from '@/queries/queryKeys'
 import { ThemedSelect } from '@/components/ThemedSelect'
 import {
   antiApi, api, HttpError,
-  type AntiApprovalPrompt, type AntiAttachmentRef, type AntiMode,
+  type AgyProfiles, type AntiApprovalPrompt, type AntiAttachmentRef, type AntiMode,
   type AntiModels, type AntiPermissionMode, type AntiRun,
-  type AntiSession, type AntiSubmission,
+  type AntiSession, type AntiSteerSubmission, type AntiSubmission,
 } from '@/api/client'
 
 type Session = AntiSession
@@ -53,19 +58,66 @@ const efforts = [
 ]
 type Models = AntiModels
 
+interface AgyModelFamily {
+  key: string
+  name: string
+  variants: Partial<Record<string, string>>
+  plain?: string
+  efforts?: string[]
+  defaultEffort?: string
+  isOrchestrator?: boolean
+}
+
 function modelFamilies(items: Models['items']) {
-  const families = new Map<string, { key: string; name: string; variants: Partial<Record<string, string>>; plain?: string }>()
-  for (const { id, display_name } of items) {
+  const families = new Map<string, AgyModelFamily>()
+  for (const item of items) {
+    const { id, display_name } = item
+    const isOrch = Boolean(item.is_orchestrator) || /orchestrator/i.test(id)
+    if (isOrch) {
+      const existing = families.get(id) ?? { key: id, name: display_name || id, variants: {}, plain: id, isOrchestrator: true, efforts: [] }
+      existing.isOrchestrator = true
+      existing.plain = id
+      if (display_name) existing.name = display_name
+      families.set(id, existing)
+      continue
+    }
     const variant = id.match(/^(.+)-(low|medium|high|xhigh|max)$/i)
     const key = variant?.[1] ?? id
     const level = variant?.[2].toLowerCase()
-    const label = level ? display_name.replace(/\s*\((low|medium|high|xhigh|max)\)\s*$/i, '') : display_name
+    const label = level ? display_name.replace(/\s*\((low|medium|high|xhigh|max|extra)\)\s*$/i, '') : display_name
     const family = families.get(key) ?? { key, name: label && label !== id ? label : key, variants: {} }
     if (level) family.variants[level] = id
     else family.plain = id
+    if (item.efforts?.length) {
+      const merged = new Set([...(family.efforts ?? []), ...item.efforts.map(e => e.toLowerCase())])
+      family.efforts = [...merged]
+    }
+    if (item.default_effort) family.defaultEffort = item.default_effort.toLowerCase()
     families.set(key, family)
   }
   return [...families.values()]
+}
+
+function buildOrchestratorRoleChoices(items: Models['items']) {
+  const options: Array<{ id: string; label: string }> = []
+  const seen = new Set<string>()
+  const push = (id: string, label: string) => {
+    if (!id || seen.has(id)) return
+    seen.add(id)
+    options.push({ id, label })
+  }
+  for (const item of items) {
+    if (item.is_orchestrator || /orchestrator/i.test(item.id)) continue
+    if (item.efforts?.length && !/-(low|medium|high|xhigh|max)$/i.test(item.id)) {
+      for (const lvl of item.efforts) {
+        const titleLevel = lvl === 'xhigh' ? 'XHigh' : `${lvl.slice(0, 1).toUpperCase()}${lvl.slice(1)}`
+        push(`${item.id}-${lvl}`, `${item.display_name} (${titleLevel})`)
+      }
+    } else {
+      push(item.id, item.display_name || item.id)
+    }
+  }
+  return options
 }
 type Submission = AntiSubmission
 
@@ -138,6 +190,82 @@ const DEFAULT_ANTI_COMMANDS: readonly {
     { name: 'review', description: '审查工作区改动与潜在问题' },
   ]
 
+const EMPTY_ATTACHMENTS: PasteAttachment[] = []
+const TRANSFER_PREFIX = 'transfer:'
+const SOFT_STOP_ESCALATION_MS = 3500
+const SILENT_STUCK_SECONDS = 90
+
+function parseIsoMs(raw?: string | null): number | null {
+  if (!raw) return null
+  const ms = Date.parse(raw)
+  return Number.isFinite(ms) ? ms : null
+}
+
+function formatRunTime(ms: number | null): string | null {
+  if (ms === null) return null
+  const date = new Date(ms)
+  const now = new Date()
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  if (date.toDateString() === now.toDateString()) return time
+  const day = date.toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })
+  return `${day} ${time}`
+}
+
+function formatDuration(milliseconds: number): string {
+  const seconds = Math.floor(milliseconds / 1000)
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const rest = seconds % 60
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`
+    : `${minutes}:${String(rest).padStart(2, '0')}`
+}
+
+function formatRunStatusLabel(status: string): string {
+  switch (status) {
+    case 'submitting': return '提交中'
+    case 'queued': return '排队中'
+    case 'running': return '运行中'
+    case 'unknown': return '状态同步中'
+    case 'cancelled':
+    case 'canceled': return '任务中止'
+    case 'timeout': return '响应超时'
+    case 'rate_limited': return '额度受限'
+    case 'rejected': return '已拒绝'
+    case 'cli_error': return '运行异常'
+    default: return status
+  }
+}
+
+const grantLabels: Record<string, string> = {
+  execute: '执行命令',
+  edit: '修改文件',
+  delete: '删除文件',
+  move: '移动文件',
+  other: '其他操作',
+  '*': '全部权限',
+}
+
+function pickBestFallbackProfile(profilesData: AgyProfiles | undefined, currentProfileId: string) {
+  if (!profilesData?.profiles?.length) return null
+  const candidates = profilesData.profiles
+    .filter(p => p.id !== currentProfileId && (p.cooldown_seconds ?? 0) <= 0)
+    .filter(p => p.auth_state === 'authenticated' || p.has_credentials === true || p.id === 'default')
+  if (!candidates.length) return null
+  candidates.sort((a, b) => {
+    const pa = a.usage?.min_remaining_pct
+    const pb = b.usage?.min_remaining_pct
+    if (typeof pa === 'number' && typeof pb === 'number' && pb !== pa) return pb - pa
+    if (typeof pa === 'number' && typeof pb !== 'number') return -1
+    if (typeof pa !== 'number' && typeof pb === 'number') return 1
+    if (a.auth_state === 'authenticated' && b.auth_state !== 'authenticated') return -1
+    if (b.auth_state === 'authenticated' && a.auth_state !== 'authenticated') return 1
+    return 0
+  })
+  const chosen = candidates[0]
+  return { profile: chosen, pct: chosen.usage?.min_remaining_pct }
+}
+
 function formatRunUsage(usage?: Run['usage']): string | null {
   if (!usage) return null
   const totalIn = usage.input_tokens ?? 0
@@ -167,6 +295,27 @@ function toUserAttachments(runId: string, list?: AntiAttachmentRef[]): PasteAtta
     size: item.size ?? 0,
     source: item.source,
   }))
+}
+
+function buildRunInputs(rawPrompt: string, itemAttachments: PasteAttachment[]): AntiSteerSubmission {
+  const trimmed = rawPrompt.trim()
+  const transferRefs = itemAttachments
+    .filter(item => item.file_id.startsWith(TRANSFER_PREFIX))
+    .map(item => ({ id: Number(item.file_id.slice(TRANSFER_PREFIX.length)), path: item.path }))
+    .filter(item => Number.isFinite(item.id) && item.id > 0)
+  const regularAtts = itemAttachments
+    .filter(item => !item.file_id.startsWith(TRANSFER_PREFIX))
+    .map(({ path, name, source, size }) => ({
+      path,
+      name,
+      source: source ?? 'managed_upload',
+      ...(size != null ? { size } : {}),
+    }))
+  return {
+    prompt: trimmed,
+    ...(transferRefs.length ? { references: transferRefs } : {}),
+    ...(regularAtts.length ? { attachments: regularAtts } : {}),
+  }
 }
 
 export default function AntiChat() {
@@ -247,7 +396,7 @@ export default function AntiChat() {
     </>}>
     <div className="flex h-full min-h-0 min-w-0 flex-col md:flex-row">
       <SessionRail storageScope="anti" projects={projects.data?.items} sessions={railSessions}
-        runtimes={railRuntimes} currentId={selected?.id ?? null} onSelect={setSid} onCreate={openCreate}
+        runtimes={railRuntimes} currentId={selected?.id ?? null} creating={create.isPending} onSelect={setSid} onCreate={openCreate}
         onRename={(id, title) => rename.mutateAsync({ id, title }).then(() => undefined)}
         onDelete={id => remove.mutateAsync(id)}
         deleteDetail="将删除此会话及消息记录，不删除本地项目文件。" />
@@ -265,7 +414,7 @@ export default function AntiChat() {
             <span>{daemon.status.data?.detail || daemon.status.error?.message || 'Agy ACP 运行时当前不可用，请检查官方 agy CLI 安装。'}</span>
             <div className="flex shrink-0 items-center gap-1.5">
               {daemon.managed && (
-                <button type="button" className="ga-btn shrink-0" onClick={() => daemon.restart.mutate()}>
+                <button type="button" className="ga-btn shrink-0" onClick={() => daemon.restart.mutate(false)}>
                   重置运行时
                 </button>
               )}
@@ -294,6 +443,8 @@ export default function AntiChat() {
         <Errors items={[sessions.error, rename.error, remove.error]} />
         {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions}
           profileId={profiles.data?.active} profileName={selectedProfile?.name}
+          profilesData={profiles.data}
+          supportsSteering={daemon.status.data?.supports_steering}
           onOpenProfiles={() => setProfilesOpen(true)} /> :
           <div className="relative flex flex-1">
             <ChatUtilityDock fileTransfer={{ canInsert: false, onInsert: () => { } }} />
@@ -308,7 +459,7 @@ export default function AntiChat() {
                   </button>
                 </>
               ) : (
-                <p>{sessions.isPending ? '正在加载 Anti 会话…' : '点击「新建会话」，选择该会话的项目。'}</p>
+                <p>{sessions.isPending ? '正在加载 Agy 会话…' : '点击「新建会话」，选择该会话的项目。'}</p>
               )}
             </div>
           </div>}
@@ -320,7 +471,7 @@ export default function AntiChat() {
         if (selectedProject && !create.isPending) create.mutate(selectedProject.name)
       }}>
         <h2 id="anti-create-session-title" className="text-base font-semibold text-ink">新建会话</h2>
-        <p className="text-sm text-ink-muted">为这次 Anti 会话选择项目。创建后，会话会归入该项目。</p>
+        <p className="text-sm text-ink-muted">为这次 Agy 会话选择项目。创建后，会话会归入该项目。</p>
         <ProjectSelect standalone aria-label="项目目录" placeholder="选择项目目录" value={project ?? ''} onChange={setProject}
           options={available.map(item => ({ key: item.name, name: item.display_name ?? item.name }))} />
         {selectedProject && <p className="break-all text-xs text-ink-muted">{selectedProject.path}</p>}
@@ -335,15 +486,28 @@ export default function AntiChat() {
   </PageShell>
 }
 
-function Conversation({ session, headerActions, profileId, profileName, onOpenProfiles }: {
-  session: Session; headerActions: HTMLDivElement | null; profileId?: string; profileName?: string; onOpenProfiles: () => void
+function Conversation({ session, headerActions, profileId, profileName, profilesData, supportsSteering, onOpenProfiles }: {
+  session: Session; headerActions: HTMLDivElement | null; profileId?: string; profileName?: string; profilesData?: AgyProfiles; supportsSteering?: boolean | null; onOpenProfiles: () => void
 }) {
   const { id: sid, project, workspace } = session
   const cache = useQueryClient()
-  const [prompt, setPrompt] = useState('')
-  const [attachments, setAttachments] = useState<PasteAttachment[]>([])
-  const [references, setReferences] = useState<TransferredFile[]>([])
+  const draftKey = `antiChat:${sid}`
+  const prompt = useDraftStore(state => state.texts[draftKey] ?? '')
+  const attachments = useDraftStore(state => state.attachments[draftKey] ?? EMPTY_ATTACHMENTS)
+  const setPrompt = useCallback((value: string) => useDraftStore.getState().setText(draftKey, value), [draftKey])
+  const setAttachments = useCallback((value: PasteAttachment[]) => useDraftStore.getState().setAttachments(draftKey, value), [draftKey])
   const [pending, setPending] = useState<Submission>()
+  const [lastRateLimitedInput, setLastRateLimitedInput] = useState<Submission | null>(null)
+  const [queuedPrompt, setQueuedPrompt] = useState<{ prompt: string; attachments: PasteAttachment[] } | null>(null)
+  const effectiveProfileId = session.profile_id ?? profileId ?? 'default'
+  const effectiveProfileName = profilesData?.profiles.find(item => item.id === effectiveProfileId)?.name
+    ?? (session.profile_id ? session.profile_id : (profileName ?? effectiveProfileId))
+  const [clock, setClock] = useState(Date.now)
+  const [stoppingRunId, setStoppingRunId] = useState<string | null>(null)
+  const [forceStopEligible, setForceStopEligible] = useState(false)
+  const [lastActivityAt, setLastActivityAt] = useState(() => Date.now())
+  const lastActivityAtRef = useRef(lastActivityAt)
+  const prevActiveRunIdRef = useRef<string | null>(null)
   const [familyKey, setFamilyKey] = usePageState('antiChat.modelFamily', DEFAULT_FAMILY)
   const [preferredEffort, setEffort] = usePageState('antiChat.effort', DEFAULT_EFFORT)
   const [mode, setMode] = usePageState<AntiMode>('antiChat.mode', 'plan')
@@ -352,7 +516,11 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null)
   const [policyOpen, setPolicyOpen] = useState(false)
+  const [orchestratorOpen, setOrchestratorOpen] = useState(false)
+  const [orchPlannerDraft, setOrchPlannerDraft] = useState('')
+  const [orchExecutorDraft, setOrchExecutorDraft] = useState('')
   const policyAnchorRef = useRef<HTMLDivElement>(null)
+  const orchestratorAnchorRef = useRef<HTMLDivElement>(null)
   const composerWrapRef = useRef<HTMLDivElement>(null)
   const activePolicy = mode === 'plan'
     ? EXECUTION_POLICIES[0]
@@ -373,6 +541,21 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
       window.removeEventListener('keydown', onKeyDown)
     }
   }, [policyOpen])
+  useEffect(() => {
+    if (!orchestratorOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (!orchestratorAnchorRef.current?.contains(event.target as Node)) setOrchestratorOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOrchestratorOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [orchestratorOpen])
   const [fontScale, setFontScale] = useState(getChatFontScale)
   useEffect(() => {
     const sync = (event: Event) => setFontScale((event as CustomEvent<number>).detail || getChatFontScale())
@@ -392,21 +575,24 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
   const utilityRailRef = useRef<HTMLElement>(null)
   const followTranscript = useRef(true)
   const [stuckBottom, setStuckBottom] = useState(true)
-  const [activeTurn, setActiveTurn] = useState(0)
-  const activeTurnRef = useRef(0)
+  const [activeTurn, setActiveTurn] = useState(-1)
+  const activeTurnRef = useRef(-1)
   const navTargetRef = useRef<number | null>(null)
   const navLockUntilRef = useRef(0)
   const jumpingToBottomUntilRef = useRef(0)
   const [unreadRuns, setUnreadRuns] = useState(0)
   const seenRunCountRef = useRef(0)
+  const scrollPositionsRef = useRef<Record<string, { scrollTop: number; stuck: boolean }>>(
+    readPageState('antiChat.scrollPositions', {}),
+  )
   const updateActiveTurn = useCallback((next: number) => {
     activeTurnRef.current = next
     setActiveTurn((previous) => previous === next ? previous : next)
   }, [])
   const models = useQuery({
-    queryKey: ['anti-models', profileId],
-    enabled: Boolean(profileId),
-    queryFn: ({ signal }) => antiApi.models(signal),
+    queryKey: ['anti-models', effectiveProfileId],
+    enabled: Boolean(effectiveProfileId),
+    queryFn: ({ signal }) => antiApi.models(signal, session.profile_id ?? undefined),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     refetchIntervalInBackground: false,
@@ -415,10 +601,52 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
   })
   const families = modelFamilies(models.data?.items ?? [DEFAULT_MODEL])
   const family = families.find(item => item.key === familyKey) ?? families[0]
-  const effortOptions = efforts.filter(option => family?.plain || family?.variants[option.key])
-  const effort = effortOptions.find(option => option.key === preferredEffort)?.key
-    ?? effortOptions.find(option => option.key === DEFAULT_EFFORT)?.key ?? effortOptions[0]?.key ?? DEFAULT_EFFORT
-  const model = family?.variants[effort] ?? family?.plain ?? DEFAULT_MODEL.id
+  const isOrchestratorSelected = Boolean(family?.isOrchestrator)
+  const effortOptions = isOrchestratorSelected
+    ? []
+    : family?.efforts?.length
+      ? efforts.filter(option => family.efforts!.includes(option.key))
+      : efforts.filter(option => family?.plain || family?.variants[option.key])
+  const effort = isOrchestratorSelected
+    ? (family?.defaultEffort ?? DEFAULT_EFFORT)
+    : (effortOptions.find(option => option.key === preferredEffort)?.key
+      ?? effortOptions.find(option => option.key === (family?.defaultEffort ?? DEFAULT_EFFORT))?.key
+      ?? effortOptions[0]?.key ?? DEFAULT_EFFORT)
+  const model = isOrchestratorSelected
+    ? (family?.plain ?? family?.key ?? DEFAULT_MODEL.id)
+    : (family?.variants[effort] ?? family?.plain ?? DEFAULT_MODEL.id)
+  const orchestratorSettings = useQuery({
+    queryKey: ['anti-orchestrator', effectiveProfileId],
+    enabled: Boolean(effectiveProfileId && (isOrchestratorSelected || orchestratorOpen)),
+    queryFn: ({ signal }) => antiApi.profileOrchestrator(effectiveProfileId, signal),
+    retry: false,
+  })
+  useEffect(() => {
+    setOrchPlannerDraft(orchestratorSettings.data?.planner ?? '')
+    setOrchExecutorDraft(orchestratorSettings.data?.executor ?? '')
+  }, [orchestratorSettings.data?.planner, orchestratorSettings.data?.executor, effectiveProfileId])
+  const orchestratorRoleChoices = useMemo(
+    () => buildOrchestratorRoleChoices(models.data?.items ?? [DEFAULT_MODEL]),
+    [models.data?.items],
+  )
+  const updateOrchestrator = useMutation({
+    mutationFn: ({ planner, executor }: { planner: string | null; executor: string | null }) =>
+      antiApi.updateProfileOrchestrator(effectiveProfileId, { planner, executor }),
+    onSuccess: updated => {
+      cache.setQueryData(['anti-orchestrator', effectiveProfileId], updated)
+      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+      void cache.invalidateQueries({ queryKey: ['anti-workers'] })
+      setOrchestratorOpen(false)
+      toast.success('已保存 Orchestrator 角色设置，空闲进程已刷新')
+    },
+  })
+  const syncModels = useMutation({
+    mutationFn: () => antiApi.syncModels(session.profile_id ?? undefined),
+    onSuccess: synced => {
+      cache.setQueryData(['anti-models', effectiveProfileId], synced)
+      toast.success(`已同步上游模型（${synced.items.length} 个）`)
+    },
+  })
   const key = ['anti-runs', sid]
   const history = useQuery({
     queryKey: key, queryFn: ({ signal }) => antiApi.runs(sid, signal),
@@ -437,20 +665,29 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
     },
   })
   useEffect(() => {
+    if (!current) return
+    setClock(Date.now())
+    const timer = window.setInterval(() => setClock(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [current])
+  useEffect(() => {
     if (pending && history.data?.some(run => run.operation === pending.operation)) {
       setPending(undefined)
-      setPrompt('')
-      setAttachments([])
-      setReferences([])
+      useDraftStore.getState().clearDraft(draftKey)
     }
-  }, [history.data, pending])
+  }, [draftKey, history.data, pending])
   const send = useMutation({
     mutationFn: (body: Submission) => antiApi.submitRun(sid, body),
     onSuccess: run => {
+      setLastRateLimitedInput(null)
       cache.setQueryData<Run[]>(key, old => [...(old ?? []).filter(row => row.id !== run.id), run])
-      setPrompt(''); setPending(undefined); setAttachments([]); setReferences([])
+      setPending(undefined)
+      useDraftStore.getState().clearDraft(draftKey)
     },
-    onError: error => {
+    onError: (error, variables) => {
+      if (error instanceof HttpError && error.status === 429) {
+        setLastRateLimitedInput(variables)
+      }
       if (error instanceof HttpError && (error.status === 422 || error.status === 429 || error.status === 409 || error.status === 503)) {
         setPending(undefined)
       }
@@ -460,11 +697,40 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
       void cache.invalidateQueries({ queryKey: sessionsKey })
     },
   })
+  const activeRunId = current?.id ?? null
+  useEffect(() => {
+    const now = Date.now()
+    lastActivityAtRef.current = now
+    setLastActivityAt(now)
+    if (!activeRunId) {
+      setStoppingRunId(null)
+      setForceStopEligible(false)
+    } else {
+      setStoppingRunId(prev => (prev === activeRunId ? prev : null))
+      setForceStopEligible(false)
+    }
+  }, [activeRunId])
+  useEffect(() => {
+    if (!stoppingRunId || stoppingRunId !== activeRunId) return
+    const timer = window.setTimeout(() => setForceStopEligible(true), SOFT_STOP_ESCALATION_MS)
+    return () => window.clearTimeout(timer)
+  }, [stoppingRunId, activeRunId])
   const cancel = useMutation({
-    mutationFn: (rid: string) => antiApi.cancelRun(sid, rid),
-    onSuccess: run => {
+    mutationFn: ({ rid, force = false }: { rid: string; force?: boolean }) => antiApi.cancelRun(sid, rid, force),
+    onMutate: ({ rid }) => {
+      setStoppingRunId(rid)
+    },
+    onSuccess: (run, vars) => {
       cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === run.id ? run : row))
-      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+      if (!active(run)) {
+        setStoppingRunId(null)
+        setForceStopEligible(false)
+        void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] })
+        void cache.invalidateQueries({ queryKey: key })
+        void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+      } else if (!vars.force) {
+        setForceStopEligible(true)
+      }
     },
   })
   const approve = useMutation({
@@ -477,9 +743,13 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
     },
   })
   const resetAcp = useMutation({
-    mutationFn: () => antiApi.resetSession(sid),
+    mutationFn: (force: boolean = false) => antiApi.resetSession(sid, force),
     onSuccess: updated => {
+      setStoppingRunId(null)
+      setForceStopEligible(false)
       cache.setQueryData<Session[]>(sessionsKey, old => old?.map(row => row.id === updated.id ? { ...row, ...updated } : row))
+      void cache.invalidateQueries({ queryKey: key })
+      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
     },
   })
   const slashMatch = /^\/(\S*)$/.exec(prompt.trimStart())
@@ -488,11 +758,16 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
     commandsOpen || (Boolean(slashMatch) && dismissedSlashText !== prompt)
   )
   const commands = useQuery({
-    queryKey: ['anti-commands', profileId],
-    enabled: showSlashMenu,
-    queryFn: ({ signal }) => antiApi.commands(signal),
+    queryKey: ['anti-commands', effectiveProfileId],
+    enabled: Boolean(effectiveProfileId && (showSlashMenu || session.has_conversation)),
+    queryFn: ({ signal }) => antiApi.commands(signal, session.profile_id ?? undefined),
+    staleTime: showSlashMenu ? 0 : 60_000,
     retry: false,
   })
+  const { refetch: refetchCommands } = commands
+  useEffect(() => {
+    if (showSlashMenu && effectiveProfileId) void refetchCommands()
+  }, [showSlashMenu, effectiveProfileId, refetchCommands])
   const rawCommands = commands.data?.items ?? DEFAULT_ANTI_COMMANDS
   const filteredCommands = slashQuery
     ? rawCommands.filter(cmd =>
@@ -518,7 +793,7 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
     const el = transcript.current
     if (!el) return
     const now = performance.now()
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 64
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
     if (jumpingToBottomUntilRef.current > now) {
       if (atBottom) {
         jumpingToBottomUntilRef.current = 0
@@ -534,7 +809,7 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
     }
     const nodes = el.querySelectorAll<HTMLElement>('[data-anti-turn]')
     if (nodes.length === 0) {
-      updateActiveTurn(0)
+      updateActiveTurn(-1)
       return
     }
     const navTarget = navTargetRef.current
@@ -556,7 +831,13 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
       })
     }
     updateActiveTurn(currentTurn)
-  }, [runs.length, updateActiveTurn])
+    if (initializedRunsRef.current) {
+      const next = { ...scrollPositionsRef.current, [sid]: { scrollTop: el.scrollTop, stuck: atBottom } }
+      const entries = Object.entries(next)
+      scrollPositionsRef.current = entries.length > 40 ? Object.fromEntries(entries.slice(entries.length - 40)) : next
+      writePageState('antiChat.scrollPositions', scrollPositionsRef.current)
+    }
+  }, [runs.length, sid, updateActiveTurn])
 
   const syncTranscriptNavRef = useRef(syncTranscriptNav)
   syncTranscriptNavRef.current = syncTranscriptNav
@@ -564,6 +845,7 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
   useEffect(() => {
     const el = transcript.current
     if (!el) return
+    const scrollScheduler = createRafScheduler(() => syncTranscriptNavRef.current())
     const clearNavLock = () => {
       navTargetRef.current = null
       navLockUntilRef.current = 0
@@ -576,13 +858,16 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
         return
       }
       clearNavLock()
-      syncTranscriptNavRef.current()
+      scrollScheduler.schedule()
     }
+    el.addEventListener('scroll', scrollScheduler.schedule, { passive: true })
     el.addEventListener('scrollend', onScrollEnd, { passive: true })
     el.addEventListener('wheel', clearNavLock, { passive: true })
     el.addEventListener('touchstart', clearNavLock, { passive: true })
     el.addEventListener('pointerdown', clearNavLock, { passive: true })
     return () => {
+      scrollScheduler.cancel()
+      el.removeEventListener('scroll', scrollScheduler.schedule)
       el.removeEventListener('scrollend', onScrollEnd)
       el.removeEventListener('wheel', clearNavLock)
       el.removeEventListener('touchstart', clearNavLock)
@@ -627,6 +912,31 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
     })
   }, [runs.length, updateActiveTurn])
 
+  const collapseToLatest = useCallback(() => {
+    navTargetRef.current = null
+    navLockUntilRef.current = 0
+    jumpingToBottomUntilRef.current = 0
+    followTranscript.current = true
+    setStuckBottom(true)
+    setUnreadRuns(0)
+    seenRunCountRef.current = runs.length
+    updateActiveTurn(runs.length - 1)
+    const el = transcript.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    if (initializedRunsRef.current) {
+      const next = { ...scrollPositionsRef.current, [sid]: { scrollTop: el.scrollTop, stuck: true } }
+      const entries = Object.entries(next)
+      scrollPositionsRef.current = entries.length > 40 ? Object.fromEntries(entries.slice(entries.length - 40)) : next
+      writePageState('antiChat.scrollPositions', scrollPositionsRef.current)
+    }
+    requestAnimationFrame(() => {
+      if (followTranscript.current && transcript.current === el) {
+        el.scrollTop = el.scrollHeight
+      }
+    })
+  }, [runs.length, sid, updateActiveTurn])
+
   const jumpToTurnIndex = useCallback((targetIndex: number) => {
     const el = transcript.current
     if (!el || runs.length === 0) return
@@ -653,8 +963,11 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
   }, [runs.length, updateActiveTurn])
 
   const jumpToTurn = useCallback((delta: -1 | 1) => {
-    jumpToTurnIndex(activeTurnRef.current + delta)
-  }, [jumpToTurnIndex])
+    const currentIndex = activeTurnRef.current < 0
+      ? (followTranscript.current ? runs.length - 1 : 0)
+      : activeTurnRef.current
+    jumpToTurnIndex(currentIndex + delta)
+  }, [jumpToTurnIndex, runs.length])
 
   const minimapTurns = useMemo(
     () => runs.map((run, idx) => {
@@ -677,10 +990,18 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
       initializedRunsRef.current = true
       seenRunCountRef.current = runs.length
       setUnreadRuns(0)
+      const saved = scrollPositionsRef.current[sid]
+      if (saved && !saved.stuck && runs.length > 0) {
+        el.scrollTop = saved.scrollTop
+        followTranscript.current = false
+        setStuckBottom(false)
+        syncTranscriptNavRef.current()
+        return
+      }
       el.scrollTop = el.scrollHeight
       followTranscript.current = true
       setStuckBottom(true)
-      updateActiveTurn(Math.max(0, runs.length - 1))
+      updateActiveTurn(runs.length - 1)
       return
     }
     if (followTranscript.current) {
@@ -688,60 +1009,371 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
       seenRunCountRef.current = runs.length
       setUnreadRuns(0)
       setStuckBottom(true)
-      updateActiveTurn(Math.max(0, runs.length - 1))
+      updateActiveTurn(runs.length - 1)
     } else if (runs.length > seenRunCountRef.current) {
       setUnreadRuns(runs.length - seenRunCountRef.current)
     }
-  }, [history.isSuccess, runs.length, updateActiveTurn])
+  }, [history.isSuccess, runs.length, sid, updateActiveTurn])
+  const handleEventsChanged = useCallback(() => {
+    const now = Date.now()
+    if (now - lastActivityAtRef.current >= 1000) {
+      lastActivityAtRef.current = now
+      setLastActivityAt(now)
+    }
+    scrollToLatest()
+  }, [scrollToLatest])
   useEffect(scrollToLatest, [history.isSuccess, runs.length, scrollToLatest])
+  const activeApprovalId = (current ? (live.data?.approval?.id ?? current.approval?.id) : undefined) ?? null
+  useEffect(() => {
+    if (activeApprovalId && followTranscript.current && transcript.current) {
+      transcript.current.scrollTop = transcript.current.scrollHeight
+    }
+  }, [activeApprovalId])
+  const silentSeconds = current && !activeApprovalId ? Math.max(0, Math.floor((clock - lastActivityAt) / 1000)) : 0
+  const isSilentStuck = silentSeconds >= SILENT_STUCK_SECONDS
+  const canForceStop = Boolean(current && forceStopEligible && stoppingRunId === current.id)
+  const showRecoveryBar = Boolean(current && (canForceStop || isSilentStuck))
+  const canNativeSteer = Boolean(current && supportsSteering !== false && !canForceStop && !activeApprovalId)
+  const transferCount = attachments.filter(item => item.file_id.startsWith(TRANSFER_PREFIX)).length
+  const createSubmission = useCallback((rawPrompt: string, itemAttachments: PasteAttachment[]): Submission => {
+    const effectivePermission = mode === 'plan' ? 'approval-required' : permissionMode
+    return {
+      ...buildRunInputs(rawPrompt, itemAttachments),
+      model,
+      effort,
+      mode,
+      permission_mode: effectivePermission,
+      ...(session.profile_id ? { profile_id: session.profile_id } : {}),
+      operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    }
+  }, [effort, mode, model, permissionMode, session.profile_id])
+  const setSessionProfile = useMutation({
+    mutationFn: (nextProfileId: string | null) => antiApi.setSessionProfile(sid, nextProfileId),
+    onSuccess: updated => {
+      cache.setQueryData<Session[]>(sessionsKey, old => old?.map(row => row.id === updated.id ? { ...row, ...updated } : row))
+      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+      void cache.invalidateQueries({ queryKey: ['anti-models'] })
+      void cache.invalidateQueries({ queryKey: ['anti-commands'] })
+      void cache.invalidateQueries({ queryKey: ['anti-workers'] })
+      const targetName = updated.profile_id
+        ? (profilesData?.profiles.find(p => p.id === updated.profile_id)?.name ?? updated.profile_id)
+        : `跟随全局默认（${profileName ?? '系统默认'}）`
+      toast.success(`本会话已切换为「${targetName}」`)
+    },
+  })
+  const switchAndRetry = useMutation({
+    mutationFn: async (targetProfileId: string) => {
+      const updated = await antiApi.setSessionProfile(sid, targetProfileId)
+      cache.setQueryData<Session[]>(sessionsKey, old => old?.map(row => row.id === updated.id ? { ...row, ...updated } : row))
+      const lastRateRun = !lastRateLimitedInput ? [...runs].reverse().find(r => r.status === 'rate_limited') : undefined
+      const baseBody = lastRateLimitedInput ?? (lastRateRun
+        ? createSubmission(lastRateRun.prompt, toUserAttachments(lastRateRun.id, lastRateRun.attachments))
+        : null)
+      if (!baseBody) return null
+      const retryBody: Submission = {
+        ...baseBody,
+        profile_id: targetProfileId,
+        operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      }
+      return await antiApi.submitRun(sid, retryBody)
+    },
+    onSuccess: (run, targetProfileId) => {
+      setLastRateLimitedInput(null)
+      send.reset()
+      if (run) {
+        cache.setQueryData<Run[]>(key, old => [...(old ?? []).filter(row => row.id !== run.id), run])
+        useDraftStore.getState().clearDraft(draftKey)
+      }
+      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+      void cache.invalidateQueries({ queryKey: key })
+      void cache.invalidateQueries({ queryKey: ['anti-workers'] })
+      const targetName = profilesData?.profiles.find(p => p.id === targetProfileId)?.name ?? targetProfileId
+      toast.success(`已切换本会话至「${targetName}」并重试`)
+    },
+  })
+  const clearGrants = useMutation({
+    mutationFn: (kind?: string) => antiApi.clearSessionGrants(sid, kind),
+    onSuccess: (updated, kind) => {
+      cache.setQueryData<Session[]>(sessionsKey, old => old?.map(row => row.id === updated.id ? { ...row, ...updated } : row))
+      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+      toast.success(kind ? `已收回本会话「${grantLabels[kind] ?? kind}」授权` : '已收回本会话全部常驻授权')
+    },
+  })
+  const compact = useMutation({
+    mutationFn: () => {
+      const effectivePermission = mode === 'plan' ? 'approval-required' : permissionMode
+      return antiApi.compactSession(sid, {
+        model,
+        effort,
+        mode,
+        permission_mode: effectivePermission,
+        ...(session.profile_id ? { profile_id: session.profile_id } : {}),
+      })
+    },
+    onSuccess: run => {
+      cache.setQueryData<Run[]>(key, old => [...(old ?? []).filter(row => row.id !== run.id), run])
+      void cache.invalidateQueries({ queryKey: key })
+      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+      toast.success('已发起上下文压缩（/compact）')
+    },
+  })
+  const supportsCompact = rawCommands.some(cmd => cmd.name === 'compact')
+  const isRateLimited = (send.error instanceof HttpError && send.error.status === 429)
+    || (!current && runs.at(-1)?.status === 'rate_limited')
+  const fallbackProfile = isRateLimited ? pickBestFallbackProfile(profilesData, effectiveProfileId) : null
+  const grants = session.grants ?? []
   const submit = () => {
     const trimmedPrompt = prompt.trim()
-    if (current || send.isPending || !history.isSuccess || (!trimmedPrompt && !attachments.length && !references.length)) return
-    const effectivePermission = mode === 'plan' ? 'approval-required' : permissionMode
-    const body = pending ?? {
-      prompt: trimmedPrompt, model, effort, mode, permission_mode: effectivePermission,
-      ...(references.length ? { references: references.map(({ id, path }) => ({ id, path })) } : {}),
-      ...(attachments.length ? {
-        attachments: attachments.map(({ path, name, source, size }) => ({
-          path,
-          name,
-          source: source ?? 'managed_upload',
-          ...(size != null ? { size } : {}),
-        })),
-      } : {}),
-      operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    }
+    if (current || send.isPending || !history.isSuccess || (!trimmedPrompt && !attachments.length)) return
+    const body = pending ?? createSubmission(prompt, attachments)
     followTranscript.current = true
     setPending(body)
     send.mutate(body)
   }
+  const steer = useMutation({
+    mutationFn: ({ rid, body }: { rid: string; body: AntiSteerSubmission }) =>
+      antiApi.steerRun(sid, rid, body),
+    onSuccess: (updated, { rid }) => {
+      useDraftStore.getState().clearDraft(draftKey)
+      cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === updated.id ? updated : row))
+      void cache.invalidateQueries({ queryKey: ['anti-live', sid, rid] })
+      void cache.invalidateQueries({ queryKey: key })
+      toast.success('已向当前任务发送插话纠偏')
+    },
+    onError: (error) => {
+      if (error instanceof HttpError && error.status === 409 && current) {
+        const currentText = prompt.trim()
+        const currentAtts = attachments
+        if (currentText || currentAtts.length) {
+          setQueuedPrompt({ prompt: currentText, attachments: currentAtts })
+          useDraftStore.getState().clearDraft(draftKey)
+        }
+        toast.info('当前任务暂无法实时插话，已加入排队等待本轮结束')
+      }
+    },
+  })
+  const queueCurrentInput = () => {
+    const trimmed = prompt.trim()
+    if (!trimmed && !attachments.length) return
+    setQueuedPrompt({ prompt: trimmed, attachments })
+    useDraftStore.getState().clearDraft(draftKey)
+    toast.info('已加入排队，将在本轮完成后自动发送')
+  }
+  const steerOrQueue = () => {
+    if (!current || steer.isPending || send.isPending || !history.isSuccess) return
+    const trimmed = prompt.trim()
+    if (!trimmed && !attachments.length) return
+    if (canNativeSteer) {
+      steer.mutate({ rid: current.id, body: buildRunInputs(prompt, attachments) })
+    } else {
+      queueCurrentInput()
+    }
+  }
+  useEffect(() => {
+    const prevId = prevActiveRunIdRef.current
+    prevActiveRunIdRef.current = activeRunId
+    if (!prevId || activeRunId || pending || send.isPending || !queuedPrompt) return
+    const finishedRun = runs.find(row => row.id === prevId)
+    if (finishedRun?.status === 'success') {
+      const body = createSubmission(queuedPrompt.prompt, queuedPrompt.attachments)
+      setQueuedPrompt(null)
+      followTranscript.current = true
+      setPending(body)
+      send.mutate(body)
+    }
+  }, [activeRunId, createSubmission, pending, queuedPrompt, runs, send])
   return <>
     {headerActions && createPortal(<>
-      <MainModelSelect aria-label="模型" className="min-w-0 max-w-[min(400px,24vw)]" title={models.error ? '模型列表加载失败' : '模型'}
+      <MainModelSelect aria-label="模型" className="min-w-0 max-w-full sm:max-w-[min(400px,100%)]" title={models.error ? '模型列表加载失败' : '模型'}
         llms={families} value={family?.key} onChange={setFamilyKey} disabled={Boolean(current || pending) || models.isPending} />
-      <ThemedSelect aria-label="思考等级" title="思考等级" options={effortOptions} value={effort} onChange={setEffort}
-        displayName={option => option.name} placeholder={DEFAULT_EFFORT}
-        renderMark={() => <span className="model-select-mark"><Brain size={16} aria-hidden="true" /></span>}
-        disabled={Boolean(current || pending)} />
-      {(session.acp_connected || session.has_conversation) && (
+      {isOrchestratorSelected ? (
+        <div ref={orchestratorAnchorRef} className="relative shrink-0">
+          <button
+            type="button"
+            data-anti-orchestrator-trigger
+            disabled={Boolean(current || pending)}
+            aria-label="Orchestrator 角色设置"
+            aria-expanded={orchestratorOpen}
+            title={[
+              'Orchestrator 采用 Planner（规划）+ Executor（执行）协同（默认各自 High）',
+              orchestratorSettings.data?.planner ? `Planner: ${orchestratorSettings.data.planner}` : 'Planner: 默认',
+              orchestratorSettings.data?.executor ? `Executor: ${orchestratorSettings.data.executor}` : 'Executor: 默认',
+            ].join(' · ')}
+            onClick={() => setOrchestratorOpen(v => !v)}
+            className="ga-btn-sm shrink-0"
+          >
+            <Brain size={14} className="text-accent" aria-hidden="true" />
+            <span>
+              {orchestratorSettings.data?.planner || orchestratorSettings.data?.executor
+                ? '角色已自定义'
+                : '角色默认 (High)'}
+            </span>
+            <ChevronDown size={13} className={`shrink-0 text-ink-muted transition-transform ${orchestratorOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+          </button>
+          {orchestratorOpen && (
+            <div
+              data-anti-orchestrator-popover
+              role="dialog"
+              aria-label="Orchestrator 角色设置面板"
+              style={{ zIndex: Z_LAYERS.contextMenu }}
+              className="ga-paper-popover absolute right-0 top-full mt-2 w-80 space-y-3 rounded-xl p-3 text-xs text-ink"
+            >
+              <div>
+                <div className="font-semibold text-ink">Orchestrator 角色设置（{effectiveProfileName}）</div>
+                <p className="mt-1 text-[11px] leading-relaxed text-ink-muted">
+                  Orchestrator 默认以 High 档分别协同 Planner（规划审查）与 Executor（执行改码）；保存到当前账号的{' '}
+                  <code>settings.json</code>，立即生效于下一次新会话。
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label className="block space-y-1">
+                  <span className="block text-[11px] font-medium text-ink-muted">Planner（规划模型）</span>
+                  <select
+                    aria-label="Orchestrator Planner 模型"
+                    value={orchPlannerDraft}
+                    disabled={orchestratorSettings.isPending || updateOrchestrator.isPending}
+                    onChange={e => setOrchPlannerDraft(e.target.value)}
+                    className="w-full rounded-lg border border-line bg-bg-card px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                  >
+                    <option value="">默认（跟随上游 / High）</option>
+                    {orchPlannerDraft && !orchestratorRoleChoices.some(c => c.id === orchPlannerDraft) && (
+                      <option value={orchPlannerDraft}>{orchPlannerDraft}（当前配置）</option>
+                    )}
+                    {orchestratorRoleChoices.map(choice => (
+                      <option key={choice.id} value={choice.id}>{choice.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block space-y-1">
+                  <span className="block text-[11px] font-medium text-ink-muted">Executor（执行模型）</span>
+                  <select
+                    aria-label="Orchestrator Executor 模型"
+                    value={orchExecutorDraft}
+                    disabled={orchestratorSettings.isPending || updateOrchestrator.isPending}
+                    onChange={e => setOrchExecutorDraft(e.target.value)}
+                    className="w-full rounded-lg border border-line bg-bg-card px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                  >
+                    <option value="">默认（跟随上游 / High）</option>
+                    {orchExecutorDraft && !orchestratorRoleChoices.some(c => c.id === orchExecutorDraft) && (
+                      <option value={orchExecutorDraft}>{orchExecutorDraft}（当前配置）</option>
+                    )}
+                    {orchestratorRoleChoices.map(choice => (
+                      <option key={choice.id} value={choice.id}>{choice.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              {updateOrchestrator.error && (
+                <p className="text-[11px] text-status-danger">
+                  {updateOrchestrator.error instanceof Error ? updateOrchestrator.error.message : '保存失败'}
+                </p>
+              )}
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <button
+                  type="button"
+                  className="ga-btn-sm"
+                  disabled={updateOrchestrator.isPending}
+                  onClick={() => updateOrchestrator.mutate({ planner: null, executor: null })}
+                >
+                  恢复默认
+                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    className="ga-btn-sm"
+                    disabled={updateOrchestrator.isPending}
+                    onClick={() => setOrchestratorOpen(false)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="ga-btn-sm-primary"
+                    disabled={updateOrchestrator.isPending}
+                    onClick={() => updateOrchestrator.mutate({
+                      planner: orchPlannerDraft || null,
+                      executor: orchExecutorDraft || null,
+                    })}
+                  >
+                    {updateOrchestrator.isPending ? '保存中…' : '保存'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <ThemedSelect aria-label="思考等级" title="思考等级" options={effortOptions} value={effort} onChange={setEffort}
+          displayName={option => option.name} placeholder={DEFAULT_EFFORT}
+          renderMark={() => <span className="model-select-mark"><Brain size={16} aria-hidden="true" /></span>}
+          disabled={Boolean(current || pending)} />
+      )}
+      <button
+        type="button"
+        className="ga-btn-icon shrink-0"
+        disabled={Boolean(current || pending) || syncModels.isPending}
+        aria-label="同步上游模型"
+        title={[
+          '立即同步上游可用模型目录（默认每天 00/06/12/18 点整点自动同步）',
+          models.data?.synced_at ? `上次同步: ${formatRunTime(parseIsoMs(models.data.synced_at)) ?? models.data.synced_at}` : undefined,
+        ].filter(Boolean).join(' · ')}
+        onClick={() => syncModels.mutate()}
+      >
+        <RotateCw size={15} className={syncModels.isPending ? 'animate-spin motion-reduce:animate-none' : undefined} aria-hidden="true" />
+      </button>
+      {session.has_conversation && supportsCompact && (
         <button
           type="button"
           className="ga-btn-sm shrink-0"
-          disabled={Boolean(current || pending) || resetAcp.isPending}
-          aria-label="重连 ACP 会话"
-          title="重启本会话 ACP 进程并保留多轮上下文"
-          onClick={() => resetAcp.mutate()}
+          disabled={Boolean(current || pending || compact.isPending)}
+          aria-label="压缩会话上下文"
+          title="执行 /compact 压缩当前会话上下文，节省配额与上下文窗口"
+          onClick={() => compact.mutate()}
+        >
+          <Minimize2 size={13} aria-hidden="true" />
+          <span>{compact.isPending ? '压缩中…' : '压缩上下文'}</span>
+        </button>
+      )}
+      {(session.acp_connected || session.has_conversation || showRecoveryBar) && (
+        <button
+          type="button"
+          className={clsx(
+            'ga-btn-sm shrink-0',
+            showRecoveryBar && 'border-status-warning-line text-status-warning',
+          )}
+          disabled={(Boolean(current || pending) && !showRecoveryBar) || resetAcp.isPending}
+          aria-label={showRecoveryBar ? '强制重连 ACP 会话' : '重连 ACP 会话'}
+          title={showRecoveryBar
+            ? '强制终止当前卡住的任务并重启 ACP 进程（保留对话上下文）'
+            : '重启本会话 ACP 进程并保留多轮上下文'}
+          onClick={() => resetAcp.mutate(showRecoveryBar)}
         >
           <RefreshCw size={13} className={resetAcp.isPending ? 'animate-spin motion-reduce:animate-none' : undefined} aria-hidden="true" />
-          <span>{resetAcp.isPending ? '重连中…' : '重连 ACP'}</span>
+          <span>{resetAcp.isPending ? '重连中…' : (showRecoveryBar ? '强制重连' : '重连 ACP')}</span>
         </button>
       )}
       {models.error && <button type="button" className="ga-btn-icon" title="重试加载模型" aria-label="重试加载模型" onClick={() => void models.refetch()}><RotateCw size={16} aria-hidden="true" /></button>}
     </>, headerActions)}
+    <ConversationCollapseProvider key={sid} onAfterCollapse={collapseToLatest}>
     <div className="relative flex min-h-0 flex-1 flex-col">
       <ChatUtilityDock fileTransfer={{
-        canInsert: !current && !pending && !send.isPending && references.length < 8,
-        onInsert: file => setReferences(old => old.some(item => item.path === file.path) ? old : [...old, file]),
+        canInsert: !current && !pending && !send.isPending && transferCount < 8,
+        onInsert: (file: TransferredFile) => {
+          const currentDraft = useDraftStore.getState().attachments[draftKey] ?? []
+          if (currentDraft.some(item => item.path === file.path)) return
+          const extension = file.name.split('.').pop()?.toLowerCase()
+          const mime = extension && ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(extension)
+            ? `image/${extension === 'jpg' ? 'jpeg' : extension}` : 'application/octet-stream'
+          useDraftStore.getState().setAttachments(draftKey, [...currentDraft, {
+            file_id: `${TRANSFER_PREFIX}${file.id}`,
+            url: '',
+            path: file.path,
+            name: file.name,
+            size: file.size,
+            mime,
+            source: 'local_ref',
+          }])
+        },
       }}>
         {runs.length > 0 && (
           <aside
@@ -754,7 +1386,7 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
               <div className="pointer-events-none flex min-h-0 w-full flex-1 items-center justify-center">
                 <ConversationTurnMinimap
                   items={minimapTurns}
-                  activeIndex={activeTurn}
+                  activeIndex={activeTurn >= 0 ? activeTurn : (stuckBottom ? Math.max(0, runs.length - 1) : 0)}
                   onSelect={jumpToTurnIndex}
                 />
               </div>
@@ -762,7 +1394,7 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
             <TranscriptNavDock
               stuckBottom={stuckBottom}
               canPrev={activeTurn > 0}
-              canNext={activeTurn < runs.length - 1}
+              canNext={activeTurn >= 0 && activeTurn < runs.length - 1}
               unread={unreadRuns}
               onJumpToBottom={jumpToBottom}
               onPrev={() => jumpToTurn(-1)}
@@ -771,192 +1403,344 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
           </aside>
         )}
       </ChatUtilityDock>
-      <div ref={transcript} onScroll={syncTranscriptNav} className={chatTranscriptClass} data-anti-chat-scroll>
-        {!history.data?.length && !history.error && <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-ink-muted">
+      <ConversationCollapseControl />
+      <div ref={transcript} tabIndex={-1} className={chatTranscriptClass} data-anti-chat-scroll>
+        {!history.data?.length && !history.error && <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-ink-faint">
           <AntiIcon className="h-11 w-11 text-accent" />
-          {history.isPending ? '正在加载会话…' : '想让 Anti 为这个项目做什么？'}
+          {history.isPending ? '正在加载 Agy 会话…' : '想让 Agy 为这个项目做什么？'}
         </div>}
-        <div className="space-y-5">
+        <div className="space-y-3">
           {history.data?.map((run, runIndex) => {
             const userAttachments = toUserAttachments(run.id, run.attachments)
             const liveRun = current?.id === run.id ? live.data : undefined
+            const displayRun = liveRun ?? run
+            const isRunActive = active(displayRun)
             const approval: AntiApprovalPrompt | null | undefined = liveRun?.approval ?? run.approval
-            return <article className="space-y-3" key={run.id} data-anti-turn={runIndex}>
-              <div className="flex flex-col items-start gap-2">
-                {userAttachments.length > 0 && <UserAttachments atts={userAttachments} />}
-                {run.prompt && (
-                  <div className={`w-fit max-w-full rounded-lg px-3.5 py-2.5 leading-7 ${bubbleTone('user').surfaceClass}`} style={messageFontStyle}>
-                    <MessageContent format="text" content={run.prompt} />
-                  </div>
-                )}
-              </div>
-              <div className={`group/anti-reply w-fit min-w-0 max-w-full space-y-2 rounded-lg px-3.5 py-3 ${bubbleTone('assistant').surfaceClass}`}>
-                {run.status !== 'success' && <p role="status" className="text-xs text-ink-muted">
-                  {run.status}{run.error ? ` · ${run.error}` : ''}
-                  {run.error_detail && <span className="mt-1 block text-sm text-ink">{run.error_detail}</span>}
-                </p>}
-                <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, project, engine: 'anti' }}>
-                  <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
-                    <div style={messageFontStyle}>
-                      <AntiTaskProgress active={active(run)} loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
-                        streamUrl={active(run) ? resolveApiUrl(`/api/anti/sessions/${sid}/runs/${run.id}/events/stream`) : undefined}
-                        runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}
-                        onApprovalRequested={() => { void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] }) }}>
-                        {partial => <MessageContent format="markdown" content={run.answer ?? partial} cache={!active(run)} />}
-                      </AntiTaskProgress>
-                    </div>
-                    {active(run) && approval && (
-                      <section aria-label="交互审批" className="mt-2 space-y-2 rounded-lg border border-accent/40 bg-bg-soft p-3 text-xs">
-                        <div className="flex items-start gap-2">
-                          <ShieldAlert size={15} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
-                          <div className="min-w-0 flex-1 space-y-1">
-                            <div className="font-semibold text-ink">{approval.title}</div>
-                            {approval.details && <div className="break-all font-mono text-[11px] text-ink-muted">{approval.details}</div>}
-                            {approval.diff && (
-                              <pre className="max-h-40 overflow-auto rounded bg-bg-card p-2 font-mono text-[11px] text-ink whitespace-pre-wrap break-all">
-                                {approval.diff}
-                              </pre>
-                            )}
-                            {approval.security_warning && (
-                              <p className="text-[11px] text-status-warning">{approval.security_warning}</p>
-                            )}
-                          </div>
-                        </div>
-                        {approval.prompt_type === 'question' && approval.question?.options?.length ? (
-                          <div className="flex flex-wrap gap-1.5">
-                            {approval.question.options.map(opt => (
-                              <button
-                                key={opt.id}
-                                type="button"
-                                className="ga-btn-sm-primary"
-                                disabled={approve.isPending}
-                                onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'allow', option_id: opt.id })}
-                              >
-                                {opt.label}
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="flex flex-wrap gap-1.5">
-                            <button
-                              type="button"
-                              className="ga-btn-sm-primary"
-                              disabled={approve.isPending}
-                              onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'allow' })}
-                            >
-                              允许一次
-                            </button>
-                            {approval.allow_always && (
-                              <button
-                                type="button"
-                                className="ga-btn-sm"
-                                disabled={approve.isPending}
-                                onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'allow_always' })}
-                              >
-                                本会话始终允许
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="ga-btn-sm-danger"
-                              disabled={approve.isPending}
-                              onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'reject' })}
-                            >
-                              拒绝
-                            </button>
-                          </div>
-                        )}
-                      </section>
+            const startedMs = parseIsoMs(displayRun.started_at)
+            const finishedMs = parseIsoMs(displayRun.finished_at)
+            const userTimeLabel = formatRunTime(startedMs)
+            const assistantTimeLabel = formatRunTime(finishedMs ?? startedMs)
+            const durationText = startedMs !== null
+              ? `${isRunActive ? '已运行' : '用时'} ${formatDuration(Math.max(0, (isRunActive ? clock : (finishedMs ?? clock)) - startedMs))}`
+              : null
+            const policyLabel = displayRun.mode === 'accept-edits'
+              ? `Edit · ${permissionLabels[displayRun.permission_mode] ?? displayRun.permission_mode}`
+              : 'Plan'
+            const rawRunModel = displayRun.effective_model || displayRun.model
+            const runModelLabel = rawRunModel
+              ? (models.data?.items.find(item => item.id === rawRunModel)?.display_name ?? rawRunModel)
+              : null
+            const usageText = formatRunUsage(displayRun.usage)
+            const footerParts = [
+              [assistantTimeLabel, durationText].filter(Boolean).join(' · '),
+              runModelLabel,
+              policyLabel,
+              usageText,
+            ].filter(Boolean)
+            return <article className="space-y-2" key={run.id} data-anti-turn={runIndex}>
+              <div className="flex justify-start">
+                <div className="max-w-[80%] flex items-end gap-1.5">
+                  <div className="min-w-0 flex flex-col items-start gap-2">
+                    {userAttachments.length > 0 && <UserAttachments atts={userAttachments} />}
+                    {displayRun.prompt && (
+                      <div className={`min-w-0 max-w-full rounded-lg px-3.5 py-2.5 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.16)] ${bubbleTone('user').surfaceClass}`} style={messageFontStyle}>
+                        <MessageContent format="text" content={displayRun.prompt} />
+                      </div>
                     )}
-                    {run.status === 'success' && (
-                      <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5 text-[11px] text-ink-muted">
-                        <div className="flex flex-wrap items-center gap-2 tabular-nums">
-                          <span>{run.mode === 'accept-edits' ? `Edit · ${permissionLabels[run.permission_mode] ?? run.permission_mode}` : 'Plan'}</span>
-                          {formatRunUsage(run.usage) && <span>· {formatRunUsage(run.usage)}</span>}
-                        </div>
-                        {run.answer?.trim() && (
-                          <div className="pointer-events-none flex flex-wrap justify-end gap-2 opacity-0 transition-opacity group-hover/anti-reply:pointer-events-auto group-hover/anti-reply:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-                            <ReplyActions text={run.answer} engine="anti" project={project} canSave />
+                  </div>
+                  {userTimeLabel && (
+                    <span className="mb-1 shrink-0 whitespace-nowrap text-[10px] leading-none text-ink-faint">
+                      {userTimeLabel}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex justify-start">
+                <div className={clsx('max-w-full min-w-0 flex flex-col items-start gap-1.5', isRunActive && 'w-full')}>
+                  <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, project, engine: 'anti' }}>
+                    <div className={clsx(
+                      isRunActive && 'w-full',
+                      'group/msg min-w-0 max-w-full relative rounded-lg px-3.5 py-3 shadow-[0_2px_6px_rgba(45,34,22,0.13)]',
+                      bubbleTone('assistant').surfaceClass,
+                    )}>
+                      <div className="mb-2 flex min-h-6 items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
+                        <span className="inline-flex shrink-0 items-center gap-2">
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
+                          Agy Agent
+                        </span>
+                        {displayRun.status === 'success' && displayRun.answer?.trim() && (
+                          <div className="pointer-events-none flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+                            <ReplyActions text={displayRun.answer} engine="anti" project={project} canSave />
                           </div>
                         )}
                       </div>
-                    )}
-                  </FileTransferConclusion.Provider>
-                </FileLinkContext.Provider>
+                      {displayRun.status !== 'success' && displayRun.status !== 'cancelled' && (
+                        <p role="status" className="mb-2 text-xs text-ink-muted">
+                          {formatRunStatusLabel(displayRun.status)}{displayRun.error ? ` · ${displayRun.error}` : ''}
+                          {displayRun.error_detail && <span className="mt-1 block text-sm text-ink">{displayRun.error_detail}</span>}
+                        </p>
+                      )}
+                      {displayRun.fallback_notice && (
+                        <p data-anti-fallback-notice role="status" className="mb-2 rounded-md border border-status-warning-line/60 bg-status-warning-soft/60 px-2.5 py-1.5 text-[11px] text-status-warning">
+                          {displayRun.fallback_notice}
+                        </p>
+                      )}
+                      <div style={messageFontStyle}>
+                        <AntiTaskProgress
+                          active={isRunActive}
+                          loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
+                          streamUrl={isRunActive ? resolveApiUrl(`/api/anti/sessions/${sid}/runs/${run.id}/events/stream`) : undefined}
+                          runKey={`${sid}/${run.id}`}
+                          onEventsChanged={handleEventsChanged}
+                          onApprovalRequested={() => { void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] }) }}
+                          onStreamEnded={() => {
+                            void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] })
+                            void cache.invalidateQueries({ queryKey: key })
+                            void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+                          }}
+                        >
+                          {(partial, liveProgressMessages) => {
+                            const persistedProgress = displayRun.progress_messages ?? []
+                            const progressMessages = persistedProgress.length > 0 ? persistedProgress : liveProgressMessages
+                            const finalAnswer = displayRun.answer ?? partial
+                            const hasProgress = progressMessages.length > 0
+                            const showFinal = Boolean(finalAnswer.trim()) || (isRunActive && !approval && !hasProgress)
+                            return <>
+                              {hasProgress && (
+                                <section
+                                  data-anti-progress-outputs
+                                  aria-label="过程阶段输出"
+                                  className="mb-3 rounded-lg border border-line/65 bg-bg-soft/65 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,250,232,0.45)]"
+                                >
+                                  <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-medium text-ink-faint">
+                                    <span>过程输出</span>
+                                    <span className="tabular-nums">{progressMessages.length} 条</span>
+                                  </div>
+                                  <ul className="list-disc space-y-1.5 pl-4 text-ink-muted marker:text-accent/65">
+                                    {progressMessages.map((msg, idx) => (
+                                      <li key={idx} className="anti-progress-item min-w-0">
+                                        <MessageContent format="markdown" content={msg} cache={!isRunActive} />
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </section>
+                              )}
+                              {showFinal && (
+                                <FileTransferConclusion.Provider value={displayRun.status === 'success' ? { engine: 'anti', project } : null}>
+                                  <div
+                                    data-anti-final-answer
+                                    className={clsx(
+                                      hasProgress && 'pt-0.5',
+                                      isRunActive && !approval && 'cursor-blink',
+                                    )}
+                                  >
+                                    {hasProgress && (
+                                      <div className="mb-2 flex items-center gap-2">
+                                        <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent-soft/55 px-2 py-0.5 text-[11px] font-semibold leading-none text-accent">
+                                          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-accent" />
+                                          最终结论
+                                        </span>
+                                        <span aria-hidden="true" className="h-px flex-1 bg-line/45" />
+                                      </div>
+                                    )}
+                                    <MessageContent format="markdown" content={finalAnswer} cache={!isRunActive} />
+                                  </div>
+                                </FileTransferConclusion.Provider>
+                              )}
+                            </>
+                          }}
+                        </AntiTaskProgress>
+                      </div>
+                      {isRunActive && approval && (
+                        <section aria-label="交互审批" className="mt-2 space-y-2 rounded-lg border border-accent/40 bg-bg-soft p-3 text-xs">
+                          <div className="flex items-start gap-2">
+                            <ShieldAlert size={15} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <div className="font-semibold text-ink">{approval.title}</div>
+                              {approval.details && <div className="break-all font-mono text-[11px] text-ink-muted">{approval.details}</div>}
+                              {approval.diff && (
+                                <pre className="max-h-40 overflow-auto rounded bg-bg-card p-2 font-mono text-[11px] text-ink whitespace-pre-wrap break-all">
+                                  {approval.diff}
+                                </pre>
+                              )}
+                              {approval.security_warning && (
+                                <p className="text-[11px] text-status-warning">{approval.security_warning}</p>
+                              )}
+                            </div>
+                          </div>
+                          {approval.prompt_type === 'question' && approval.question?.options?.length ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {approval.question.options.map(opt => (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  className="ga-btn-sm-primary"
+                                  disabled={approve.isPending}
+                                  onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'allow', option_id: opt.id })}
+                                >
+                                  {opt.label}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              <button
+                                type="button"
+                                className="ga-btn-sm-primary"
+                                disabled={approve.isPending}
+                                onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'allow' })}
+                              >
+                                允许一次
+                              </button>
+                              {approval.allow_always && (
+                                <button
+                                  type="button"
+                                  className="ga-btn-sm"
+                                  disabled={approve.isPending}
+                                  onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'allow_always' })}
+                                >
+                                  本会话始终允许
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="ga-btn-sm-danger"
+                                disabled={approve.isPending}
+                                onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'reject' })}
+                              >
+                                拒绝
+                              </button>
+                            </div>
+                          )}
+                        </section>
+                      )}
+                      {displayRun.status === 'cancelled' && (
+                        <p className="mt-2 flex items-center gap-1.5 text-xs italic leading-5 text-status-warning-muted">
+                          <Square size={10} className="shrink-0 fill-current" aria-hidden="true" />
+                          <span>任务中止</span>
+                        </p>
+                      )}
+                    </div>
+                  </FileLinkContext.Provider>
+                  {footerParts.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-0.5 text-[10px] leading-4 tabular-nums text-ink-faint">
+                      <span>{footerParts.join(' · ')}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             </article>
           })}
-          <Errors items={[history.error, live.error, send.error, cancel.error, approve.error, resetAcp.error]} />
-          {pending && send.isError && !current && (
-            <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
-              <span>无法确认请求是否已送达。重试会沿用同一请求；放弃重试不会撤回已送达的请求。</span>
-              <button type="button" onClick={() => { setPending(undefined); send.reset() }}>
-                放弃重试并继续编辑
-              </button>
-            </div>
-          )}
-          {send.error instanceof HttpError && send.error.status === 429 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-status-warning-line bg-status-warning-soft px-3 py-2 text-xs text-status-warning">
+          <Errors items={[
+            history.error,
+            live.error,
+            send.error,
+            steer.error instanceof HttpError && steer.error.status === 409 ? null : steer.error,
+            setSessionProfile.error,
+            switchAndRetry.error,
+            clearGrants.error,
+            compact.error,
+            syncModels.error,
+            cancel.error,
+            approve.error,
+            resetAcp.error,
+          ]} />
+          {isRateLimited && (
+            <div data-anti-rate-limit-switch className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-status-warning-line bg-status-warning-soft px-3 py-2 text-xs text-status-warning">
               <span>当前账号处于风控冷却或配额保护中，可切换至其他可用账号继续对话。</span>
-              <button type="button" className="ga-btn-warning-sm shrink-0" onClick={onOpenProfiles}>
-                切换可用账号
-              </button>
+              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                {fallbackProfile && (
+                  <button
+                    type="button"
+                    className="ga-btn-sm-primary shrink-0"
+                    disabled={switchAndRetry.isPending || Boolean(current)}
+                    onClick={() => switchAndRetry.mutate(fallbackProfile.profile.id)}
+                  >
+                    {switchAndRetry.isPending
+                      ? '切换重试中…'
+                      : `一键切换到「${fallbackProfile.profile.name}」${typeof fallbackProfile.pct === 'number' ? `（剩余 ${fallbackProfile.pct}%）` : ''}并重试`}
+                  </button>
+                )}
+                <button type="button" className="ga-btn-warning-sm shrink-0" onClick={onOpenProfiles}>
+                  切换可用账号
+                </button>
+              </div>
             </div>
           )}
         </div>
       </div>
     </div>
+    </ConversationCollapseProvider>
     <div ref={composerWrapRef}>
       <ChatComposerFrame>
-        {profileId && profileId !== 'default' && (
-          <div className="flex items-center gap-1.5 px-3.5 pt-2 text-[11px] text-ink-muted">
-            <UserCheck size={12} className="shrink-0 text-accent" aria-hidden="true" />
-            <span>当前隔离账号：<span className="font-medium text-ink">{profileName ?? profileId}</span>（多轮上下文按账号独立续接）</span>
-          </div>
-        )}
-        {references.length > 0 && <ul aria-label="引用文件" className="flex flex-wrap gap-1 pl-[3.25rem] pr-3 pt-2 text-xs">
-          {references.map(file => <li key={file.path} className="flex min-w-0 items-center gap-1 rounded-md bg-bg-soft px-2 py-1" title={file.path}>
-            <span className="truncate">{file.name}</span>
-            <CloseIconButton
-              label={`移除引用 ${file.name}`}
-              variant="compact"
-              iconSize={12}
-              disabled={Boolean(pending) || Boolean(current)}
-              className="text-ink-muted hover:text-accent disabled:opacity-40"
-              onClick={() => setReferences(old => old.filter(item => item.path !== file.path))}
-            />
-          </li>)}
-        </ul>}
-        {showSlashMenu && (
-          <div role="listbox" aria-label="Agy 原生命令" className="flex flex-wrap items-center gap-1.5 border-b border-line/60 bg-bg-soft/70 px-3 py-2 text-xs">
-            {filteredCommands.length > 0 ? filteredCommands.map((cmd, idx) => {
-              const isActive = idx === slashActiveIndex
-              return (
+        {((profilesData?.profiles.length ?? 0) > 1 || Boolean(session.profile_id) || effectiveProfileId !== 'default' || grants.length > 0) && (
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-3.5 pt-2 text-[11px] text-ink-muted">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <UserCheck size={12} className="shrink-0 text-accent" aria-hidden="true" />
+              {(profilesData?.profiles.length ?? 0) > 1 ? (
+                <label className="inline-flex items-center gap-1.5">
+                  <span>会话账号：</span>
+                  <select
+                    aria-label="本会话 Agy 账号"
+                    value={session.profile_id ?? ''}
+                    disabled={Boolean(current || pending || setSessionProfile.isPending)}
+                    onChange={e => setSessionProfile.mutate(e.target.value || null)}
+                    className="rounded-md border border-line/70 bg-bg-card px-1.5 py-0.5 text-[11px] text-ink outline-none focus:border-accent disabled:opacity-50"
+                  >
+                    <option value="">跟随全局默认（{profileName ?? '系统默认'}）</option>
+                    {profilesData!.profiles.map(item => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                        {(item.cooldown_seconds ?? 0) > 0
+                          ? `（冷却 ${item.cooldown_seconds}s）`
+                          : typeof item.usage?.min_remaining_pct === 'number'
+                            ? `（剩余 ${item.usage.min_remaining_pct}%）`
+                            : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <span>
+                  当前隔离账号：<span className="font-medium text-ink">{effectiveProfileName}</span>（多轮上下文按账号独立续接）
+                </span>
+              )}
+            </div>
+            {grants.length > 0 && (
+              <div data-anti-session-grants className="flex flex-wrap items-center gap-1">
+                <span>已常驻授权：</span>
+                {grants.map(kind => (
+                  <span
+                    key={kind}
+                    className="inline-flex items-center gap-1 rounded-md border border-line/70 bg-bg-soft px-1.5 py-0.5 text-[11px] text-ink"
+                  >
+                    <span>{grantLabels[kind] ?? kind}</span>
+                    <button
+                      type="button"
+                      disabled={clearGrants.isPending}
+                      aria-label={`收回 ${grantLabels[kind] ?? kind} 授权`}
+                      title="收回此项授权"
+                      onClick={() => clearGrants.mutate(kind)}
+                      className="text-ink-muted hover:text-status-danger"
+                    >
+                      <X size={10} aria-hidden="true" />
+                    </button>
+                  </span>
+                ))}
                 <button
-                  key={cmd.name}
                   type="button"
-                  role="option"
-                  aria-selected={isActive}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-left transition-colors ${isActive
-                    ? 'border-accent bg-accent-soft/75 text-ink shadow-xs'
-                    : 'border-line bg-bg-card hover:border-accent/60'
-                    }`}
-                  onMouseEnter={() => setSlashActiveIndex(idx)}
-                  onClick={() => applySlashCommand(cmd.name)}
+                  disabled={clearGrants.isPending}
+                  onClick={() => clearGrants.mutate(undefined)}
+                  className="ga-btn-link px-1 py-0 text-[11px] text-status-danger"
                 >
-                  <span className="font-mono font-semibold text-accent">/{cmd.name}</span>
-                  {cmd.hint && <span className="font-mono text-[11px] text-ink-faint">{cmd.hint}</span>}
-                  {cmd.description && <span className="text-ink-muted">{cmd.description}</span>}
+                  全部收回
                 </button>
-              )
-            }) : (
-              <span className="text-ink-faint">{rawCommands.length === 0
-                ? '当前没有可用的原生命令，按 Esc 关闭'
-                : `未找到匹配 /${slashQuery} 的原生命令，按 Esc 关闭或继续输入`}</span>
+              </div>
             )}
           </div>
         )}
         <ImagePasteInput
+          key={draftKey}
           text={prompt}
           onText={(value) => {
             setDismissedSlashText(null)
@@ -964,14 +1748,36 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
           }}
           attachments={attachments}
           onAttachments={setAttachments}
-          inputLabel="发给 Anti"
-          placeholder="发给 Anti，输入 / 查看原生命令，可粘贴/拖放图片或文件…"
+          inputLabel="发给 Agy"
+          placeholder={current
+            ? (canNativeSteer
+              ? '任务运行中，可直接发送插话纠偏，或加入排队等待本轮结束…'
+              : '任务运行中，输入内容后可加入排队，本轮结束后自动发送…')
+            : '发给 Agy，输入 / 查看原生命令，可粘贴/拖放图片或文件…'}
           readOnly={Boolean(pending)}
           maxLength={24000}
           onSubmit={submit}
           submitDisabled={Boolean(current) || send.isPending || !history.isSuccess}
+          activeSubmit={current && !pending ? {
+            label: canNativeSteer ? '插话纠偏' : '加入排队',
+            title: canNativeSteer
+              ? '向运行中的 Agy 任务发送插话纠偏（保留后台工具与子代理）'
+              : '加入排队，本轮结束后自动发送',
+            disabled: steer.isPending || send.isPending || !history.isSuccess,
+            onSubmit: steerOrQueue,
+          } : undefined}
           slashAutocomplete={{
             open: showSlashMenu,
+            ariaLabel: 'Agy 原生命令',
+            items: filteredCommands.map(cmd => ({
+              name: cmd.name,
+              displayName: `/${cmd.name}`,
+              hint: cmd.hint,
+              description: cmd.description,
+            })),
+            emptyMessage: rawCommands.length === 0
+              ? '当前没有可用的原生命令，按 Esc 关闭'
+              : `未找到匹配 /${slashQuery} 的原生命令，按 Esc 关闭或继续输入`,
             itemCount: filteredCommands.length,
             activeIndex: slashActiveIndex,
             onActiveIndexChange: setSlashActiveIndex,
@@ -1061,9 +1867,129 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
           }
           submitLabel={pending && send.isError ? '查询或重试同一请求' : '发送'}
           stopActive={Boolean(current)}
-          stopDisabled={cancel.isPending}
-          onStop={() => { if (current) cancel.mutate(current.id) }}
+          stopDisabled={cancel.isPending && (!canForceStop || Boolean(cancel.variables?.force))}
+          stopTitle={canForceStop
+            ? '强制终止当前任务并重置 ACP 进程'
+            : (cancel.isPending ? '正在停止当前任务…' : '停止当前会话任务')}
+          onStop={() => {
+            if (!current) return
+            cancel.mutate({ rid: current.id, force: canForceStop })
+          }}
         />
+        {canNativeSteer && !pending && (prompt.trim() || attachments.length > 0) && (
+          <div className="flex items-center justify-end gap-1.5 border-t border-line/40 px-3 py-1 text-[11px] text-ink-muted">
+            <span>不想打断当前推理？</span>
+            <button type="button" className="text-accent hover:underline" onClick={queueCurrentInput}>
+              改为等本轮结束后排队发送
+            </button>
+          </div>
+        )}
+        {queuedPrompt && (
+          <div
+            data-anti-queued-bar
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-2 border-t border-accent/30 bg-accent-soft/35 px-3 py-2 text-xs text-ink"
+          >
+            <div className="min-w-0 flex-1 truncate">
+              <span className="font-medium text-accent">
+                {current ? '已排队（本轮完成后发送）：' : '待确认排队消息：'}
+              </span>
+              <span className="text-ink-muted">
+                {queuedPrompt.prompt || `（${queuedPrompt.attachments.length} 个附件）`}
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {canNativeSteer && current && (
+                <button
+                  type="button"
+                  className="ga-btn-sm-primary"
+                  disabled={steer.isPending}
+                  onClick={() => {
+                    const body = buildRunInputs(queuedPrompt.prompt, queuedPrompt.attachments)
+                    setQueuedPrompt(null)
+                    steer.mutate({ rid: current.id, body })
+                  }}
+                >
+                  立即插话
+                </button>
+              )}
+              {!current && (
+                <button
+                  type="button"
+                  className="ga-btn-sm-primary"
+                  disabled={send.isPending}
+                  onClick={() => {
+                    const body = createSubmission(queuedPrompt.prompt, queuedPrompt.attachments)
+                    setQueuedPrompt(null)
+                    followTranscript.current = true
+                    setPending(body)
+                    send.mutate(body)
+                  }}
+                >
+                  立即发送
+                </button>
+              )}
+              <button
+                type="button"
+                className="ga-btn-sm"
+                onClick={() => {
+                  setPrompt(queuedPrompt.prompt)
+                  setAttachments(queuedPrompt.attachments)
+                  setQueuedPrompt(null)
+                  requestAnimationFrame(() => composerWrapRef.current?.querySelector('textarea')?.focus())
+                }}
+              >
+                编辑
+              </button>
+              <button type="button" className="ga-btn-sm" onClick={() => setQueuedPrompt(null)}>
+                取消排队
+              </button>
+            </div>
+          </div>
+        )}
+        {showRecoveryBar && current && (
+          <div
+            data-anti-force-stop-bar
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-2 border-t border-status-warning-line/60 bg-status-warning-soft/55 px-3 py-2 text-xs text-ink"
+          >
+            <span className="min-w-0 text-status-warning">
+              {canForceStop
+                ? '任务尚未响应停止信号，可能卡在工具执行或上游连接；强制终止会重建进程并保留多轮上下文。'
+                : `已超过 ${silentSeconds} 秒未收到新输出，任务可能已卡死；可尝试强制终止或重连（保留上下文）。`}
+            </span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                className="ga-btn-sm-danger"
+                disabled={cancel.isPending && Boolean(cancel.variables?.force)}
+                onClick={() => cancel.mutate({ rid: current.id, force: true })}
+              >
+                {cancel.isPending && cancel.variables?.force ? '强制终止中…' : '强制终止'}
+              </button>
+              <button
+                type="button"
+                className="ga-btn-sm"
+                disabled={resetAcp.isPending}
+                onClick={() => resetAcp.mutate(true)}
+              >
+                {resetAcp.isPending ? '重连中…' : '强制重连 ACP'}
+              </button>
+            </div>
+          </div>
+        )}
+        {pending && send.isError && !current && (
+          <div role="status" className="flex flex-wrap items-center gap-2 px-3 pb-2 text-xs text-ink-muted">
+            <span>无法确认请求是否已送达。重试会沿用同一请求；放弃重试不会撤回已送达的请求。</span>
+            <button
+              type="button"
+              className="shrink-0 text-accent hover:underline"
+              onClick={() => { setPending(undefined); send.reset() }}
+            >
+              放弃重试并继续编辑
+            </button>
+          </div>
+        )}
       </ChatComposerFrame>
     </div>
   </>

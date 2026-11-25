@@ -262,7 +262,8 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     expect(transcript.classList.contains('pr-[76px]')).toBe(true)
     expect(transcript.classList.contains('overflow-y-auto')).toBe(true)
     expect(transcript.contains(host.querySelector('[data-file-composer]'))).toBe(false)
-    expect(host.querySelector('[data-file-composer] textarea')?.getAttribute('aria-label')).toBe('发给 Anti')
+    expect(host.querySelector('[data-file-composer] textarea')?.getAttribute('aria-label')).toBe('发给 Agy')
+    expect(transcript.getAttribute('tabindex')).toBe('-1')
     await choose('模型', 'Alternate')
     expect(control('思考等级').textContent).toContain('low')
     await choose('思考等级', 'medium')
@@ -1215,7 +1216,9 @@ it('shows iconic right-side transcript navigation dock in AntiChat when scrolled
       scrollTop: { configurable: true, writable: true, value: 100 },
     })
     await act(async () => { scroller.dispatchEvent(new Event('scroll')) })
-    expect(host.querySelector('[aria-label="对话位置导航"]')).not.toBeNull()
+    await vi.waitFor(() => {
+      expect(host.querySelector('[aria-label="对话位置导航"]')).not.toBeNull()
+    })
     expect(host.querySelector('button[aria-label="跳到底部"]')?.textContent?.trim()).toBe('')
     expect(host.querySelector('button[aria-label="上一节"]')?.textContent?.trim()).toBe('')
     expect(host.querySelector('button[aria-label="下一节"]')?.textContent?.trim()).toBe('')
@@ -1226,3 +1229,850 @@ it('shows iconic right-side transcript navigation dock in AntiChat when scrolled
     vi.unstubAllGlobals()
   }
 })
+
+it('renders chat-aligned bubble chrome, external metadata, floating slash popover, and persistent session drafts', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const sessions = [
+    { id: 's-1', title: 'Session One', project: 'demo', workspace: 'D:/demo' },
+    { id: 's-2', title: 'Session Two', project: 'demo', workspace: 'D:/demo' },
+  ]
+  const postedRuns: Record<string, unknown>[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
+    if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path === '/api/anti/commands') return reply({ items: [{ name: 'plan', description: '先生成方案', hint: '<goal>' }] })
+    if (path === '/api/anti/sessions') return reply(sessions)
+    if (path === '/api/anti/sessions/s-1/runs' && !init?.body) {
+      return reply([{
+        id: 'r-done',
+        operation: 'op-done',
+        prompt: 'Inspect layout',
+        status: 'success',
+        answer: 'Aligned result',
+        mode: 'plan',
+        permission_mode: 'approval-required',
+        started_at: '2026-11-24T09:00:00Z',
+        finished_at: '2026-11-24T09:00:12Z',
+        usage: { input_tokens: 120, output_tokens: 30, cache_read_tokens: 60, thinking_tokens: 0 },
+      }])
+    }
+    if (path === '/api/anti/sessions/s-2/runs' && !init?.body) return reply([])
+    if (path === '/api/anti/sessions/s-2/runs' && init?.body) {
+      const body = JSON.parse(String(init.body))
+      postedRuns.push(body)
+      return reply({ ...body, id: 'r-2', status: 'success', answer: 'Received ref', started_at: '2026-11-24T09:05:00Z', finished_at: '2026-11-24T09:05:03Z' })
+    }
+    if (path.endsWith('/events')) return reply([])
+    if (path.startsWith('/api/file-transfer')) {
+      return reply([{ id: 7, name: 'spec.md', path: 'D:/demo/spec.md', size: 128, engine: 'anti', project: 'demo', available: true }])
+    }
+    return reply({})
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.textContent).toContain('Aligned result')
+    })
+
+    const article = host.querySelector('[data-anti-turn="0"]')!
+    expect(article.textContent).toContain('Agy Agent')
+    expect(article.textContent).toContain('用时 0:12')
+    expect(article.textContent).toContain('120 in · 30 out · 缓存 50%')
+    const assistantBubble = article.querySelector('.group\\/msg')!
+    expect(assistantBubble.textContent).not.toContain('120 in')
+    expect(assistantBubble.querySelector('button[title="复制结论"]')).not.toBeNull()
+
+    const textarea = host.querySelector('textarea')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '/')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+    const slashMenu = host.querySelector('#slash-command-menu[role="listbox"][aria-label="Agy 原生命令"]')
+    expect(slashMenu).not.toBeNull()
+    expect(slashMenu?.className).toContain('bottom-[calc(100%+0.5rem)]')
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Draft for s1')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const switchBtn = [...host.querySelectorAll('aside[aria-label="会话工作区"] button')].find(b => b.textContent?.includes('Session Two')) as HTMLButtonElement
+    await act(async () => { switchBtn.click() })
+    await flush()
+    expect(host.querySelector('textarea')?.value).toBe('')
+
+    const transferBtn = host.querySelector<HTMLButtonElement>('button[aria-label="中转箱"]')!
+    await act(async () => { transferBtn.click() })
+    await flush()
+    const insertBtn = [...host.querySelectorAll('button')].find(b => b.textContent?.includes('插入') || b.getAttribute('title')?.includes('spec.md')) as HTMLButtonElement | undefined
+    if (insertBtn) {
+      await act(async () => { insertBtn.click() })
+      await flush()
+      expect(host.querySelector('[data-file-composer] [data-attachment-kind="file"]')?.textContent).toContain('spec.md')
+    }
+
+    const backBtn = [...host.querySelectorAll('aside[aria-label="会话工作区"] button')].find(b => b.textContent?.includes('Session One')) as HTMLButtonElement
+    await act(async () => { backBtn.click() })
+    await flush()
+    expect(host.querySelector('textarea')?.value).toBe('Draft for s1')
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('reveals a single conversation collapse control when process details expand and collapses all open processes', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const session = { id: 's-collapse', title: 'Collapse test', project: 'demo', workspace: 'D:/demo' }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
+    if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path === '/api/anti/sessions') return reply([session])
+    if (path === '/api/anti/sessions/s-collapse/runs') {
+      return reply([
+        { id: 'r1', operation: 'op1', prompt: 'First turn', status: 'success', answer: 'First answer', mode: 'plan', permission_mode: 'approval-required' },
+        { id: 'r2', operation: 'op2', prompt: 'Second turn', status: 'success', answer: 'Second answer', mode: 'plan', permission_mode: 'approval-required' },
+      ])
+    }
+    if (path.endsWith('/events')) {
+      return reply([{ seq: 1, type: 'step.update', step: { index: 1, kind: 'thought', state: 'DONE', text_delta: '思考内容' } }])
+    }
+    if (path.startsWith('/api/file-transfer')) return reply([])
+    return reply({})
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.textContent).toContain('Second answer')
+    })
+
+    expect(host.querySelector('[data-conversation-collapse]')).toBeNull()
+    expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
+
+    const scroller = host.querySelector('[data-anti-chat-scroll]') as HTMLDivElement
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 2000 },
+      clientHeight: { configurable: true, value: 500 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    })
+
+    const detailsList = [...host.querySelectorAll<HTMLDetailsElement>('[data-anti-turn] details')]
+    expect(detailsList).toHaveLength(2)
+
+    await act(async () => {
+      detailsList[0].open = true
+      detailsList[0].dispatchEvent(new Event('toggle'))
+      detailsList[1].open = true
+      detailsList[1].dispatchEvent(new Event('toggle'))
+    })
+    expect(host.querySelectorAll('[data-conversation-collapse]')).toHaveLength(1)
+    expect(host.querySelectorAll('[data-collapse-to-latest]')).toHaveLength(1)
+
+    await act(async () => {
+      detailsList[0].open = false
+      detailsList[0].dispatchEvent(new Event('toggle'))
+    })
+    expect(host.querySelectorAll('[data-collapse-to-latest]')).toHaveLength(1)
+
+    await act(async () => {
+      detailsList[1].open = false
+      detailsList[1].dispatchEvent(new Event('toggle'))
+    })
+    expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
+
+    await act(async () => {
+      detailsList[0].open = true
+      detailsList[0].dispatchEvent(new Event('toggle'))
+      detailsList[1].open = true
+      detailsList[1].dispatchEvent(new Event('toggle'))
+    })
+    const collapseBtn = host.querySelector<HTMLButtonElement>('[data-collapse-to-latest]')!
+    expect(collapseBtn).not.toBeNull()
+
+    await act(async () => { collapseBtn.click() })
+    expect(detailsList[0].open).toBe(false)
+    expect(detailsList[1].open).toBe(false)
+    expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
+    expect(scroller.scrollTop).toBe(2000)
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('renders framed unnumbered progress outputs separately from the final conclusion', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const session = { id: 's-split', title: 'Split test', project: 'demo', workspace: 'D:/demo' }
+  const savedBodies: Record<string, unknown>[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
+    if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path === '/api/anti/sessions') return reply([session])
+    if (path === '/api/anti/sessions/s-split/runs') {
+      return reply([
+        {
+          id: 'r1',
+          operation: 'op1',
+          prompt: 'Multi-step question',
+          status: 'success',
+          progress_messages: ['阶段一：检查结构', '阶段二：跑完测试'],
+          answer: '最终已完成修改',
+          mode: 'plan',
+          permission_mode: 'approval-required',
+        },
+        {
+          id: 'r2',
+          operation: 'op2',
+          prompt: 'Simple question',
+          status: 'success',
+          progress_messages: [],
+          answer: '单段直接回复',
+          mode: 'plan',
+          permission_mode: 'approval-required',
+        },
+      ])
+    }
+    if (path === '/api/file-transfer/reply' && init?.body) {
+      savedBodies.push(JSON.parse(String(init.body)))
+      return { ok: true, status: 204 }
+    }
+    if (path.endsWith('/events')) return reply([])
+    if (path.startsWith('/api/file-transfer')) return reply([])
+    return reply({})
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.textContent).toContain('单段直接回复')
+    })
+
+    const turn0 = host.querySelector('[data-anti-turn="0"]')!
+    const progressBox = turn0.querySelector('section[data-anti-progress-outputs]')!
+    expect(progressBox).not.toBeNull()
+    expect(progressBox.querySelector('ol')).toBeNull()
+    const list = progressBox.querySelector('ul')!
+    expect(list.className).toContain('list-disc')
+    const progressItems = [...list.querySelectorAll(':scope > li')].map(li => li.textContent?.trim())
+    expect(progressItems).toEqual(['阶段一：检查结构', '阶段二：跑完测试'])
+
+    const finalBox = turn0.querySelector('[data-anti-final-answer]')!
+    expect(finalBox.textContent).toContain('最终结论')
+    expect(finalBox.textContent).toContain('最终已完成修改')
+    expect(finalBox.textContent).not.toContain('阶段一：检查结构')
+
+    const saveBtn = turn0.querySelector<HTMLButtonElement>('button[title="放入中转箱"]')!
+    await act(async () => { saveBtn.click() })
+    await flush()
+    expect(savedBodies).toEqual([{ text: '最终已完成修改', engine: 'anti', session_id: 's-split', project: 'demo' }])
+
+    const turn1 = host.querySelector('[data-anti-turn="1"]')!
+    expect(turn1.querySelector('section[data-anti-progress-outputs]')).toBeNull()
+    const turn1Final = turn1.querySelector('[data-anti-final-answer]')!
+    expect(turn1Final.textContent).toContain('单段直接回复')
+    expect(turn1Final.textContent).not.toContain('最终结论')
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('escalates unresponsive soft stop into force stop recovery bar and supports force ACP reset', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const session = { id: 's-force-ui', title: 'Force UI', project: 'demo', workspace: 'D:/demo', has_conversation: true }
+  let activeRun: Record<string, unknown> = {
+    id: 'r-stuck',
+    operation: 'op-stuck',
+    prompt: 'Do long task',
+    status: 'running',
+    mode: 'plan',
+    permission_mode: 'approval-required',
+  }
+  const calledPaths: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    calledPaths.push(path)
+    const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
+    if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path === '/api/anti/sessions') return reply([session])
+    if (path === `/api/anti/sessions/${session.id}/runs`) return reply([activeRun])
+    if (path === `/api/anti/sessions/${session.id}/runs/${activeRun.id}`) return reply(activeRun)
+    if (path === `/api/anti/sessions/${session.id}/runs/${activeRun.id}/cancel`) return reply(activeRun)
+    if (path === `/api/anti/sessions/${session.id}/runs/${activeRun.id}/cancel?force=true`) {
+      activeRun = { ...activeRun, status: 'cancelled' }
+      return reply(activeRun)
+    }
+    if (path === `/api/anti/sessions/${session.id}/reset?force=true`) {
+      activeRun = { ...activeRun, status: 'cancelled' }
+      return reply({ ...session, acp_connected: false })
+    }
+    if (path.endsWith('/events')) return reply([])
+    if (path.startsWith('/api/file-transfer')) return reply([])
+    return reply({})
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('button[aria-label="停止"]')).not.toBeNull()
+    })
+    expect(host.querySelector('[data-anti-force-stop-bar]')).toBeNull()
+
+    // Soft stop returns still-running -> escalates immediately to force stop bar & unlocked force reset
+    const stopBtn = host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')!
+    await act(async () => { stopBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-force-stop-bar]')).not.toBeNull()
+    })
+    expect(calledPaths).toContain(`/api/anti/sessions/${session.id}/runs/${activeRun.id}/cancel`)
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')?.title).toBe('强制终止当前任务并重置 ACP 进程')
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="强制重连 ACP 会话"]')?.disabled).toBe(false)
+
+    // Clicking "强制终止" sends ?force=true and converges the turn to cancelled
+    const forceStopBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-force-stop-bar] button')].find(
+      b => b.textContent?.includes('强制终止'),
+    )!
+    await act(async () => { forceStopBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.textContent).toContain('任务中止')
+    })
+    expect(calledPaths).toContain(`/api/anti/sessions/${session.id}/runs/r-stuck/cancel?force=true`)
+    expect(host.querySelector('[data-anti-force-stop-bar]')).toBeNull()
+
+    // Second active run: clicking "强制重连 ACP" calls /reset?force=true
+    activeRun = {
+      id: 'r-stuck-2',
+      operation: 'op-stuck-2',
+      prompt: 'Do another long task',
+      status: 'running',
+      mode: 'plan',
+      permission_mode: 'approval-required',
+    }
+    await act(async () => { await cache.invalidateQueries({ queryKey: ['anti-runs', session.id] }) })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('button[aria-label="停止"]')).not.toBeNull()
+    })
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')!.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-force-stop-bar]')).not.toBeNull()
+    })
+    const forceResetBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-force-stop-bar] button')].find(
+      b => b.textContent?.includes('强制重连 ACP'),
+    )!
+    await act(async () => { forceResetBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(calledPaths).toContain(`/api/anti/sessions/${session.id}/reset?force=true`)
+    })
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('escalates daemon 409 conflicts to force confirm, shows active workers, and supports mid-turn steer & follow-up queue', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const session = { id: 's-steer-ui', title: 'Steer UI', project: 'demo', workspace: 'D:/demo', acp_connected: true }
+  let supportsSteering = true
+  let activeRun: Record<string, unknown> | null = {
+    id: 'r-active-1',
+    operation: 'op-active-1',
+    prompt: 'Initial long run',
+    status: 'running',
+    mode: 'plan',
+    permission_mode: 'approval-required',
+  }
+  const called: Array<{ path: string; body?: unknown }> = []
+
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
+    called.push({ path, body })
+    const reply = (data: unknown, status = 200) =>
+      ({ ok: status < 400, status, json: async () => JSON.parse(JSON.stringify(data)) })
+
+    if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated', version: '1.5.14', active_count: activeRun ? 1 : 0, supports_steering: supportsSteering })
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认', has_credentials: true, auth_state: 'authenticated' }] })
+    if (path === '/api/anti/workers') {
+      return reply({
+        items: [{
+          profile_id: 'default', profile_name: '系统默认', session_id: session.id, session_title: 'Steer UI',
+          project: 'demo', workspace: 'D:/demo', pid: 4321, alive: true, busy: true, state: 'running',
+          active_run_id: 'r-active-1', idle_seconds: 0, idle_ttl: 1800, dirty: false, retired: false, exit_pending: false,
+        }],
+      })
+    }
+    if (path === '/api/anti/restart') return reply({ detail: '当前有正在运行的 Anti 任务' }, 409)
+    if (path === '/api/anti/restart?force=true') {
+      activeRun = null
+      return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated', version: '1.5.14', active_count: 0, supports_steering: supportsSteering })
+    }
+    if (path === `/api/anti/sessions/${session.id}/reset?force=true`) {
+      return reply({ ...session, acp_connected: false })
+    }
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path === '/api/anti/sessions') return reply([session])
+    if (path === `/api/anti/sessions/${session.id}/runs` && init?.method === 'POST') {
+      const next = { id: 'r-queued-1', operation: body.operation, prompt: body.prompt, status: 'success', answer: 'queued ok', mode: 'plan', permission_mode: 'approval-required' }
+      activeRun = next
+      return reply(next)
+    }
+    if (path === `/api/anti/sessions/${session.id}/runs`) {
+      return reply(activeRun ? [activeRun] : [])
+    }
+    if (path === `/api/anti/sessions/${session.id}/runs/r-active-1`) {
+      return reply(activeRun)
+    }
+    if (path === `/api/anti/sessions/${session.id}/runs/r-active-1/steer`) {
+      return reply(activeRun)
+    }
+    if (path.endsWith('/events')) return reply([])
+    if (path.startsWith('/api/file-transfer')) return reply([])
+    return reply({})
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 15)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('button[aria-label="插话纠偏"]')).not.toBeNull()
+    })
+
+    // 1. Mid-turn steering button sends POST .../steer while active
+    const textarea = host.querySelector('textarea')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '先跑单测')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="插话纠偏"]')!.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/runs/r-active-1/steer`)).toBe(true)
+    })
+
+    // 2. When supports_steering is false, submitting while running queues and auto-sends once completed.
+    supportsSteering = false
+    await act(async () => { await cache.invalidateQueries({ queryKey: ['anti-daemon-status'] }) })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('button[aria-label="加入排队"]')).not.toBeNull()
+    })
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '排队补充总结')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="加入排队"]')!.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-queued-bar]')?.textContent).toContain('排队补充总结')
+    })
+
+    // Complete activeRun -> auto-dispatches queued prompt.
+    activeRun = { ...activeRun, status: 'success', answer: 'done' }
+    await act(async () => { await cache.invalidateQueries({ queryKey: ['anti-live', session.id, 'r-active-1'] }) })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/runs` && (c.body as { prompt?: string })?.prompt === '排队补充总结')).toBe(true)
+    })
+
+    // 3. Header restart returning 409 shows inline force confirm; Active Workers panel resets stuck session.
+    activeRun = { id: 'r-active-1', operation: 'op-active-1', prompt: 'Initial long run', status: 'running', mode: 'plan', permission_mode: 'approval-required' }
+    await act(async () => { await cache.invalidateQueries({ queryKey: ['anti-daemon-status'] }) })
+    await flush()
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="重置 Agy 运行时"]')!.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-daemon-force-confirm]')).not.toBeNull()
+    })
+
+    const accBtn = [...host.querySelectorAll('button')].find(b => b.getAttribute('aria-label')?.startsWith('Agy 账号：')) as HTMLButtonElement
+    await act(async () => { accBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(document.body.querySelector('[data-anti-modal-force-bar]')).not.toBeNull()
+    })
+    const workersToggle = [...document.body.querySelectorAll('button')].find(b => b.textContent?.includes('活跃进程')) as HTMLButtonElement
+    await act(async () => { workersToggle.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(document.body.querySelector('[data-anti-workers-panel]')?.textContent).toContain('PID 4321')
+    })
+    const forceWorkerBtn = [...document.body.querySelectorAll<HTMLButtonElement>('[data-anti-workers-panel] button')].find(
+      b => b.textContent?.includes('强制重连'),
+    )!
+    await act(async () => { forceWorkerBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/reset?force=true`)).toBe(true)
+    })
+
+    const forceModalRestartBtn = [...document.body.querySelectorAll<HTMLButtonElement>('[data-anti-modal-force-bar] button')].find(
+      b => b.textContent?.includes('强制重置运行时'),
+    )!
+    await act(async () => { forceModalRestartBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.path === '/api/anti/restart?force=true')).toBe(true)
+    })
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('supports session account binding, grant revocation, /compact action, and 429 one-click failover retry', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  let session = {
+    id: 's-p3',
+    title: 'Phase 3 Session',
+    project: 'demo',
+    workspace: 'D:/demo',
+    has_conversation: true,
+    profile_id: null as string | null,
+    grants: ['edit', 'execute'],
+  }
+  const called: Array<{ method: string; path: string; body?: unknown }> = []
+  let failOnceWith429 = true
+
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET'
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined
+    called.push({ method, path, body })
+    const reply = (data: unknown, status = 200) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => JSON.parse(JSON.stringify(data)),
+    })
+
+    if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') {
+      return reply({
+        active: 'default',
+        profiles: [
+          {
+            id: 'default',
+            name: '系统默认',
+            has_credentials: true,
+            auth_state: 'authenticated',
+            usage: { state: 'authenticated', rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 5 }] },
+          },
+          {
+            id: 'backup',
+            name: '备用账号',
+            has_credentials: true,
+            auth_state: 'authenticated',
+            usage: { state: 'authenticated', rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 85 }] },
+          },
+        ],
+      })
+    }
+    if (path.startsWith('/api/anti/models')) return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path.startsWith('/api/anti/commands')) return reply({ items: [{ name: 'compact', description: '压缩上下文', hint: null }] })
+    if (path === '/api/anti/workers') return reply([])
+    if (path === '/api/anti/sessions') return reply([session])
+    if (path === `/api/anti/sessions/${session.id}/profile` && method === 'PATCH') {
+      session = { ...session, profile_id: (body as { profile_id: string | null }).profile_id }
+      return reply(session)
+    }
+    if (path === `/api/anti/sessions/${session.id}/grants` && method === 'DELETE') {
+      session = { ...session, grants: [] }
+      return reply(session)
+    }
+    if (path === `/api/anti/sessions/${session.id}/compact` && method === 'POST') {
+      return reply({
+        id: 'r-compact',
+        operation: 'op-compact',
+        prompt: '/compact',
+        status: 'success',
+        answer: '上下文已压缩',
+        mode: 'plan',
+        permission_mode: 'approval-required',
+      })
+    }
+    if (path === `/api/anti/sessions/${session.id}/runs` && method === 'GET') return reply([])
+    if (path === `/api/anti/sessions/${session.id}/runs` && method === 'POST') {
+      if (failOnceWith429) {
+        failOnceWith429 = false
+        return reply({ detail: '当前账号触发风控冷却（约 60 秒后自动恢复），请切换可用账号。' }, 429)
+      }
+      return reply({
+        id: 'r-retry-ok',
+        operation: 'op-retry',
+        prompt: (body as { prompt: string }).prompt,
+        status: 'success',
+        answer: '切换后重试成功',
+        mode: 'plan',
+        permission_mode: 'approval-required',
+      })
+    }
+    if (path.endsWith('/events')) return reply([])
+    if (path.startsWith('/api/file-transfer')) return reply([])
+    return reply({})
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-session-grants]')).not.toBeNull()
+    })
+
+    // 1. Revoke all session grants via [data-anti-session-grants]
+    const revokeAllBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-session-grants] button')].find(
+      b => b.textContent?.includes('全部收回'),
+    )!
+    await act(async () => { revokeAllBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.method === 'DELETE' && c.path === `/api/anti/sessions/${session.id}/grants`)).toBe(true)
+    })
+
+    // 2. Header compact action
+    const compactBtn = host.querySelector<HTMLButtonElement>('button[aria-label="压缩会话上下文"]')!
+    await act(async () => { compactBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.method === 'POST' && c.path === `/api/anti/sessions/${session.id}/compact`)).toBe(true)
+    })
+
+    // 3. Submit triggers 429 -> one-click failover button switches session profile & retries run
+    const textarea = host.querySelector('textarea')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Retry after 429')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-rate-limit-switch]')?.textContent).toContain('切换可用账号')
+      expect(host.querySelector('[data-anti-rate-limit-switch]')?.textContent).toContain('备用账号')
+    })
+
+    const oneClickBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-rate-limit-switch] button')].find(
+      b => b.textContent?.includes('备用账号'),
+    )!
+    await act(async () => { oneClickBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.method === 'PATCH' && c.path === `/api/anti/sessions/${session.id}/profile`)).toBe(true)
+      expect(called.filter(c => c.method === 'POST' && c.path === `/api/anti/sessions/${session.id}/runs`).length).toBe(2)
+    })
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('supports Orchestrator role settings, manual model sync, and displays fallback notices clearly', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const session = {
+    id: 's-orch-ui',
+    title: 'Orch Session',
+    project: 'demo',
+    workspace: 'D:/demo',
+    has_conversation: true,
+    profile_id: null as string | null,
+    grants: [],
+  }
+  const initialModels = [
+    { id: 'gemini-4-hydrogen', display_name: 'Gemini 4 Hydrogen', efforts: ['low', 'medium', 'high', 'xhigh'], is_default: true },
+    { id: 'gemini-4-neon', display_name: 'Gemini 4 Neon', efforts: ['low', 'medium', 'high', 'xhigh'] },
+    { id: 'gemini-pro-orchestrator-neon', display_name: 'Orchestrator (Neon)', is_orchestrator: true },
+  ]
+  const syncedModels = [
+    ...initialModels,
+    { id: 'gemini-pro-orchestrator', display_name: 'Orchestrator (Carbon)', is_orchestrator: true },
+  ]
+  let orchestratorState: { profile_id: string; planner: string | null; executor: string | null } = {
+    profile_id: 'default',
+    planner: null,
+    executor: null,
+  }
+  const called: Array<{ method: string; path: string; body?: unknown }> = []
+
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET'
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined
+    called.push({ method, path, body })
+    const reply = (data: unknown, status = 200) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => JSON.parse(JSON.stringify(data)),
+    })
+
+    if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认', has_credentials: true, auth_state: 'authenticated' }] })
+    if (path === '/api/anti/models') return reply({ items: initialModels, synced_at: '2026-11-25T06:00:00+08:00' })
+    if (path === '/api/anti/models/sync' && method === 'POST') return reply({ items: syncedModels, synced_at: '2026-11-25T09:30:00+08:00' })
+    if (path === '/api/anti/commands') return reply({ items: [] })
+    if (path === '/api/anti/workers') return reply([])
+    if (path === '/api/anti/profiles/default/orchestrator' && method === 'GET') return reply(orchestratorState)
+    if (path === '/api/anti/profiles/default/orchestrator' && method === 'PATCH') {
+      orchestratorState = { profile_id: 'default', ...(body as { planner: string | null; executor: string | null }) }
+      return reply(orchestratorState)
+    }
+    if (path === '/api/anti/sessions') return reply([session])
+    if (path === `/api/anti/sessions/${session.id}/runs`) {
+      return reply([
+        {
+          id: 'r-fb-ui',
+          operation: 'op-fb-ui',
+          prompt: 'Run hybrid',
+          status: 'success',
+          model: 'old-hybrid',
+          effective_model: 'gemini-4-hydrogen-high',
+          fallback_notice: '当前账号不支持模型「old-hybrid」，已自动回退至「gemini-4-hydrogen-high」执行',
+          answer: '完成',
+          mode: 'plan',
+          permission_mode: 'approval-required',
+        },
+      ])
+    }
+    if (path.endsWith('/events')) return reply([])
+    if (path.startsWith('/api/file-transfer')) return reply([])
+    return reply({})
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-fallback-notice]')?.textContent).toContain('old-hybrid')
+    })
+
+    // 1. Sync upstream models button
+    const syncBtn = host.querySelector<HTMLButtonElement>('button[aria-label="同步上游模型"]')!
+    await act(async () => { syncBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.method === 'POST' && c.path === '/api/anti/models/sync')).toBe(true)
+    })
+
+    // 2. Select Orchestrator (Neon) -> hides effort selector, shows Orchestrator role popover
+    const modelBtn = host.querySelector<HTMLButtonElement>('button[aria-label="模型"]')!
+    await act(async () => { modelBtn.click() })
+    const orchOption = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      el => el.textContent?.includes('Orchestrator (Neon)'),
+    )!
+    await act(async () => { orchOption.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('button[aria-label="思考等级"]')).toBeNull()
+      expect(host.querySelector('button[aria-label="Orchestrator 角色设置"]')).not.toBeNull()
+    })
+
+    const orchTrigger = host.querySelector<HTMLButtonElement>('button[aria-label="Orchestrator 角色设置"]')!
+    await act(async () => { orchTrigger.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-orchestrator-popover]')).not.toBeNull()
+    })
+
+    const plannerSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Orchestrator Planner 模型"]')!
+    const executorSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Orchestrator Executor 模型"]')!
+    await act(async () => {
+      plannerSelect.value = 'gemini-4-neon-xhigh'
+      plannerSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      executorSelect.value = 'gemini-4-hydrogen-high'
+      executorSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    const saveBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-orchestrator-popover] button')].find(
+      b => b.textContent?.trim() === '保存',
+    )!
+    await act(async () => { saveBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(
+        c => c.method === 'PATCH'
+          && c.path === '/api/anti/profiles/default/orchestrator'
+          && JSON.stringify(c.body) === JSON.stringify({ planner: 'gemini-4-neon-xhigh', executor: 'gemini-4-hydrogen-high' }),
+      )).toBe(true)
+    })
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+

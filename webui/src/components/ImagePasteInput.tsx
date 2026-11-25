@@ -35,6 +35,12 @@ interface Props {
   stopActive?: boolean
   stopDisabled?: boolean
   stopTitle?: string
+  activeSubmit?: {
+    label: string
+    title?: string
+    disabled?: boolean
+    onSubmit: () => void
+  }
   submitLabel?: string
   submitAccessory?: ReactNode
   /** Session runtime used by /btw. Omit on non-session chat surfaces. */
@@ -47,6 +53,14 @@ interface Props {
     onActiveIndexChange: (index: number) => void
     onSelectIndex: (index: number) => void
     onClose: () => void
+    ariaLabel?: string
+    items?: readonly {
+      name: string
+      displayName?: string
+      hint?: string | null
+      description?: string | null
+    }[]
+    emptyMessage?: string
   }
   placeholder?: string
   inputLabel?: string
@@ -71,7 +85,7 @@ interface PendingUpload {
 }
 
 export function ImagePasteInput({
-  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, stopDisabled, stopTitle, submitLabel, submitAccessory, btwSessionId, onSlashCommand, slashAutocomplete,
+  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, stopDisabled, stopTitle, activeSubmit, submitLabel, submitAccessory, btwSessionId, onSlashCommand, slashAutocomplete,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
   inputLabel, readOnly, maxLength, disabled, submitDisabled, scheduleDisabled = submitDisabled, acceptFiles = true, autoFocus = true,
 }: Props) {
@@ -110,6 +124,23 @@ export function ImagePasteInput({
   const slashCommands = onSlashCommand && dismissedSlashText !== text
     ? filterSlashCommands(text).filter((command) => command.name !== '/btw' || !!btwSessionId)
     : []
+  const externalMenuOpen = Boolean(slashAutocomplete?.open && (slashAutocomplete.items || slashAutocomplete.emptyMessage))
+  const menuList = externalMenuOpen
+    ? (slashAutocomplete?.items ?? []).map((item) => ({
+      name: item.name,
+      displayName: item.displayName ?? item.name,
+      hint: item.hint,
+      description: item.description,
+    }))
+    : slashCommands.map((command) => ({
+      name: command.name,
+      displayName: command.name,
+      hint: null as string | null,
+      description: command.description,
+    }))
+  const menuOpen = externalMenuOpen || slashCommands.length > 0
+  const menuActiveIndex = externalMenuOpen ? (slashAutocomplete?.activeIndex ?? 0) : slashActiveIndex
+  const menuAriaLabel = externalMenuOpen ? (slashAutocomplete?.ariaLabel ?? '快捷命令') : '快捷命令'
 
   useEffect(() => {
     setSlashActiveIndex(0)
@@ -324,8 +355,13 @@ export function ImagePasteInput({
     else upload(files)
   })
   const submit = () => {
-    if (!disabled && !submitDisabled && pendingUploadsRef.current.length === 0 && !referenceBusyRef.current && !capacityExceeded(0)
-      && (text.trim() || attachmentsRef.current.length > 0)) onSubmit()
+    if (disabled || pendingUploadsRef.current.length > 0 || referenceBusyRef.current || capacityExceeded(0)
+      || (!text.trim() && attachmentsRef.current.length === 0)) return
+    if (stopActive) {
+      if (activeSubmit && !activeSubmit.disabled) activeSubmit.onSubmit()
+      return
+    }
+    if (!submitDisabled) onSubmit()
   }
 
   return (
@@ -422,34 +458,49 @@ export function ImagePasteInput({
       )}
       {attachmentsBlocked && <span className={attachmentsOverLimit ? 'block px-3 text-xs text-status-danger' : 'sr-only'} role={attachmentsOverLimit || pendingUploads.some((item) => item.error) ? 'alert' : 'status'}>{attachmentHint}</span>}
 
-      {slashCommands.length > 0 && (
+      {menuOpen && (
         <div
           id="slash-command-menu"
           role="listbox"
-          aria-label="快捷命令"
-          className="absolute bottom-[calc(100%+0.5rem)] left-3 right-3 z-30 overflow-hidden rounded-2xl border border-line bg-bg-card p-1.5 shadow-[0_-8px_28px_rgba(54,42,28,0.22)]"
+          aria-label={menuAriaLabel}
+          className="absolute bottom-[calc(100%+0.5rem)] left-3 right-3 z-30 max-h-64 overflow-y-auto rounded-2xl border border-line bg-bg-card p-1.5 shadow-[0_-8px_28px_rgba(54,42,28,0.22)]"
         >
-          {slashCommands.map((command, index) => (
+          {menuList.length > 0 ? menuList.map((command, index) => (
             <button
               key={command.name}
               id={`slash-command-${index}`}
               type="button"
               role="option"
-              aria-selected={index === slashActiveIndex}
+              aria-selected={index === menuActiveIndex}
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => selectSlashCommand(command)}
-              onMouseEnter={() => setSlashActiveIndex(index)}
+              onClick={() => {
+                if (externalMenuOpen) {
+                  slashAutocomplete?.onSelectIndex(index)
+                } else {
+                  const builtin = slashCommands[index]
+                  if (builtin) selectSlashCommand(builtin)
+                }
+              }}
+              onMouseEnter={() => {
+                if (externalMenuOpen) slashAutocomplete?.onActiveIndexChange(index)
+                else setSlashActiveIndex(index)
+              }}
               className={clsx(
                 'flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition',
-                index === slashActiveIndex
+                index === menuActiveIndex
                   ? 'bg-accent/15 text-ink'
                   : 'text-ink hover:bg-ink/5',
               )}
             >
-              <span className="w-20 shrink-0 font-mono text-sm font-semibold text-accent">{command.name}</span>
-              <span className="text-xs text-ink-muted">{command.description}</span>
+              <span className="min-w-20 shrink-0 font-mono text-sm font-semibold text-accent">{command.displayName}</span>
+              {command.hint && <span className="shrink-0 font-mono text-[11px] text-ink-faint">{command.hint}</span>}
+              {command.description && <span className="min-w-0 truncate text-xs text-ink-muted">{command.description}</span>}
             </button>
-          ))}
+          )) : (
+            <div className="px-3 py-2 text-xs text-ink-faint">
+              {slashAutocomplete?.emptyMessage}
+            </div>
+          )}
         </div>
       )}
 
@@ -576,9 +627,9 @@ export function ImagePasteInput({
           }}
           role="combobox"
           aria-autocomplete="list"
-          aria-expanded={slashCommands.length > 0 || Boolean(slashAutocomplete?.open && slashAutocomplete.itemCount > 0)}
-          aria-controls={slashCommands.length > 0 ? 'slash-command-menu' : undefined}
-          aria-activedescendant={slashCommands.length > 0 ? `slash-command-${slashActiveIndex}` : undefined}
+          aria-expanded={menuOpen}
+          aria-controls={menuOpen ? 'slash-command-menu' : undefined}
+          aria-activedescendant={menuOpen && menuList.length > 0 ? `slash-command-${menuActiveIndex}` : undefined}
           wrap="soft"
           className="flex-1 min-w-0 w-0 bg-transparent resize-none outline-none text-ink placeholder:text-ink-faint px-3 py-2 max-h-60 leading-7 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
         />
@@ -600,6 +651,18 @@ export function ImagePasteInput({
           </button>
         )}
         {submitAccessory}
+        {stopActive && activeSubmit && (
+          <button
+            type="button"
+            onClick={submit}
+            disabled={disabled || activeSubmit.disabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)}
+            className="ga-solid-primary mb-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+            aria-label={activeSubmit.label}
+            title={attachmentHint ?? activeSubmit.title ?? activeSubmit.label}
+          >
+            <SendHorizontal className="h-4 w-4" aria-hidden="true" />
+          </button>
+        )}
         <button
           type="button"
           onClick={stopActive ? onStop : submit}

@@ -292,6 +292,25 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
 .prose-chat h2 { @apply font-semibold mt-3 mb-2; font-size: calc(1.125rem * var(--chat-scale, 1)); line-height: calc(1.75rem * var(--chat-scale, 1)); }
 .prose-chat h3 { @apply font-semibold mt-2 mb-1; font-size: calc(1rem * var(--chat-scale, 1)); line-height: calc(1.5rem * var(--chat-scale, 1)); }
 .prose-chat p  { @apply leading-7 my-1; }
+/* Agy 过程阶段输出：紧凑克制的无编号列表正文，避免与最终结论抢视觉重心 */
+.anti-progress-item .prose-chat {
+  color: var(--c-text-muted);
+  font-size: calc(0.8125rem * var(--chat-scale, 1));
+  line-height: 1.55;
+}
+.anti-progress-item .prose-chat p {
+  margin: 0.125rem 0;
+  line-height: 1.55;
+}
+.anti-progress-item .prose-chat p:first-child { margin-top: 0; }
+.anti-progress-item .prose-chat p:last-child { margin-bottom: 0; }
+.anti-progress-item .prose-chat ul,
+.anti-progress-item .prose-chat ol {
+  margin: 0.25rem 0;
+}
+.anti-progress-item .prose-chat code {
+  font-size: 0.92em;
+}
 /* Theme-task tabs use a compact reading scale, independent of chat bubbles. */
 .theme-task-content {
   font-size: 13px;
