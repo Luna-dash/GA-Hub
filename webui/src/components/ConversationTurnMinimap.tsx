@@ -51,7 +51,7 @@ export function ConversationTurnMinimap({
 
   return (
     <div
-      className="pointer-events-auto relative flex max-h-full w-9 flex-col items-center"
+      className="pointer-events-auto relative flex min-h-0 max-h-[min(100%,12rem)] w-9 flex-col items-center"
       onMouseLeave={() => setHoveredIdx(null)}
     >
       <nav
