@@ -956,6 +956,33 @@ class SessionUpdateNormalizer:
         self.current_mode_id: str | None = None
         self.prompt_settled = False
         self.reply_open = False
+        self._gen_burst_start: float | None = None
+        self._gen_last_chunk: float | None = None
+        self._gen_active_seconds: float = 0.0
+
+    def _touch_generation_burst(self) -> None:
+        now = float(self._clock())
+        if self._gen_burst_start is None or self._gen_last_chunk is None:
+            self._gen_burst_start = now
+            self._gen_last_chunk = now
+            return
+        if (now - self._gen_last_chunk) > 2.5:
+            self._gen_active_seconds += max(0.0, self._gen_last_chunk - self._gen_burst_start)
+            self._gen_burst_start = now
+        self._gen_last_chunk = now
+
+    def _flush_generation_burst(self) -> None:
+        if self._gen_burst_start is not None and self._gen_last_chunk is not None:
+            self._gen_active_seconds += max(0.0, self._gen_last_chunk - self._gen_burst_start)
+        self._gen_burst_start = None
+        self._gen_last_chunk = None
+
+    @property
+    def generation_ms(self) -> int:
+        total = self._gen_active_seconds
+        if self._gen_burst_start is not None and self._gen_last_chunk is not None:
+            total += max(0.0, self._gen_last_chunk - self._gen_burst_start)
+        return max(0, int(round(total * 1000.0)))
 
     @property
     def final_answer(self) -> str:
@@ -1016,6 +1043,7 @@ class SessionUpdateNormalizer:
         return ids
 
     def emit_steer(self, prompt_text: str) -> list[dict[str, Any]]:
+        self._flush_generation_burst()
         events: list[dict[str, Any]] = []
         if self._thought_idx is not None:
             events.append(self._emit("step.update", step={"index": self._thought_idx, "kind": "thought", "state": "DONE"}))
@@ -1156,6 +1184,7 @@ class SessionUpdateNormalizer:
         )
 
     def finish_turn(self) -> list[dict[str, Any]]:
+        self._flush_generation_burst()
         events: list[dict[str, Any]] = []
         self.flush_pending_terminals(events)
         if self._thought_idx is not None:
@@ -1174,6 +1203,7 @@ class SessionUpdateNormalizer:
             content = update.get("content")
             text = content.get("text") if isinstance(content, dict) and content.get("type") == "text" else None
             if isinstance(text, str) and text:
+                self._touch_generation_burst()
                 if self.prompt_settled:
                     self.reply_open = True
                 self.answer_chunks.append(text)
@@ -1196,6 +1226,7 @@ class SessionUpdateNormalizer:
             content = update.get("content")
             text = content.get("text") if isinstance(content, dict) and content.get("type") == "text" else None
             if isinstance(text, str) and text:
+                self._touch_generation_burst()
                 if self.prompt_settled:
                     self.reply_open = True
                 self._flush_reply_as_progress(events)
@@ -1349,6 +1380,7 @@ class SessionUpdateNormalizer:
             if self.prompt_settled and kind == "tool_call":
                 self.reply_open = True
             if kind == "tool_call" or tid not in self._tool_indices:
+                self._flush_generation_burst()
                 self._flush_reply_as_progress(events)
             if tid not in self._tool_indices:
                 self._tool_indices[tid] = self._alloc_idx()
@@ -1466,7 +1498,7 @@ class SessionUpdateNormalizer:
                 and merged["locations"]
                 and isinstance(merged["locations"][0], dict)
                 else None
-            )
+            ) or image_path
             if isinstance(detail, str) and detail:
                 step["detail"] = _bound_text(detail, 512)
             events.append(self._emit("step.update", step=step))
@@ -2135,11 +2167,14 @@ class PromptOutcomeWatcher:
         self._untrusted = False
         self._identity: tuple[int, int] | None = None
         self._start_index: int = -1
+        self._turn_start_index: int = -1
 
-    def prepare(self) -> None:
+    def prepare(self, *, reset_turn: bool = True) -> None:
         self._untrusted = False
         self._identity = None
         self._start_index = -1
+        if reset_turn:
+            self._turn_start_index = -1
         if not _NATIVE_ID_RE.fullmatch(self.session_id):
             self._untrusted = True
             return
@@ -2160,6 +2195,8 @@ class PromptOutcomeWatcher:
         idx = _read_steps_readonly(db_path, lambda conn: conn.execute("SELECT max(idx) FROM steps").fetchone())
         if isinstance(idx, tuple) and isinstance(idx[0], int):
             self._start_index = idx[0]
+            if reset_turn:
+                self._turn_start_index = idx[0]
 
     def check(self, prompt_result: dict[str, Any] | None) -> dict[str, Any] | None:
         stop_reason = prompt_result.get("stopReason") if isinstance(prompt_result, dict) else None
@@ -2203,6 +2240,29 @@ class PromptOutcomeWatcher:
                     step_type, payload, reached_model = res
 
         return evaluate_turn_outcome(stop_reason, step_type, payload, reached_model)
+
+    def model_call_count(self) -> int:
+        """Count planner/model generation steps recorded in local `steps` during this turn."""
+        if self._untrusted:
+            return 0
+        seg = ("conversations", f"{self.session_id}.db")
+        resolved = _resolve_managed_path(self.app_data_dir, seg, "file")
+        if resolved is None:
+            return 0
+        db_path, st = resolved
+        if self._identity is not None and (st.st_dev, st.st_ino) != self._identity:
+            return 0
+        start_idx = self._turn_start_index
+        row = _read_steps_readonly(
+            db_path,
+            lambda conn: conn.execute(
+                "SELECT COUNT(*) FROM steps WHERE idx > ? AND step_type = ?",
+                (start_idx, _PLANNER_RESPONSE_STEP_TYPE),
+            ).fetchone(),
+        )
+        if isinstance(row, tuple) and isinstance(row[0], int) and row[0] > 0:
+            return row[0]
+        return 0
 
 
 def _read_inbox_messages(app_data_dir: Path, conversation_id: str) -> list[dict[str, Any]] | None:

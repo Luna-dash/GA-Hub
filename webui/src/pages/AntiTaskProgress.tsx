@@ -6,10 +6,12 @@ import clsx from 'clsx'
 import { CollapseToLatestButton } from '@/components/CollapseToLatestButton'
 import { useConversationCollapse } from '@/components/ConversationCollapse'
 
-type Step = components['schemas']['AntiStep']
-export type AntiEvent = components['schemas']['AntiMessageDelta' | 'AntiStepUpdate']
+type Step = components['schemas']['AntiStep'] & { image_path?: string | null }
+export type AntiEvent =
+  | (Omit<components['schemas']['AntiMessageDelta'], 'step'> & { step?: Step | null })
+  | (Omit<components['schemas']['AntiStepUpdate'], 'step'> & { step: Step })
 
-type TimelineStep = Omit<Step, 'text_delta'> & { description: string }
+type TimelineStep = Omit<Step, 'text_delta'> & { description: string; image_path?: string | null }
 
 const toolLabels = new Map([
   ['view_file', '读取文件'], ['list_dir', '查看目录'], ['grep_search', '搜索内容'],
@@ -82,6 +84,7 @@ function collectEvents(events: AntiEvent[] = []) {
       exit_code: update.exit_code ?? previous?.exit_code,
       diff: update.diff ?? previous?.diff,
       detail: update.detail ?? previous?.detail,
+      image_path: update.image_path ?? previous?.image_path,
     })
   }
   const progressMessages = replySegments
@@ -248,7 +251,9 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
             const isSteer = step.kind === 'user_steer'
             const isLiveOutput = step.state === 'ACTIVE' && Boolean(step.output)
             const showDetail = Boolean(
-              step.detail && (isNotice || (!step.command && !isRedundantDetail(label, step.detail))),
+              step.detail
+              && !(step.image_path && step.detail === step.image_path)
+              && (isNotice || (!step.command && !isRedundantDetail(label, step.detail))),
             )
             const descriptionParagraphs = step.description ? splitDescriptionParagraphs(step.description) : []
             return <li
@@ -277,6 +282,14 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
                   className={clsx('mt-0.5 text-[11px]', isNotice ? 'text-status-warning' : 'text-ink-muted')}
                 >
                   {step.detail}
+                </div>
+              )}
+              {step.image_path && (
+                <div
+                  data-step-image-path
+                  className="mt-0.5 font-mono text-[11px] text-ink-muted"
+                >
+                  图片路径：{step.image_path}
                 </div>
               )}
               {descriptionParagraphs.length > 0 && (

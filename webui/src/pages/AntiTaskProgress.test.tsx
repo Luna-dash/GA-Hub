@@ -293,4 +293,47 @@ describe('AntiTaskProgress SSE stability', () => {
     expect(host.querySelector('[data-live-terminal-output="streaming"]')?.textContent).toContain('line2')
     expect(host.textContent).toContain('实时输出')
   })
+
+  it('displays image_path cleanly without duplicating identical detail', async () => {
+    const events: AntiEvent[] = [
+      {
+        seq: 1,
+        type: 'step.update',
+        step: {
+          index: 0,
+          kind: 'tool_call',
+          tool: 'generate_image',
+          state: 'DONE',
+          detail: 'D:/work/preview.png',
+          image_path: 'D:/work/preview.png',
+        } as AntiEvent['step'] & { image_path: string },
+      },
+    ]
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <AntiTaskProgress
+            active={false}
+            runKey="sid-1/run-img"
+            loadEvents={() => Promise.resolve(events)}
+            onEventsChanged={() => {}}
+          >
+            {() => null}
+          </AntiTaskProgress>
+        </QueryClientProvider>,
+      )
+    })
+
+    const details = host.querySelector('details')!
+    await act(async () => {
+      details.open = true
+      details.dispatchEvent(new Event('toggle'))
+    })
+
+    await vi.waitFor(() => {
+      expect(host.querySelector('[data-step-image-path]')?.textContent).toBe('图片路径：D:/work/preview.png')
+    })
+    expect(host.querySelector('[data-step-detail]')).toBeNull()
+  })
 })
