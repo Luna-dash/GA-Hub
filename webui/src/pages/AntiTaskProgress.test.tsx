@@ -336,4 +336,43 @@ describe('AntiTaskProgress SSE stability', () => {
     })
     expect(host.querySelector('[data-step-detail]')).toBeNull()
   })
+
+  it('keeps the process toggle label shrink-0 and nowrap even when active tool text is very long', async () => {
+    const events: AntiEvent[] = [
+      {
+        seq: 1,
+        type: 'step.update',
+        step: {
+          index: 0,
+          kind: 'tool_call',
+          tool: 'Reading a very long file path /some/deeply/nested/directory/structure/file_name_that_exceeds_row_width.tsx',
+          state: 'ACTIVE',
+        },
+      },
+    ]
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <AntiTaskProgress
+            active
+            runKey="sid-1/run-long-tool"
+            loadEvents={() => Promise.resolve(events)}
+            onEventsChanged={() => {}}
+          >
+            {() => null}
+          </AntiTaskProgress>
+        </QueryClientProvider>,
+      )
+    })
+
+    await vi.waitFor(() => {
+      expect(host.querySelector('summary')?.textContent).toContain('Reading a very long file path')
+    })
+    const toggleSpan = [...host.querySelectorAll('summary > span')].find(el =>
+      el.textContent === '查看任务过程' || el.textContent === '收起任务过程',
+    )
+    expect(toggleSpan?.className).toContain('shrink-0')
+    expect(toggleSpan?.className).toContain('whitespace-nowrap')
+  })
 })

@@ -237,9 +237,9 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
     <details ref={detailsRef} className="group mb-3 border-b border-line/70 pb-2 text-xs text-ink-muted" onToggle={event => setOpen(event.currentTarget.open)}>
       <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md border border-line bg-bg-soft px-3 py-2 text-left text-xs font-medium text-ink-muted transition-colors hover:bg-bg-card hover:text-ink [&::-webkit-details-marker]:hidden">
         <ChevronRight size={13} className="shrink-0 text-ink-faint transition-transform duration-150 group-open:rotate-90" aria-hidden="true" />
-        <span>{open ? '收起任务过程' : '查看任务过程'}</span>
+        <span className="shrink-0 whitespace-nowrap">{open ? '收起任务过程' : '查看任务过程'}</span>
         {active && <span className="min-w-0 truncate font-normal text-ink-faint">· {latest ? stepLabel(latest) : '等待步骤事件…'}</span>}
-        {steps.length > 0 && <span className="ml-auto shrink-0 tabular-nums text-ink-faint">共 {steps.length} 步</span>}
+        {steps.length > 0 && <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums text-ink-faint">共 {steps.length} 步</span>}
         {active && <span aria-label="正在输出" className={clsx('h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent', steps.length === 0 && 'ml-auto')} />}
       </summary>
       <div className="mt-1.5 space-y-2 px-1 py-1">
