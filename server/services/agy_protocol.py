@@ -9,13 +9,19 @@ from __future__ import annotations
 import base64
 import binascii
 import difflib
+import json
+import math
 import mimetypes
 import os
 import re
+import sqlite3
+import stat
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import unquote, urlsplit
 
 from .agy_profile import AgyProfileError
 
@@ -605,12 +611,106 @@ def _extract_terminal_exit_code(exit_status: Any) -> int | None:
     return val if isinstance(val, int) and not isinstance(val, bool) else None
 
 
+def _has_truncated_text(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.startswith(_TOOL_TEXT_TRUNCATED)
+    if isinstance(value, dict):
+        return any(_has_truncated_text(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_truncated_text(v) for v in value)
+    return False
+
+
+_DATA_IMAGE_URL_RE = re.compile(r"^data:image/", re.I)
+_IMAGE_PREVIEW_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"})
+
+
+def sanitize_tool_payload(payload: Any, *, max_nodes: int = 512, max_text: int = 64_000) -> Any:
+    """Bound ACP tool payload depth, node count, and total text while stripping inline base64 images."""
+    budget = [max_nodes, max_text]
+
+    def _walk(value: Any, depth: int, field: str | None = None) -> Any:
+        if depth > 12 or budget[0] <= 0:
+            return None
+        budget[0] -= 1
+        if isinstance(value, str):
+            if _DATA_IMAGE_URL_RE.match(value) or budget[1] <= 0:
+                return None
+            limit = min(_TOOL_TEXT_LIMIT, budget[1])
+            # Always tail-truncate with _TOOL_TEXT_TRUNCATED (T3 Code boundText) so
+            # edit patch previewers reliably detect truncated TargetContent/ReplacementContent.
+            text = _bound_text(value, limit, tail=True)
+            budget[1] -= len(text)
+            return text
+        if isinstance(value, list):
+            out_list: list[Any] = []
+            for entry in value:
+                if budget[0] <= 0:
+                    break
+                item = _walk(entry, depth + 1)
+                if item is not None:
+                    out_list.append(item)
+            return out_list
+        if not isinstance(value, dict):
+            return value
+        out_dict: dict[str, Any] = {}
+        for key, entry in value.items():
+            if budget[0] <= 0:
+                break
+            if (
+                (value.get("type") == "image" and key in ("data", "blob"))
+                or (key == "blob" and isinstance(value.get("mimeType"), str) and value["mimeType"].startswith("image/"))
+                or (
+                    key in ("formatted_output", "formattedOutput")
+                    and (entry == value.get("combinedOutput") or entry == value.get("combined_output"))
+                )
+            ):
+                continue
+            cleaned = _walk(entry, depth + 1, key)
+            if cleaned is not None:
+                out_dict[key] = cleaned
+        return out_dict
+
+    return _walk(payload, 0)
+
+
+def extract_local_image_path(image_path: Any) -> str | None:
+    """Extract a safe local image path or file URI from Antigravity `rawOutput.imagePath`."""
+    if not isinstance(image_path, str) or not image_path.strip() or len(image_path) > _TOOL_TEXT_LIMIT:
+        return None
+    raw = image_path.strip()
+    if raw.lower().startswith("file://"):
+        parsed = urlsplit(raw)
+        if parsed.netloc and parsed.netloc.lower() != "localhost":
+            return None
+        pathname = unquote(parsed.path or "")
+        if re.match(r"^/[a-zA-Z]:/", pathname):
+            pathname = pathname[1:]
+        raw = pathname
+    elif re.match(r"^[a-zA-Z][a-zA-Z\d+.-]*:", raw) and not re.match(r"^[a-zA-Z]:[\\/]", raw):
+        return None
+    if not raw or Path(raw).suffix.lower() not in _IMAGE_PREVIEW_EXTS:
+        return None
+    return raw
+
+
+def _is_mcp_tool_call(snapshot: dict[str, Any], update: dict[str, Any] | None = None) -> bool:
+    for source in (update, snapshot):
+        if isinstance(source, dict):
+            meta = source.get("_meta")
+            if isinstance(meta, dict) and meta.get("is_mcp_tool_call") is True:
+                return True
+    return False
+
+
 def is_background_outliving_tool(
     snapshot: dict[str, Any],
     terminals: dict[str, dict[str, Any]] | None = None,
 ) -> bool:
     """Return True when an active tool represents background work that may outlive `session/prompt`."""
     if _map_tool_status(snapshot.get("status")) != "ACTIVE":
+        return False
+    if _is_mcp_tool_call(snapshot):
         return False
     if terminals:
         for term_id in _embedded_terminal_ids(snapshot.get("content")):
@@ -897,6 +997,23 @@ class SessionUpdateNormalizer:
             if term.get("exit_status") is None and not self._terminal_to_tools.get(term_id):
                 return True
         return False
+
+    def collect_subagent_tool_ids(self) -> list[str]:
+        """Return toolCallIds of non-MCP subagent launches observed during this turn."""
+        ids: list[str] = []
+        for tid, snap in self._tool_snapshots.items():
+            if _is_mcp_tool_call(snap):
+                continue
+            raw_input = snap.get("rawInput") if isinstance(snap.get("rawInput"), dict) else {}
+            title_low = str(snap.get("title") or "").strip().lower()
+            raw_tool = str(raw_input.get("ToolName") or raw_input.get("tool") or "").strip().lower()
+            if (
+                "invoke_subagent" in title_low
+                or "start_subagent" in title_low
+                or raw_tool in ("invoke_subagent", "start_subagent")
+            ):
+                ids.append(tid)
+        return ids
 
     def emit_steer(self, prompt_text: str) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -1238,7 +1355,17 @@ class SessionUpdateNormalizer:
                 self._tool_snapshots[tid] = {}
             idx = self._tool_indices[tid]
             prev = self._tool_snapshots[tid]
-            merged = {**prev, **{k: v for k, v in update.items() if v is not None}}
+            sanitized_update: dict[str, Any] = {}
+            for k, v in update.items():
+                if v is None:
+                    continue
+                if k in ("rawInput", "rawOutput"):
+                    sanitized_val = sanitize_tool_payload(v)
+                    if sanitized_val is not None:
+                        sanitized_update[k] = sanitized_val
+                else:
+                    sanitized_update[k] = v
+            merged = {**prev, **sanitized_update}
             self._tool_snapshots[tid] = merged
 
             term_ids = _embedded_terminal_ids(merged.get("content"))
@@ -1256,6 +1383,7 @@ class SessionUpdateNormalizer:
             tool_kind = str(merged.get("kind") or "other")
             command = _extract_command(raw_input, raw_output)
             cwd = _extract_cwd(raw_input, raw_output)
+            image_path = extract_local_image_path(raw_output.get("imagePath"))
             output_text = raw_output.get("combinedOutput") or raw_output.get("combined_output")
             if output_text is None and isinstance(merged.get("rawOutput"), str):
                 output_text = merged.get("rawOutput")
@@ -1289,16 +1417,28 @@ class SessionUpdateNormalizer:
                             term["exit_status"] = {"inferred": True}
 
             diff_text = _extract_diff_from_content(merged.get("content"))
+            diff_omitted = False
             if diff_text is None and tool_kind == "edit":
                 locs = merged.get("locations") if isinstance(merged.get("locations"), list) else []
                 target_path = (locs[0].get("path") if locs and isinstance(locs[0], dict) else None) or raw_input.get("path") or raw_input.get("TargetFile")
-                if isinstance(target_path, str) and target_path:
+                if _has_truncated_text(raw_input):
+                    diff_omitted = True
+                elif isinstance(target_path, str) and target_path:
                     diff_text = build_edit_patch(
                         target_path,
                         raw_input,
                         locs,
                         self._pre_edit_reader if merged.get("status") in (None, "pending", "in_progress") else None,
                     )
+                    if diff_text is None and any(
+                        k in raw_input for k in ("ReplacementChunks", "replacement_chunks", "TargetContent", "target_content")
+                    ):
+                        diff_omitted = True
+                elif not any(
+                    isinstance(entry, dict) and entry.get("type") == "diff"
+                    for entry in (merged.get("content") if isinstance(merged.get("content"), list) else ())
+                ):
+                    diff_omitted = True
 
             step: dict[str, Any] = {
                 "index": idx,
@@ -1310,12 +1450,16 @@ class SessionUpdateNormalizer:
                 step["command"] = command
             if cwd:
                 step["cwd"] = cwd
+            if image_path:
+                step["image_path"] = image_path
             if isinstance(output_text, str) and output_text:
                 step["output"] = _bound_text(output_text, _TOOL_TEXT_LIMIT, tail=True)
             if isinstance(exit_code, int):
                 step["exit_code"] = exit_code
             if diff_text:
                 step["diff"] = diff_text
+            elif diff_omitted:
+                step["diff_omitted"] = True
             detail = command or (
                 merged["locations"][0].get("path")
                 if isinstance(merged.get("locations"), list)
@@ -1399,6 +1543,8 @@ def build_prompt_blocks(
     total_bytes = 0
     seen_paths: set[str] = set()
     for att in attachments:
+        if att.get("is_path_only") or att.get("source_tag") == "pasted-text":
+            continue
         raw_path = str(att.get("path") or "").strip()
         if not raw_path or raw_path in seen_paths:
             continue
@@ -1436,7 +1582,11 @@ def build_prompt_blocks(
             })
         elif caps.get("embeddedContext") is True and is_txt and size <= _MAX_TEXT_ATTACHMENT_BYTES and total_bytes + size <= _MAX_TOTAL_ATTACHMENT_BYTES:
             try:
-                decoded = p.read_text(encoding="utf-8")
+                raw_bytes = p.read_bytes()
+                if raw_bytes.startswith((b"\xff\xfe", b"\xfe\xff")):
+                    decoded = raw_bytes.decode("utf-16")
+                else:
+                    decoded = raw_bytes.decode("utf-8")
                 if "\0" not in decoded:
                     total_bytes += size
                     blocks.append({
@@ -1767,3 +1917,468 @@ def select_model_and_effort_calls(
                 calls.append(("session/set_config_option", {"configId": cid, "value": resolved_effort}))
             break
     return calls
+
+
+# ---------------------------------------------------------------------------
+# Managed profile-path safety, turn-outcome diagnostics, and detached child work
+# (mirrors T3 Code's AntigravityProfilePaths, AntigravityTurnOutcome, AntigravityChildWork)
+# ---------------------------------------------------------------------------
+
+_NATIVE_ID_RE = re.compile(r"^[\w-]+$")
+_ERROR_STEP_TYPE = 17
+_PLANNER_RESPONSE_STEP_TYPE = 15
+_MAX_ERROR_PAYLOAD_BYTES = 16_384
+_API_ERROR_RE = re.compile(r"Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)", re.S)
+_STATUS_ERROR_RE = re.compile(r"(?<![A-Z_])([A-Z_]+) \(code (\d{3})\): ([^\x00-\x1f\x7f-\x9f]+)")
+_QUOTA_EXHAUSTED_RE = re.compile(r"\breason:QUOTA_EXHAUSTED\b")
+_INVALID_THINKING_SIGNATURE_RE = re.compile(
+    r"\bmessages\.\d+\.content\.\d+(?:\.thinking\.signature: Field required|: Invalid `signature` in `thinking` block)"
+)
+_RESET_TIMESTAMP_RE = re.compile(r"\bquotaResetTimeStamp:([^\s\]]+)")
+_RESET_DELAY_RE = re.compile(r"\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])")
+_RETRY_DELAY_RE = re.compile(r"\bretryDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])")
+_GO_DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|h|m|s)")
+_GO_DURATION_UNITS = {
+    "ns": 1e-9,
+    "us": 1e-6,
+    "µs": 1e-6,
+    "μs": 1e-6,
+    "ms": 1e-3,
+    "s": 1.0,
+    "m": 60.0,
+    "h": 3600.0,
+}
+
+_PENDING_REPLY_TAIL_BYTES = 64 * 1024
+_TRANSCRIPT_BYTE_CAP = 1024 * 1024
+_MAX_STEP_BYTES = 1024 * 1024
+_MAX_MESSAGE_FILES = 500
+_MAX_DETACHED_CHILDREN = 256
+_HIGH_PRIORITY_MESSAGE = "MESSAGE_PRIORITY_HIGH"
+_LOW_PRIORITY_MESSAGE = "MESSAGE_PRIORITY_LOW"
+
+
+def _resolve_managed_path(
+    app_data_dir: Path,
+    segments: tuple[str, ...],
+    kind: Literal["file", "directory"],
+) -> tuple[Path, os.stat_result] | None:
+    """Prove `app_data_dir / segments` exists with the expected type and no symlinks/junctions."""
+    try:
+        root_st = app_data_dir.lstat()
+    except OSError:
+        return None
+    if stat.S_ISLNK(root_st.st_mode) or not stat.S_ISDIR(root_st.st_mode):
+        return None
+    root_real = os.path.normcase(os.path.realpath(app_data_dir))
+    cur = app_data_dir
+    st: os.stat_result | None = None
+    for idx, seg in enumerate(segments):
+        if not seg or "/" in seg or "\\" in seg or seg in (".", ".."):
+            return None
+        cur = cur / seg
+        try:
+            st = cur.lstat()
+        except OSError:
+            return None
+        if stat.S_ISLNK(st.st_mode):
+            return None
+        expect_file = kind == "file" and idx == len(segments) - 1
+        if expect_file and not stat.S_ISREG(st.st_mode):
+            return None
+        if not expect_file and not stat.S_ISDIR(st.st_mode):
+            return None
+    if st is None:
+        return None
+    expected_real = os.path.normcase(os.path.join(root_real, *segments))
+    if os.path.normcase(os.path.realpath(cur)) != expected_real:
+        return None
+    return cur, st
+
+
+def _parse_reset_seconds(text: str, now_ts: float | None = None) -> int | None:
+    now_val = time.time() if now_ts is None else now_ts
+    ts_match = _RESET_TIMESTAMP_RE.search(text)
+    if ts_match:
+        raw_ts = ts_match.group(1).strip()
+        try:
+            iso_norm = raw_ts[:-1] + "+00:00" if raw_ts.endswith("Z") else raw_ts
+            dt = datetime.fromisoformat(iso_norm)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            delta = dt.timestamp() - now_val
+            if delta > 0:
+                return max(1, int(math.ceil(delta)))
+        except ValueError:
+            pass
+    delay_match = _RESET_DELAY_RE.search(text) or _RETRY_DELAY_RE.search(text)
+    if not delay_match:
+        return None
+    total_sec = 0.0
+    for amount, unit in _GO_DURATION_PART_RE.findall(delay_match.group(1)):
+        total_sec += float(amount) * _GO_DURATION_UNITS.get(unit, 0.0)
+    return max(1, int(math.ceil(total_sec))) if total_sec > 0 else None
+
+
+def evaluate_turn_outcome(
+    stop_reason: str | None,
+    step_type: int | None,
+    payload: bytes | str | None,
+    reached_model: bool,
+    *,
+    now_ts: float | None = None,
+) -> dict[str, Any] | None:
+    """Classify hidden upstream API failures reported via `stopReason` / session log `steps`."""
+    if step_type == _ERROR_STEP_TYPE:
+        if isinstance(payload, (bytes, bytearray)):
+            error_text: str | None = bytes(payload).decode("utf-8", errors="replace")
+        elif isinstance(payload, str):
+            error_text = payload
+        else:
+            error_text = ""
+    else:
+        error_text = None
+
+    if error_text is None and stop_reason != "refusal":
+        return None
+
+    text = error_text or ""
+    api_match = _API_ERROR_RE.search(text) or _STATUS_ERROR_RE.search(text)
+    # _API_ERROR_RE yields (http, message, status); _STATUS_ERROR_RE yields (status, http, message).
+    if api_match:
+        if api_match.re is _API_ERROR_RE:
+            http_status, message, status_name = api_match.group(1), api_match.group(2), api_match.group(3)
+        else:
+            status_name, http_status, message = api_match.group(1), api_match.group(2), api_match.group(3)
+    else:
+        http_status, message, status_name = None, None, None
+
+    if stop_reason == "refusal" or _QUOTA_EXHAUSTED_RE.search(text):
+        reset_sec = _parse_reset_seconds(text, now_ts=now_ts)
+        return {
+            "status": "rate_limited",
+            "code": status_name or "QUOTA_EXHAUSTED",
+            "error": "当前账号本周期 Antigravity 配额已耗尽，请稍后重试或切换账号。",
+            "retryable": True,
+            "thread_broken": False,
+            "reset_seconds": reset_sec,
+        }
+
+    if _INVALID_THINKING_SIGNATURE_RE.search(text):
+        return {
+            "status": "cli_error",
+            "code": "INVALID_THINKING_SIGNATURE",
+            "error": "Antigravity 保存的会话 thinking 签名已失效，已自动重置会话映射，下一条消息将附带前文摘要开启新会话。",
+            "retryable": True,
+            "thread_broken": True,
+            "reset_seconds": None,
+        }
+
+    if api_match is None or not http_status or not message:
+        return {
+            "status": "cli_error",
+            "code": "PROVIDER_ERROR",
+            "error": "Antigravity 因内部错误中止了本轮响应。",
+            "retryable": False,
+            "thread_broken": False,
+            "reset_seconds": None,
+        }
+
+    rate_limited = http_status == "429" or status_name == "RESOURCE_EXHAUSTED"
+    transient_not_found = http_status == "404" and reached_model
+    reset_sec = _parse_reset_seconds(text, now_ts=now_ts)
+    if rate_limited:
+        return {
+            "status": "rate_limited",
+            "code": status_name or "RESOURCE_EXHAUSTED",
+            "error": _bound_text(message.strip(), 512),
+            "retryable": True,
+            "thread_broken": False,
+            "reset_seconds": reset_sec,
+        }
+    return {
+        "status": "cli_error",
+        "code": status_name,
+        "error": _bound_text(message.strip(), 512),
+        "retryable": transient_not_found or int(http_status) >= 500,
+        "thread_broken": False,
+        "transient_not_found": transient_not_found,
+        "resume_with": "continue" if transient_not_found else None,
+        "reset_seconds": reset_sec,
+    }
+
+
+def _read_steps_readonly(db_path: Path, fn: Any) -> Any:
+    try:
+        uri = f"{db_path.resolve().as_uri()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=0.5)
+    except (OSError, sqlite3.Error):
+        return None
+    try:
+        conn.execute("PRAGMA busy_timeout = 100")
+        has_steps = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'steps'"
+        ).fetchone()
+        return fn(conn) if has_steps is not None else None
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
+class PromptOutcomeWatcher:
+    """Ports T3 Code's `watchAntigravityPromptOutcome` against `<app_data_dir>/conversations/<sid>.db`."""
+
+    def __init__(self, app_data_dir: Path, session_id: str) -> None:
+        self.app_data_dir = app_data_dir
+        self.session_id = session_id
+        self._untrusted = False
+        self._identity: tuple[int, int] | None = None
+        self._start_index: int = -1
+
+    def prepare(self) -> None:
+        self._untrusted = False
+        self._identity = None
+        self._start_index = -1
+        if not _NATIVE_ID_RE.fullmatch(self.session_id):
+            self._untrusted = True
+            return
+        if _resolve_managed_path(self.app_data_dir, ("conversations",), "directory") is None:
+            return
+        seg = ("conversations", f"{self.session_id}.db")
+        resolved = _resolve_managed_path(self.app_data_dir, seg, "file")
+        if resolved is None:
+            # Fail closed if a symlink/foreign entry sits at the DB path.
+            try:
+                (self.app_data_dir / seg[0] / seg[1]).lstat()
+                self._untrusted = True
+            except OSError:
+                pass
+            return
+        db_path, st = resolved
+        self._identity = (st.st_dev, st.st_ino)
+        idx = _read_steps_readonly(db_path, lambda conn: conn.execute("SELECT max(idx) FROM steps").fetchone())
+        if isinstance(idx, tuple) and isinstance(idx[0], int):
+            self._start_index = idx[0]
+
+    def check(self, prompt_result: dict[str, Any] | None) -> dict[str, Any] | None:
+        stop_reason = prompt_result.get("stopReason") if isinstance(prompt_result, dict) else None
+        if not isinstance(stop_reason, str):
+            stop_reason = None
+        if self._untrusted:
+            return evaluate_turn_outcome(stop_reason, None, None, False)
+
+        seg = ("conversations", f"{self.session_id}.db")
+        after = _resolve_managed_path(self.app_data_dir, seg, "file")
+        step_type: int | None = None
+        payload: bytes | None = None
+        reached_model = False
+        if after is not None:
+            after_path, after_st = after
+            same_file = self._identity is None or (after_st.st_dev, after_st.st_ino) == self._identity
+            if same_file:
+                start_idx = self._start_index
+
+                def _query(conn: sqlite3.Connection) -> tuple[int | None, bytes | None, bool]:
+                    row = conn.execute(
+                        "SELECT step_type, substr(step_payload, 1, ?) FROM steps WHERE idx > ? ORDER BY idx DESC LIMIT 1",
+                        (_MAX_ERROR_PAYLOAD_BYTES, start_idx),
+                    ).fetchone()
+                    if not row or not isinstance(row[0], int):
+                        return None, None, False
+                    reached = (
+                        conn.execute(
+                            "SELECT 1 FROM steps WHERE idx > ? AND step_type = ? LIMIT 1",
+                            (start_idx, _PLANNER_RESPONSE_STEP_TYPE),
+                        ).fetchone()
+                        is not None
+                    )
+                    raw_payload = bytes(row[1]) if isinstance(row[1], (bytes, bytearray, memoryview)) else (
+                        row[1].encode("utf-8", errors="replace") if isinstance(row[1], str) else None
+                    )
+                    return row[0], raw_payload, reached
+
+                res = _read_steps_readonly(after_path, _query)
+                if isinstance(res, tuple):
+                    step_type, payload, reached_model = res
+
+        return evaluate_turn_outcome(stop_reason, step_type, payload, reached_model)
+
+
+def _read_inbox_messages(app_data_dir: Path, conversation_id: str) -> list[dict[str, Any]] | None:
+    if not _NATIVE_ID_RE.fullmatch(conversation_id):
+        return None
+    directory = ("brain", conversation_id, ".system_generated", "messages")
+    inbox = _resolve_managed_path(app_data_dir, directory, "directory")
+    if inbox is None:
+        return []
+    inbox_path, _ = inbox
+    try:
+        names = [e for e in os.listdir(inbox_path) if e.endswith(".json") and e != "read.json"]
+    except OSError:
+        return None
+    if len(names) > _MAX_MESSAGE_FILES:
+        return None
+    out: list[dict[str, Any]] = []
+    for name in names:
+        msg_file = _resolve_managed_path(app_data_dir, (*directory, name), "file")
+        if msg_file is None or msg_file[1].st_size > _MAX_STEP_BYTES:
+            return None
+        try:
+            data = json.loads(msg_file[0].read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            return None
+        if isinstance(data, dict):
+            out.append(data)
+    return out
+
+
+def has_pending_reply_on_disk(app_data_dir: Path, session_id: str) -> bool:
+    """Mirror `readAntigravityPendingReply`: unread high-priority inbox wake or trailing SYSTEM_MESSAGE."""
+    if not _NATIVE_ID_RE.fullmatch(session_id):
+        return False
+
+    msg_dir = ("brain", session_id, ".system_generated", "messages")
+    inbox = _resolve_managed_path(app_data_dir, msg_dir, "directory")
+    if inbox is not None:
+        inbox_path, _ = inbox
+        try:
+            entries = os.listdir(inbox_path)
+        except OSError:
+            entries = []
+        msg_names = [e for e in entries if e.endswith(".json") and e != "read.json"]
+        if 0 < len(msg_names) <= _MAX_MESSAGE_FILES:
+            read_receipts: dict[str, bool] = {}
+            if "read.json" in entries:
+                rf = _resolve_managed_path(app_data_dir, (*msg_dir, "read.json"), "file")
+                if rf is not None and rf[1].st_size <= _MAX_STEP_BYTES:
+                    try:
+                        parsed_rcpts = json.loads(rf[0].read_text(encoding="utf-8"))
+                        if isinstance(parsed_rcpts, dict):
+                            read_receipts = {str(k): bool(v) for k, v in parsed_rcpts.items()}
+                    except (OSError, UnicodeDecodeError, ValueError):
+                        read_receipts = {}
+            for name in msg_names:
+                file_id = name[:-5]
+                if read_receipts.get(file_id) is True:
+                    continue
+                mf = _resolve_managed_path(app_data_dir, (*msg_dir, name), "file")
+                if mf is None or mf[1].st_size > _MAX_STEP_BYTES:
+                    continue
+                try:
+                    msg = json.loads(mf[0].read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, ValueError):
+                    continue
+                if not isinstance(msg, dict):
+                    continue
+                mid = msg.get("id")
+                if isinstance(mid, str) and read_receipts.get(mid) is True:
+                    continue
+                if msg.get("priority") == _HIGH_PRIORITY_MESSAGE:
+                    return True
+
+    transcript = _resolve_managed_path(
+        app_data_dir,
+        ("brain", session_id, ".system_generated", "logs", "transcript.jsonl"),
+        "file",
+    )
+    if transcript is None or transcript[1].st_size == 0:
+        return False
+    t_path, t_st = transcript
+    try:
+        with open(t_path, "rb") as fp:
+            for byte_cap in (_PENDING_REPLY_TAIL_BYTES, _TRANSCRIPT_BYTE_CAP):
+                start = max(0, t_st.st_size - byte_cap)
+                fp.seek(start)
+                raw = fp.read(t_st.st_size - start).rstrip(b"\r\n")
+                if not raw:
+                    if start == 0:
+                        return False
+                    continue
+                nl = raw.rfind(b"\n")
+                if nl == -1 and start > 0:
+                    continue
+                line = raw[nl + 1 :].decode("utf-8", errors="replace")
+                try:
+                    step = json.loads(line)
+                except ValueError:
+                    return False
+                if not isinstance(step, dict) or step.get("type") != "SYSTEM_MESSAGE":
+                    return False
+                content = step.get("content")
+                if content is None:
+                    return True
+                if not isinstance(content, str):
+                    return False
+                return (f"priority={_HIGH_PRIORITY_MESSAGE}" in content) or (
+                    f"priority={_LOW_PRIORITY_MESSAGE}" not in content
+                )
+    except OSError:
+        return False
+    return False
+
+
+def read_detached_children_at_work(
+    app_data_dir: Path,
+    root_session_id: str,
+    tool_call_ids: set[str] | list[str] | tuple[str, ...],
+) -> list[str]:
+    """Mirror `readAntigravityChildrenAtWork`: return subagent call IDs with live unreported children."""
+    if not tool_call_ids or not _NATIVE_ID_RE.fullmatch(root_session_id):
+        return []
+    target_ids = set(tool_call_ids)
+    sub_dir = ("brain", root_session_id, ".system_generated", "subagents")
+    children_dir = _resolve_managed_path(app_data_dir, sub_dir, "directory")
+    if children_dir is None:
+        return []
+    try:
+        entries = os.listdir(children_dir[0])
+    except OSError:
+        return []
+    child_ids = [
+        e[:-5]
+        for e in entries
+        if e.endswith(".json") and _NATIVE_ID_RE.fullmatch(e[:-5])
+    ]
+    if not child_ids or len(child_ids) > _MAX_DETACHED_CHILDREN:
+        return []
+    parent_inbox = _read_inbox_messages(app_data_dir, root_session_id)
+    if parent_inbox is None:
+        return []
+    reported_senders = {str(m.get("sender")) for m in parent_inbox if isinstance(m.get("sender"), str)}
+    at_work: list[str] = []
+    for child_id in child_ids:
+        if child_id in reported_senders:
+            continue
+        sub_file = _resolve_managed_path(app_data_dir, (*sub_dir, f"{child_id}.json"), "file")
+        if sub_file is None or sub_file[1].st_size > _MAX_STEP_BYTES:
+            continue
+        try:
+            record = json.loads(sub_file[0].read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        rec_cid = record.get("conversationId")
+        if rec_cid is not None and rec_cid != child_id:
+            continue
+        if record.get("state") == "SUBAGENT_STATE_KILLED":
+            continue
+        child_inbox = _read_inbox_messages(app_data_dir, child_id)
+        if not child_inbox:
+            continue
+        for msg in child_inbox:
+            if msg.get("sender") != root_session_id:
+                continue
+            tool_meta = (msg.get("sourceMetadata") or {}).get("tool") if isinstance(msg.get("sourceMetadata"), dict) else None
+            if not isinstance(tool_meta, dict):
+                continue
+            meta_cid = tool_meta.get("conversationId")
+            if meta_cid is not None and meta_cid != root_session_id:
+                continue
+            call = tool_meta.get("toolCall")
+            if isinstance(call, dict) and call.get("name") == "invoke_subagent":
+                call_id = call.get("id")
+                if isinstance(call_id, str) and call_id in target_ids:
+                    at_work.append(call_id)
+    return at_work

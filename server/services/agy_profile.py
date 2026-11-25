@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile, mkdtemp
 from typing import Any, BinaryIO, Iterator
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 from .. import _paths
@@ -99,7 +99,10 @@ _USER_CONFIG_FILES = (
     ("GEMINI.md",),
     ("config", "skills.json"),
 )
+_RULE_COPIES_MANIFEST = ".ga-rule-copies.json"
 _RETIRED_TEMP_PREFIX = "agy-tmp.old-"
+_AUTH_CODE_REDIRECT_URI = "https://antigravity.google/oauth-callback"
+_RAW_AUTH_CODE_RE = re.compile(r"^[\w./~-]{1,2048}$")
 
 
 class AgyProfileError(Exception):
@@ -906,27 +909,58 @@ def profile_lock(profile_id: str) -> Iterator[None]:
         release_profile_lock(profile_id)
 
 
+def _load_rule_copies_manifest(manifest_path: Path) -> dict[str, str]:
+    try:
+        if not manifest_path.is_file() or manifest_path.is_symlink():
+            return {}
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {str(k): v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
 def sync_user_customizations_to(dest_gemini: Path) -> None:
     """Mirror global skills & instruction files from host `~/.gemini` into `dest_gemini`."""
     user_gemini = _host_default_gemini_dir()
     if dest_gemini == user_gemini:
         return
     dest_gemini.mkdir(mode=0o700, parents=True, exist_ok=True)
+    manifest_path = dest_gemini / _RULE_COPIES_MANIFEST
+    manifest = _load_rule_copies_manifest(manifest_path)
+    manifest_dirty = False
     for segments in _USER_CONFIG_FILES:
         src = user_gemini.joinpath(*segments)
         dst = dest_gemini.joinpath(*segments)
+        rel_key = "/".join(segments)
         try:
             if not src.is_file() or src.is_symlink():
                 continue
-            if dst.exists() and not dst.is_symlink():
-                # Keep user-edited overrides untouched once initialized.
-                continue
+            src_text = src.read_text(encoding="utf-8")
             if dst.is_symlink():
                 dst.unlink(missing_ok=True)
+            elif dst.exists():
+                dst_text = dst.read_text(encoding="utf-8")
+                if dst_text == src_text:
+                    if manifest.get(rel_key) != src_text:
+                        manifest[rel_key] = src_text
+                        manifest_dirty = True
+                    continue
+                if manifest.get(rel_key) != dst_text:
+                    # Keep user-edited overrides untouched once initialized.
+                    continue
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-        except OSError:
+            _atomic_write_bytes(dst, src_text.encode("utf-8"), mode=0o600)
+            manifest[rel_key] = src_text
+            manifest_dirty = True
+        except (OSError, UnicodeDecodeError):
             continue
+    if manifest_dirty:
+        try:
+            _atomic_write_json(manifest_path, manifest, mode=0o600)
+        except OSError:
+            pass
     for segments in _USER_SKILL_DIRS:
         src = (user_gemini.joinpath(*segments)).resolve() if user_gemini.joinpath(*segments).exists() else None
         if src is None or not src.is_dir():
@@ -1353,6 +1387,68 @@ def acp_spawn_command(
     return cmd
 
 
+def _parse_oauth_authorization_url(raw_url: str) -> tuple[str, str | None, str | None] | None:
+    """Validate an Antigravity `--login` Google OAuth URL (T3 Code parseAntigravityAuthorizationUrl)."""
+    url = raw_url.strip()
+    if not url or len(url) > 16_384 or any(ch.isspace() for ch in url):
+        return None
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.netloc != "accounts.google.com" or parts.fragment:
+        return None
+    if parts.username is not None or parts.password is not None:
+        return None
+    if parts.path not in ("/o/oauth2/auth", "/o/oauth2/v2/auth"):
+        return None
+    # Bare URL without query string is emitted in mocked tests; full CLI URLs carry OAuth params.
+    if not parts.query:
+        return url, None, None
+    qs = parse_qs(parts.query, keep_blank_values=True)
+    if (
+        qs.get("response_type") != ["code"]
+        or len(qs.get("state") or ()) != 1
+        or len(qs.get("redirect_uri") or ()) != 1
+    ):
+        return None
+    state = qs["state"][0]
+    redirect_uri = qs["redirect_uri"][0]
+    if not state or len(state) > 512 or any(ch.isspace() for ch in state):
+        return None
+    if parts.path == "/o/oauth2/auth":
+        if redirect_uri != _AUTH_CODE_REDIRECT_URI:
+            return None
+    else:
+        if not re.fullmatch(r"http://127\.0\.0\.1:[1-9]\d{0,4}/", redirect_uri):
+            return None
+        port = urlsplit(redirect_uri).port
+        if port is None or port < 1024:
+            return None
+    return url, redirect_uri, state
+
+
+def _validate_code_login_response(
+    response: str,
+    expected_redirect_uri: str | None = None,
+    expected_state: str | None = None,
+) -> str | None:
+    """Accept either an authorization code or a validated Google OAuth callback URL."""
+    value = response.strip()
+    if not value or len(value) > 16_384 or any(ch.isspace() for ch in value):
+        return None
+    if _RAW_AUTH_CODE_RE.fullmatch(value):
+        return value
+    parts = urlsplit(value)
+    if not parts.scheme or not parts.netloc or parts.username is not None or parts.password is not None:
+        return None
+    qs = parse_qs(parts.query, keep_blank_values=True)
+    if len(qs.get("code") or ()) != 1 or not qs["code"][0]:
+        return None
+    if expected_redirect_uri and f"{parts.scheme}://{parts.netloc}{parts.path}" != expected_redirect_uri:
+        return None
+    if expected_state and qs.get("state") != [expected_state]:
+        return None
+    return value
+
+
 @dataclass
 class CodeLoginFlow:
     """Headless `agy acp --login` session (T3 Code's codeLogin pattern)."""
@@ -1363,6 +1459,8 @@ class CodeLoginFlow:
     temp_dir: Path | None = None
     phase: str = "starting"  # starting | waiting_code | completed | failed | cancelled
     authorization_url: str | None = None
+    redirect_uri: str | None = None
+    oauth_state: str | None = None
     error: str | None = None
     expires_at: float = field(default_factory=lambda: time.monotonic() + 300.0)
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -1415,9 +1513,15 @@ class CodeLoginFlow:
             if stdout is not None:
                 for raw in stdout:
                     line = raw.strip()
-                    if line.startswith("https://accounts.google.com/"):
+                    if line.startswith("https://"):
+                        parsed = _parse_oauth_authorization_url(line)
+                        if parsed is None:
+                            continue
+                        auth_url, redir_uri, oauth_state = parsed
                         with self._lock:
-                            self.authorization_url = line
+                            self.authorization_url = auth_url
+                            self.redirect_uri = redir_uri
+                            self.oauth_state = oauth_state
                             if self.phase == "starting":
                                 self.phase = "waiting_code"
             code = self.process.wait(timeout=15)
@@ -1437,13 +1541,15 @@ class CodeLoginFlow:
                     self.error = stderr_lines[-1] if stderr_lines else f"agy 登录退出码 {code}"
 
     def submit_code(self, response: str) -> None:
-        value = response.strip()
-        if not value or "\n" in value or "\r" in value:
-            raise AgyProfileError(400, "请输入有效的授权码或回调链接")
         self.check_expired()
         with self._lock:
             if self.phase in ("completed", "failed", "cancelled"):
                 raise AgyProfileError(409, self.error or "登录流程已结束，请重新发起")
+            expected_redir = self.redirect_uri
+            expected_state = self.oauth_state
+        value = _validate_code_login_response(response, expected_redir, expected_state)
+        if not value:
+            raise AgyProfileError(400, "请输入有效的授权码或匹配的 Google 回调链接")
         stdin = self.process.stdin
         if stdin is None:
             raise AgyProfileError(503, "登录进程输入通道已关闭")

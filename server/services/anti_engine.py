@@ -646,6 +646,8 @@ class AntiSessions:
         answer = result.get("answer")
         error = result.get("error")
         conv_id = result.get("conversation_id")
+        thread_broken = bool(result.get("thread_broken"))
+        reset_seconds = result.get("reset_seconds")
         usage = result.get("usage") or {}
         usage_json = json.dumps(usage, ensure_ascii=False) if usage else None
         progress_messages = [
@@ -662,7 +664,13 @@ class AntiSessions:
 
         try:
             with self.connect() as db, db:
-                if isinstance(conv_id, str) and conv_id:
+                if thread_broken:
+                    db.execute("UPDATE sessions SET conversation=NULL WHERE id=?", (sid,))
+                    db.execute(
+                        "DELETE FROM profile_conversations WHERE session_id=? AND profile_id=?",
+                        (sid, profile_id),
+                    )
+                elif isinstance(conv_id, str) and conv_id:
                     db.execute("UPDATE sessions SET conversation=? WHERE id=?", (conv_id, sid))
                     db.execute(
                         "INSERT INTO profile_conversations (session_id,profile_id,conversation) VALUES (?,?,?) "
@@ -682,7 +690,10 @@ class AntiSessions:
                 self._local_runs.discard(key)
             _EVENT_BUS.notify(key, finished=True)
 
-        cooldown = 60 if status == "rate_limited" else 0
+        if status == "rate_limited" and isinstance(reset_seconds, (int, float)) and reset_seconds > 0:
+            cooldown = max(60, min(int(reset_seconds), 3600))
+        else:
+            cooldown = 60 if status == "rate_limited" else 0
         self.ledger.record_run(
             rid,
             effective_model,
@@ -769,7 +780,7 @@ class AntiSessions:
                         (sid,),
                     ).fetchone()
                     conversation = conv_row[0] if conv_row else None
-                handoff_summary = self._build_handoff_summary(db, sid) if conversation else None
+                handoff_summary = self._build_handoff_summary(db, sid)
                 if isinstance(conversation, str) and conversation:
                     try:
                         agy_profile.rescue_conversation_files(conversation)

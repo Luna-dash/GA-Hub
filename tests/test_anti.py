@@ -909,3 +909,64 @@ def test_decode_run_repairs_legacy_exclusive_usage_json(tmp_path):
     assert row["usage"]["cache_read_tokens"] == 4_683_759
 
 
+def test_broken_thread_clears_conversation_and_injects_handoff(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path / "data")
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+    db = tmp_path / "anti_broken.sqlite"
+
+    calls: list[dict] = []
+
+    class BrokenThenFreshWorker:
+        def __init__(self, runtime_ref):
+            self.runtime_ref = runtime_ref
+
+        def run_turn(self, **kwargs):
+            calls.append(kwargs)
+            idx = len(calls)
+            if idx == 1:
+                return {"status": "success", "conversation_id": "conv-old", "answer": "part 1", "usage": {}}
+            if idx == 2:
+                return {
+                    "status": "cli_error",
+                    "conversation_id": "conv-old",
+                    "error": "signature broken",
+                    "thread_broken": True,
+                    "usage": {},
+                }
+            return {"status": "success", "conversation_id": "conv-new", "answer": "part 3", "usage": {}}
+
+    class DummyRuntime(FakeRuntime):
+        def get_worker(self, db_key, profile_id, session_id, workspace_path):
+            return BrokenThenFreshWorker(self)
+
+    runtime = DummyRuntime()
+    monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(db, runtime))
+    monkeypatch.setattr(anti.daemon, "submission", lambda profile_id=None: __import__("contextlib").nullcontext(profile_id or "default"))
+
+    app = FastAPI()
+    app.include_router(anti.router)
+    with TestClient(app) as client:
+        sid = client.post("/api/anti/sessions", json={"project": "project"}).json()["id"]
+        r1 = client.post(f"/api/anti/sessions/{sid}/runs", json={"operation": "op1", "prompt": "step 1"}).json()
+        assert _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{r1['id']}")["status"] == "success"
+        s_row1 = next(item for item in client.get("/api/anti/sessions").json() if item["id"] == sid)
+        assert s_row1["has_conversation"] is True
+
+        # Turn 2 fails with thread_broken=True -> conversation mapping is cleared automatically.
+        r2 = client.post(f"/api/anti/sessions/{sid}/runs", json={"operation": "op2", "prompt": "step 2"}).json()
+        done2 = _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{r2['id']}")
+        assert done2["status"] == "cli_error"
+        s_row2 = next(item for item in client.get("/api/anti/sessions").json() if item["id"] == sid)
+        assert s_row2["has_conversation"] is False
+
+        # Turn 3 starts fresh without broken conversation ID, carrying handoff summary from step 1.
+        r3 = client.post(f"/api/anti/sessions/{sid}/runs", json={"operation": "op3", "prompt": "step 3"}).json()
+        done3 = _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{r3['id']}")
+        assert done3["status"] == "success"
+        assert calls[2]["resume_conversation"] is None
+        assert calls[2]["fallback_handoff_context"] and "step 1" in calls[2]["fallback_handoff_context"]
+
+
+

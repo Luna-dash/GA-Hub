@@ -2593,5 +2593,195 @@ def test_default_clear_credentials_uses_vault_without_touching_host(tmp_path, mo
     assert host_tok.read_text(encoding="utf-8") == '{"token":{"access_token":"host-tok"}}'
 
 
+def test_stats_today_filters_from_local_midnight(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
+
+    ledger = agy_usage.AgyLedger(tmp_path / "anti_sessions.sqlite3")
+    local_midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    before_midnight_utc = (local_midnight - timedelta(minutes=10)).astimezone(timezone.utc).isoformat()
+    after_midnight_utc = (local_midnight + timedelta(minutes=1)).astimezone(timezone.utc).isoformat()
+
+    with ledger._connect() as db, db:
+        db.execute(
+            "INSERT INTO usage_ledger (run_id, profile_id, model, model_group, status, input_tokens, output_tokens, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            ("run-yesterday", "default", "gemini-4-hydrogen", "gemini-4", "success", 1000, 100, before_midnight_utc),
+        )
+        db.execute(
+            "INSERT INTO usage_ledger (run_id, profile_id, model, model_group, status, input_tokens, output_tokens, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            ("run-today", "default", "gemini-4-hydrogen", "gemini-4", "success", 250, 50, after_midnight_utc),
+        )
+
+    rolling_24h = ledger.stats(window_hours=24, profile_id="default", today=False)
+    assert rolling_24h["total_runs"] == 2
+    assert rolling_24h["total_tokens"] == 1400
+
+    today_only = ledger.stats(window_hours=24, profile_id="default", today=True)
+    assert today_only["window_hours"] == 0
+    assert today_only["total_runs"] == 1
+    assert today_only["success_runs"] == 1
+    assert today_only["total_tokens"] == 300
+
+    client = make_client(monkeypatch)
+    monkeypatch.setattr(anti_engine, "AntiSessions", lambda: SimpleNamespace(ledger=ledger))
+    resp = client.get("/api/anti/stats?today=true")
+    assert resp.status_code == 200
+    assert resp.json()["total_runs"] == 1
+    assert resp.json()["total_tokens"] == 300
+
+
+def test_sync_user_customizations_refreshes_unmodified_copies(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path / "admin")
+    fake_home = tmp_path / "host_home"
+    (fake_home / ".gemini").mkdir(parents=True)
+    host_agents = fake_home / ".gemini" / "AGENTS.md"
+    host_agents.write_text("host rules v1", encoding="utf-8")
+    monkeypatch.setattr(agy_profile.Path, "home", staticmethod(lambda: fake_home))
+
+    prof = agy_profile.add("Synced")
+    agy_profile.prepare_profile(prof.id)
+    dst = agy_profile.profile_gemini_dir(prof.id) / "AGENTS.md"
+    assert dst.read_text(encoding="utf-8") == "host rules v1"
+
+    # When host file updates and profile copy wasn't edited manually, sync refreshes it.
+    host_agents.write_text("host rules v2", encoding="utf-8")
+    agy_profile.prepare_profile(prof.id)
+    assert dst.read_text(encoding="utf-8") == "host rules v2"
+
+    # Once user customizes profile copy, later host updates do not clobber local edit.
+    dst.write_text("local override", encoding="utf-8")
+    host_agents.write_text("host rules v3", encoding="utf-8")
+    agy_profile.prepare_profile(prof.id)
+    assert dst.read_text(encoding="utf-8") == "local override"
+
+
+def test_code_login_oauth_url_and_response_validation():
+    good_url = (
+        "https://accounts.google.com/o/oauth2/auth"
+        "?response_type=code&client_id=abc&state=st-123"
+        "&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback"
+    )
+    parsed = agy_profile._parse_oauth_authorization_url(good_url)
+    assert parsed == (good_url, "https://antigravity.google/oauth-callback", "st-123")
+
+    assert agy_profile._parse_oauth_authorization_url("https://evil.example/o/oauth2/auth?response_type=code&state=s&redirect_uri=https://antigravity.google/oauth-callback") is None
+    assert agy_profile._parse_oauth_authorization_url("https://accounts.google.com/o/oauth2/auth?response_type=code&state=s&redirect_uri=https://evil.example/") is None
+
+    # Raw auth code and matching callback URL succeed; state mismatch is rejected.
+    assert agy_profile._validate_code_login_response("4/0AeanS0_abc-123", parsed[1], parsed[2]) == "4/0AeanS0_abc-123"
+    cb_ok = "https://antigravity.google/oauth-callback?state=st-123&code=xyz"
+    assert agy_profile._validate_code_login_response(cb_ok, parsed[1], parsed[2]) == cb_ok
+    assert agy_profile._validate_code_login_response("https://antigravity.google/oauth-callback?state=wrong&code=xyz", parsed[1], parsed[2]) is None
+
+
+def test_worker_session_load_fallback_and_broken_thread_run_turn(tmp_path, monkeypatch):
+    import json
+    import sqlite3
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path / "admin")
+    agy_profile.ensure_workspace_ready()
+    app_dir = agy_profile.workspace_app_data_dir()
+    (app_dir / "conversations").mkdir(parents=True, exist_ok=True)
+    conv_db = app_dir / "conversations" / "conv-load-1.db"
+    c = sqlite3.connect(conv_db)
+    c.execute("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)")
+    c.execute("INSERT INTO steps VALUES (0, 15, ?)", (b"prior",))
+    c.commit()
+    c.close()
+
+    worker = agy_runtime.AgySessionWorker(
+        profile_id="default",
+        session_id="s-load",
+        workspace=tmp_path,
+        executable="agy",
+        version="1.5.2",
+    )
+    methods_seen: list[str] = []
+
+    class DummyProc:
+        pid = 999
+        stdin = None
+        stdout = None
+
+        def poll(self):
+            return None
+
+    def fake_rpc(method, params=None, *, timeout=60.0, cancel_event=None):
+        methods_seen.append(method)
+        if method == "initialize":
+            return {"agentInfo": {"version": "1.5.2"}, "agentCapabilities": {"loadSession": True}}
+        if method == "session/resume":
+            raise agy_profile.AgyProfileError(502, "resume unsupported")
+        if method == "session/load":
+            return {
+                "sessionId": "conv-load-1",
+                "models": {"currentModelId": "gemini-4-hydrogen-high", "availableModels": [{"modelId": "gemini-4-hydrogen-high"}]},
+            }
+        return {}
+
+    rt_tmp = tmp_path / "rt"
+    rt_tmp.mkdir()
+    monkeypatch.setattr(worker, "_rpc", fake_rpc)
+    monkeypatch.setattr(agy_runtime.agy_profile, "activate_profile_in_workspace", lambda pid: None)
+    monkeypatch.setattr(agy_runtime.agy_profile, "acp_spawn_command", lambda *a, **kw: ["agy"])
+    monkeypatch.setattr(agy_runtime.agy_profile, "clean_agy_env", lambda *a, **kw: {})
+    monkeypatch.setattr(agy_runtime.agy_profile, "make_runtime_temp_dir", lambda pid: rt_tmp)
+    monkeypatch.setattr(agy_runtime.agy_profile, "claim_workspace_lock", lambda: None)
+    monkeypatch.setattr(agy_runtime.agy_profile, "release_workspace_lock", lambda: None)
+    monkeypatch.setattr(agy_runtime.child_job, "spawn", lambda *a, **kw: DummyProc())
+    monkeypatch.setattr(agy_runtime.threading, "Thread", lambda *a, **kw: SimpleNamespace(start=lambda: None))
+
+    sid = worker.ensure_started(resume_conversation="conv-load-1", add_dirs=())
+    assert sid == "conv-load-1"
+    assert "session/resume" in methods_seen and "session/load" in methods_seen
+    assert "session/new" not in methods_seen
+    assert worker.resumed_fallback is False
+
+    # Now drive run_turn where upstream returns end_turn but logs INVALID_THINKING_SIGNATURE.
+    def fake_send_broken(frame):
+        rid = frame.get("id")
+        if frame.get("method") == "session/prompt":
+            conn = sqlite3.connect(conv_db)
+            conn.execute(
+                "INSERT INTO steps VALUES (1, 17, ?)",
+                (b"INVALID_ARGUMENT (code 400): messages.1.content.0.thinking.signature: Field required",),
+            )
+            conn.commit()
+            conn.close()
+        if rid is not None:
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(rid, None)
+            if entry is not None:
+                entry[1]["result"] = {"stopReason": "end_turn"}
+                entry[0].set()
+
+    monkeypatch.setattr(worker, "_send_frame", fake_send_broken)
+    worker._closed = False
+    res = worker.run_turn(
+        run_id="run-broken",
+        prompt_text="continue",
+        model="gemini-4-hydrogen-high",
+        effort="high",
+        mode="plan",
+        permission_mode="approval-required",
+        resume_conversation="conv-load-1",
+        add_dirs=(),
+        staged_paths=[],
+        attachments=[],
+        allowed_roots=[tmp_path],
+        on_event=lambda e: None,
+    )
+    assert res["status"] == "cli_error"
+    assert res["thread_broken"] is True
+    assert res["error_code"] == "INVALID_THINKING_SIGNATURE"
+    assert worker._dirty is True
+
+
+
+
 
 

@@ -39,9 +39,13 @@ from .agy_protocol import (
     extract_model_catalog_from_setup,
     extract_permission_prompt,
     extract_usage_fields,
+    find_model_config_option,
     handle_read_text_file,
+    has_pending_reply_on_disk,
     normalize_usage_payload,
     parse_version,
+    PromptOutcomeWatcher,
+    read_detached_children_at_work,
     read_pre_edit_file,
     resolve_model_target,
     select_effort_call_for_config,
@@ -168,6 +172,7 @@ class _ActiveTurn:
         self.force_cancelled = False
         self.cancel_event = threading.Event()
         self.wake_event = threading.Event()
+        self.prompt_dispatching = threading.Event()
         self.prompt_queued = threading.Event()
         self.event_lock = threading.Lock()
         self.prompt_lock = threading.Lock()
@@ -717,10 +722,29 @@ class AgySessionWorker:
                     except AgyProfileError as exc:
                         if exc.status == 499 or self._abort_event.is_set():
                             raise
-                        self.resumed_fallback = True
-                        self._resume_fallback_reason = str(exc)
-                        _append_log(f"session/resume fallback to session/new ({resume_conversation}): {exc}")
-                        started = None
+                        caps = self.init_result.get("agentCapabilities") if isinstance(self.init_result, dict) else None
+                        if isinstance(caps, dict) and caps.get("loadSession") is True:
+                            try:
+                                started = self._rpc(
+                                    "session/load",
+                                    {**base_session, "sessionId": resume_conversation},
+                                    timeout=60.0,
+                                )
+                                if not isinstance(started.get("sessionId"), str) or not started["sessionId"]:
+                                    started = {"sessionId": resume_conversation, **started}
+                                _append_log(f"session/resume recovered via session/load ({resume_conversation})")
+                            except AgyProfileError as load_exc:
+                                if load_exc.status == 499 or self._abort_event.is_set():
+                                    raise
+                                started = None
+                                self.resumed_fallback = True
+                                self._resume_fallback_reason = str(exc)
+                                _append_log(f"session/resume+load fallback to session/new ({resume_conversation}): {exc}; load={load_exc}")
+                        else:
+                            self.resumed_fallback = True
+                            self._resume_fallback_reason = str(exc)
+                            _append_log(f"session/resume fallback to session/new ({resume_conversation}): {exc}")
+                            started = None
 
                 if started is None:
                     started = self._rpc("session/new", base_session, timeout=60.0)
@@ -777,6 +801,7 @@ class AgySessionWorker:
             turn.normalizer.prompt_settled = False
             turn.normalizer.reply_open = False
 
+        turn.prompt_dispatching.set()
         try:
             self._send_frame({
                 "jsonrpc": "2.0",
@@ -785,6 +810,7 @@ class AgySessionWorker:
                 "params": {"sessionId": acp_sid, "prompt": blocks},
             })
         except BaseException:
+            turn.prompt_dispatching.clear()
             with self._rpc_lock:
                 self._pending_rpcs.pop(req_id, None)
             with turn.prompt_lock:
@@ -803,6 +829,7 @@ class AgySessionWorker:
             raise
 
         turn.prompt_queued.set()
+        turn.prompt_dispatching.clear()
         turn.touch()
         return req_id, ev, box
 
@@ -965,7 +992,24 @@ class AgySessionWorker:
                     "usage": {},
                 }
             switched_fb = False
-            if auto_fb:
+            model_opt = find_model_config_option(turn.normalizer.config_options or self.setup_result.get("configOptions"))
+            if use_cfg_id is None and isinstance(model_opt, dict) and isinstance(model_opt.get("id"), str):
+                try:
+                    self._switch_model_rpc(acp_sid, target_model, str(model_opt["id"]), turn)
+                    switched_fb = True
+                except AgyProfileError as cfg_exc:
+                    if cfg_exc.status == 499 or turn.cancelled or self._abort_event.is_set():
+                        self._dirty = True
+                        return None, {
+                            "status": "cancelled",
+                            "conversation_id": acp_sid,
+                            "answer": None,
+                            "progress_messages": [],
+                            "effective_model": effective_model,
+                            "fallback_notice": "；".join(notices) if notices else None,
+                            "usage": {},
+                        }
+            if auto_fb and not switched_fb:
                 for fb in plan["fallback_candidates"]:
                     if turn.cancelled or self._abort_event.is_set():
                         break
@@ -1149,6 +1193,13 @@ class AgySessionWorker:
                 evt = turn.normalizer.emit_notice("runtime_notice", fb_msg)
                 with turn.event_lock:
                     turn.on_event(evt)
+            elif fallback_handoff_context and not resume_conversation:
+                effective_prompt = f"{fallback_handoff_context}\n\n{prompt_text}"
+                fb_msg = "已自动附带前文摘要开启新会话"
+                notices.append(fb_msg)
+                evt = turn.normalizer.emit_notice("runtime_notice", fb_msg)
+                with turn.event_lock:
+                    turn.on_event(evt)
 
             avail_modes = (
                 self.setup_result.get("modes", {}).get("availableModes")
@@ -1205,6 +1256,18 @@ class AgySessionWorker:
                     "usage": {},
                 }
 
+            app_data_dir = agy_profile.workspace_app_data_dir()
+            outcome_watcher = PromptOutcomeWatcher(app_data_dir, acp_sid)
+            outcome_watcher.prepare()
+            outcome_resumed = False
+            hidden_outcome: dict[str, Any] | None = None
+
+            def _disk_post_settle_state() -> tuple[bool, bool]:
+                sub_ids = turn.normalizer.collect_subagent_tool_ids()
+                child_working = bool(sub_ids and read_detached_children_at_work(app_data_dir, acp_sid, sub_ids))
+                pending_reply = has_pending_reply_on_disk(app_data_dir, acp_sid)
+                return child_working, pending_reply
+
             self._dispatch_prompt(turn, acp_sid, blocks)
 
             timed_out = False
@@ -1258,17 +1321,45 @@ class AgySessionWorker:
 
                 _, _, _, latest_seq = turn.current_prompt_state()
                 if not timed_out and not turn.cancelled and not self._abort_event.is_set() and latest_seq != cur_seq:
+                    outcome_watcher.prepare()
                     continue
 
                 if timed_out or turn.cancelled or self._abort_event.is_set() or "error" in box:
                     break
 
-                if not turn.has_post_settle_work():
+                hidden_outcome = outcome_watcher.check(box.get("result"))
+                if hidden_outcome is not None:
+                    resume_with = hidden_outcome.get("resume_with")
+                    init_info = self.init_result.get("agentInfo") if isinstance(self.init_result, dict) else None
+                    probe_init = (
+                        self.init_result
+                        if isinstance(init_info, dict) and isinstance(init_info.get("version"), str) and init_info.get("version")
+                        else {"agentInfo": {"version": self.version}}
+                    )
+                    if resume_with and not outcome_resumed and supports_prompt_steering(probe_init):
+                        outcome_resumed = True
+                        hidden_outcome = None
+                        msg = "遇到上游瞬态 404，已自动发送 continue 恢复执行"
+                        notices.append(msg)
+                        _append_log(f"transient 404 recovery steer: {acp_sid}")
+                        evt = turn.normalizer.emit_notice("runtime_notice", msg)
+                        with turn.event_lock:
+                            turn.on_event(evt)
+                        outcome_watcher.prepare()
+                        self._dispatch_prompt(turn, acp_sid, [{"type": "text", "text": str(resume_with)}])
+                        continue
+                    break
+
+                disk_child_working, disk_pending_reply = _disk_post_settle_state()
+                if not turn.has_post_settle_work() and not disk_child_working and not disk_pending_reply:
                     break
 
                 turn.normalizer.prompt_settled = True
+                if disk_pending_reply:
+                    turn.normalizer.reply_open = True
                 settled_seq = cur_seq
                 turn.touch_progress()
+                last_disk_check = time.monotonic()
                 steered_during_hold = False
                 while not turn.cancelled and not self._abort_event.is_set() and not self._closed:
                     _, _, _, seq_now = turn.current_prompt_state()
@@ -1283,12 +1374,18 @@ class AgySessionWorker:
                         turn.touch()
                     wall_mono_gap = cur_gap
 
+                    if now_mono - last_disk_check >= 0.4:
+                        disk_child_working, disk_pending_reply = _disk_post_settle_state()
+                        if disk_pending_reply:
+                            turn.normalizer.reply_open = True
+                        last_disk_check = now_mono
+
                     with turn._perm_lock:
                         has_open_req = turn.pending_permission is not None or turn._open_incoming_requests > 0
                     if has_open_req:
                         turn.touch_progress()
                         wait_for = 0.25
-                    elif turn.normalizer.has_outliving_background_work():
+                    elif turn.normalizer.has_outliving_background_work() or disk_child_working:
                         silent = now_mono - turn.last_progress_at
                         if silent >= POST_SETTLE_COMMAND_HOLD_TIMEOUT:
                             break
@@ -1315,6 +1412,7 @@ class AgySessionWorker:
                     turn.wake_event.wait(wait_for)
 
                 if steered_during_hold:
+                    outcome_watcher.prepare()
                     continue
                 break
 
@@ -1453,6 +1551,22 @@ class AgySessionWorker:
                     "fallback_notice": notice_text,
                     "usage": usage,
                 }
+            if hidden_outcome is not None:
+                if hidden_outcome.get("thread_broken") or hidden_outcome.get("status") == "rate_limited":
+                    self._dirty = True
+                return {
+                    "status": hidden_outcome["status"],
+                    "conversation_id": acp_sid,
+                    "answer": answer or None,
+                    "progress_messages": progress_messages,
+                    "error": hidden_outcome.get("error"),
+                    "error_code": hidden_outcome.get("code"),
+                    "thread_broken": bool(hidden_outcome.get("thread_broken")),
+                    "reset_seconds": hidden_outcome.get("reset_seconds"),
+                    "effective_model": effective_model,
+                    "fallback_notice": notice_text,
+                    "usage": usage,
+                }
             return {
                 "status": "success",
                 "conversation_id": acp_sid,
@@ -1501,6 +1615,17 @@ class AgySessionWorker:
             self.force_abort("Agy 启动阶段已取消")
             return
         turn.cancel_pending(force=False)
+        if not turn.prompt_queued.is_set() and turn.prompt_dispatching.is_set() and self.is_alive():
+            wait_deadline = time.monotonic() + 2.0
+            while (
+                turn.prompt_dispatching.is_set()
+                and not turn.prompt_queued.is_set()
+                and not turn.done_event.is_set()
+                and not turn.force_cancelled
+                and self.is_alive()
+                and time.monotonic() < wait_deadline
+            ):
+                turn.prompt_queued.wait(0.05)
         if turn.prompt_queued.is_set() and self.acp_session_id and self.is_alive():
             try:
                 self._send_frame({

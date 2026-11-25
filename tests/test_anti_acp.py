@@ -529,3 +529,194 @@ def test_resolve_model_target_orchestrator_and_live_effort_selection():
     assert notice and "xhigh" in notice and "high" in notice
 
 
+def test_prompt_outcome_watcher_and_evaluation(tmp_path):
+    import sqlite3
+
+    app_dir = tmp_path / "antigravity-cli"
+    (app_dir / "conversations").mkdir(parents=True)
+    db_path = app_dir / "conversations" / "sess-1.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)")
+    conn.execute("INSERT INTO steps VALUES (0, 15, ?)", (b"ok",))
+    conn.commit()
+    conn.close()
+
+    watcher = proto.PromptOutcomeWatcher(app_dir, "sess-1")
+    watcher.prepare()
+    assert watcher.check({"stopReason": "end_turn"}) is None
+
+    # 1. Quota exhausted with Go retry/reset delay hidden behind end_turn.
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO steps VALUES (1, 17, ?)",
+        (b"Error 429, Message: Quota exceeded reason:QUOTA_EXHAUSTED [quotaResetDelay:2m30s], Status: RESOURCE_EXHAUSTED",),
+    )
+    conn.commit()
+    conn.close()
+    q_res = watcher.check({"stopReason": "end_turn"})
+    assert q_res is not None
+    assert q_res["status"] == "rate_limited"
+    assert q_res["reset_seconds"] == 150
+    assert q_res["thread_broken"] is False
+
+    # 2. Invalid thinking signature marks conversation broken.
+    watcher.prepare()
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO steps VALUES (2, 17, ?)",
+        (b"RESOURCE_EXHAUSTED (code 400): messages.3.content.0.thinking.signature: Field required",),
+    )
+    conn.commit()
+    conn.close()
+    sig_res = watcher.check({"stopReason": "end_turn"})
+    assert sig_res is not None
+    assert sig_res["status"] == "cli_error"
+    assert sig_res["code"] == "INVALID_THINKING_SIGNATURE"
+    assert sig_res["thread_broken"] is True
+
+    # 3. 404 after model reached becomes transient resume_with="continue"; 404 before model does not.
+    watcher.prepare()
+    conn = sqlite3.connect(db_path)
+    conn.execute("INSERT INTO steps VALUES (3, 15, ?)", (b"partial",))
+    conn.execute("INSERT INTO steps VALUES (4, 17, ?)", (b"Error 404, Message: model edge miss, Status: NOT_FOUND",))
+    conn.commit()
+    conn.close()
+    res_404_after = watcher.check({"stopReason": "end_turn"})
+    assert res_404_after is not None
+    assert res_404_after["transient_not_found"] is True
+    assert res_404_after["resume_with"] == "continue"
+
+    ev_404_before = proto.evaluate_turn_outcome("end_turn", 17, b"Error 404, Message: unknown model, Status: NOT_FOUND", False)
+    assert ev_404_before is not None and ev_404_before["transient_not_found"] is False
+
+    # 4. Typed refusal without DB error step still triggers rate_limited.
+    assert watcher.check({"stopReason": "refusal"})["status"] == "rate_limited"
+
+
+def test_tool_sanitization_image_path_diff_omitted_and_mcp_subagent_guard(tmp_path):
+    huge_payload = {
+        "image": "data:image/png;base64,AAAABBBB",
+        "combinedOutput": "ok-output",
+        "formatted_output": "ok-output",
+        "extra": "x" * 100,
+    }
+    cleaned = proto.sanitize_tool_payload(huge_payload)
+    assert "image" not in cleaned
+    assert "formatted_output" not in cleaned
+    assert cleaned["combinedOutput"] == "ok-output"
+
+    norm = proto.SessionUpdateNormalizer()
+    img_file = str(tmp_path / "shot.png")
+    ev1 = norm.normalize({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "tc-img",
+        "kind": "other",
+        "title": "Run capture",
+        "status": "completed",
+        "rawOutput": {
+            "imagePath": img_file,
+            "preview": "data:image/jpeg;base64,/9j/4AAQ",
+        },
+    })
+    assert ev1[0]["step"]["image_path"] == img_file
+    assert "preview" not in norm._tool_snapshots["tc-img"]["rawOutput"]
+
+    # Oversized edit payload omits diff and sets diff_omitted=True.
+    ev_edit = norm.normalize({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "tc-edit-big",
+        "kind": "edit",
+        "title": "edit big",
+        "status": "completed",
+        "locations": [{"path": "big.txt"}],
+        "rawInput": {"TargetContent": "a" * 35_000, "ReplacementContent": "b" * 35_000},
+    })
+    assert ev_edit[0]["step"].get("diff") is None
+    assert ev_edit[0]["step"].get("diff_omitted") is True
+
+    # MCP call titled invoke_subagent must not count as background outliving tool or subagent.
+    norm.normalize({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "tc-mcp",
+        "kind": "other",
+        "title": "Run invoke_subagent",
+        "status": "in_progress",
+        "_meta": {"is_mcp_tool_call": True},
+    })
+    assert proto.is_background_outliving_tool(norm._tool_snapshots["tc-mcp"]) is False
+    assert "tc-mcp" not in norm.collect_subagent_tool_ids()
+
+    norm.normalize({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "tc-sub",
+        "kind": "other",
+        "title": "Run invoke_subagent",
+        "status": "completed",
+    })
+    assert "tc-sub" in norm.collect_subagent_tool_ids()
+
+
+def test_disk_pending_reply_and_detached_children(tmp_path):
+    import json
+
+    app_dir = tmp_path / "antigravity-cli"
+    root = "sess-root"
+    child = "sess-child"
+    msg_dir = app_dir / "brain" / root / ".system_generated" / "messages"
+    logs_dir = app_dir / "brain" / root / ".system_generated" / "logs"
+    sub_dir = app_dir / "brain" / root / ".system_generated" / "subagents"
+    child_msg_dir = app_dir / "brain" / child / ".system_generated" / "messages"
+    for d in (msg_dir, logs_dir, sub_dir, child_msg_dir):
+        d.mkdir(parents=True)
+
+    # High-priority inbox wake triggers pending reply until marked in read.json.
+    (msg_dir / "m1.json").write_text(json.dumps({"id": "m1", "priority": "MESSAGE_PRIORITY_HIGH"}), encoding="utf-8")
+    assert proto.has_pending_reply_on_disk(app_dir, root) is True
+    (msg_dir / "read.json").write_text(json.dumps({"m1": True}), encoding="utf-8")
+    assert proto.has_pending_reply_on_disk(app_dir, root) is False
+
+    # Trailing transcript SYSTEM_MESSAGE respects HIGH vs LOW priority.
+    (logs_dir / "transcript.jsonl").write_text(
+        json.dumps({"type": "SYSTEM_MESSAGE", "content": "wake priority=MESSAGE_PRIORITY_HIGH"}) + "\n",
+        encoding="utf-8",
+    )
+    assert proto.has_pending_reply_on_disk(app_dir, root) is True
+    (logs_dir / "transcript.jsonl").write_text(
+        json.dumps({"type": "SYSTEM_MESSAGE", "content": "info priority=MESSAGE_PRIORITY_LOW"}) + "\n",
+        encoding="utf-8",
+    )
+    assert proto.has_pending_reply_on_disk(app_dir, root) is False
+
+    # Detached child in progress holds launch tool_call_id until killed or replied to parent inbox.
+    (sub_dir / f"{child}.json").write_text(json.dumps({"conversationId": child, "state": "SUBAGENT_STATE_RUNNING"}), encoding="utf-8")
+    (child_msg_dir / "launch.json").write_text(json.dumps({
+        "sender": root,
+        "sourceMetadata": {"tool": {"conversationId": root, "toolCall": {"id": "tc-launch-1", "name": "invoke_subagent"}}},
+    }), encoding="utf-8")
+    assert proto.read_detached_children_at_work(app_dir, root, ["tc-launch-1"]) == ["tc-launch-1"]
+
+    (sub_dir / f"{child}.json").write_text(json.dumps({"conversationId": child, "state": "SUBAGENT_STATE_KILLED"}), encoding="utf-8")
+    assert proto.read_detached_children_at_work(app_dir, root, ["tc-launch-1"]) == []
+
+
+def test_prompt_blocks_utf16_and_pasted_text_skip(tmp_path):
+    utf16_file = tmp_path / "notes.txt"
+    utf16_file.write_bytes("你好 Antigravity".encode("utf-16"))
+    pasted_file = tmp_path / "paste.txt"
+    pasted_file.write_text("already pasted", encoding="utf-8")
+
+    blocks = proto.build_prompt_blocks(
+        "read files",
+        [utf16_file, pasted_file],
+        [
+            {"path": str(utf16_file), "name": "notes.txt"},
+            {"path": str(pasted_file), "name": "paste.txt", "source_tag": "pasted-text"},
+        ],
+        {"embeddedContext": True},
+    )
+    assert len(blocks) == 2
+    assert blocks[1]["type"] == "resource"
+    assert blocks[1]["resource"]["text"] == "你好 Antigravity"
+
+
+
