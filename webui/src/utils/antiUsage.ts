@@ -61,11 +61,15 @@ export function formatRunUsage(usage?: AntiRunUsage | null): FormattedRunUsage |
   const cached = Math.max(0, Math.round(usage.cache_read_tokens ?? 0))
   const cacheWrite = Math.max(0, Math.round(usage.cache_write_tokens ?? 0))
   const thinking = Math.max(0, Math.round(usage.thinking_tokens ?? 0))
+  const modelCalls = Math.max(0, Math.round(usage.model_calls ?? 0))
+  const generationMs = Math.max(0, Math.round(usage.generation_ms ?? 0))
   if (!rawIn && !totalOut && !thinking && !cached && !cacheWrite) return null
 
   const totalIn = (cached + cacheWrite) > rawIn ? rawIn + cached + cacheWrite : rawIn
   const freshIn = Math.max(0, totalIn - cached - cacheWrite)
   const hitPct = totalIn > 0 && cached > 0 ? Math.min(100, Math.round((cached / totalIn) * 100)) : 0
+  const effectiveOut = Math.max(totalOut, thinking)
+  const tokPerSec = generationMs >= 150 && effectiveOut > 0 ? effectiveOut / (generationMs / 1000) : null
 
   const parts = [
     `${formatCompactTokens(totalIn)} in`,
@@ -73,6 +77,8 @@ export function formatRunUsage(usage?: AntiRunUsage | null): FormattedRunUsage |
   ]
   if (thinking > 0) parts.push(`${formatCompactTokens(thinking)} think`)
   if (totalIn > 0 && cached > 0) parts.push(`缓存 ${hitPct}%`)
+  if (modelCalls > 0) parts.push(`${modelCalls} 次调用`)
+  if (tokPerSec !== null) parts.push(`${tokPerSec >= 100 ? Math.round(tokPerSec) : tokPerSec.toFixed(1)} tok/s`)
 
   const inBreakdown = [
     `新输入 ${freshIn.toLocaleString('en-US')}`,
@@ -85,6 +91,8 @@ export function formatRunUsage(usage?: AntiRunUsage | null): FormattedRunUsage |
     `输出 ${totalOut.toLocaleString('en-US')}`,
     thinking > 0 ? `思考 ${thinking.toLocaleString('en-US')}` : null,
     totalIn > 0 && cached > 0 ? `缓存命中率 ${((cached / totalIn) * 100).toFixed(1)}%` : null,
+    modelCalls > 0 ? `模型调用 ${modelCalls} 次` : null,
+    tokPerSec !== null ? `生成速度 ${tokPerSec.toFixed(1)} tok/s（有效输出耗时 ${(generationMs / 1000).toFixed(1)}s）` : null,
   ].filter(Boolean)
 
   return {

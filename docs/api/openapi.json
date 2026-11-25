@@ -9067,6 +9067,28 @@
             "type": "integer",
             "title": "Thinking Tokens",
             "default": 0
+          },
+          "model_calls": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Calls"
+          },
+          "generation_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Ms"
           }
         },
         "type": "object",
@@ -9457,6 +9479,16 @@
             "type": "integer",
             "title": "Total Tokens",
             "default": 0
+          },
+          "model_calls": {
+            "type": "integer",
+            "title": "Model Calls",
+            "default": 0
+          },
+          "tokens_per_sec": {
+            "type": "number",
+            "title": "Tokens Per Sec",
+            "default": 0.0
           },
           "cache_hit_ratio": {
             "type": "number",

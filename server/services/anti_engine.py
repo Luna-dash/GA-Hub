@@ -704,6 +704,8 @@ class AntiSessions:
             cache_read_tokens=int(usage.get("cache_read_tokens") or 0),
             cache_write_tokens=int(usage.get("cache_write_tokens") or 0),
             thinking_tokens=int(usage.get("thinking_tokens") or 0),
+            model_calls=int(usage.get("model_calls") or 0),
+            generation_ms=int(usage.get("generation_ms") or 0),
             cooldown_seconds=cooldown,
         )
 

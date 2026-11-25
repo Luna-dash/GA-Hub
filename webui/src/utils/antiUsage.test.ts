@@ -57,5 +57,18 @@ describe('formatRunUsage', () => {
     })
     expect(withWrite?.text).toBe('100k in · 2.5k out · 缓存 60%')
     expect(withWrite?.title).toContain('新输入 30,000 + 缓存命中 60,000 + 缓存写入 10,000')
+
+    // Displays model_calls and tok/s when generation_ms >= 150ms without double-counting thinking tokens
+    const withSpeed = formatRunUsage({
+      input_tokens: 1_000,
+      output_tokens: 400,
+      cache_read_tokens: 500,
+      cache_write_tokens: 0,
+      thinking_tokens: 150,
+      model_calls: 4,
+      generation_ms: 5_000,
+    })
+    expect(withSpeed?.text).toBe('1k in · 400 out · 150 think · 缓存 50% · 4 次调用 · 80.0 tok/s')
+    expect(withSpeed?.title).toContain('模型调用 4 次 · 生成速度 80.0 tok/s（有效输出耗时 5.0s）')
   })
 })

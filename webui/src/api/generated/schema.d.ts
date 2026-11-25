@@ -3593,6 +3593,10 @@ export interface components {
              * @default 0
              */
             thinking_tokens: number;
+            /** Model Calls */
+            model_calls?: number | null;
+            /** Generation Ms */
+            generation_ms?: number | null;
         };
         /** AntiSessionCompactReq */
         AntiSessionCompactReq: {
@@ -3719,6 +3723,16 @@ export interface components {
              * @default 0
              */
             total_tokens: number;
+            /**
+             * Model Calls
+             * @default 0
+             */
+            model_calls: number;
+            /**
+             * Tokens Per Sec
+             * @default 0
+             */
+            tokens_per_sec: number;
             /**
              * Cache Hit Ratio
              * @default 0

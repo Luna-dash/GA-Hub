@@ -195,6 +195,8 @@ class AntiRunUsage(BaseModel):
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     thinking_tokens: int = 0
+    model_calls: int | None = None
+    generation_ms: int | None = None
 
 
 class AntiRunResp(BaseModel):
@@ -416,6 +418,8 @@ class AntiUsageStats(BaseModel):
     failed_runs: int = 0
     rate_limited_runs: int = 0
     total_tokens: int = 0
+    model_calls: int = 0
+    tokens_per_sec: float = 0.0
     cache_hit_ratio: float = 0.0
     estimated_cost_usd: float = 0.0
 

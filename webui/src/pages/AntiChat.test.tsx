@@ -498,6 +498,8 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
         failed_runs: 1,
         rate_limited_runs: 0,
         total_tokens: 12000,
+        model_calls: 19,
+        tokens_per_sec: 72.4,
         cache_hit_ratio: 0.4,
         estimated_cost_usd: 0.1,
       })
@@ -549,8 +551,8 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
       expect(document.body.textContent).toContain('65%')
       expect(document.body.textContent).toContain('触发 429 冷却')
       expect(document.body.textContent).toContain('Gemini 4 30s')
-      expect(document.body.textContent).toContain('今日 5 轮（成功 4）')
-      expect(document.body.textContent).toContain('12k tok · 缓存 40%')
+      expect(document.body.textContent).toContain('今日 5 轮 · 19 次调用（成功 4）')
+      expect(document.body.textContent).toContain('12k tok · 72.4 tok/s · 缓存 40%')
     })
     expect(document.body.textContent).not.toContain('查看本地配额池')
     expect(document.body.textContent).not.toContain('5h 窗口 64%')
@@ -559,7 +561,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await vi.waitFor(async () => {
       await flush()
       expect(document.body.querySelector('[data-anti-cooldown-alert]')).toBeNull()
-      expect(document.body.textContent).toContain('今日 5 轮（成功 4）')
+      expect(document.body.textContent).toContain('今日 5 轮 · 19 次调用（成功 4）')
     })
 
     await act(async () => { usageBtn.click() })

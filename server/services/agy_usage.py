@@ -826,6 +826,8 @@ class AgyLedger:
                 cache_read_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_write_tokens INTEGER NOT NULL DEFAULT 0,
                 thinking_tokens INTEGER NOT NULL DEFAULT 0,
+                model_calls INTEGER NOT NULL DEFAULT 0,
+                generation_ms INTEGER NOT NULL DEFAULT 0,
                 estimated_cost_usd REAL NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
@@ -846,6 +848,12 @@ class AgyLedger:
         if "cache_write_tokens" not in ledger_cols:
             with conn:
                 conn.execute("ALTER TABLE usage_ledger ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0")
+        if "model_calls" not in ledger_cols:
+            with conn:
+                conn.execute("ALTER TABLE usage_ledger ADD COLUMN model_calls INTEGER NOT NULL DEFAULT 0")
+        if "generation_ms" not in ledger_cols:
+            with conn:
+                conn.execute("ALTER TABLE usage_ledger ADD COLUMN generation_ms INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_usage_ledger_profile_created ON usage_ledger(profile_id, created_at)"
         )
@@ -904,6 +912,8 @@ class AgyLedger:
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
         thinking_tokens: int = 0,
+        model_calls: int = 0,
+        generation_ms: int = 0,
         cooldown_seconds: int = 0,
     ) -> None:
         pid = profile_id or agy_profile.DEFAULT
@@ -925,8 +935,8 @@ class AgyLedger:
             db.execute(
                 """
                 INSERT INTO usage_ledger
-                (run_id, profile_id, model, model_group, status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, estimated_cost_usd, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                (run_id, profile_id, model, model_group, status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, model_calls, generation_ms, estimated_cost_usd, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(run_id) DO UPDATE SET
                     profile_id=excluded.profile_id,
                     status=excluded.status,
@@ -935,6 +945,8 @@ class AgyLedger:
                     cache_read_tokens=excluded.cache_read_tokens,
                     cache_write_tokens=excluded.cache_write_tokens,
                     thinking_tokens=excluded.thinking_tokens,
+                    model_calls=excluded.model_calls,
+                    generation_ms=excluded.generation_ms,
                     estimated_cost_usd=excluded.estimated_cost_usd
                 """,
                 (
@@ -948,6 +960,8 @@ class AgyLedger:
                     cached,
                     cache_write,
                     max(0, thinking_tokens),
+                    max(0, int(model_calls)),
+                    max(0, int(generation_ms)),
                     cost,
                     now.isoformat(),
                 ),
@@ -1146,7 +1160,7 @@ class AgyLedger:
         where = "WHERE " + " AND ".join(clauses)
         with self._connect() as db:
             rows = db.execute(
-                f"SELECT status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, estimated_cost_usd FROM usage_ledger {where}",
+                f"SELECT status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, model_calls, generation_ms, estimated_cost_usd FROM usage_ledger {where}",
                 tuple(params),
             ).fetchall()
         total = len(rows)
@@ -1156,6 +1170,9 @@ class AgyLedger:
         inp = 0
         out = 0
         cached = 0
+        calls = 0
+        gen_ms_total = 0
+        gen_out_tokens = 0
         cost = 0.0
         for r in rows:
             row_in, _, row_cr, _ = normalize_ledger_input(
@@ -1163,11 +1180,22 @@ class AgyLedger:
                 int(r["cache_read_tokens"]),
                 int(r["cache_write_tokens"]),
             )
+            row_out = max(max(0, int(r["output_tokens"])), max(0, int(r["thinking_tokens"])))
+            row_gen_ms = max(0, int(r["generation_ms"] or 0))
             inp += row_in
-            out += max(max(0, int(r["output_tokens"])), max(0, int(r["thinking_tokens"])))
+            out += row_out
             cached += row_cr
+            calls += max(0, int(r["model_calls"] or 0))
+            if row_gen_ms >= 150 and row_out > 0:
+                gen_ms_total += row_gen_ms
+                gen_out_tokens += row_out
             cost += float(r["estimated_cost_usd"])
         ratio = min(1.0, round(cached / inp, 4)) if inp > 0 else 0.0
+        tok_per_sec = (
+            round(gen_out_tokens / (gen_ms_total / 1000.0), 1)
+            if gen_ms_total >= 150 and gen_out_tokens > 0
+            else 0.0
+        )
         return {
             "window_hours": 0 if today else window_hours,
             "total_runs": total,
@@ -1175,6 +1203,8 @@ class AgyLedger:
             "failed_runs": failed,
             "rate_limited_runs": rate_limited,
             "total_tokens": inp + out,
+            "model_calls": calls,
+            "tokens_per_sec": tok_per_sec,
             "cache_hit_ratio": ratio,
             "estimated_cost_usd": round(cost, 4),
         }

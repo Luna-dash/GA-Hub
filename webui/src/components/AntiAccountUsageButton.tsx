@@ -365,9 +365,17 @@ export function AntiAccountUsageButton({
                 {resetBreaker.isError && <p className="text-[11px] text-status-danger">{resetBreaker.error.message}</p>}
                 {stats.data && (
                   <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[11px] tabular-nums text-ink-muted">
-                    <span>今日 {stats.data.total_runs} 轮（成功 {stats.data.success_runs}）</span>
+                    <span>
+                      今日 {stats.data.total_runs} 轮
+                      {(stats.data.model_calls ?? 0) > 0 ? ` · ${stats.data.model_calls} 次调用` : ''}
+                      （成功 {stats.data.success_runs}）
+                    </span>
                     <span title={`${stats.data.total_tokens.toLocaleString('en-US')} tokens`}>
-                      {formatCompactTokens(stats.data.total_tokens)} tok · 缓存 {Math.min(100, Math.round(stats.data.cache_hit_ratio * 100))}%
+                      {formatCompactTokens(stats.data.total_tokens)} tok
+                      {(stats.data.tokens_per_sec ?? 0) > 0
+                        ? ` · ${stats.data.tokens_per_sec! >= 100 ? Math.round(stats.data.tokens_per_sec!) : stats.data.tokens_per_sec!.toFixed(1)} tok/s`
+                        : ''}
+                      {' · '}缓存 {Math.min(100, Math.round(stats.data.cache_hit_ratio * 100))}%
                       {stats.data.estimated_cost_usd > 0 ? ` · ~$${stats.data.estimated_cost_usd.toFixed(2)}` : ''}
                     </span>
                   </div>

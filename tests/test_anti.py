@@ -222,6 +222,8 @@ def test_unified_acp_round_trip_mode_switch_and_resume(tmp_path, monkeypatch):
             "cache_read_tokens": 60,
             "cache_write_tokens": 0,
             "thinking_tokens": 0,
+            "model_calls": None,
+            "generation_ms": None,
         }
         assert runtime.calls[-1]["mode"] == "accept-edits"
         assert runtime.calls[-1]["permission_mode"] == "auto-accept-edits"

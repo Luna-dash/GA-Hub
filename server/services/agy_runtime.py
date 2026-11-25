@@ -1321,7 +1321,7 @@ class AgySessionWorker:
 
                 _, _, _, latest_seq = turn.current_prompt_state()
                 if not timed_out and not turn.cancelled and not self._abort_event.is_set() and latest_seq != cur_seq:
-                    outcome_watcher.prepare()
+                    outcome_watcher.prepare(reset_turn=False)
                     continue
 
                 if timed_out or turn.cancelled or self._abort_event.is_set() or "error" in box:
@@ -1345,7 +1345,7 @@ class AgySessionWorker:
                         evt = turn.normalizer.emit_notice("runtime_notice", msg)
                         with turn.event_lock:
                             turn.on_event(evt)
-                        outcome_watcher.prepare()
+                        outcome_watcher.prepare(reset_turn=False)
                         self._dispatch_prompt(turn, acp_sid, [{"type": "text", "text": str(resume_with)}])
                         continue
                     break
@@ -1412,7 +1412,7 @@ class AgySessionWorker:
                     turn.wake_event.wait(wait_for)
 
                 if steered_during_hold:
-                    outcome_watcher.prepare()
+                    outcome_watcher.prepare(reset_turn=False)
                     continue
                 break
 
@@ -1479,6 +1479,12 @@ class AgySessionWorker:
             answer = turn.normalizer.final_answer
             progress_messages = list(turn.normalizer.progress_messages)
             usage = dict(turn.normalizer.usage)
+            model_calls = outcome_watcher.model_call_count()
+            if model_calls > 0:
+                usage["model_calls"] = model_calls
+            gen_ms = turn.normalizer.generation_ms
+            if gen_ms > 0:
+                usage["generation_ms"] = gen_ms
             notice_text = "；".join(notices) if notices else None
             if turn.cancelled:
                 return {

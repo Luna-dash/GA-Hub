@@ -2633,6 +2633,23 @@ def test_stats_today_filters_from_local_midnight(tmp_path, monkeypatch):
     assert resp.json()["total_runs"] == 1
     assert resp.json()["total_tokens"] == 300
 
+    # Verify record_run persists model_calls and generation_ms -> aggregated weighted tok/s.
+    ledger.record_run(
+        "run-metrics-today",
+        "gemini-4-hydrogen",
+        "success",
+        profile_id="default",
+        input_tokens=500,
+        output_tokens=400,
+        thinking_tokens=150,
+        model_calls=4,
+        generation_ms=5_000,
+    )
+    with_speed = client.get("/api/anti/stats?today=true").json()
+    assert with_speed["total_runs"] == 2
+    assert with_speed["model_calls"] == 4
+    assert with_speed["tokens_per_sec"] == 80.0
+
 
 def test_sync_user_customizations_refreshes_unmodified_copies(tmp_path, monkeypatch):
     monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path / "admin")

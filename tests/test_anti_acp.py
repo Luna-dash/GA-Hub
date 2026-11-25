@@ -719,4 +719,56 @@ def test_prompt_blocks_utf16_and_pasted_text_skip(tmp_path):
     assert blocks[1]["resource"]["text"] == "你好 Antigravity"
 
 
+def test_normalizer_generation_ms_and_watcher_model_call_count(tmp_path):
+    import sqlite3
+
+    now = [10.0]
+    norm = proto.SessionUpdateNormalizer(clock=lambda: now[0])
+    # First generation burst: 10.0 -> 11.5 (1.5s)
+    norm.normalize({"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "step 1"}})
+    now[0] = 11.5
+    norm.normalize({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "calling"}})
+    # Tool pause: 11.5 -> 20.0 must NOT count as generation time!
+    norm.normalize({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "tc-1",
+        "kind": "execute",
+        "title": "run_command",
+        "status": "in_progress",
+    })
+    now[0] = 20.0
+    norm.normalize({"sessionUpdate": "tool_call_update", "toolCallId": "tc-1", "status": "completed"})
+    # Second generation burst: 20.0 -> 21.0 (1.0s)
+    norm.normalize({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "do"}})
+    now[0] = 21.0
+    norm.normalize({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "ne"}})
+    norm.finish_turn()
+    assert norm.generation_ms == 2500
+
+    # PromptOutcomeWatcher counts step_type=15 rows across initial + steered prompts.
+    app_dir = tmp_path / "antigravity-cli"
+    (app_dir / "conversations").mkdir(parents=True)
+    db_path = app_dir / "conversations" / "conv-calls.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)")
+    conn.execute("INSERT INTO steps VALUES (0, 15, ?)", (b"prior-turn",))
+    conn.commit()
+
+    watcher = proto.PromptOutcomeWatcher(app_dir, "conv-calls")
+    watcher.prepare()
+    conn.execute("INSERT INTO steps VALUES (1, 15, ?)", (b"call-1",))
+    conn.execute("INSERT INTO steps VALUES (2, 8, ?)", (b"tool-exec",))
+    conn.execute("INSERT INTO steps VALUES (3, 15, ?)", (b"call-2",))
+    conn.commit()
+
+    # Mid-turn steer resets segment start index but keeps turn start index.
+    watcher.prepare(reset_turn=False)
+    conn.execute("INSERT INTO steps VALUES (4, 15, ?)", (b"call-3-after-steer",))
+    conn.commit()
+    conn.close()
+
+    assert watcher.model_call_count() == 3
+
+
+
 
