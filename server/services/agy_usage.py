@@ -122,6 +122,14 @@ def read_windows_cli_credential() -> bytes | None:
 
 
 def _model_group(model: str) -> str:
+    try:
+        from .agy_models import match_quota_group
+
+        matched = match_quota_group(model)
+        if matched:
+            return matched
+    except Exception:
+        pass
     lower = (model or "").lower()
     if "claude" in lower or "gpt" in lower or lower.startswith("3p-"):
         return "claude-3p"
@@ -277,6 +285,68 @@ def _parse_model_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
                     "resets_at": _iso_utc(quota.get("resetTime")),
                 }
     return list(merged.values())
+
+
+def _parse_available_model_catalog(data: dict[str, Any]) -> list[dict[str, Any]]:
+    models = data.get("models")
+    if not isinstance(models, dict):
+        return []
+    default_id = data.get("defaultAgentModelId") if isinstance(data.get("defaultAgentModelId"), str) else None
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for model_id, info in models.items():
+        if not isinstance(model_id, str) or not model_id.strip() or not isinstance(info, dict):
+            continue
+        if info.get("isInternal") is True:
+            continue
+        mid = model_id.strip()
+        if mid in seen:
+            continue
+        seen.add(mid)
+        entry: dict[str, Any] = {
+            "id": mid,
+            "display_name": str(info.get("displayName") or info.get("name") or mid).strip() or mid,
+        }
+        if "orchestrator" in mid.lower():
+            entry["is_orchestrator"] = True
+        else:
+            raw_levels = info.get("supportedThinkingLevels") or info.get("thinkingLevels") or info.get("supportedEfforts")
+            if isinstance(raw_levels, list):
+                efforts = [str(lvl).strip().lower() for lvl in raw_levels if isinstance(lvl, str) and str(lvl).strip()]
+                if efforts:
+                    entry["efforts"] = list(dict.fromkeys(efforts))
+            if isinstance(info.get("defaultThinkingLevel"), str) and info["defaultThinkingLevel"].strip():
+                entry["default_effort"] = info["defaultThinkingLevel"].strip().lower()
+        if mid == default_id or info.get("isDefault") is True:
+            entry["is_default"] = True
+        items.append(entry)
+    return items
+
+
+def probe_available_models(profile_id: str) -> dict[str, Any]:
+    """Fetch upstream model catalog directly via CloudCode `fetchAvailableModels`."""
+    access_token, project_id = _extract_access_token(profile_id)
+    if not access_token:
+        return {"state": "login_required", "items": []}
+    session = requests.Session()
+    session.trust_env = True
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "User-Agent": USER_AGENT,
+        "Content-Type": "application/json",
+    }
+    body = {"project": project_id} if project_id else {}
+    for endpoint in (DAILY_ENDPOINT, PROD_ENDPOINT):
+        try:
+            res = session.post(f"{endpoint}/v1internal:fetchAvailableModels", headers=headers, json=body, timeout=PROBE_TIMEOUT)
+            if res.status_code != 200:
+                continue
+            items = _parse_available_model_catalog(res.json())
+            if items:
+                return {"state": "authenticated", "items": items}
+        except Exception:
+            continue
+    return {"state": "authenticated", "items": []}
 
 
 def _probe_via_cli_fallback(profile_id: str) -> dict[str, Any] | None:

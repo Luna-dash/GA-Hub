@@ -940,3 +940,92 @@ class CodeLoginFlow:
         if self.temp_dir is not None:
             shutil.rmtree(self.temp_dir, ignore_errors=True)
         return True
+
+
+def _profile_settings_file(profile_id: str) -> Path:
+    _, profiles = snapshot()
+    if not any(p.id == profile_id for p in profiles):
+        raise AgyProfileError(404, "找不到 Agy 账号")
+    app_dir = profile_app_data_dir(profile_id)
+    settings_file = app_dir / "settings.json"
+    if app_dir.is_symlink() or settings_file.is_symlink():
+        raise AgyProfileError(409, "Agy 设置文件不得使用符号链接")
+    return settings_file
+
+
+def get_orchestrator_settings(profile_id: str) -> dict[str, str | None]:
+    """Read official Antigravity CLI `"orchestrator": {"planner", "executor"}` for a profile."""
+    settings_file = _profile_settings_file(profile_id)
+    if not settings_file.exists():
+        return {"profile_id": profile_id, "planner": None, "executor": None}
+    try:
+        raw = json.loads(settings_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise AgyProfileError(503, f"无法读取 Agy 设置文件: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise AgyProfileError(503, "Agy 设置文件格式无效")
+    orch = raw.get("orchestrator")
+    if not isinstance(orch, dict):
+        return {"profile_id": profile_id, "planner": None, "executor": None}
+    planner_raw = orch.get("planner")
+    executor_raw = orch.get("executor")
+    planner = planner_raw.strip() if isinstance(planner_raw, str) and planner_raw.strip() else None
+    executor = executor_raw.strip() if isinstance(executor_raw, str) and executor_raw.strip() else None
+    return {"profile_id": profile_id, "planner": planner, "executor": executor}
+
+
+def set_orchestrator_settings(
+    profile_id: str,
+    *,
+    planner: str | None = None,
+    executor: str | None = None,
+) -> dict[str, str | None]:
+    """Persist sparse `"orchestrator": {"planner", "executor"}` in profile `settings.json`."""
+    clean_planner = planner.strip() if isinstance(planner, str) and planner.strip() else None
+    clean_executor = executor.strip() if isinstance(executor, str) and executor.strip() else None
+    with _profile_metadata_lock:
+        settings_file = _profile_settings_file(profile_id)
+        data: dict[str, Any] = {}
+        if settings_file.exists():
+            try:
+                loaded = json.loads(settings_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise AgyProfileError(503, f"无法读取现有 Agy 设置文件: {exc}") from exc
+            if not isinstance(loaded, dict):
+                raise AgyProfileError(503, "现有 Agy 设置文件格式无效")
+            data = loaded
+        orch: dict[str, str] = {}
+        if clean_planner is not None:
+            orch["planner"] = clean_planner
+        if clean_executor is not None:
+            orch["executor"] = clean_executor
+        if orch:
+            data["orchestrator"] = orch
+        else:
+            data.pop("orchestrator", None)
+
+        settings_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        stage: Path | None = None
+        try:
+            with NamedTemporaryFile(mode="w", encoding="utf-8", dir=settings_file.parent, delete=False) as fp:
+                stage = Path(fp.name)
+                json.dump(data, fp, ensure_ascii=False, indent=2)
+                fp.write("\n")
+            for attempt in range(6):
+                try:
+                    stage.replace(settings_file)
+                    break
+                except PermissionError as exc:
+                    if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 5:
+                        raise
+                    time.sleep(0.01 * (2 ** attempt))
+            try:
+                os.chmod(settings_file, 0o600)
+            except OSError:
+                pass
+        except OSError as exc:
+            raise AgyProfileError(503, f"无法保存 Agy Orchestrator 设置: {exc}") from exc
+        finally:
+            if stage is not None:
+                stage.unlink(missing_ok=True)
+        return {"profile_id": profile_id, "planner": clean_planner, "executor": clean_executor}
