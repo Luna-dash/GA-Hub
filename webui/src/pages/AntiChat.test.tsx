@@ -150,9 +150,11 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     await wait(() => expect(accountButton()?.getAttribute('aria-label')).toBe('Agy 账号：工作'))
     const edit = dialog?.querySelector<HTMLButtonElement>('button[aria-label="修改备注：工作"]')
     expect(edit).toBeTruthy()
+    const editRow = edit!.closest('li')!
     await act(async () => edit!.click())
     const nameField = dialog?.querySelector<HTMLInputElement>('#agy-edit-name')
     expect(nameField?.value).toBe('工作')
+    expect(editRow.querySelector('#agy-edit-name')).toBe(nameField)
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(nameField, '  主力  ')
       nameField!.dispatchEvent(new Event('input', { bubbles: true }))
@@ -543,10 +545,11 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
 
     await act(async () => { usageBtn.click() })
 
-    // Profile modal: capture current login, inspect logs, clear credentials, & delete inactive profile
+    // Profile modal: defaults to 账号管理 tab, captures login, inspects logs, clears credentials, & deletes inactive profile
     const accountsBtn = [...host.querySelectorAll('button')].find(b => b.getAttribute('aria-label')?.startsWith('Agy 账号：')) as HTMLButtonElement
     await act(async () => { accountsBtn.click() })
     await flush()
+    expect(document.body.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('账号管理')
     expect(document.body.textContent).toContain('已验证登录')
     expect(document.body.textContent).toContain('最低剩余 65%')
 
@@ -1804,6 +1807,17 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
       await flush()
       expect(document.body.querySelector('[data-anti-workers-panel]')?.textContent).toContain('PID 4321')
     })
+    // Toggling ACP 日志 closes 活跃进程 drawer (mutually exclusive)
+    const logsToggle = [...document.body.querySelectorAll('button')].find(b => b.textContent === 'ACP 日志') as HTMLButtonElement
+    await act(async () => { logsToggle.click() })
+    await flush()
+    expect(document.body.querySelector('[data-anti-workers-panel]')).toBeNull()
+    const workersReopen = [...document.body.querySelectorAll('button')].find(b => b.textContent?.includes('活跃进程')) as HTMLButtonElement
+    await act(async () => { workersReopen.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(document.body.querySelector('[data-anti-workers-panel]')?.textContent).toContain('PID 4321')
+    })
     const forceWorkerBtn = [...document.body.querySelectorAll<HTMLButtonElement>('[data-anti-workers-panel] button')].find(
       b => b.textContent?.includes('强制重连'),
     )!
@@ -2095,9 +2109,22 @@ it('supports Orchestrator quick icon button, profile-consolidated model sync and
       expect(orchTrigger?.textContent?.trim()).toBe('')
     })
 
-    // 3. Click Plan B Orch icon -> opens Account Management modal focused on Model Sync & Orchestrator settings
+    // 3. Click Plan B Orch icon -> opens Account Management modal directly on the 模型与 Orchestrator tab
     const orchTrigger = host.querySelector<HTMLButtonElement>('button[aria-label="Orchestrator 角色设置"]')!
     await act(async () => { orchTrigger.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(document.body.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('模型与 Orchestrator')
+      expect(document.body.querySelector('[data-anti-models-orch-section]')).not.toBeNull()
+    })
+
+    // Switching back to 账号管理 tab hides models section; clicking 模型与 Orchestrator restores it
+    const accountsTab = [...document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(b => b.textContent?.includes('账号管理'))!
+    const modelsTab = [...document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(b => b.textContent?.includes('模型与 Orchestrator'))!
+    await act(async () => { accountsTab.click() })
+    await flush()
+    expect(document.body.querySelector('[data-anti-models-orch-section]')).toBeNull()
+    await act(async () => { modelsTab.click() })
     await vi.waitFor(async () => {
       await flush()
       expect(document.body.querySelector('[data-anti-models-orch-section]')).not.toBeNull()

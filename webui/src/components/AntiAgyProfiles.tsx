@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Brain } from 'lucide-react'
+import { Brain, UserRound } from 'lucide-react'
 import { RefreshIcon, RotateCw, Trash2, X } from '@/components/ActionIcons'
-import { UserRound } from 'lucide-react'
 import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
 import { antiApi, type AgyCodeLoginState } from '@/api/client'
@@ -14,6 +13,7 @@ import type { useAntiDaemonStatus } from './AntiDaemonControl'
 
 type Profiles = components['schemas']['AgyProfiles']
 type Profile = components['schemas']['AgyProfile']
+type ModalTab = 'accounts' | 'models'
 type Action =
   | { kind: 'create'; name: string }
   | { kind: 'capture'; name: string }
@@ -108,6 +108,19 @@ export function AntiAgyProfiles({
     if (controlledOpen === undefined) setUncontrolledOpen(next)
     onOpenChange?.(next)
   }
+  const [activeTab, setActiveTab] = useState<ModalTab>(
+    focusSection === 'orchestrator' ? 'models' : 'accounts',
+  )
+  const prevSyncKeyRef = useRef('')
+  const syncKey = `${open}:${focusSection}`
+  if (prevSyncKeyRef.current !== syncKey) {
+    prevSyncKeyRef.current = syncKey
+    if (open) {
+      const targetTab: ModalTab = focusSection === 'orchestrator' ? 'models' : 'accounts'
+      if (activeTab !== targetTab) setActiveTab(targetTab)
+    }
+  }
+
   const [name, setName] = useState('')
   const [editing, setEditing] = useState<{ profile: Profile; name: string } | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
@@ -120,13 +133,12 @@ export function AntiAgyProfiles({
   const [orchPlannerDraft, setOrchPlannerDraft] = useState('')
   const [orchExecutorDraft, setOrchExecutorDraft] = useState('')
   const prevLoginProfile = useRef<string | null | undefined>(undefined)
-  const orchSectionRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
     const current = profiles.data?.login_profile ?? null
     if (prevLoginProfile.current && !current) {
       refresh()
-      setMessage(old => old || '官方登录窗口已关闭，已刷新账号凭据状态。')
+      setMessage(old => old || '官方登录窗口已关闭，已刷新账号状态。')
     }
     prevLoginProfile.current = current
   }, [profiles.data?.login_profile, refresh])
@@ -137,7 +149,7 @@ export function AntiAgyProfiles({
 
   const modelsQuery = useQuery({
     queryKey: ['anti-models', effectivePid],
-    enabled: open && Boolean(effectivePid),
+    enabled: open && activeTab === 'models' && Boolean(effectivePid),
     queryFn: ({ signal }) => antiApi.models(signal, overridePid),
     staleTime: 60_000,
     retry: false,
@@ -155,7 +167,7 @@ export function AntiAgyProfiles({
   })
   const orchestratorSettings = useQuery({
     queryKey: ['anti-orchestrator', effectivePid],
-    enabled: open && Boolean(effectivePid),
+    enabled: open && activeTab === 'models' && Boolean(effectivePid),
     queryFn: ({ signal }) => antiApi.profileOrchestrator(effectivePid, signal),
     retry: false,
   })
@@ -163,11 +175,7 @@ export function AntiAgyProfiles({
     setOrchPlannerDraft(orchestratorSettings.data?.planner ?? '')
     setOrchExecutorDraft(orchestratorSettings.data?.executor ?? '')
   }, [orchestratorSettings.data?.planner, orchestratorSettings.data?.executor, effectivePid])
-  useEffect(() => {
-    if (open && focusSection === 'orchestrator') {
-      requestAnimationFrame(() => orchSectionRef.current?.scrollIntoView?.({ block: 'nearest' }))
-    }
-  }, [open, focusSection])
+
   const orchestratorRoleChoices = useMemo(
     () => buildOrchestratorRoleChoices(modelsQuery.data?.items ?? [DEFAULT_MODEL]),
     [modelsQuery.data?.items],
@@ -182,21 +190,21 @@ export function AntiAgyProfiles({
       cache.setQueryData(['anti-orchestrator', effectivePid], updated)
       void cache.invalidateQueries({ queryKey: ['anti-sessions'], exact: true })
       void cache.invalidateQueries({ queryKey: ['anti-workers'] })
-      setMessage('已保存 Orchestrator 角色设置，空闲进程已刷新。')
+      setMessage('已保存，空闲进程已刷新。')
     },
   })
 
   const logs = useQuery({
     queryKey: ['anti-daemon-logs'],
-    enabled: open && showLogs,
+    enabled: open && activeTab === 'accounts' && showLogs,
     queryFn: ({ signal }) => antiApi.daemonLogs(80, signal),
     retry: false,
   })
   const workers = useQuery({
     queryKey: ['anti-workers'],
-    enabled: open,
+    enabled: open && activeTab === 'accounts',
     queryFn: ({ signal }) => antiApi.workers(signal),
-    refetchInterval: open ? 3_000 : false,
+    refetchInterval: open && activeTab === 'accounts' ? 3_000 : false,
     retry: false,
   })
   const workerItems = Array.isArray(workers.data?.items) ? workers.data.items : []
@@ -207,7 +215,7 @@ export function AntiAgyProfiles({
       setResettingSid(sid)
     },
     onSuccess: (_, { sid, force }) => {
-      setMessage(force ? '已强制重连该会话 ACP 进程（保留上下文）。' : '已释放该会话空闲 ACP 进程。')
+      setMessage(force ? '已强制重连会话进程（保留上下文）。' : '已释放空闲会话进程。')
       void cache.invalidateQueries({ queryKey: ['anti-workers'] })
       void cache.invalidateQueries({ queryKey: ['anti-sessions'] })
       void cache.invalidateQueries({ queryKey: ['anti-runs', sid] })
@@ -228,11 +236,11 @@ export function AntiAgyProfiles({
         })
         cache.setQueryData<Profiles>(key, old => old && ({ ...old, profiles: [...old.profiles.filter(p => p.id !== profile.id), profile] }))
         setName('')
-        setMessage(`已添加「${profile.name}」。请在该账号旁点「官方登录」，完成登录并关闭 CLI 窗口后再切换。`)
+        setMessage(`已添加「${profile.name}」，请点击登录完成授权。`)
       } else if (args.kind === 'capture') {
         const profile = await antiApi.captureProfile(args.name)
         setName('')
-        setMessage(`已将当前系统登录另存为独立账号「${profile.name}」。`)
+        setMessage(`已另存为独立账号「${profile.name}」。`)
       } else if (args.kind === 'rename') {
         const profile = await request<Profile>(`/${encodeURIComponent(args.profile.id)}`, {
           method: 'PATCH',
@@ -241,7 +249,7 @@ export function AntiAgyProfiles({
         })
         cache.setQueryData<Profiles>(key, old => old && ({ ...old, profiles: old.profiles.map(p => p.id === profile.id ? profile : p) }))
         setEditing(null)
-        setMessage(`账号备注已改为「${profile.name}」。`)
+        setMessage(`已重命名为「${profile.name}」。`)
       } else if (args.kind === 'switch') {
         const data = await request<Profiles>(`/${encodeURIComponent(args.profile.id)}/switch`, write)
         cache.setQueryData(key, data)
@@ -254,24 +262,24 @@ export function AntiAgyProfiles({
           profiles: old.profiles.filter(p => p.id !== args.profile.id),
         }))
         setConfirmDeleteId(null)
-        setMessage(`已删除账号「${args.profile.name}」。`)
+        setMessage(`已删除「${args.profile.name}」。`)
       } else if (args.kind === 'logout') {
         const updated = await antiApi.clearProfileCredentials(args.profile.id)
         cache.setQueryData<Profiles>(key, old => old && ({
           ...old,
           profiles: old.profiles.map(p => p.id === updated.id ? updated : p),
         }))
-        setMessage(`已清除「${args.profile.name}」的登录凭据与缓存额度，保留了多轮会话记录。`)
+        setMessage(`已清除「${args.profile.name}」凭据（保留会话记录）。`)
       } else if (args.kind === 'check-usage') {
         const usage = await antiApi.accountUsage()
         setMessage(
           usage.rows.length > 0
             ? `已刷新额度（${usage.rows.length} 项模型）。`
-            : (usage.detail || '未读取到额度信息，请确认已登录并重试。'),
+            : (usage.detail || '未读取到额度信息，请确认已登录后重试。'),
         )
       } else {
         await request(`/${encodeURIComponent(args.profile.id)}/login`, write)
-        setMessage(`已为「${args.profile.name}」打开官方 CLI。请完成登录并关闭该窗口，再回这里切换。`)
+        setMessage(`已打开「${args.profile.name}」官方登录窗口，完成后关闭即可。`)
       }
     },
     onMutate: async args => {
@@ -340,6 +348,11 @@ export function AntiAgyProfiles({
 
   const selected = profiles.data?.profiles.find(item => item.id === profiles.data?.active)
   const others = profiles.data?.profiles.filter(item => item.id !== profiles.data?.active) ?? []
+  const orderedProfiles = useMemo(
+    () => [selected, ...others].filter((item): item is Profile => Boolean(item)),
+    [selected, others],
+  )
+  const profileCount = profiles.data?.profiles.length ?? 0
   const loginProfile = profiles.data?.login_profile
   const cancelActiveCodeLogin = (flow: AgyCodeLoginState | null) => {
     if (!flow || (flow.phase !== 'starting' && flow.phase !== 'waiting_code')) return
@@ -372,54 +385,266 @@ export function AntiAgyProfiles({
     if (!disabled && profiles.data && name.trim()) action.mutate({ kind: 'create', name: name.trim() })
   }
   const pendingLabel = action.variables?.kind === 'switch' ? '正在切换账号…'
-    : action.variables?.kind === 'login' ? '正在打开官方 CLI…'
-    : action.variables?.kind === 'logout' ? '正在清除账号凭据…'
+    : action.variables?.kind === 'login' ? '正在打开官方登录窗口…'
+    : action.variables?.kind === 'logout' ? '正在清除凭据…'
     : action.variables?.kind === 'rename' ? '正在保存备注…'
-    : action.variables?.kind === 'capture' ? '正在从当前系统登录另存…'
+    : action.variables?.kind === 'capture' ? '正在另存当前登录…'
     : action.variables?.kind === 'delete' ? '正在删除账号…'
-    : action.variables?.kind === 'check-usage' ? '正在刷新当前账号额度…'
+    : action.variables?.kind === 'check-usage' ? '正在刷新额度…'
     : '正在添加账号…'
-  const secondary = 'ga-btn-sm shrink-0'
+
+  const compactBtn = 'ga-btn-sm h-7 shrink-0 px-2 py-0 text-[11px]'
+  const compactPrimaryBtn = 'ga-btn-sm-primary h-7 shrink-0 px-2.5 py-0 text-[11px]'
+  const compactDangerBtn = 'ga-btn-sm-danger h-7 shrink-0 px-2 py-0 text-[11px]'
   const daemonError = daemon?.start.error ?? daemon?.stop.error ?? daemon?.restart.error
   const nonWindows = typeof navigator !== 'undefined' && /mac|linux|x11/i.test(navigator.platform)
-  const editButton = (profile: Profile) => profile.id !== 'default' && (
-    <button type="button" className={secondary} disabled={disabled} aria-label={`修改备注：${profile.name}`}
-      onClick={() => { action.reset(); setMessage(''); setConfirmDeleteId(null); setEditing({ profile, name: profile.name }) }}>修改备注</button>
+  const hasDaemonLifecycleBtns = Boolean(
+    daemon && (
+      (!daemon.running && daemon.state === 'stopped')
+      || ((daemon.running || daemon.state === 'unavailable') && daemon.managed)
+    ),
   )
 
-  const renderProfileMeta = (profile: Profile) => {
+  const renderAccountRow = (profile: Profile, isActive: boolean) => {
     const badge = authBadge(profile, loginProfile === profile.id)
     const usage = profile.usage
     const pct = usage?.min_remaining_pct
     const checkedAt = usage?.checked_at ? new Date(usage.checked_at).getTime() : NaN
     const checkedLabel = Number.isFinite(checkedAt) ? resetTimeFormat.format(checkedAt) : null
     const cooldownSec = profile.cooldown_seconds ?? 0
+    const isEditing = editing?.profile.id === profile.id
+    const canClearCredentials = profile.id !== 'default'
+      && (profile.has_credentials || profile.auth_state === 'authenticated')
+      && (!isActive || !daemon || daemon.state === 'stopped')
+    const showRightDivider = !isActive && profile.id !== 'default'
+
     return (
-      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
-        <span className={clsx('inline-flex items-center rounded-md border px-1.5 py-0.5 font-medium', badge.tone)}>
-          {badge.label}
-        </span>
-        {cooldownSec > 0 && (
-          <span className="inline-flex items-center rounded-md border border-status-warning-line bg-status-warning-soft px-1.5 py-0.5 font-medium tabular-nums text-status-warning">
-            风控冷却 {cooldownSec}s
-          </span>
+      <li
+        key={profile.id}
+        className={clsx(
+          'rounded-lg border px-3 py-2 transition-colors',
+          isActive ? 'border-accent/45 bg-bg-card' : 'border-line/70 bg-bg-card/75',
         )}
-        {typeof pct === 'number' && (
-          <span className={clsx('font-semibold tabular-nums', quotaTone(pct))} title={checkedLabel ? `上次检测：${checkedLabel}` : undefined}>
-            最低剩余 {pct}%
-          </span>
-        )}
-        {checkedLabel && (
-          <span className="tabular-nums">
-            检测于 {checkedLabel}
-          </span>
-        )}
-      </div>
+      >
+        <div className="flex min-h-[28px] items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            {isActive && (
+              <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-accent">
+                当前
+              </span>
+            )}
+            <span className="min-w-0 truncate text-sm font-medium text-ink" title={profile.name}>
+              {profile.name}
+            </span>
+            <span className={clsx('shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none', badge.tone)}>
+              {badge.label}
+            </span>
+            {cooldownSec > 0 && (
+              <span className="shrink-0 rounded border border-status-warning-line bg-status-warning-soft px-1.5 py-0.5 text-[10px] font-medium leading-none tabular-nums text-status-warning">
+                风控冷却 {cooldownSec}s
+              </span>
+            )}
+            {typeof pct === 'number' && (
+              <span
+                className={clsx('shrink-0 text-xs font-semibold tabular-nums', quotaTone(pct))}
+                title={checkedLabel ? `检测于 ${checkedLabel}` : undefined}
+              >
+                最低剩余 {pct}%
+              </span>
+            )}
+          </div>
+          <div className="shrink-0">
+            {isActive ? (
+              daemon?.running && (
+                <button
+                  type="button"
+                  className={compactBtn}
+                  disabled={disabled}
+                  onClick={() => action.mutate({ kind: 'check-usage' })}
+                >
+                  刷新额度
+                </button>
+              )
+            ) : (
+              <button
+                type="button"
+                className={compactPrimaryBtn}
+                disabled={disabled}
+                aria-label={`切换到${profile.name}`}
+                onClick={() => action.mutate({ kind: 'switch', profile })}
+              >
+                切换
+              </button>
+            )}
+          </div>
+        </div>
+
+        {isActive && profile.usage?.rows?.length ? (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+            {profile.usage.rows.map(row => (
+              <span
+                key={`${row.model}-${row.limit}`}
+                className="inline-flex items-center gap-1.5 rounded bg-bg-soft px-2 py-0.5"
+                title={`${row.model} · ${row.limit}`}
+              >
+                <span className="max-w-[11rem] truncate text-ink-muted">{row.model}</span>
+                <span className={clsx('font-semibold tabular-nums', quotaTone(row.remaining_pct))}>
+                  {row.remaining_pct}%
+                </span>
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-line/40 pt-1.5">
+          {isEditing ? (
+            <form
+              className="flex w-full items-center gap-1.5"
+              onSubmit={event => {
+                event.preventDefault()
+                const value = editing.name.trim()
+                if (!disabled && value && value !== editing.profile.name) {
+                  action.mutate({ kind: 'rename', profile: editing.profile, name: value })
+                }
+              }}
+            >
+              <input
+                id="agy-edit-name"
+                value={editing.name}
+                maxLength={64}
+                disabled={disabled}
+                aria-label={`修改「${editing.profile.name}」的备注`}
+                onChange={event => setEditing({ ...editing, name: event.target.value })}
+                className="h-7 min-w-0 flex-1 rounded-md border border-accent/60 bg-bg-soft/60 px-2 text-xs text-ink outline-none focus:border-accent"
+              />
+              <button
+                type="submit"
+                className={compactPrimaryBtn}
+                disabled={disabled || !editing.name.trim() || editing.name.trim() === editing.profile.name}
+              >
+                保存备注
+              </button>
+              <button
+                type="button"
+                className={compactBtn}
+                disabled={action.isPending}
+                onClick={() => {
+                  action.reset()
+                  setEditing(null)
+                }}
+              >
+                取消
+              </button>
+            </form>
+          ) : (
+            <>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  className={compactBtn}
+                  disabled={disabled || codeLoginStart.isPending}
+                  aria-label={`授权码登录：${profile.name}`}
+                  onClick={() => codeLoginStart.mutate(profile.id)}
+                >
+                  {codeLoginStart.isPending && codeLoginStart.variables === profile.id ? '生成链接…' : '授权码登录'}
+                </button>
+                <button
+                  type="button"
+                  className={compactBtn}
+                  disabled={disabled || nonWindows}
+                  title={nonWindows ? '仅支持在 Windows 上直接唤起官方登录窗口，请使用「授权码登录」' : undefined}
+                  aria-label={`官方登录：${profile.name}`}
+                  onClick={() => action.mutate({ kind: 'login', profile })}
+                >
+                  官方登录
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {profile.id !== 'default' && (
+                  <button
+                    type="button"
+                    className={compactBtn}
+                    disabled={disabled}
+                    aria-label={`修改备注：${profile.name}`}
+                    onClick={() => {
+                      action.reset()
+                      setMessage('')
+                      setConfirmDeleteId(null)
+                      setEditing({ profile, name: profile.name })
+                    }}
+                  >
+                    修改备注
+                  </button>
+                )}
+                {canClearCredentials && (
+                  <button
+                    type="button"
+                    className={compactBtn}
+                    disabled={disabled}
+                    aria-label={`清除凭据：${profile.name}`}
+                    onClick={() => action.mutate({ kind: 'logout', profile })}
+                  >
+                    清除凭据
+                  </button>
+                )}
+                {showRightDivider && (
+                  confirmDeleteId === profile.id ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        className="ga-btn-danger h-7 shrink-0 rounded-md px-2 py-0 text-[11px]"
+                        disabled={disabled}
+                        aria-label={`确认删除：${profile.name}`}
+                        onClick={() => action.mutate({ kind: 'delete', profile })}
+                      >
+                        确认删除
+                      </button>
+                      <button
+                        type="button"
+                        className={compactBtn}
+                        disabled={disabled}
+                        onClick={() => setConfirmDeleteId(null)}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className={compactDangerBtn}
+                      disabled={disabled}
+                      aria-label={`删除账号：${profile.name}`}
+                      onClick={() => setConfirmDeleteId(profile.id)}
+                    >
+                      <Trash2 className="h-3 w-3" aria-hidden="true" />
+                      <span>删除</span>
+                    </button>
+                  )
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </li>
     )
   }
 
   const triggerLabel = selected ? `Agy 账号：${selected.name}` : 'Agy 账号'
   const customActive = Boolean(selected && selected.id !== 'default')
+
+  const daemonDotClass = daemon?.running
+    ? 'bg-status-success'
+    : daemon?.state === 'unavailable'
+      ? 'bg-status-danger'
+      : daemon?.busy
+        ? 'bg-accent animate-pulse'
+        : 'bg-ink-faint'
+  const daemonStateLabel = !daemon ? ''
+    : daemon.external ? '外部运行中'
+    : daemon.running ? 'ACP 就绪'
+    : daemon.busy ? '处理中'
+    : daemon.state === 'stopped' ? '已停止'
+    : '不可用'
 
   return <>
     <button
@@ -440,453 +665,475 @@ export function AntiAgyProfiles({
       )}
     </button>
     {open && createPortal(<ModalOverlay onClose={close} labelledBy="agy-accounts-title"
-      panelClassName="max-h-[90vh] w-full max-w-lg space-y-4 overflow-auto p-4 sm:p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 id="agy-accounts-title" className="text-base font-semibold">Agy CLI 账号</h2>
-          <p className="mt-1 text-sm text-ink-muted">「系统默认」沿用当前系统的 agy 登录。各账号各自隔离凭据与历史；切换全局默认不影响其他会话进行中的任务，也可在会话底部单独绑定账号。</p>
+      panelClassName="flex max-h-[86vh] w-[40rem] max-w-[94vw] flex-col overflow-hidden p-0">
+      <div className="shrink-0 border-b border-line/60 px-4 py-3 sm:px-5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id="agy-accounts-title" className="text-sm font-semibold text-ink">Agy CLI 账号</h2>
+            <p className="mt-0.5 truncate text-[11px] text-ink-muted">
+              账号隔离凭据与上下文，切换默认不影响运行中会话
+            </p>
+          </div>
+          <button type="button" className={compactBtn} onClick={close} disabled={action.isPending}>
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>关闭</span>
+          </button>
         </div>
-        <button type="button" className={secondary} onClick={close} disabled={action.isPending}><X className="h-3.5 w-3.5" aria-hidden="true" /><span>关闭</span></button>
-      </div>
-      {daemon && (
-        <div className="space-y-1.5 rounded-lg border border-line/70 bg-bg-soft px-3 py-2 text-xs">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0 space-y-0.5 text-ink-muted">
-              <div>
-                运行时状态：<strong className="font-semibold text-ink">
-                  {daemon.external ? '外部运行中' : daemon.running ? 'ACP 就绪' : daemon.busy ? '处理中' : daemon.state === 'stopped' ? '已停止' : '不可用'}
-                </strong>
-                {daemon.running && daemon.status.data?.version && (
-                  <span className="ml-1.5">v{daemon.status.data.version}</span>
-                )}
-              </div>
-              {daemon.running && (
-                <p className="text-[11px] text-ink-muted">ACP 长会话复用 · 隔离账号强制 File Storage</p>
-              )}
-              {daemon.state === 'unavailable' && daemon.status.data?.detail && (
-                <p className="text-[11px] text-status-danger">{daemon.status.data.detail}</p>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {!daemon.running && daemon.state === 'stopped' && (
-                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.start.mutate()}>启用 Agy</button>
-              )}
-              {(daemon.running || daemon.state === 'unavailable') && daemon.managed && (
-                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.restart.mutate(false)}>重置运行时</button>
-              )}
-              {daemon.running && daemon.managed && (
-                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.stop.mutate(false)}>停止运行时</button>
-              )}
-              <button type="button" className={secondary} onClick={() => setShowWorkers(v => !v)}>
-                {showWorkers ? '隐藏进程' : `活跃进程${workerItems.length > 0 ? ` (${workerItems.length})` : ''}`}
-              </button>
-              <button type="button" className={secondary} onClick={() => setShowLogs(v => !v)}>
-                {showLogs ? '隐藏日志' : 'ACP 日志'}
-              </button>
-            </div>
-          </div>
-          {daemon.forceConflict && daemon.managed && (
-            <div
-              data-anti-modal-force-bar
-              role="status"
-              className="flex flex-wrap items-center justify-between gap-2 rounded border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-[11px] text-status-danger"
-            >
-              <span>仍有活跃任务，常规{daemon.forceConflict === 'restart' ? '重置' : '停止'}已拦截；可强制中断所有活动任务。</span>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <button
-                  type="button"
-                  className="ga-btn-sm-danger"
-                  disabled={daemon.busy}
-                  onClick={() => (daemon.forceConflict === 'restart' ? daemon.restart.mutate(true) : daemon.stop.mutate(true))}
-                >
-                  {daemon.forceConflict === 'restart' ? '强制重置运行时' : '强制停止运行时'}
-                </button>
-                <button type="button" className={secondary} onClick={() => daemon.clearForceConflict()}>
-                  取消
-                </button>
-              </div>
-            </div>
-          )}
-          {showWorkers && (
-            <div data-anti-workers-panel className="space-y-1.5 border-t border-line/60 pt-2">
-              <div className="flex items-center justify-between text-[11px] text-ink-muted">
-                <span>活跃 ACP 会话进程池（{workerItems.length}）</span>
-                <button type="button" className="ga-btn-link" disabled={workers.isFetching} onClick={() => void workers.refetch()}>
-                  <RefreshIcon spinning={workers.isFetching} size={11} />
-                  <span>{workers.isFetching ? '刷新中…' : '刷新'}</span>
-                </button>
-              </div>
-              {workers.error ? (
-                <p className="text-[11px] text-status-danger">{workers.error.message}</p>
-              ) : workerItems.length > 0 ? (
-                <ul className="space-y-1">
-                  {workerItems.map(worker => {
-                    const forceReset = worker.busy || worker.exit_pending || worker.dirty
-                    const stateLabel = worker.state === 'running' ? '运行中'
-                      : worker.state === 'retiring' ? '退出中'
-                      : worker.state === 'idle' ? `空闲 ${formatIdleSeconds(worker.idle_seconds)}`
-                      : '已停止'
-                    const stateTone = worker.state === 'running' ? 'text-accent font-medium'
-                      : worker.state === 'retiring' ? 'text-status-warning font-medium'
-                      : 'text-ink-muted'
-                    const isResetting = resetWorker.isPending && resettingSid === worker.session_id
-                    return (
-                      <li key={`${worker.profile_id}:${worker.session_id}`} className="flex flex-wrap items-center justify-between gap-2 rounded bg-bg-card px-2 py-1.5">
-                        <div className="min-w-0 flex-1 space-y-0.5">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="truncate font-medium text-ink" title={worker.workspace}>
-                              {worker.session_title || worker.project || worker.session_id.slice(0, 8)}
-                            </span>
-                            {worker.project && worker.session_title && (
-                              <span className="rounded bg-bg-soft px-1 py-0.5 text-[10px] text-ink-muted">{worker.project}</span>
-                            )}
-                            <span className="rounded bg-bg-soft px-1 py-0.5 text-[10px] text-ink-muted">{worker.profile_name || worker.profile_id}</span>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-muted tabular-nums">
-                            <span>PID {worker.pid ?? '—'}</span>
-                            <span className={stateTone}>{stateLabel}</span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          className={forceReset ? 'ga-btn-sm-danger shrink-0' : secondary}
-                          disabled={resetWorker.isPending}
-                          onClick={() => resetWorker.mutate({ sid: worker.session_id, force: forceReset })}
-                        >
-                          {isResetting ? '处理中…' : (forceReset ? '强制重连' : '释放进程')}
-                        </button>
-                      </li>
-                    )
-                  })}
-                </ul>
-              ) : (
-                <p className="text-[11px] text-ink-muted">{workers.isPending ? '正在查询进程池…' : '当前没有常驻 Agy ACP 进程。'}</p>
-              )}
-            </div>
-          )}
-          {showLogs && (
-            <div className="border-t border-line/60 pt-2">
-              <div className="mb-1 flex items-center justify-between text-[11px] text-ink-muted">
-                <span className="truncate" title={logs.data?.log_path}>最近 Agy ACP 运行日志</span>
-                <button type="button" className="ga-btn-link" disabled={logs.isFetching} onClick={() => void logs.refetch()}>
-                  <RefreshIcon spinning={logs.isFetching} size={11} />
-                  <span>{logs.isFetching ? '刷新中…' : '刷新'}</span>
-                </button>
-              </div>
-              {logs.error ? (
-                <p className="text-[11px] text-status-danger">{logs.error.message}</p>
-              ) : logs.data?.lines.length ? (
-                <pre className="max-h-36 overflow-auto rounded bg-bg-card p-2 font-mono text-[11px] leading-4 text-ink whitespace-pre-wrap break-all">
-                  {logs.data.lines.join('\n')}
-                </pre>
-              ) : (
-                <p className="text-[11px] text-ink-muted">{logs.isPending ? '正在读取日志…' : '暂无 Agy ACP 运行日志。'}</p>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-      <div role="status" className="text-sm text-ink-muted empty:hidden">{action.isPending ? pendingLabel : message}</div>
-      {(action.error || daemonError || codeLoginStart.error || codeLoginSubmit.error || resetWorker.error) && (
-        <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft p-2 text-sm text-status-danger">
-          {(action.error ?? daemonError ?? codeLoginStart.error ?? codeLoginSubmit.error ?? resetWorker.error)!.message}
-        </p>
-      )}
-      {codeLogin && (
-        <div className="space-y-2 rounded-lg border border-accent/40 bg-bg-soft p-3 text-xs">
-          <div className="font-semibold text-ink">应用内 Google 授权码登录（T3 Code `--login`）</div>
-          {codeLogin.authorization_url ? (
-            <>
-              <p className="text-ink-muted">1. 打开下方链接完成 Google 登录；2. 复制页面显示的授权码或完整回调链接粘贴到下方提交：</p>
-              <a
-                href={codeLogin.authorization_url}
-                target="_blank"
-                rel="noreferrer"
-                className="block break-all rounded bg-bg-card px-2 py-1.5 font-mono text-[11px] text-accent underline"
-              >
-                {codeLogin.authorization_url}
-              </a>
-              <form
-                className="flex flex-wrap gap-2"
-                onSubmit={e => {
-                  e.preventDefault()
-                  if (authCode.trim() && !codeLoginSubmit.isPending) {
-                    codeLoginSubmit.mutate({ flowId: codeLogin.flow_id, code: authCode.trim() })
-                  }
-                }}
-              >
-                <input
-                  value={authCode}
-                  onChange={e => setAuthCode(e.target.value)}
-                  placeholder="粘贴授权码或回调链接…"
-                  aria-label="Google 授权码"
-                  className="min-w-0 flex-1 rounded-lg border border-line bg-bg-card px-2 py-1 text-xs"
-                />
-                <button type="submit" className="ga-btn-sm-primary" disabled={!authCode.trim() || codeLoginSubmit.isPending}>
-                  {codeLoginSubmit.isPending ? '提交中…' : '提交授权码'}
-                </button>
-                <button
-                  type="button"
-                  className={secondary}
-                  onClick={() => {
-                    void antiApi.codeLoginStatus(codeLogin.flow_id).then(next => {
-                      setCodeLogin(next)
-                      if (next.phase === 'completed') {
-                        setMessage('Google 授权码登录成功，凭据已保存。')
-                        setCodeLogin(null)
-                        setAuthCode('')
-                        void cache.invalidateQueries({ queryKey: key, exact: true })
-                        refresh()
-                      }
-                    }).catch(() => undefined)
-                  }}
-                >
-                  刷新状态
-                </button>
-                <button
-                  type="button"
-                  className={secondary}
-                  onClick={() => {
-                    cancelActiveCodeLogin(codeLogin)
-                    setCodeLogin(null)
-                    setAuthCode('')
-                  }}
-                >取消</button>
-              </form>
-            </>
-          ) : (
-            <p className="text-ink-muted">正在生成 Google 授权链接…{codeLogin.error ? `（${codeLogin.error}）` : ''}</p>
-          )}
-          {codeLogin.error && <p className="text-status-danger">{codeLogin.error}</p>}
-        </div>
-      )}
-      {profiles.isError && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-2 text-sm">
-        <p role="alert">{profiles.error.message}</p>
-        <button type="button" className={secondary} onClick={() => void profiles.refetch()} disabled={profiles.isFetching}>重试加载账号</button>
-      </div>}
-      {profiles.isPending && <p role="status" className="text-sm text-ink-muted">正在加载账号…</p>}
-      {profiles.data && <>
-        {selected && <section className="rounded-lg border border-line/70 p-3" aria-labelledby="agy-active-account">
-          <h3 id="agy-active-account" className="text-sm font-semibold">当前账号</h3>
-          <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0 flex-1">
-              <div className="break-all text-sm font-medium">{selected.name}</div>
-              {renderProfileMeta(selected)}
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {daemon?.running && (
-                <button type="button" className={secondary} disabled={disabled}
-                  onClick={() => action.mutate({ kind: 'check-usage' })}>刷新额度</button>
-              )}
-              {editButton(selected)}
-              {selected.id !== 'default' && (selected.has_credentials || selected.auth_state === 'authenticated') && (!daemon || daemon.state === 'stopped') && (
-                <button type="button" className={secondary} disabled={disabled}
-                  aria-label={`清除凭据：${selected.name}`}
-                  onClick={() => action.mutate({ kind: 'logout', profile: selected })}>清除凭据</button>
-              )}
-              <button type="button" className={secondary} disabled={disabled || codeLoginStart.isPending}
-                aria-label={`授权码登录：${selected.name}`} onClick={() => codeLoginStart.mutate(selected.id)}>
-                {codeLoginStart.isPending ? '生成链接…' : '授权码登录'}
-              </button>
-              <button type="button" className={secondary} disabled={disabled || nonWindows}
-                title={nonWindows ? '从 GA-Hub 直接唤起官方登录窗口仅支持 Windows，请使用右侧「授权码登录」' : undefined}
-                aria-label={`官方登录：${selected.name}`} onClick={() => action.mutate({ kind: 'login', profile: selected })}>官方登录</button>
-            </div>
-          </div>
-          {nonWindows && (
-            <p className="mt-2 text-[11px] text-ink-muted">当前非 Windows 系统：可在终端将隔离账号目录设为 `HOME` 后运行 `agy` 登录，或通过下方「从当前登录另存」导入凭据。</p>
-          )}
-          {selected.usage?.rows?.length ? (
-            <div className="mt-2 grid grid-cols-2 gap-1.5 border-t border-line/60 pt-2 text-xs sm:grid-cols-3">
-              {selected.usage.rows.map(row => (
-                <div key={`${row.model}-${row.limit}`} className="rounded-md bg-bg-soft px-2 py-1">
-                  <div className="truncate font-medium text-ink" title={row.model}>{row.model}</div>
-                  <div className={clsx('tabular-nums font-semibold', quotaTone(row.remaining_pct))}>{row.remaining_pct}%</div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </section>}
-        <section aria-labelledby="agy-other-accounts">
-          <h3 id="agy-other-accounts" className="mb-1 text-sm font-semibold">其他账号</h3>
-          {others.length === 0 ? <p className="text-sm text-ink-muted">暂无可切换账号，请先添加。</p> :
-            <ul className="divide-y divide-line/60 rounded-lg border border-line/70">
-              {others.map(profile => <li key={profile.id} className="flex flex-wrap items-center gap-2 p-2">
-                <div className="min-w-0 flex-1 px-1">
-                  <div className="break-all text-sm">{profile.name}</div>
-                  {renderProfileMeta(profile)}
-                </div>
-                {editButton(profile)}
-                {profile.id !== 'default' && (profile.has_credentials || profile.auth_state === 'authenticated') && (
-                  <button type="button" className={secondary} disabled={disabled}
-                    aria-label={`清除凭据：${profile.name}`}
-                    onClick={() => action.mutate({ kind: 'logout', profile })}>清除凭据</button>
-                )}
-                {profile.id !== 'default' && (
-                  confirmDeleteId === profile.id ? (
-                    <div className="flex items-center gap-1">
-                      <button type="button" className="ga-btn-danger shrink-0" disabled={disabled}
-                        aria-label={`确认删除：${profile.name}`} onClick={() => action.mutate({ kind: 'delete', profile })}>确认删除</button>
-                      <button type="button" className={secondary} disabled={disabled}
-                        onClick={() => setConfirmDeleteId(null)}>取消</button>
-                    </div>
-                  ) : (
-                    <button type="button" className="ga-btn-sm-danger shrink-0" disabled={disabled}
-                      aria-label={`删除账号：${profile.name}`} onClick={() => setConfirmDeleteId(profile.id)}>
-                      <Trash2 className="h-3 w-3" aria-hidden="true" />
-                      <span>删除</span>
-                    </button>
-                  )
-                )}
-                <button type="button" className={secondary} disabled={disabled || codeLoginStart.isPending}
-                  aria-label={`授权码登录：${profile.name}`}
-                  onClick={() => codeLoginStart.mutate(profile.id)}>授权码登录</button>
-                <button type="button" className={secondary} disabled={disabled || nonWindows}
-                  title={nonWindows ? '仅支持在 Windows 上直接唤起官方登录窗口，请使用「授权码登录」' : undefined}
-                  aria-label={`官方登录：${profile.name}`}
-                  onClick={() => action.mutate({ kind: 'login', profile })}>官方登录</button>
-                <button type="button" className="ga-btn-sm-primary shrink-0" disabled={disabled} aria-label={`切换到${profile.name}`}
-                  onClick={() => action.mutate({ kind: 'switch', profile })}>切换</button>
-              </li>)}
-            </ul>}
-        </section>
-        {editing && <form onSubmit={event => {
-          event.preventDefault()
-          const value = editing.name.trim()
-          if (!disabled && value && value !== editing.profile.name) action.mutate({ kind: 'rename', profile: editing.profile, name: value })
-        }} className="space-y-2 border-t border-line/70 pt-3">
-          <label htmlFor="agy-edit-name" className="text-sm font-semibold">修改「{editing.profile.name}」的备注</label>
-          <div className="flex flex-wrap gap-2">
-            <input id="agy-edit-name" value={editing.name} maxLength={64} disabled={disabled}
-              onChange={event => setEditing({ ...editing, name: event.target.value })}
-              className="min-w-0 flex-1 rounded-lg border border-line bg-transparent px-2 text-sm" />
-            <button type="submit" className={secondary} disabled={disabled || !editing.name.trim() || editing.name.trim() === editing.profile.name}>保存备注</button>
-            <button type="button" className={secondary} disabled={action.isPending} onClick={() => { action.reset(); setEditing(null) }}>取消</button>
-          </div>
-        </form>}
-        <form onSubmit={add} className="space-y-2 border-t border-line/70 pt-3">
-          <label htmlFor="agy-profile-name" className="text-sm font-semibold">添加账号</label>
-          <p id="agy-add-help" className="text-sm text-ink-muted">新建空白账号需通过官方 CLI 登录一次；也可直接把本机当前登录另存为独立账号。</p>
-          <div className="flex flex-wrap gap-2">
-            <input id="agy-profile-name" value={name} maxLength={64} onChange={event => setName(event.target.value)} disabled={disabled}
-              aria-label="账号备注" aria-describedby="agy-add-help" placeholder="例如：工作账号"
-              className="min-w-0 flex-1 rounded-lg border border-line bg-transparent px-2 text-sm" />
-            <button type="submit" className={secondary} disabled={disabled || !name.trim()}>添加账号</button>
-            <button type="button" className={secondary} disabled={disabled || !name.trim()}
-              onClick={() => { if (!disabled && profiles.data && name.trim()) action.mutate({ kind: 'capture', name: name.trim() }) }}>
-              从当前登录另存
-            </button>
-          </div>
-        </form>
-        <section
-          ref={orchSectionRef}
-          data-anti-models-orch-section
-          aria-labelledby="agy-models-orch-title"
-          className={clsx(
-            'space-y-3 rounded-lg border p-3 text-xs',
-            focusSection === 'orchestrator' ? 'border-accent/60 bg-accent-soft/15' : 'border-line/70 bg-bg-soft/45',
-          )}
+        <div
+          role="tablist"
+          aria-label="Agy 账号设置分区"
+          className="mt-2.5 inline-flex rounded-lg border border-line/70 bg-bg-card/80 p-0.5 text-xs"
         >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0">
-              <h3 id="agy-models-orch-title" className="flex items-center gap-1.5 text-sm font-semibold text-ink">
-                <Brain size={14} className="shrink-0 text-accent" aria-hidden="true" />
-                <span>模型目录与 Orchestrator 设置（{effectiveProfileName}）</span>
-              </h3>
-              <p className="mt-0.5 text-[11px] text-ink-muted">
-                {modelsQuery.data?.items
-                  ? `已加载 ${modelsQuery.data.items.length} 个模型${formatSyncTime(modelsQuery.data.synced_at) ? ` · 上次同步 ${formatSyncTime(modelsQuery.data.synced_at)}` : ''}`
-                  : '默认每天 00/06/12/18 点整点自动同步上游模型目录'}
-              </p>
-            </div>
-            <button
-              type="button"
-              className={secondary}
-              disabled={syncModels.isPending}
-              aria-label="同步上游模型"
-              onClick={() => syncModels.mutate()}
-            >
-              <RotateCw size={12} className={syncModels.isPending ? 'animate-spin motion-reduce:animate-none' : undefined} aria-hidden="true" />
-              <span>{syncModels.isPending ? '同步中…' : '同步上游模型'}</span>
-            </button>
-          </div>
-          {syncModels.error && (
-            <p className="text-[11px] text-status-danger">
-              {syncModels.error instanceof Error ? syncModels.error.message : '同步上游模型失败'}
-            </p>
-          )}
-          <div data-anti-orchestrator-section className="space-y-2 border-t border-line/60 pt-2.5">
-            <p className="text-[11px] leading-relaxed text-ink-muted">
-              Orchestrator 采用 Planner（规划审查）+ Executor（执行改码）协同（默认各自 High 档），保存到当前账号的{' '}
-              <code>settings.json</code>，下一次新会话立即生效。
-            </p>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <label className="block space-y-1">
-                <span className="block text-[11px] font-medium text-ink-muted">Planner（规划模型）</span>
-                <select
-                  aria-label="Orchestrator Planner 模型"
-                  value={orchPlannerDraft}
-                  disabled={orchestratorSettings.isPending || updateOrchestrator.isPending}
-                  onChange={e => setOrchPlannerDraft(e.target.value)}
-                  className="w-full rounded-lg border border-line bg-bg-card px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
-                >
-                  <option value="">默认（跟随上游 / High）</option>
-                  {orchPlannerDraft && !orchestratorRoleChoices.some(c => c.id === orchPlannerDraft) && (
-                    <option value={orchPlannerDraft}>{orchPlannerDraft}（当前配置）</option>
-                  )}
-                  {orchestratorRoleChoices.map(choice => (
-                    <option key={choice.id} value={choice.id}>{choice.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="block space-y-1">
-                <span className="block text-[11px] font-medium text-ink-muted">Executor（执行模型）</span>
-                <select
-                  aria-label="Orchestrator Executor 模型"
-                  value={orchExecutorDraft}
-                  disabled={orchestratorSettings.isPending || updateOrchestrator.isPending}
-                  onChange={e => setOrchExecutorDraft(e.target.value)}
-                  className="w-full rounded-lg border border-line bg-bg-card px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
-                >
-                  <option value="">默认（跟随上游 / High）</option>
-                  {orchExecutorDraft && !orchestratorRoleChoices.some(c => c.id === orchExecutorDraft) && (
-                    <option value={orchExecutorDraft}>{orchExecutorDraft}（当前配置）</option>
-                  )}
-                  {orchestratorRoleChoices.map(choice => (
-                    <option key={choice.id} value={choice.id}>{choice.label}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {updateOrchestrator.error && (
-              <p className="text-[11px] text-status-danger">
-                {updateOrchestrator.error instanceof Error ? updateOrchestrator.error.message : '保存 Orchestrator 设置失败'}
-              </p>
+          <button
+            type="button"
+            role="tab"
+            id="agy-tab-accounts"
+            aria-selected={activeTab === 'accounts'}
+            aria-controls="agy-panel-accounts"
+            onClick={() => setActiveTab('accounts')}
+            className={clsx(
+              'inline-flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-colors',
+              activeTab === 'accounts'
+                ? 'bg-bg-soft text-ink shadow-sm ring-1 ring-line/60'
+                : 'text-ink-muted hover:text-ink',
             )}
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                className={secondary}
-                disabled={updateOrchestrator.isPending}
-                onClick={() => updateOrchestrator.mutate({ planner: null, executor: null })}
-              >
-                恢复默认
-              </button>
-              <button
-                type="button"
-                className="ga-btn-sm-primary shrink-0"
-                disabled={updateOrchestrator.isPending}
-                onClick={() => updateOrchestrator.mutate({
-                  planner: orchPlannerDraft || null,
-                  executor: orchExecutorDraft || null,
-                })}
-              >
-                {updateOrchestrator.isPending ? '保存中…' : '保存设置'}
-              </button>
-            </div>
+          >
+            <span>账号管理</span>
+            {profileCount > 0 && (
+              <span className="rounded bg-line/40 px-1 py-0.5 text-[10px] leading-none tabular-nums text-ink-muted">
+                {profileCount}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="agy-tab-models"
+            aria-selected={activeTab === 'models'}
+            aria-controls="agy-panel-models"
+            onClick={() => setActiveTab('models')}
+            className={clsx(
+              'inline-flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-colors',
+              activeTab === 'models'
+                ? 'bg-bg-soft text-ink shadow-sm ring-1 ring-line/60'
+                : 'text-ink-muted hover:text-ink',
+            )}
+          >
+            <Brain size={12} className="shrink-0 text-accent" aria-hidden="true" />
+            <span>模型与 Orchestrator</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 sm:px-5">
+        <div role="status" className="rounded-md bg-bg-card/80 px-2.5 py-1.5 text-xs text-ink-muted empty:hidden">
+          {action.isPending ? pendingLabel : message}
+        </div>
+        {(action.error || daemonError || codeLoginStart.error || codeLoginSubmit.error || resetWorker.error) && (
+          <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-xs text-status-danger">
+            {(action.error ?? daemonError ?? codeLoginStart.error ?? codeLoginSubmit.error ?? resetWorker.error)!.message}
+          </p>
+        )}
+
+        {activeTab === 'accounts' ? (
+          <div role="tabpanel" id="agy-panel-accounts" aria-labelledby="agy-tab-accounts" className="space-y-3">
+            {daemon && (
+              <div className="rounded-lg border border-line/70 bg-bg-card px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className={clsx('h-2 w-2 shrink-0 rounded-full', daemonDotClass)} aria-hidden="true" />
+                    <span className="font-semibold text-ink">{daemonStateLabel}</span>
+                    {daemon.running && daemon.status.data?.version && (
+                      <span className="font-mono text-[11px] text-ink-muted">v{daemon.status.data.version}</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      className={clsx(compactBtn, showWorkers && 'border-accent/60 bg-accent-soft/45 text-ink')}
+                      onClick={() => {
+                        setShowWorkers(v => !v)
+                        setShowLogs(false)
+                      }}
+                    >
+                      {showWorkers ? '隐藏进程' : `活跃进程${workerItems.length > 0 ? ` (${workerItems.length})` : ''}`}
+                    </button>
+                    <button
+                      type="button"
+                      className={clsx(compactBtn, showLogs && 'border-accent/60 bg-accent-soft/45 text-ink')}
+                      onClick={() => {
+                        setShowLogs(v => !v)
+                        setShowWorkers(false)
+                      }}
+                    >
+                      {showLogs ? '隐藏日志' : 'ACP 日志'}
+                    </button>
+                    {hasDaemonLifecycleBtns && <span aria-hidden="true" className="mx-0.5 h-3.5 w-px bg-line/70" />}
+                    {!daemon.running && daemon.state === 'stopped' && (
+                      <button type="button" className={compactBtn} disabled={daemon.busy} onClick={() => daemon.start.mutate()}>启用 Agy</button>
+                    )}
+                    {(daemon.running || daemon.state === 'unavailable') && daemon.managed && (
+                      <button type="button" className={compactBtn} disabled={daemon.busy} onClick={() => daemon.restart.mutate(false)}>重置运行时</button>
+                    )}
+                    {daemon.running && daemon.managed && (
+                      <button type="button" className={compactBtn} disabled={daemon.busy} onClick={() => daemon.stop.mutate(false)}>停止运行时</button>
+                    )}
+                  </div>
+                </div>
+                {daemon.state === 'unavailable' && daemon.status.data?.detail && (
+                  <p className="mt-1 text-[11px] text-status-danger">{daemon.status.data.detail}</p>
+                )}
+                {daemon.forceConflict && daemon.managed && (
+                  <div
+                    data-anti-modal-force-bar
+                    role="status"
+                    className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-[11px] text-status-danger"
+                  >
+                    <span>仍有活跃任务，常规{daemon.forceConflict === 'restart' ? '重置' : '停止'}已拦截；可强制中断。</span>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <button
+                        type="button"
+                        className={compactDangerBtn}
+                        disabled={daemon.busy}
+                        onClick={() => (daemon.forceConflict === 'restart' ? daemon.restart.mutate(true) : daemon.stop.mutate(true))}
+                      >
+                        {daemon.forceConflict === 'restart' ? '强制重置运行时' : '强制停止运行时'}
+                      </button>
+                      <button type="button" className={compactBtn} onClick={() => daemon.clearForceConflict()}>
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {showWorkers && (
+                  <div data-anti-workers-panel className="mt-2 space-y-1.5 border-t border-line/60 pt-2">
+                    <div className="flex items-center justify-between text-[11px] text-ink-muted">
+                      <span>活跃会话进程（{workerItems.length}）</span>
+                      <button type="button" className="ga-btn-link" disabled={workers.isFetching} onClick={() => void workers.refetch()}>
+                        <RefreshIcon spinning={workers.isFetching} size={11} />
+                        <span>{workers.isFetching ? '刷新中…' : '刷新'}</span>
+                      </button>
+                    </div>
+                    {workers.error ? (
+                      <p className="text-[11px] text-status-danger">{workers.error.message}</p>
+                    ) : workerItems.length > 0 ? (
+                      <ul className="space-y-1">
+                        {workerItems.map(worker => {
+                          const forceReset = worker.busy || worker.exit_pending || worker.dirty
+                          const stateLabel = worker.state === 'running' ? '运行中'
+                            : worker.state === 'retiring' ? '退出中'
+                            : worker.state === 'idle' ? `空闲 ${formatIdleSeconds(worker.idle_seconds)}`
+                            : '已停止'
+                          const stateTone = worker.state === 'running' ? 'text-accent font-medium'
+                            : worker.state === 'retiring' ? 'text-status-warning font-medium'
+                            : 'text-ink-muted'
+                          const isResetting = resetWorker.isPending && resettingSid === worker.session_id
+                          return (
+                            <li key={`${worker.profile_id}:${worker.session_id}`} className="flex items-center justify-between gap-2 rounded bg-bg-soft px-2.5 py-1.5">
+                              <div className="min-w-0 flex-1 space-y-0.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="truncate font-medium text-ink" title={worker.workspace}>
+                                    {worker.session_title || worker.project || worker.session_id.slice(0, 8)}
+                                  </span>
+                                  {worker.project && worker.session_title && (
+                                    <span className="shrink-0 rounded bg-bg-card px-1 py-0.5 text-[10px] text-ink-muted">{worker.project}</span>
+                                  )}
+                                  <span className="shrink-0 rounded bg-bg-card px-1 py-0.5 text-[10px] text-ink-muted">{worker.profile_name || worker.profile_id}</span>
+                                </div>
+                                <div className="flex items-center gap-2 text-[11px] text-ink-muted tabular-nums">
+                                  <span>PID {worker.pid ?? '—'}</span>
+                                  <span className={stateTone}>{stateLabel}</span>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className={forceReset ? compactDangerBtn : compactBtn}
+                                disabled={resetWorker.isPending}
+                                onClick={() => resetWorker.mutate({ sid: worker.session_id, force: forceReset })}
+                              >
+                                {isResetting ? '处理中…' : (forceReset ? '强制重连' : '释放进程')}
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    ) : (
+                      <p className="text-[11px] text-ink-muted">{workers.isPending ? '正在查询进程池…' : '当前没有常驻 Agy ACP 进程。'}</p>
+                    )}
+                  </div>
+                )}
+                {showLogs && (
+                  <div className="mt-2 border-t border-line/60 pt-2">
+                    <div className="mb-1 flex items-center justify-between text-[11px] text-ink-muted">
+                      <span className="truncate" title={logs.data?.log_path}>最近 Agy ACP 运行日志</span>
+                      <button type="button" className="ga-btn-link" disabled={logs.isFetching} onClick={() => void logs.refetch()}>
+                        <RefreshIcon spinning={logs.isFetching} size={11} />
+                        <span>{logs.isFetching ? '刷新中…' : '刷新'}</span>
+                      </button>
+                    </div>
+                    {logs.error ? (
+                      <p className="text-[11px] text-status-danger">{logs.error.message}</p>
+                    ) : logs.data?.lines?.length ? (
+                      <pre className="max-h-36 overflow-auto rounded bg-bg-soft p-2 font-mono text-[11px] leading-4 text-ink whitespace-pre-wrap break-all">
+                        {logs.data.lines.join('\n')}
+                      </pre>
+                    ) : (
+                      <p className="text-[11px] text-ink-muted">{logs.isPending ? '正在读取日志…' : '暂无 Agy ACP 运行日志。'}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {codeLogin && (
+              <div className="space-y-1.5 rounded-lg border border-accent/45 bg-bg-card p-3 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-ink">Google 授权码登录</span>
+                  <span className="text-[11px] text-ink-muted">打开链接登录后，将授权码或回调链接粘贴到下方：</span>
+                </div>
+                {codeLogin.authorization_url ? (
+                  <>
+                    <a
+                      href={codeLogin.authorization_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={codeLogin.authorization_url}
+                      className="block truncate rounded bg-bg-soft px-2 py-1 font-mono text-[11px] text-accent underline"
+                    >
+                      {codeLogin.authorization_url}
+                    </a>
+                    <form
+                      className="flex items-center gap-1.5"
+                      onSubmit={e => {
+                        e.preventDefault()
+                        if (authCode.trim() && !codeLoginSubmit.isPending) {
+                          codeLoginSubmit.mutate({ flowId: codeLogin.flow_id, code: authCode.trim() })
+                        }
+                      }}
+                    >
+                      <input
+                        value={authCode}
+                        onChange={e => setAuthCode(e.target.value)}
+                        placeholder="粘贴授权码或回调链接…"
+                        aria-label="Google 授权码"
+                        className="h-7 min-w-0 flex-1 rounded-md border border-line bg-bg-soft/60 px-2 text-xs text-ink outline-none focus:border-accent"
+                      />
+                      <button type="submit" className={compactPrimaryBtn} disabled={!authCode.trim() || codeLoginSubmit.isPending}>
+                        {codeLoginSubmit.isPending ? '提交中…' : '提交授权码'}
+                      </button>
+                      <button
+                        type="button"
+                        className={compactBtn}
+                        aria-label="刷新授权状态"
+                        onClick={() => {
+                          void antiApi.codeLoginStatus(codeLogin.flow_id).then(next => {
+                            setCodeLogin(next)
+                            if (next.phase === 'completed') {
+                              setMessage('Google 授权码登录成功，凭据已保存。')
+                              setCodeLogin(null)
+                              setAuthCode('')
+                              void cache.invalidateQueries({ queryKey: key, exact: true })
+                              refresh()
+                            }
+                          }).catch(() => undefined)
+                        }}
+                      >
+                        刷新
+                      </button>
+                      <button
+                        type="button"
+                        className={compactBtn}
+                        onClick={() => {
+                          cancelActiveCodeLogin(codeLogin)
+                          setCodeLogin(null)
+                          setAuthCode('')
+                        }}
+                      >
+                        取消
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <p className="text-[11px] text-ink-muted">正在生成 Google 授权链接…{codeLogin.error ? `（${codeLogin.error}）` : ''}</p>
+                )}
+                {codeLogin.error && <p className="text-[11px] text-status-danger">{codeLogin.error}</p>}
+              </div>
+            )}
+
+            {profiles.isError && (
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-line bg-bg-card px-3 py-2 text-xs">
+                <p role="alert" className="text-status-danger">{profiles.error.message}</p>
+                <button type="button" className={compactBtn} onClick={() => void profiles.refetch()} disabled={profiles.isFetching}>
+                  重试
+                </button>
+              </div>
+            )}
+            {profiles.isPending && <p role="status" className="text-xs text-ink-muted">正在加载账号…</p>}
+
+            {profiles.data && (
+              <>
+                {orderedProfiles.length > 0 ? (
+                  <ul className="space-y-2" aria-label="账号列表">
+                    {orderedProfiles.map(profile => renderAccountRow(profile, profile.id === selected?.id))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-ink-muted">暂无账号，请在下方添加。</p>
+                )}
+                {nonWindows && (
+                  <p className="text-[11px] text-ink-muted">
+                    非 Windows 系统请使用「授权码登录」或下方「从当前登录另存」。
+                  </p>
+                )}
+                <form onSubmit={add} className="rounded-lg border border-line/70 bg-bg-card px-3 py-2.5">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <label htmlFor="agy-profile-name" className="text-xs font-semibold text-ink">添加账号</label>
+                    <span id="agy-add-help" className="text-[11px] text-ink-muted">空白新建或复制本机当前登录</span>
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <input
+                      id="agy-profile-name"
+                      value={name}
+                      maxLength={64}
+                      onChange={event => setName(event.target.value)}
+                      disabled={disabled}
+                      aria-label="账号备注"
+                      aria-describedby="agy-add-help"
+                      placeholder="输入备注，如：工作账号"
+                      className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-bg-soft/50 px-2.5 text-xs text-ink outline-none focus:border-accent"
+                    />
+                    <button
+                      type="submit"
+                      className="ga-btn-sm h-8 shrink-0 px-2.5 py-0 text-xs"
+                      disabled={disabled || !name.trim()}
+                    >
+                      添加
+                    </button>
+                    <button
+                      type="button"
+                      className="ga-btn-sm h-8 shrink-0 px-2.5 py-0 text-xs"
+                      disabled={disabled || !name.trim()}
+                      onClick={() => {
+                        if (!disabled && profiles.data && name.trim()) {
+                          action.mutate({ kind: 'capture', name: name.trim() })
+                        }
+                      }}
+                    >
+                      从当前登录另存
+                    </button>
+                  </div>
+                </form>
+              </>
+            )}
           </div>
-        </section>
-      </>}
+        ) : (
+          <div role="tabpanel" id="agy-panel-models" aria-labelledby="agy-tab-models">
+            <section
+              data-anti-models-orch-section
+              aria-labelledby="agy-models-orch-title"
+              className="space-y-3 rounded-lg border border-line/70 bg-bg-card p-3 text-xs"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 id="agy-models-orch-title" className="truncate text-sm font-semibold text-ink">
+                    模型目录（{effectiveProfileName}）
+                  </h3>
+                  <p className="mt-0.5 text-[11px] text-ink-muted">
+                    {modelsQuery.data?.items
+                      ? `共 ${modelsQuery.data.items.length} 个模型${formatSyncTime(modelsQuery.data.synced_at) ? ` · 同步于 ${formatSyncTime(modelsQuery.data.synced_at)}` : ''}`
+                      : '默认每日 00/06/12/18 点自动同步上游目录'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className={compactBtn}
+                  disabled={syncModels.isPending}
+                  aria-label="同步上游模型"
+                  onClick={() => syncModels.mutate()}
+                >
+                  <RotateCw size={12} className={syncModels.isPending ? 'animate-spin motion-reduce:animate-none' : undefined} aria-hidden="true" />
+                  <span>{syncModels.isPending ? '同步中…' : '同步上游模型'}</span>
+                </button>
+              </div>
+              {syncModels.error && (
+                <p className="text-[11px] text-status-danger">
+                  {syncModels.error instanceof Error ? syncModels.error.message : '同步上游模型失败'}
+                </p>
+              )}
+
+              <div data-anti-orchestrator-section className="space-y-2.5 border-t border-line/60 pt-2.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-xs font-semibold text-ink">Orchestrator 角色模型</span>
+                  <span className="text-[11px] text-ink-muted">写入账号 settings.json，新会话生效</span>
+                </div>
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  <label className="block space-y-1">
+                    <span className="block text-[11px] font-medium text-ink-muted">Planner（规划）</span>
+                    <select
+                      aria-label="Orchestrator Planner 模型"
+                      value={orchPlannerDraft}
+                      disabled={orchestratorSettings.isPending || updateOrchestrator.isPending}
+                      onChange={e => setOrchPlannerDraft(e.target.value)}
+                      className="h-8 w-full rounded-lg border border-line bg-bg-soft/50 px-2 text-xs text-ink outline-none focus:border-accent"
+                    >
+                      <option value="">默认（跟随上游 / High）</option>
+                      {orchPlannerDraft && !orchestratorRoleChoices.some(c => c.id === orchPlannerDraft) && (
+                        <option value={orchPlannerDraft}>{orchPlannerDraft}（当前配置）</option>
+                      )}
+                      {orchestratorRoleChoices.map(choice => (
+                        <option key={choice.id} value={choice.id}>{choice.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block space-y-1">
+                    <span className="block text-[11px] font-medium text-ink-muted">Executor（执行）</span>
+                    <select
+                      aria-label="Orchestrator Executor 模型"
+                      value={orchExecutorDraft}
+                      disabled={orchestratorSettings.isPending || updateOrchestrator.isPending}
+                      onChange={e => setOrchExecutorDraft(e.target.value)}
+                      className="h-8 w-full rounded-lg border border-line bg-bg-soft/50 px-2 text-xs text-ink outline-none focus:border-accent"
+                    >
+                      <option value="">默认（跟随上游 / High）</option>
+                      {orchExecutorDraft && !orchestratorRoleChoices.some(c => c.id === orchExecutorDraft) && (
+                        <option value={orchExecutorDraft}>{orchExecutorDraft}（当前配置）</option>
+                      )}
+                      {orchestratorRoleChoices.map(choice => (
+                        <option key={choice.id} value={choice.id}>{choice.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {updateOrchestrator.error && (
+                  <p className="text-[11px] text-status-danger">
+                    {updateOrchestrator.error instanceof Error ? updateOrchestrator.error.message : '保存 Orchestrator 设置失败'}
+                  </p>
+                )}
+                <div className="flex items-center justify-end gap-1.5">
+                  <button
+                    type="button"
+                    className={compactBtn}
+                    disabled={updateOrchestrator.isPending}
+                    onClick={() => updateOrchestrator.mutate({ planner: null, executor: null })}
+                  >
+                    恢复默认
+                  </button>
+                  <button
+                    type="button"
+                    className={compactPrimaryBtn}
+                    disabled={updateOrchestrator.isPending}
+                    onClick={() => updateOrchestrator.mutate({
+                      planner: orchPlannerDraft || null,
+                      executor: orchExecutorDraft || null,
+                    })}
+                  >
+                    {updateOrchestrator.isPending ? '保存中…' : '保存设置'}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+      </div>
     </ModalOverlay>, document.body)}
   </>
 }
