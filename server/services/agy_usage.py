@@ -335,7 +335,7 @@ def _refresh_cli_token_status(profile_id: str, timeout: float = CLI_REFRESH_TIME
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            **hidden_process_kwargs(detach_console=True),
+            **hidden_process_kwargs(),
         )
         group = child_job.create_process_group(proc)
         proc.wait(timeout=timeout)
@@ -912,11 +912,12 @@ class AgyLedger:
         total_in, fresh_in, cached, cache_write = normalize_ledger_input(
             input_tokens, cache_read_tokens, cache_write_tokens
         )
-        out_think = max(0, output_tokens) + max(0, thinking_tokens)
+        # Antigravity 1.5+ output_tokens already includes thinking_tokens (T3 Code reasoningTokens subset).
+        total_out = max(max(0, int(output_tokens or 0)), max(0, int(thinking_tokens or 0)))
         cost = round(
             ((fresh_in + cache_write) / 1_000_000) * cfg["input_rate"]
             + (cached / 1_000_000) * cfg["cached_rate"]
-            + (out_think / 1_000_000) * cfg["output_rate"],
+            + (total_out / 1_000_000) * cfg["output_rate"],
             6,
         )
         now = datetime.now(timezone.utc)
@@ -1010,7 +1011,7 @@ class AgyLedger:
             totals_5h = {
                 row["model_group"]: row["tok"] or 0
                 for row in db.execute(
-                    "SELECT model_group, SUM(input_tokens + output_tokens + thinking_tokens) AS tok "
+                    "SELECT model_group, SUM(input_tokens + MAX(output_tokens, thinking_tokens)) AS tok "
                     "FROM usage_ledger WHERE profile_id=? AND created_at>=? GROUP BY model_group",
                     (pid, cutoff_5h),
                 )
@@ -1018,7 +1019,7 @@ class AgyLedger:
             totals_7d = {
                 row["model_group"]: (row["tok"] or 0, float(row["cost"] or 0.0))
                 for row in db.execute(
-                    "SELECT model_group, SUM(input_tokens + output_tokens + thinking_tokens) AS tok, SUM(estimated_cost_usd) AS cost "
+                    "SELECT model_group, SUM(input_tokens + MAX(output_tokens, thinking_tokens)) AS tok, SUM(estimated_cost_usd) AS cost "
                     "FROM usage_ledger WHERE profile_id=? AND created_at>=? GROUP BY model_group",
                     (pid, cutoff_7d),
                 )
@@ -1143,7 +1144,6 @@ class AgyLedger:
         failed = sum(1 for r in rows if r["status"] not in ("success", "cancelled"))
         inp = 0
         out = 0
-        think = 0
         cached = 0
         cost = 0.0
         for r in rows:
@@ -1153,8 +1153,7 @@ class AgyLedger:
                 int(r["cache_write_tokens"]),
             )
             inp += row_in
-            out += max(0, int(r["output_tokens"]))
-            think += max(0, int(r["thinking_tokens"]))
+            out += max(max(0, int(r["output_tokens"])), max(0, int(r["thinking_tokens"])))
             cached += row_cr
             cost += float(r["estimated_cost_usd"])
         ratio = min(1.0, round(cached / inp, 4)) if inp > 0 else 0.0
@@ -1164,7 +1163,7 @@ class AgyLedger:
             "success_runs": success,
             "failed_runs": failed,
             "rate_limited_runs": rate_limited,
-            "total_tokens": inp + out + think,
+            "total_tokens": inp + out,
             "cache_hit_ratio": ratio,
             "estimated_cost_usd": round(cost, 4),
         }

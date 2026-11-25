@@ -2005,6 +2005,9 @@ def test_usage_probe_refreshes_expired_cli_token_safely_without_pipe_hang(tmp_pa
         assert kwargs["stdin"] == subprocess.DEVNULL
         assert kwargs["stdout"] == subprocess.DEVNULL
         assert kwargs["stderr"] == subprocess.DEVNULL
+        if sys.platform == "win32":
+            assert kwargs["creationflags"] & subprocess.CREATE_NO_WINDOW
+            assert not (kwargs["creationflags"] & subprocess.DETACHED_PROCESS)
         tok_path.write_text(
             json.dumps({
                 "token": {
@@ -2154,8 +2157,37 @@ def test_ledger_exclusive_and_legacy_rows_keep_cache_ratio_bounded(tmp_path, mon
     assert 0.0 <= stats["cache_hit_ratio"] <= 1.0
     # Total input = (778033 + 4683759) + (1000 + 4000) = 5,466,792; cached = 4,687,759 -> ~0.8575
     assert abs(stats["cache_hit_ratio"] - (4_687_759 / 5_466_792)) < 0.001
+    # output_tokens already includes thinking_tokens (90,537 + 100), not 90,537 + 29,726 + 100
+    assert stats["total_tokens"] == 5_466_792 + 90_537 + 100
     # Cost of r-excl must include both non_cached (778,033) and cached (4,683,759) tokens (> $1.50)
     assert stats["estimated_cost_usd"] > 1.5
+
+    # Low-cache ACP turn without totalTokens (cachedReadTokens <= inputTokens) must still fold cached into input
+    low_cache_norm = agy_runtime.normalize_usage_payload({
+        "inputTokens": 100_000,
+        "cachedReadTokens": 40_000,
+        "outputTokens": 5_000,
+        "thoughtTokens": 1_000,
+    })
+    assert low_cache_norm == {
+        "input_tokens": 140_000,
+        "output_tokens": 5_000,
+        "cache_read_tokens": 40_000,
+        "thinking_tokens": 1_000,
+    }
+    ledger_low = agy_usage.AgyLedger(tmp_path / "ledger_low_cache.sqlite3")
+    ledger_low.record_run(
+        "r-low",
+        "gemini-4-hydrogen-high",
+        "success",
+        input_tokens=low_cache_norm["input_tokens"],
+        output_tokens=low_cache_norm["output_tokens"],
+        cache_read_tokens=low_cache_norm["cache_read_tokens"],
+        thinking_tokens=low_cache_norm["thinking_tokens"],
+    )
+    low_stats = ledger_low.stats(window_hours=0)
+    assert low_stats["total_tokens"] == 145_000
+    assert abs(low_stats["cache_hit_ratio"] - (40_000 / 140_000)) < 0.0005
 
 
 def test_runtime_prompt_usage_replaces_stale_usage_update_and_normalizes_steer(tmp_path, monkeypatch):
