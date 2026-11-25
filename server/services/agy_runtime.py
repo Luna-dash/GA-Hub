@@ -40,6 +40,7 @@ from .agy_protocol import (
     extract_permission_prompt,
     extract_usage_fields,
     handle_read_text_file,
+    normalize_usage_payload,
     parse_version,
     read_pre_edit_file,
     resolve_model_target,
@@ -74,8 +75,7 @@ _SYSTEM_PROMPT_APPEND = (
 
 
 def _merge_prompt_usage(acc: dict[str, int], payload: Any) -> None:
-    delta: dict[str, int] = {}
-    extract_usage_fields(payload, delta)
+    delta = normalize_usage_payload(payload)
     for key, val in delta.items():
         acc[key] = acc.get(key, 0) + val
 
@@ -1339,10 +1339,12 @@ class AgySessionWorker:
                     _merge_prompt_usage(prompt_usage, sb.get("result"))
                 if ev.is_set() and "result" in box:
                     _merge_prompt_usage(prompt_usage, box.get("result"))
-                for k, v in prompt_usage.items():
-                    turn.normalizer.usage[k] = v
+                if prompt_usage:
+                    turn.normalizer.usage = prompt_usage
             elif ev.is_set():
-                extract_usage_fields(box.get("result"), turn.normalizer.usage)
+                prompt_usage = normalize_usage_payload(box.get("result"))
+                if prompt_usage:
+                    turn.normalizer.usage = prompt_usage
 
             answer = turn.normalizer.final_answer
             progress_messages = list(turn.normalizer.progress_messages)

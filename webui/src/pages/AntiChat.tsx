@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import type { TransferredFile } from '@/components/FileTransferBox'
@@ -16,6 +16,7 @@ import { ImagePasteInput } from '@/components/ImagePasteInput'
 import { AntiDaemonControl, useAntiDaemonStatus } from '@/components/AntiDaemonControl'
 import { AntiAgyProfiles, useAgyProfiles } from '@/components/AntiAgyProfiles'
 import { AntiAccountUsageButton } from '@/components/AntiAccountUsageButton'
+import { AntiApprovalDock } from '@/components/AntiApprovalDock'
 import {
   AntiModelSelector,
   DEFAULT_EFFORT,
@@ -39,6 +40,7 @@ import { routeChatWheel } from '@/utils/chatWheel'
 import { createRafScheduler } from '@/utils/rafScheduler'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
+import { formatRunUsage } from '@/utils/antiUsage'
 import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { useDraftStore } from '@/stores/draftStore'
 import { toast } from '@/stores/toastStore'
@@ -200,19 +202,6 @@ function pickBestFallbackProfile(profilesData: AgyProfiles | undefined, currentP
   })
   const chosen = candidates[0]
   return { profile: chosen, pct: chosen.usage?.min_remaining_pct }
-}
-
-function formatRunUsage(usage?: Run['usage']): string | null {
-  if (!usage) return null
-  const totalIn = usage.input_tokens ?? 0
-  const totalOut = usage.output_tokens ?? 0
-  const cached = usage.cache_read_tokens ?? 0
-  const thinking = usage.thinking_tokens ?? 0
-  if (!totalIn && !totalOut && !thinking) return null
-  const parts = [`${totalIn.toLocaleString('en-US')} in`, `${totalOut.toLocaleString('en-US')} out`]
-  if (thinking > 0) parts.push(`${thinking.toLocaleString('en-US')} think`)
-  if (totalIn > 0 && cached > 0) parts.push(`缓存 ${Math.round((cached / totalIn) * 100)}%`)
-  return parts.join(' · ')
 }
 
 function Errors({ items }: { items: (Error | null)[] }) {
@@ -932,11 +921,31 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
     scrollToLatest()
   }, [scrollToLatest])
   useEffect(scrollToLatest, [history.isSuccess, runs.length, scrollToLatest])
-  const activeApprovalId = (current ? (live.data?.approval?.id ?? current.approval?.id) : undefined) ?? null
+  const activeApproval: AntiApprovalPrompt | null = current
+    ? (live.data?.approval ?? current.approval ?? null)
+    : null
+  const activeApprovalId = activeApproval?.id ?? null
+  const [approvalCollapsed, setApprovalCollapsed] = useState(false)
+  const approvalDockRef = useRef<HTMLElement>(null)
   useEffect(() => {
-    if (activeApprovalId && followTranscript.current && transcript.current) {
-      transcript.current.scrollTop = transcript.current.scrollHeight
-    }
+    setApprovalCollapsed(false)
+  }, [activeApprovalId])
+  useLayoutEffect(() => {
+    const el = transcript.current
+    if (!el || !activeApprovalId || !followTranscript.current) return
+    el.scrollTop = el.scrollHeight
+  }, [activeApprovalId, approvalCollapsed])
+  useEffect(() => {
+    const dock = approvalDockRef.current
+    const el = transcript.current
+    if (!dock || !el || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      if (followTranscript.current && transcript.current === el) {
+        el.scrollTop = el.scrollHeight
+      }
+    })
+    observer.observe(dock)
+    return () => observer.disconnect()
   }, [activeApprovalId])
   const silentSeconds = current && !activeApprovalId ? Math.max(0, Math.floor((clock - lastActivityAt) / 1000)) : 0
   const isSilentStuck = silentSeconds >= SILENT_STUCK_SECONDS
@@ -1189,12 +1198,11 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
             const runModelLabel = rawRunModel
               ? (models.data?.items.find(item => item.id === rawRunModel)?.display_name ?? rawRunModel)
               : null
-            const usageText = formatRunUsage(displayRun.usage)
-            const footerParts = [
+            const usageInfo = formatRunUsage(displayRun.usage)
+            const metaParts = [
               [assistantTimeLabel, durationText].filter(Boolean).join(' · '),
               runModelLabel,
               policyLabel,
-              usageText,
             ].filter(Boolean)
             return <article className="space-y-2" key={run.id} data-anti-turn={runIndex}>
               <div className="flex justify-start">
@@ -1311,67 +1319,28 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
                         </AntiTaskProgress>
                       </div>
                       {isRunActive && approval && (
-                        <section aria-label="交互审批" className="mt-2 space-y-2 rounded-lg border border-accent/40 bg-bg-soft p-3 text-xs">
-                          <div className="flex items-start gap-2">
-                            <ShieldAlert size={15} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
-                            <div className="min-w-0 flex-1 space-y-1">
-                              <div className="font-semibold text-ink">{approval.title}</div>
-                              {approval.details && <div className="break-all font-mono text-[11px] text-ink-muted">{approval.details}</div>}
-                              {approval.diff && (
-                                <pre className="max-h-40 overflow-auto rounded bg-bg-card p-2 font-mono text-[11px] text-ink whitespace-pre-wrap break-all">
-                                  {approval.diff}
-                                </pre>
-                              )}
-                              {approval.security_warning && (
-                                <p className="text-[11px] text-status-warning">{approval.security_warning}</p>
-                              )}
-                            </div>
-                          </div>
-                          {approval.prompt_type === 'question' && approval.question?.options?.length ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {approval.question.options.map(opt => (
-                                <button
-                                  key={opt.id}
-                                  type="button"
-                                  className="ga-btn-sm-primary"
-                                  disabled={approve.isPending}
-                                  onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'allow', option_id: opt.id })}
-                                >
-                                  {opt.label}
-                                </button>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="flex flex-wrap gap-1.5">
-                              <button
-                                type="button"
-                                className="ga-btn-sm-primary"
-                                disabled={approve.isPending}
-                                onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'allow' })}
-                              >
-                                允许一次
-                              </button>
-                              {approval.allow_always && (
-                                <button
-                                  type="button"
-                                  className="ga-btn-sm"
-                                  disabled={approve.isPending}
-                                  onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'allow_always' })}
-                                >
-                                  本会话始终允许
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                className="ga-btn-sm-danger"
-                                disabled={approve.isPending}
-                                onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'reject' })}
-                              >
-                                拒绝
-                              </button>
-                            </div>
-                          )}
-                        </section>
+                        <div
+                          data-anti-approval-inline-hint
+                          className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-accent/35 bg-bg-soft/75 px-3 py-2 text-xs text-ink-muted"
+                        >
+                          <span className="inline-flex min-w-0 items-center gap-1.5">
+                            <ShieldAlert size={14} className="shrink-0 text-accent" aria-hidden="true" />
+                            <span className="truncate">
+                              {approval.prompt_type === 'question' ? '等待你的选择：' : '等待审批确认：'}
+                              <span className="font-medium text-ink">{approval.title}</span>
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            className="ga-btn-link shrink-0 text-[11px] font-medium text-accent"
+                            onClick={() => {
+                              setApprovalCollapsed(false)
+                              requestAnimationFrame(() => approvalDockRef.current?.focus())
+                            }}
+                          >
+                            查看下方操作栏
+                          </button>
+                        </div>
                       )}
                       {displayRun.status === 'cancelled' && (
                         <p className="mt-2 flex items-center gap-1.5 text-xs italic leading-5 text-status-warning-muted">
@@ -1381,9 +1350,15 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
                       )}
                     </div>
                   </FileLinkContext.Provider>
-                  {footerParts.length > 0 && (
+                  {(metaParts.length > 0 || usageInfo) && (
                     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-0.5 text-[10px] leading-4 tabular-nums text-ink-faint">
-                      <span>{footerParts.join(' · ')}</span>
+                      {metaParts.length > 0 && <span>{metaParts.join(' · ')}</span>}
+                      {metaParts.length > 0 && usageInfo && <span aria-hidden="true">·</span>}
+                      {usageInfo && (
+                        <span data-anti-run-usage title={usageInfo.title} className="cursor-help">
+                          {usageInfo.text}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1428,6 +1403,22 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
       </div>
     </div>
     </ConversationCollapseProvider>
+    {current && activeApproval && (
+      <AntiApprovalDock
+        dockRef={approvalDockRef}
+        approval={activeApproval}
+        pending={approve.isPending}
+        collapsed={approvalCollapsed}
+        onToggleCollapsed={() => setApprovalCollapsed(prev => !prev)}
+        onDecide={(decision, optionId) =>
+          approve.mutate({
+            rid: current.id,
+            approval_id: activeApproval.id,
+            decision,
+            ...(optionId ? { option_id: optionId } : {}),
+          })}
+      />
+    )}
     <div ref={composerWrapRef}>
       <ChatComposerFrame>
         {((profilesData?.profiles.length ?? 0) > 1 || Boolean(session.profile_id) || effectiveProfileId !== 'default' || grants.length > 0) && (
@@ -1507,9 +1498,11 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
           onAttachments={setAttachments}
           inputLabel="发给 Agy"
           placeholder={current
-            ? (canNativeSteer
-              ? '任务运行中，可直接发送插话纠偏，或加入排队等待本轮结束…'
-              : '任务运行中，输入内容后可加入排队，本轮结束后自动发送…')
+            ? (activeApprovalId
+              ? '当前任务正在等待上方审批确认；可提前输入下一条消息加入排队…'
+              : canNativeSteer
+                ? '任务运行中，可直接发送插话纠偏，或加入排队等待本轮结束…'
+                : '任务运行中，输入内容后可加入排队，本轮结束后自动发送…')
             : '发给 Agy，输入 / 查看原生命令，可粘贴/拖放图片或文件…'}
           readOnly={Boolean(pending)}
           maxLength={24000}

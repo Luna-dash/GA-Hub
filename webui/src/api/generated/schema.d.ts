@@ -3599,6 +3599,11 @@ export interface components {
              */
             cache_read_tokens: number;
             /**
+             * Cache Write Tokens
+             * @default 0
+             */
+            cache_write_tokens: number;
+            /**
              * Thinking Tokens
              * @default 0
              */

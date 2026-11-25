@@ -435,7 +435,16 @@ class AntiSessions:
         raw_usage = item.get("usage_json")
         if raw_usage:
             try:
-                item["usage"] = json.loads(raw_usage)
+                parsed_usage = json.loads(raw_usage)
+                if isinstance(parsed_usage, dict):
+                    raw_in = max(0, int(parsed_usage.get("input_tokens") or 0))
+                    cr = max(0, int(parsed_usage.get("cache_read_tokens") or 0))
+                    cw = max(0, int(parsed_usage.get("cache_write_tokens") or 0))
+                    if (cr + cw) > raw_in:
+                        parsed_usage["input_tokens"] = raw_in + cr + cw
+                    item["usage"] = parsed_usage
+                else:
+                    item["usage"] = None
             except ValueError:
                 item["usage"] = None
         raw_progress = item.get("progress_messages_json")
@@ -628,6 +637,7 @@ class AntiSessions:
             input_tokens=int(usage.get("input_tokens") or 0),
             output_tokens=int(usage.get("output_tokens") or 0),
             cache_read_tokens=int(usage.get("cache_read_tokens") or 0),
+            cache_write_tokens=int(usage.get("cache_write_tokens") or 0),
             thinking_tokens=int(usage.get("thinking_tokens") or 0),
             cooldown_seconds=cooldown,
         )

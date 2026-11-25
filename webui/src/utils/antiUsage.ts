@@ -1,0 +1,65 @@
+import type { AntiRunUsage } from '@/api/client'
+
+export interface FormattedRunUsage {
+  text: string
+  title: string
+}
+
+function trimDecimal(value: number, digits: number): string {
+  return value.toFixed(digits).replace(/\.?0+$/, '')
+}
+
+export function formatCompactTokens(rawValue: number): string {
+  if (!Number.isFinite(rawValue) || rawValue <= 0) return '0'
+  const value = Math.round(rawValue)
+  if (value < 1_000) return String(value)
+  if (value < 999_500) {
+    if (value >= 100_000) return `${Math.round(value / 1_000)}k`
+    return `${trimDecimal(value / 1_000, 1)}k`
+  }
+  if (value < 999_500_000) {
+    if (value >= 100_000_000) return `${Math.round(value / 1_000_000)}M`
+    if (value >= 10_000_000) return `${trimDecimal(value / 1_000_000, 1)}M`
+    return `${trimDecimal(value / 1_000_000, 2)}M`
+  }
+  return `${trimDecimal(value / 1_000_000_000, value >= 10_000_000_000 ? 1 : 2)}B`
+}
+
+export function formatRunUsage(usage?: AntiRunUsage | null): FormattedRunUsage | null {
+  if (!usage) return null
+  const rawIn = Math.max(0, Math.round(usage.input_tokens ?? 0))
+  const totalOut = Math.max(0, Math.round(usage.output_tokens ?? 0))
+  const cached = Math.max(0, Math.round(usage.cache_read_tokens ?? 0))
+  const cacheWrite = Math.max(0, Math.round(usage.cache_write_tokens ?? 0))
+  const thinking = Math.max(0, Math.round(usage.thinking_tokens ?? 0))
+  if (!rawIn && !totalOut && !thinking && !cached && !cacheWrite) return null
+
+  const totalIn = (cached + cacheWrite) > rawIn ? rawIn + cached + cacheWrite : rawIn
+  const freshIn = Math.max(0, totalIn - cached - cacheWrite)
+  const hitPct = totalIn > 0 && cached > 0 ? Math.min(100, Math.round((cached / totalIn) * 100)) : 0
+
+  const parts = [
+    `${formatCompactTokens(totalIn)} in`,
+    `${formatCompactTokens(totalOut)} out`,
+  ]
+  if (thinking > 0) parts.push(`${formatCompactTokens(thinking)} think`)
+  if (totalIn > 0 && cached > 0) parts.push(`缓存 ${hitPct}%`)
+
+  const inBreakdown = [
+    `新输入 ${freshIn.toLocaleString('en-US')}`,
+    cached > 0 ? `缓存命中 ${cached.toLocaleString('en-US')}` : null,
+    cacheWrite > 0 ? `缓存写入 ${cacheWrite.toLocaleString('en-US')}` : null,
+  ].filter(Boolean).join(' + ')
+
+  const titleParts = [
+    `总输入 ${totalIn.toLocaleString('en-US')}${cached > 0 || cacheWrite > 0 ? `（${inBreakdown}）` : ''}`,
+    `输出 ${totalOut.toLocaleString('en-US')}`,
+    thinking > 0 ? `思考 ${thinking.toLocaleString('en-US')}` : null,
+    totalIn > 0 && cached > 0 ? `缓存命中率 ${((cached / totalIn) * 100).toFixed(1)}%` : null,
+  ].filter(Boolean)
+
+  return {
+    text: parts.join(' · '),
+    title: titleParts.join(' · '),
+  }
+}

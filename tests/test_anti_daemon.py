@@ -2076,4 +2076,130 @@ def test_usage_probe_acp_token_memory_cache_and_logout_invalidation(tmp_path, mo
     assert oauth_calls == 2
 
 
+def test_ledger_exclusive_and_legacy_rows_keep_cache_ratio_bounded(tmp_path, monkeypatch):
+    import sqlite3
+
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
+    db = tmp_path / "ledger_cache.sqlite3"
+    ledger = agy_usage.AgyLedger(db)
+
+    # Record a run with exclusive-like input (cached > input)
+    ledger.record_run(
+        "r-excl",
+        "gemini-pro-orchestrator-neon",
+        "success",
+        input_tokens=778_033,
+        output_tokens=90_537,
+        cache_read_tokens=4_683_759,
+        thinking_tokens=29_726,
+    )
+    # Also inject a legacy pre-fix SQLite row where input_tokens < cache_read_tokens
+    with sqlite3.connect(db) as conn, conn:
+        conn.execute(
+            "INSERT INTO usage_ledger (run_id, profile_id, model, model_group, status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, estimated_cost_usd, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("r-legacy", "default", "claude-4-sonnet", "claude-3p", "success", 1000, 100, 4000, 0, 0, 0.02, "2099-01-01T00:00:00+00:00"),
+        )
+
+    stats = ledger.stats(window_hours=0)
+    assert 0.0 <= stats["cache_hit_ratio"] <= 1.0
+    # Total input = (778033 + 4683759) + (1000 + 4000) = 5,466,792; cached = 4,687,759 -> ~0.8575
+    assert abs(stats["cache_hit_ratio"] - (4_687_759 / 5_466_792)) < 0.001
+    # Cost of r-excl must include both non_cached (778,033) and cached (4,683,759) tokens (> $1.50)
+    assert stats["estimated_cost_usd"] > 1.5
+
+
+def test_runtime_prompt_usage_replaces_stale_usage_update_and_normalizes_steer(tmp_path, monkeypatch):
+    import threading
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.14")
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=60)
+    db = str(tmp_path / "sessions.db")
+    worker = mgr.get_worker(db, "default", "s-usage", tmp_path)
+    worker.acp_session_id = "acp-usage"
+    worker.init_result = {"agentInfo": {"version": "1.5.14"}}
+    worker.setup_result = {"sessionId": "acp-usage"}
+    worker.proc = SimpleNamespace(pid=7103, stdin=None, stdout=None, poll=lambda: None)
+    monkeypatch.setattr(worker, "ensure_started", lambda **kw: "acp-usage")
+
+    prompt_ids: list[int] = []
+    prompt1_seen = threading.Event()
+    prompt2_seen = threading.Event()
+
+    def fake_send_frame(frame):
+        method = frame.get("method")
+        rid = frame.get("id")
+        if method == "session/prompt":
+            prompt_ids.append(rid)
+            if len(prompt_ids) == 1:
+                prompt1_seen.set()
+            elif len(prompt_ids) == 2:
+                prompt2_seen.set()
+        elif rid is not None and method is not None:
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(rid, None)
+            if entry is not None:
+                entry[1]["result"] = {}
+                entry[0].set()
+
+    monkeypatch.setattr(worker, "_send_frame", fake_send_frame)
+
+    events: list[dict] = []
+    box: dict = {}
+    mgr.register_turn(db, "r-usage", worker)
+    t = threading.Thread(
+        target=lambda: box.setdefault("result", worker.run_turn(
+            run_id="r-usage", prompt_text="first", model="gemini-4-hydrogen-high",
+            effort="high", mode="plan", permission_mode="approval-required",
+            resume_conversation=None, add_dirs=(), staged_paths=[], attachments=[],
+            allowed_roots=[tmp_path], on_event=events.append,
+        )),
+        daemon=True,
+    )
+    t.start()
+    try:
+        assert prompt1_seen.wait(2.0)
+        # Mid-turn usage_update carries stale cache_read_tokens that must NOT leak into final PromptResponse.usage
+        worker._handle_session_update({
+            "update": {"sessionUpdate": "usage_update", "inputTokens": 999, "cachedReadTokens": 888, "outputTokens": 5}
+        })
+        assert mgr.steer_turn(db, "r-usage", prompt_text="second", staged_paths=[], attachments=[], allowed_roots=[tmp_path])["steered"]
+        assert prompt2_seen.wait(2.0)
+
+        with worker._rpc_lock:
+            e1 = worker._pending_rpcs.pop(prompt_ids[0], None)
+        assert e1 is not None
+        e1[1]["result"] = {
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 100, "cachedReadTokens": 400, "outputTokens": 20},
+        }
+        e1[0].set()
+        if len(e1) > 2 and e1[2] is not None:
+            e1[2].set()
+
+        with worker._rpc_lock:
+            e2 = worker._pending_rpcs.pop(prompt_ids[1], None)
+        assert e2 is not None
+        e2[1]["result"] = {
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 200, "outputTokens": 30},
+        }
+        e2[0].set()
+        if len(e2) > 2 and e2[2] is not None:
+            e2[2].set()
+
+        t.join(timeout=2.0)
+        assert not t.is_alive()
+    finally:
+        mgr.unregister_turn(db, "r-usage")
+
+    res = box["result"]
+    # Prompt 1 normalized to 500 input / 400 cached / 20 out; Prompt 2 = 200 input / 30 out; stale 999/888 replaced!
+    assert res["usage"] == {"input_tokens": 700, "output_tokens": 50, "cache_read_tokens": 400}
+    mgr.shutdown()
+
+
 

@@ -535,6 +535,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     expect(document.body.textContent).toContain('5h 窗口 64%')
     expect(document.body.textContent).toContain('7d 窗口 28%')
     expect(document.body.textContent).toContain('24h 5 次')
+    expect(document.body.textContent).toContain('12k tok · 缓存 40%')
     const resetBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '重置熔断') as HTMLButtonElement
     await act(async () => { resetBtn.click() })
     await flush()
@@ -868,14 +869,33 @@ it('supports Edit mode switching, permission policy selection, and interactive A
     await flush()
 
     expect(runs[0]).toMatchObject({ mode: 'accept-edits', permission_mode: 'auto-accept-edits' })
-    expect(host.textContent).toContain('Run shell command')
-    expect(host.textContent).toContain('Will run commands automatically in this session')
+    const scrollArea = host.querySelector('[data-anti-chat-scroll]')!
+    const dock = host.querySelector('[data-anti-approval-dock]')!
+    expect(dock).not.toBeNull()
+    expect(scrollArea.contains(dock)).toBe(false)
+    expect(scrollArea.querySelector('[data-anti-approval-inline-hint]')?.textContent).toContain('Run shell command')
+    expect(dock.textContent).toContain('Run shell command')
+    expect(dock.textContent).toContain('Will run commands automatically in this session')
+    expect(host.querySelector('textarea')?.placeholder).toContain('等待上方审批确认')
 
-    const allowAlwaysBtn = [...host.querySelectorAll('button')].find(b => b.textContent === '本会话始终允许') as HTMLButtonElement
+    const toggleDetailBtn = dock.querySelector<HTMLButtonElement>('button[aria-label="收起审批详情"]')!
+    await act(async () => { toggleDetailBtn.click() })
+    await flush()
+    expect(dock.textContent).not.toContain('Will run commands automatically in this session')
+    expect(dock.querySelector('button[aria-label="展开审批详情"]')).not.toBeNull()
+
+    const jumpDockBtn = [...scrollArea.querySelectorAll<HTMLButtonElement>('[data-anti-approval-inline-hint] button')]
+      .find(b => b.textContent === '查看下方操作栏')!
+    await act(async () => { jumpDockBtn.click() })
+    await flush()
+    expect(dock.textContent).toContain('Will run commands automatically in this session')
+
+    const allowAlwaysBtn = [...dock.querySelectorAll('button')].find(b => b.textContent === '本会话始终允许') as HTMLButtonElement
     await act(async () => { allowAlwaysBtn.click() })
     await flush()
 
     expect(approvalCalls).toEqual([{ approval_id: approvalId, decision: 'allow_always' }])
+    expect(host.querySelector('[data-anti-approval-dock]')).toBeNull()
     expect(host.textContent).toContain('测试已全部通过')
   } finally {
     await act(async () => root.unmount())
@@ -1112,8 +1132,10 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     const sendBtn = host.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!
     await act(async () => { sendBtn.click() })
     await flush()
-    expect(host.textContent).toContain('请选择目标分支')
-    const devChoice = [...host.querySelectorAll('button')].find(b => b.textContent === 'dev 分支') as HTMLButtonElement
+    const qDock = host.querySelector('[data-anti-approval-dock]')!
+    expect(host.querySelector('[data-anti-chat-scroll]')!.contains(qDock)).toBe(false)
+    expect(qDock.textContent).toContain('请选择目标分支')
+    const devChoice = [...qDock.querySelectorAll('button')].find(b => b.textContent === 'dev 分支') as HTMLButtonElement
     await act(async () => { devChoice.click() })
     await flush()
     expect(approvalCalls).toEqual([{ approval_id: qApprovalId, decision: 'allow', option_id: 'dev' }])
@@ -2110,6 +2132,68 @@ it('supports Orchestrator quick icon button, profile-consolidated model sync and
           && JSON.stringify(c.body) === JSON.stringify({ planner: 'gemini-4-neon-xhigh', executor: 'gemini-4-hydrogen-high' }),
       )).toBe(true)
     })
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('displays compact k/M usage units with exact breakdown tooltip and repairs legacy >100% cache ratio', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const session = { id: 's-compact-usage', title: 'Compact usage', project: 'demo', workspace: 'D:/demo' }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
+    if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-pro-orchestrator-neon', display_name: 'Orchestrator (Neon)', is_orchestrator: true }] })
+    if (path === '/api/anti/commands') return reply({ items: [] })
+    if (path === '/api/anti/workers') return reply({ items: [] })
+    if (path === '/api/anti/sessions') return reply([session])
+    if (path === `/api/anti/sessions/${session.id}/runs`) {
+      return reply([{
+        id: 'r-high-cache',
+        operation: 'op-high-cache',
+        prompt: 'Analyze repo',
+        status: 'success',
+        answer: 'Done',
+        model: 'gemini-pro-orchestrator-neon',
+        mode: 'accept-edits',
+        permission_mode: 'full-access',
+        usage: {
+          input_tokens: 778_033,
+          output_tokens: 90_537,
+          cache_read_tokens: 4_683_759,
+          cache_write_tokens: 0,
+          thinking_tokens: 29_726,
+        },
+      }])
+    }
+    if (path.endsWith('/events')) return reply([])
+    if (path.startsWith('/api/file-transfer')) return reply([])
+    return reply({})
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-run-usage]')?.textContent).toContain('5.46M in')
+    })
+
+    const usageEl = host.querySelector<HTMLElement>('[data-anti-run-usage]')!
+    expect(usageEl.textContent).toBe('5.46M in · 90.5k out · 29.7k think · 缓存 86%')
+    expect(usageEl.getAttribute('title')).toBe(
+      '总输入 5,461,792（新输入 778,033 + 缓存命中 4,683,759） · 输出 90,537 · 思考 29,726 · 缓存命中率 85.8%',
+    )
   } finally {
     await act(async () => root.unmount())
     cache.clear()

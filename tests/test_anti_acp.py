@@ -166,6 +166,74 @@ def test_extract_usage_fields_handles_nested_prompt_results_and_updates():
     assert meta_usage == {"input_tokens": 50, "output_tokens": 12, "thinking_tokens": 7}
 
 
+def test_normalize_usage_payload_unifies_exclusive_inclusive_and_atomic_updates():
+    # Exclusive with totalTokens even when cachedReadTokens < inputTokens
+    excl_with_total = proto.normalize_usage_payload({
+        "inputTokens": 500,
+        "cachedReadTokens": 200,
+        "outputTokens": 50,
+        "totalTokens": 750,
+    })
+    assert excl_with_total == {"input_tokens": 700, "output_tokens": 50, "cache_read_tokens": 200}
+
+    # Exclusive without totalTokens when cachedReadTokens > inputTokens (602% bug repro)
+    excl_high_cache = proto.normalize_usage_payload({
+        "inputTokens": 778_033,
+        "outputTokens": 90_537,
+        "thoughtTokens": 29_726,
+        "cachedReadTokens": 4_683_759,
+    })
+    assert excl_high_cache == {
+        "input_tokens": 5_461_792,
+        "output_tokens": 90_537,
+        "cache_read_tokens": 4_683_759,
+        "thinking_tokens": 29_726,
+    }
+
+    # Anthropic explicit exclusive cache keys
+    anthropic = proto.normalize_usage_payload({
+        "input_tokens": 500,
+        "cache_read_input_tokens": 200,
+        "cache_creation_input_tokens": 100,
+        "output_tokens": 50,
+    })
+    assert anthropic == {
+        "input_tokens": 800,
+        "output_tokens": 50,
+        "cache_read_tokens": 200,
+        "cache_write_tokens": 100,
+    }
+
+    # Inclusive with totalTokens (Gemini / standard ACP inclusive)
+    incl_with_total = proto.normalize_usage_payload({
+        "inputTokens": 500,
+        "cachedReadTokens": 200,
+        "outputTokens": 50,
+        "totalTokens": 550,
+    })
+    assert incl_with_total == {"input_tokens": 500, "output_tokens": 50, "cache_read_tokens": 200}
+
+    # Gemini promptTokenCount / cachedContentTokenCount (inclusive)
+    gemini = proto.normalize_usage_payload({
+        "promptTokenCount": 1000,
+        "cachedContentTokenCount": 700,
+        "candidatesTokenCount": 120,
+        "thoughtsTokenCount": 30,
+    })
+    assert gemini == {
+        "input_tokens": 1000,
+        "output_tokens": 120,
+        "cache_read_tokens": 700,
+        "thinking_tokens": 30,
+    }
+
+    # SessionUpdateNormalizer replaces usage atomically on each non-empty usage_update
+    norm = proto.SessionUpdateNormalizer()
+    norm.normalize({"sessionUpdate": "usage_update", "inputTokens": 100, "cachedReadTokens": 60, "outputTokens": 10})
+    norm.normalize({"sessionUpdate": "usage_update", "inputTokens": 200, "outputTokens": 25})
+    assert norm.usage == {"input_tokens": 200, "output_tokens": 25}
+
+
 def test_session_update_normalizer_splits_progress_messages_and_final_answer():
     norm = proto.SessionUpdateNormalizer()
     e1 = norm.normalize({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "阶段一：先看代码"}})

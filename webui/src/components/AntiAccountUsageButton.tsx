@@ -11,6 +11,7 @@ import {
   type AntiAccountUsage,
   type AntiQuotaPool,
 } from '@/api/client'
+import { formatCompactTokens } from '@/utils/antiUsage'
 
 async function checkUsage(profileId?: string): Promise<AntiAccountUsage> {
   try {
@@ -364,8 +365,8 @@ export function AntiAccountUsageButton({
                 {stats.data && (
                   <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-t border-line/50 pt-1.5 text-[11px] tabular-nums text-ink-muted">
                     <span>24h {stats.data.total_runs} 次（成功 {stats.data.success_runs}）</span>
-                    <span>
-                      {stats.data.total_tokens.toLocaleString('en-US')} tok · 缓存 {(stats.data.cache_hit_ratio * 100).toFixed(0)}%
+                    <span title={`${stats.data.total_tokens.toLocaleString('en-US')} tokens`}>
+                      {formatCompactTokens(stats.data.total_tokens)} tok · 缓存 {Math.min(100, Math.round(stats.data.cache_hit_ratio * 100))}%
                       {stats.data.estimated_cost_usd > 0 ? ` · ~$${stats.data.estimated_cost_usd.toFixed(2)}` : ''}
                     </span>
                   </div>

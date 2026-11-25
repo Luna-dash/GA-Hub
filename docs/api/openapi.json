@@ -9009,6 +9009,11 @@
             "title": "Cache Read Tokens",
             "default": 0
           },
+          "cache_write_tokens": {
+            "type": "integer",
+            "title": "Cache Write Tokens",
+            "default": 0
+          },
           "thinking_tokens": {
             "type": "integer",
             "title": "Thinking Tokens",

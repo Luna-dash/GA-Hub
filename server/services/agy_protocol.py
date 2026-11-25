@@ -680,10 +680,67 @@ class ReadRepair:
         return update
 
 
-def extract_usage_fields(payload: Any, target: dict[str, int]) -> None:
-    """Extract normalized token counts from ACP `usage_update` or `session/prompt` results."""
+_USAGE_FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("input_tokens", ("inputTokens", "input_tokens", "promptTokens", "prompt_tokens", "promptTokenCount")),
+    (
+        "output_tokens",
+        (
+            "outputTokens",
+            "output_tokens",
+            "completionTokens",
+            "completion_tokens",
+            "candidatesTokens",
+            "candidates_tokens",
+            "candidatesTokenCount",
+        ),
+    ),
+    (
+        "cache_read_tokens",
+        (
+            "cachedReadTokens",
+            "cacheReadTokens",
+            "cache_read_tokens",
+            "cache_read_input_tokens",
+            "cachedContentTokenCount",
+        ),
+    ),
+    (
+        "cache_write_tokens",
+        (
+            "cachedWriteTokens",
+            "cacheWriteTokens",
+            "cache_write_tokens",
+            "cacheCreationTokens",
+            "cache_creation_tokens",
+            "cache_creation_input_tokens",
+        ),
+    ),
+    (
+        "thinking_tokens",
+        (
+            "thinkingTokens",
+            "thoughtTokens",
+            "thoughtsTokens",
+            "thinking_tokens",
+            "thoughts_tokens",
+            "thoughtsTokenCount",
+        ),
+    ),
+)
+_TOTAL_TOKEN_KEYS = ("totalTokens", "total_tokens", "totalTokenCount")
+_ANTHROPIC_EXCLUSIVE_CACHE_KEYS = frozenset({"cache_read_input_tokens", "cache_creation_input_tokens"})
+_GEMINI_INCLUSIVE_KEYS = frozenset({"promptTokenCount", "cachedContentTokenCount"})
+
+
+def normalize_usage_payload(payload: Any) -> dict[str, int]:
+    """Normalize ACP `usage_update` or `session/prompt` results to canonical inclusive totals.
+
+    Matches T3 Code's canonical token contract: `input_tokens` ALWAYS represents total
+    prompt input (fresh input + cache_read + cache_write), ensuring
+    `0 <= cache_read_tokens + cache_write_tokens <= input_tokens`.
+    """
     if not isinstance(payload, dict):
-        return
+        return {}
     candidates: list[dict[str, Any]] = [payload]
     for container_key in ("usage", "tokenUsage", "token_usage"):
         nested = payload.get(container_key)
@@ -695,33 +752,69 @@ def extract_usage_fields(payload: Any, target: dict[str, int]) -> None:
             nested = meta.get(container_key)
             if isinstance(nested, dict):
                 candidates.append(nested)
-    field_map = (
-        ("inputTokens", "input_tokens"),
-        ("input_tokens", "input_tokens"),
-        ("promptTokens", "input_tokens"),
-        ("prompt_tokens", "input_tokens"),
-        ("outputTokens", "output_tokens"),
-        ("output_tokens", "output_tokens"),
-        ("completionTokens", "output_tokens"),
-        ("completion_tokens", "output_tokens"),
-        ("candidatesTokens", "output_tokens"),
-        ("candidates_tokens", "output_tokens"),
-        ("cachedReadTokens", "cache_read_tokens"),
-        ("cacheReadTokens", "cache_read_tokens"),
-        ("cache_read_tokens", "cache_read_tokens"),
-        ("cache_read_input_tokens", "cache_read_tokens"),
-        ("cachedContentTokenCount", "cache_read_tokens"),
-        ("thinkingTokens", "thinking_tokens"),
-        ("thoughtTokens", "thinking_tokens"),
-        ("thoughtsTokens", "thinking_tokens"),
-        ("thinking_tokens", "thinking_tokens"),
-        ("thoughts_tokens", "thinking_tokens"),
-    )
+
+    raw: dict[str, int] = {}
+    raw_total: int | None = None
+    has_anthropic_exclusive = False
+    has_gemini_inclusive = False
+
     for source in candidates:
-        for src, dst in field_map:
+        for dst, src_keys in _USAGE_FIELD_GROUPS:
+            for src in src_keys:
+                val = source.get(src)
+                if isinstance(val, int) and not isinstance(val, bool) and val >= 0:
+                    raw[dst] = val
+                    if src in _ANTHROPIC_EXCLUSIVE_CACHE_KEYS:
+                        has_anthropic_exclusive = True
+                    if src in _GEMINI_INCLUSIVE_KEYS:
+                        has_gemini_inclusive = True
+        for src in _TOTAL_TOKEN_KEYS:
             val = source.get(src)
             if isinstance(val, int) and not isinstance(val, bool) and val >= 0:
-                target[dst] = val
+                raw_total = val
+
+    if not raw:
+        return {}
+
+    raw_in = raw.get("input_tokens", 0)
+    raw_out = raw.get("output_tokens", 0)
+    cr = raw.get("cache_read_tokens", 0)
+    cw = raw.get("cache_write_tokens", 0)
+    raw_th = raw.get("thinking_tokens", 0)
+    cache_total = cr + cw
+
+    out = dict(raw)
+    if cache_total > 0:
+        if cache_total > raw_in:
+            is_exclusive = True
+        elif raw_total is not None and raw_total > 0:
+            excl_err = min(
+                abs(raw_in + cache_total + raw_out + raw_th - raw_total),
+                abs(raw_in + cache_total + raw_out - raw_total),
+            )
+            incl_err = min(
+                abs(raw_in + raw_out + raw_th - raw_total),
+                abs(raw_in + raw_out - raw_total),
+            )
+            is_exclusive = excl_err < incl_err
+        elif has_anthropic_exclusive and not has_gemini_inclusive:
+            is_exclusive = True
+        else:
+            is_exclusive = False
+
+        if is_exclusive:
+            out["input_tokens"] = raw_in + cache_total
+
+    if "cache_write_tokens" in out and out["cache_write_tokens"] == 0:
+        out.pop("cache_write_tokens")
+    return out
+
+
+def extract_usage_fields(payload: Any, target: dict[str, int]) -> None:
+    """Extract normalized token counts from ACP `usage_update` or `session/prompt` results."""
+    normalized = normalize_usage_payload(payload)
+    if normalized:
+        target.update(normalized)
 
 
 class SessionUpdateNormalizer:
@@ -1247,7 +1340,9 @@ class SessionUpdateNormalizer:
             return events
 
         if kind == "usage_update":
-            extract_usage_fields(update, self.usage)
+            parsed_usage = normalize_usage_payload(update)
+            if parsed_usage:
+                self.usage = parsed_usage
             if self.prompt_settled:
                 self.reply_open = False
             return events

@@ -215,7 +215,13 @@ def test_unified_acp_round_trip_mode_switch_and_resume(tmp_path, monkeypatch):
         assert done2["status"] == "success"
         assert done2["progress_messages"] == ["阶段一：检查文件", "阶段二：应用修改"]
         assert client.get(runs).json()[-1]["progress_messages"] == ["阶段一：检查文件", "阶段二：应用修改"]
-        assert done2["usage"] == {"input_tokens": 120, "output_tokens": 30, "cache_read_tokens": 60, "thinking_tokens": 0}
+        assert done2["usage"] == {
+            "input_tokens": 120,
+            "output_tokens": 30,
+            "cache_read_tokens": 60,
+            "cache_write_tokens": 0,
+            "thinking_tokens": 0,
+        }
         assert runtime.calls[-1]["mode"] == "accept-edits"
         assert runtime.calls[-1]["permission_mode"] == "auto-accept-edits"
         assert runtime.calls[-1]["conversation"] == "conv-default"
@@ -856,5 +862,37 @@ def test_models_config_sync_and_run_effective_model_persistence(tmp_path, monkey
         done = _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{run['id']}")
         assert done["effective_model"] == "gemini-4-hydrogen-high"
         assert "old-hybrid" in (done.get("fallback_notice") or "")
+
+
+def test_decode_run_repairs_legacy_exclusive_usage_json(tmp_path):
+    import json
+    import sqlite3
+
+    db = tmp_path / "legacy_usage.sqlite"
+    sessions = engine.AntiSessions(db)
+    with sessions.connect() as db_conn, db_conn:
+        db_conn.execute(
+            "INSERT INTO sessions (id, project, workspace, title, updated_at) VALUES (?,?,?,?,?)",
+            ("s-leg", "p", str(tmp_path), "Legacy", "2026-11-25T00:00:00Z"),
+        )
+        db_conn.execute(
+            "INSERT INTO runs (id, session_id, operation, prompt, status, usage_json) VALUES (?,?,?,?,?,?)",
+            (
+                "r-leg",
+                "s-leg",
+                "op-leg",
+                "hi",
+                "success",
+                json.dumps({
+                    "input_tokens": 778_033,
+                    "output_tokens": 90_537,
+                    "cache_read_tokens": 4_683_759,
+                    "thinking_tokens": 29_726,
+                }),
+            ),
+        )
+    row, = sessions.history("s-leg")
+    assert row["usage"]["input_tokens"] == 5_461_792
+    assert row["usage"]["cache_read_tokens"] == 4_683_759
 
 
