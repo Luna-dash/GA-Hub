@@ -59,7 +59,7 @@ from typing import Any, Optional
 
 from .. import _paths
 from ..constants import ENV_GAHUB_KEEP_CHILDREN_ON_EXIT
-from ..process_utils import pid_alive
+from ..process_utils import hidden_process_kwargs, pid_alive
 
 log = logging.getLogger(__name__)
 
@@ -143,6 +143,8 @@ class _WindowsJobApi:
         kernel32.AssignProcessToJobObject.restype = ctypes.c_int
         kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
         kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.TerminateJobObject.argtypes = (ctypes.c_void_p, ctypes.c_uint32)
+        kernel32.TerminateJobObject.restype = ctypes.c_int
         kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
         kernel32.CloseHandle.restype = ctypes.c_int
         self.kernel32 = kernel32
@@ -198,6 +200,16 @@ class _WindowsJobApi:
             return ok, (0 if ok else self.ctypes.get_last_error())
         finally:
             self.kernel32.CloseHandle(handle)
+
+    def terminate_job(self, job: Any, exit_code: int = 1) -> bool:
+        """Atomically terminate every process belonging to ``job``."""
+        if not job:
+            return False
+        return bool(self.kernel32.TerminateJobObject(job, int(exit_code)))
+
+    def close_job(self, job: Any) -> None:
+        if job:
+            self.kernel32.CloseHandle(job)
 
 
 _job_api_cache: Any = _UNSET
@@ -664,6 +676,104 @@ def reap_all(timeout: float = _REAP_ALL_TIMEOUT) -> list[int]:
 def sweep_registry() -> list[int]:
     """See :meth:`ChildJob.sweep_registry`."""
     return ChildJob.instance().sweep_registry()
+
+
+class ProcessGroupHandle:
+    """Isolated per-worker process-tree cage (nested Windows Job Object + fallback reap)."""
+
+    def __init__(self, api: Any = None, job: Any = None) -> None:
+        self._lock = threading.Lock()
+        self._api = api
+        self._job = job
+
+    def close(self) -> None:
+        with self._lock:
+            api, job = self._api, self._job
+            self._api = None
+            self._job = None
+        if job is not None and api is not None:
+            try:
+                api.close_job(job)
+            except Exception:
+                log.debug("Failed to close process-group job handle", exc_info=True)
+
+    def terminate(self, pid: Any, timeout: float = _SWEEP_TERMINATE_TIMEOUT) -> bool:
+        with self._lock:
+            api, job = self._api, self._job
+            self._api = None
+            self._job = None
+        terminated_by_job = False
+        if job is not None and api is not None:
+            try:
+                terminated_by_job = bool(api.terminate_job(job, 1))
+            except Exception:
+                log.debug("TerminateJobObject failed for pid=%r", pid, exc_info=True)
+            finally:
+                try:
+                    api.close_job(job)
+                except Exception:
+                    log.debug("CloseHandle failed for job of pid=%r", pid, exc_info=True)
+        valid_pid = isinstance(pid, int) and pid > 0
+        if terminated_by_job and valid_pid and pid_alive(pid):
+            brief_deadline = time.monotonic() + min(0.25, max(0.0, timeout))
+            while pid_alive(pid) and time.monotonic() < brief_deadline:
+                time.sleep(0.01)
+        if terminated_by_job and (not valid_pid or not pid_alive(pid)):
+            return True
+        if not valid_pid:
+            return terminated_by_job
+        if _terminate_tree(pid, timeout):
+            return True
+        if os.name == "nt" and pid_alive(pid):
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=3.0,
+                    check=False,
+                    **hidden_process_kwargs(),
+                )
+            except Exception:
+                log.debug("taskkill fallback failed for pid=%s", pid, exc_info=True)
+        return not pid_alive(pid)
+
+
+def create_process_group(proc: Any) -> ProcessGroupHandle:
+    """Create an isolated nested Job Object on Windows for ``proc`` and its subtree."""
+    api = _windows_job_api()
+    if api is None or proc is None:
+        return ProcessGroupHandle()
+    pid = getattr(proc, "pid", None)
+    valid_pid = isinstance(pid, int) and pid > 0
+    job = api.create_kill_on_close()
+    if job is None:
+        return ProcessGroupHandle()
+    try:
+        assigned, error = api.assign(job, proc)
+        if not assigned and valid_pid:
+            assigned, error = api.assign_pid(job, pid)
+        if not assigned:
+            if error != _ERROR_ACCESS_DENIED:
+                log.debug("per-worker job assign failed pid=%r err=%s", pid, error)
+            api.close_job(job)
+            return ProcessGroupHandle()
+        if valid_pid:
+            try:
+                import psutil
+
+                for descendant in psutil.Process(pid).children(recursive=True):
+                    api.assign_pid(job, descendant.pid)
+            except Exception:
+                pass
+        return ProcessGroupHandle(api, job)
+    except Exception:
+        log.debug("per-worker process group setup failed pid=%r", pid, exc_info=True)
+        try:
+            api.close_job(job)
+        except Exception:
+            pass
+        return ProcessGroupHandle()
 
 
 def registry_path() -> Path:

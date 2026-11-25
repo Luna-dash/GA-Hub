@@ -564,3 +564,57 @@ def test_platform_probe_never_returns_an_api_off_windows(monkeypatch):
     monkeypatch.setattr(child_job.os, "name", "posix")
     monkeypatch.setattr(child_job, "_job_api_cache", child_job._UNSET)
     assert child_job._windows_job_api() is None
+
+
+def test_create_process_group_terminates_via_nested_job_and_closes_cleanly(monkeypatch):
+    api = _FakeJobApi(job=0xBEEF)
+    terminated_jobs: list[tuple[object, int]] = []
+    closed_jobs: list[object] = []
+    api.terminate_job = lambda job, exit_code=1: terminated_jobs.append((job, exit_code)) or True
+    api.close_job = lambda job: closed_jobs.append(job)
+    _install_api(monkeypatch, api)
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil({4242: [4300]}))
+    alive = {4242}
+    monkeypatch.setattr(child_job, "pid_alive", lambda pid: pid in alive)
+
+    proc = _FakeProc(pid=4242)
+    group = child_job.create_process_group(proc)
+    assert api.created == 1
+    assert api.assigned == [(0xBEEF, 4242)]
+    assert api.assigned_pids == [(0xBEEF, 4300)]
+
+    def fake_terminate_job(job, exit_code=1):
+        terminated_jobs.append((job, exit_code))
+        alive.clear()
+        return True
+
+    api.terminate_job = fake_terminate_job
+    assert group.terminate(proc.pid, timeout=0.1) is True
+    assert terminated_jobs == [(0xBEEF, 1)]
+    assert closed_jobs == [0xBEEF]
+    # Idempotent second close/terminate does not double-close the job handle.
+    group.close()
+    assert len(closed_jobs) == 1
+
+
+def test_process_group_kills_real_subprocess_when_job_falls_back(monkeypatch):
+    import subprocess
+    import time
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        handle = child_job.create_process_group(proc)
+        assert handle.terminate(proc.pid, timeout=2.0) is True
+        deadline = time.monotonic() + 2.0
+        while proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert proc.poll() is not None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
