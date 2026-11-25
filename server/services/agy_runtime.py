@@ -273,6 +273,7 @@ class AgySessionWorker:
         workspace: Path,
         executable: str,
         version: str | None,
+        grants: RuntimeGrants | None = None,
         on_models: Callable[[list[dict[str, str]]], None] | None = None,
         on_commands: Callable[[list[dict[str, Any]]], None] | None = None,
         on_retire: Callable[["AgySessionWorker"], None] | None = None,
@@ -296,17 +297,20 @@ class AgySessionWorker:
         self.proc: subprocess.Popen | None = None
         self._process_group: child_job.ProcessGroupHandle | None = None
         self.temp_dir: Path | None = None
+        self._lock_id: str = profile_id
         self._profile_lock_held = False
         self.acp_session_id: str | None = None
         self.init_result: dict[str, Any] = {}
         self.setup_result: dict[str, Any] = {}
-        self.grants = RuntimeGrants()
+        self.grants = grants if grants is not None else RuntimeGrants()
         self.active_turn: _ActiveTurn | None = None
         self.add_dirs: tuple[str, ...] = ()
         self.last_used = time.monotonic()
         self._closed = False
         self._retired = False
         self._dirty = False
+        self.resumed_fallback = False
+        self._resume_fallback_reason: str | None = None
         self._abort_event = threading.Event()
         self._exit_pending: threading.Event | None = None
         self._reader_thread: threading.Thread | None = None
@@ -607,11 +611,14 @@ class AgySessionWorker:
                 if self.exit_pending():
                     raise AgyProfileError(409, "Agy 正在关闭旧会话，请稍后重试")
 
-            agy_profile.claim_profile_lock(self.profile_id)
+            self.resumed_fallback = False
+            self._resume_fallback_reason = None
+            agy_profile.claim_workspace_lock()
+            self._lock_id = agy_profile.WORKSPACE_LOCK_ID
             self._profile_lock_held = True
             try:
-                agy_profile.prepare_profile(self.profile_id)
-                self.temp_dir = agy_profile.make_runtime_temp_dir(self.profile_id)
+                agy_profile.prepare_workspace(self.profile_id)
+                self.temp_dir = agy_profile.make_runtime_temp_dir(agy_profile.WORKSPACE_LOCK_ID)
                 self.add_dirs = tuple(dict.fromkeys(add_dirs))
                 cmd = agy_profile.acp_spawn_command(
                     self.executable,
@@ -710,6 +717,8 @@ class AgySessionWorker:
                     except AgyProfileError as exc:
                         if exc.status == 499 or self._abort_event.is_set():
                             raise
+                        self.resumed_fallback = True
+                        self._resume_fallback_reason = str(exc)
                         _append_log(f"session/resume fallback to session/new ({resume_conversation}): {exc}")
                         started = None
 
@@ -1063,6 +1072,7 @@ class AgySessionWorker:
         allowed_roots: list[Path],
         on_event: Callable[[dict[str, Any]], None],
         allow_auto_fallback: bool | None = None,
+        fallback_handoff_context: str | None = None,
     ) -> dict[str, Any]:
         """Execute a complete conversational/editing turn inside the persistent ACP session."""
         if self._abort_event.is_set() or self._closed:
@@ -1077,6 +1087,7 @@ class AgySessionWorker:
                 "fallback_notice": None,
                 "usage": {},
             }
+        pre_tok_fp = agy_usage.workspace_token_fingerprint()
         try:
             acp_sid = self.ensure_started(resume_conversation=resume_conversation, add_dirs=add_dirs)
         except AgyProfileError as exc:
@@ -1093,6 +1104,11 @@ class AgySessionWorker:
                     "usage": {},
                 }
             raise
+        resumed_fb = self.resumed_fallback
+        fb_reason = self._resume_fallback_reason
+        self.resumed_fallback = False
+        self._resume_fallback_reason = None
+
         turn = _ActiveTurn(
             run_id=run_id,
             mode=mode,
@@ -1117,6 +1133,22 @@ class AgySessionWorker:
                     "fallback_notice": None,
                     "usage": {},
                 }
+
+            effective_prompt = prompt_text
+            if resumed_fb:
+                if fallback_handoff_context:
+                    effective_prompt = f"{fallback_handoff_context}\n\n{prompt_text}"
+                    fb_msg = "原生上下文续接失败，已自动附带前文摘要继续对话"
+                else:
+                    fb_msg = (
+                        f"原生上下文续接失败，已重建对话上下文（{fb_reason}）"
+                        if fb_reason
+                        else "原生上下文续接失败，已重建对话上下文"
+                    )
+                notices.append(fb_msg)
+                evt = turn.normalizer.emit_notice("runtime_notice", fb_msg)
+                with turn.event_lock:
+                    turn.on_event(evt)
 
             avail_modes = (
                 self.setup_result.get("modes", {}).get("availableModes")
@@ -1160,7 +1192,7 @@ class AgySessionWorker:
 
             caps = self.init_result.get("agentCapabilities") if isinstance(self.init_result, dict) else {}
             prompt_caps = caps.get("promptCapabilities") if isinstance(caps, dict) else {}
-            blocks = build_prompt_blocks(prompt_text, staged_paths, attachments, prompt_caps)
+            blocks = build_prompt_blocks(effective_prompt, staged_paths, attachments, prompt_caps)
 
             if turn.cancelled or self._abort_event.is_set():
                 return {
@@ -1365,11 +1397,54 @@ class AgySessionWorker:
                 msg = err.get("message") if isinstance(err, dict) else str(err)
                 lower = str(msg).lower()
                 if "rate" in lower or "429" in lower or "quota" in lower or "resource_exhausted" in lower:
-                    status = "rate_limited"
-                else:
-                    status = "cli_error"
+                    return {
+                        "status": "rate_limited",
+                        "conversation_id": acp_sid,
+                        "answer": answer or None,
+                        "progress_messages": progress_messages,
+                        "error": str(msg),
+                        "effective_model": effective_model,
+                        "fallback_notice": notice_text,
+                        "usage": usage,
+                    }
+                is_auth_err = any(
+                    tok in lower
+                    for tok in (
+                        "401",
+                        "unauthenticated",
+                        "invalid_grant",
+                        "token expired",
+                        "authentication required",
+                        "please sign in",
+                        "login required",
+                    )
+                )
+                if is_auth_err:
+                    self._dirty = True
+                    try:
+                        agy_profile.sync_workspace_credentials_to_vault(self.profile_id)
+                    except Exception:
+                        pass
+                    post_tok_fp = agy_usage.workspace_token_fingerprint()
+                    transient_refreshed = bool(pre_tok_fp and post_tok_fp and post_tok_fp != pre_tok_fp)
+                    refresh_outcome = "ok" if transient_refreshed else agy_usage.refresh_profile_token(self.profile_id)
+                    if refresh_outcome == "ok":
+                        agy_profile.record_auth_state(self.profile_id, "authenticated")
+                        return {
+                            "status": "cli_error",
+                            "conversation_id": acp_sid,
+                            "answer": answer or None,
+                            "progress_messages": progress_messages,
+                            "error": "登录凭据跨 1 小时自动续期时遇到瞬态 401，已自动刷新凭据并重置进程，请直接重试（上下文已保留）。",
+                            "auth_transient": True,
+                            "effective_model": effective_model,
+                            "fallback_notice": notice_text,
+                            "usage": usage,
+                        }
+                    if refresh_outcome == "login_required":
+                        agy_profile.record_auth_state(self.profile_id, "login_required")
                 return {
-                    "status": status,
+                    "status": "cli_error",
                     "conversation_id": acp_sid,
                     "answer": answer or None,
                     "progress_messages": progress_messages,
@@ -1391,6 +1466,10 @@ class AgySessionWorker:
             self.active_turn = None
             turn.done_event.set()
             self.last_used = time.monotonic()
+            try:
+                agy_profile.sync_workspace_credentials_to_vault(self.profile_id)
+            except Exception:
+                log.debug("Failed syncing workspace credentials after turn", exc_info=True)
             if self._dirty or self._abort_event.is_set():
                 self._retire(force=True)
 
@@ -1475,7 +1554,7 @@ class AgySessionWorker:
                 if proc.poll() is None:
                     # The worker may already have been evicted. Transfer its
                     # lock reference and temp directory to the exit waiter.
-                    profile_id = self.profile_id
+                    lock_id = self._lock_id
                     held = self._profile_lock_held
                     temp_dir = self.temp_dir
                     self._profile_lock_held = False
@@ -1497,13 +1576,13 @@ class AgySessionWorker:
                         if temp_dir is not None:
                             shutil.rmtree(temp_dir, ignore_errors=True)
                         if held:
-                            agy_profile.release_profile_lock(profile_id)
+                            agy_profile.release_profile_lock(lock_id)
                         exited.set()
 
                     try:
                         threading.Thread(target=wait_for_exit, name="agy-acp-exit", daemon=True).start()
                     except RuntimeError:
-                        log.error("Cannot monitor Agy worker exit; retaining profile lock for %s", profile_id)
+                        log.error("Cannot monitor Agy worker exit; retaining lock for %s", lock_id)
                     return
                 for stream in (proc.stdin, proc.stdout):
                     close_fn = getattr(stream, "close", None)
@@ -1521,7 +1600,7 @@ class AgySessionWorker:
         finally:
             if self._profile_lock_held:
                 self._profile_lock_held = False
-                agy_profile.release_profile_lock(self.profile_id)
+                agy_profile.release_profile_lock(self._lock_id)
 
 
     def exit_pending(self) -> bool:
@@ -1580,6 +1659,8 @@ class AgyRuntimeManager:
         # Keep detached sessions reserved until close() and any exit waiter finish.
         self._retiring: dict[tuple[str, str, str], tuple[AgySessionWorker, threading.Event]] = {}
         self._changing_profiles: set[str] = set()
+        self._switching_profile = False
+        self._session_grants: dict[tuple[str, str], RuntimeGrants] = {}
         self._active_turns: dict[tuple[Path, str], AgySessionWorker] = {}
         self._stopped_manually = False
         self._draining_workers = False
@@ -1635,7 +1716,9 @@ class AgyRuntimeManager:
             return sum(1 for w in self._active_turns.values() if w.active_turn is not None)
 
     def _auth_state_fast(self, profile_id: str) -> AntiAuthState:
-        return "authenticated" if agy_profile.has_local_credentials(profile_id) else "login_required"
+        if not agy_profile.has_local_credentials(profile_id):
+            return "login_required"
+        return "login_required" if agy_profile.effective_auth_state(profile_id) == "login_required" else "authenticated"
 
     @staticmethod
     def _supports_steering_for_version(version: str | None) -> bool | None:
@@ -1706,6 +1789,8 @@ class AgyRuntimeManager:
     def _require_workers_available_locked(self) -> None:
         if self._draining_workers:
             raise AgyProfileError(409, "Agy 正在关闭旧会话，请稍后重试")
+        if self._switching_profile:
+            raise AgyProfileError(409, "正在切换 Agy 账号，请稍后重试")
 
     def stop(self, *, force: bool = False) -> AntiDaemonStatus:
         return self._stop_or_restart(restart=False, force=force)
@@ -1733,6 +1818,10 @@ class AgyRuntimeManager:
                 try:
                     self._close_detached(workers, force=force)
                 finally:
+                    try:
+                        agy_profile.sync_workspace_credentials_to_vault()
+                    except Exception:
+                        pass
                     if code_login is not None:
                         code_login.cancel()
             finally:
@@ -1903,6 +1992,10 @@ class AgyRuntimeManager:
             try:
                 self._close_detached(workers)
             finally:
+                try:
+                    agy_profile.sync_workspace_credentials_to_vault()
+                except Exception:
+                    pass
                 if code_login is not None:
                     code_login.cancel()
                 if login is not None and login.poll() is None:
@@ -1967,12 +2060,9 @@ class AgyRuntimeManager:
     def submission(self, profile_id: str | None = None):
         with self._lock:
             active, profiles = agy_profile.snapshot()
-            if profile_id is not None:
-                if not any(p.id == profile_id for p in profiles):
-                    raise AgyProfileError(404, "找不到指定的 Agy 账号")
-                target = profile_id
-            else:
-                target = active
+            if profile_id is not None and not any(p.id == profile_id for p in profiles):
+                raise AgyProfileError(404, "找不到指定的 Agy 账号")
+            target = active
             self._require_login_closed(target)
             if self._stopped_manually:
                 raise AgyProfileError(409, "Agy 运行时已停止，请先在顶部状态栏重新启用")
@@ -1991,6 +2081,7 @@ class AgyRuntimeManager:
         key = (db_key, profile_id, session_id)
         with self._lock:
             self._require_session_available_locked(*key)
+            grants = self._session_grants.setdefault((db_key, session_id), RuntimeGrants())
             worker = self._workers.get(key)
             if worker is not None and worker.workspace == workspace and not worker._closed:
                 return worker
@@ -1999,6 +2090,7 @@ class AgyRuntimeManager:
         while True:
             with self._lock:
                 self._require_session_available_locked(*key)
+                grants = self._session_grants.setdefault((db_key, session_id), RuntimeGrants())
                 worker = self._workers.get(key)
                 if worker is None:
                     worker = AgySessionWorker(
@@ -2007,6 +2099,7 @@ class AgyRuntimeManager:
                         workspace=workspace,
                         executable=executable,
                         version=version,
+                        grants=grants,
                         on_models=lambda models, pid=profile_id: self._record_models(pid, models),
                         on_commands=lambda cmds, pid=profile_id: self._record_commands(pid, cmds),
                         on_retire=lambda w, key_db=db_key: self.retire_worker(key_db, w),
@@ -2080,6 +2173,12 @@ class AgyRuntimeManager:
     def session_grants(self, db_key: str, session_id: str) -> list[str]:
         grants: set[str] = set()
         with self._lock:
+            stored = self._session_grants.get((db_key, session_id))
+            if stored is not None:
+                snap = stored.snapshot()
+                if "*" in snap:
+                    return ["*"]
+                grants.update(snap)
             for (w_db, _, w_sid), worker in self._workers.items():
                 if w_db == db_key and w_sid == session_id:
                     snap = worker.grants.snapshot()
@@ -2090,10 +2189,17 @@ class AgyRuntimeManager:
 
     def clear_session_grants(self, db_key: str, session_id: str, kind: str | None = None) -> list[str]:
         with self._lock:
+            stored = self._session_grants.get((db_key, session_id))
+            if stored is not None:
+                stored.clear(kind)
             for (w_db, _, w_sid), worker in self._workers.items():
                 if w_db == db_key and w_sid == session_id:
                     worker.grants.clear(kind)
         return self.session_grants(db_key, session_id)
+
+    def forget_session_grants(self, db_key: str, session_id: str) -> None:
+        with self._lock:
+            self._session_grants.pop((db_key, session_id), None)
 
     def register_turn(self, db_path: Path, run_id: str, worker: AgySessionWorker) -> None:
         with self._lock:
@@ -2276,9 +2382,12 @@ class AgyRuntimeManager:
 
     def _fetch_cli_models(self, pid: str) -> list[dict[str, Any]]:
         executable = agy_profile.agy_executable()
+        if pid == agy_profile.DEFAULT:
+            agy_profile._seed_default_vault_if_empty()
+        agy_profile.prepare_profile(pid)
         temp_dir = agy_profile.make_runtime_temp_dir(pid)
         try:
-            env = agy_profile.clean_agy_env(pid, temp_dir=temp_dir)
+            env = agy_profile.clean_agy_env(pid, temp_dir=temp_dir, vault_only=True)
             result = subprocess.run(
                 [executable, "models"],
                 stdin=subprocess.DEVNULL,
@@ -2450,7 +2559,7 @@ class AgyRuntimeManager:
             registered = set(self._active_turns.values())
             idle_keys = [
                 k for k, w in self._workers.items()
-                if k[1] == profile_id and w not in registered and w.active_turn is None
+                if w not in registered and w.active_turn is None
             ]
             workers = self._detach_workers_locked(idle_keys)
         self._close_detached(workers)
@@ -2468,21 +2577,35 @@ class AgyRuntimeManager:
             if active == profile_id:
                 return
             self._require_login_closed(active, profile_id)
-            agy_profile.select(profile_id)
-            registered = set(self._active_turns.values())
-            idle_keys = [
-                k for k, w in self._workers.items()
-                if w not in registered and w.active_turn is None
-            ]
-            workers = self._detach_workers_locked(idle_keys)
-            self._cached_models.pop(profile_id, None)
-            self._cached_commands.pop(profile_id, None)
-        self._close_detached(workers)
-        _append_log(f"Switched global default Agy profile to {profile_id}")
+            if self._active_turns or any(w.active_turn is not None for w in self._workers.values()):
+                raise AgyProfileError(409, "当前有正在运行的任务，请等待结束或先停止后再切换账号")
+            self._switching_profile = True
+            workers = self._detach_workers_locked(list(self._workers))
+        try:
+            self._close_detached(workers)
+            with self._lock:
+                self._prune_retiring_locked()
+                if self._retiring:
+                    raise AgyProfileError(409, "Agy 旧会话进程仍在退出，请稍后重试")
+                try:
+                    agy_profile.sync_workspace_credentials_to_vault(active)
+                except Exception:
+                    log.debug("Failed syncing previous account credentials before switch", exc_info=True)
+                agy_profile.select(profile_id)
+                agy_profile.activate_profile_in_workspace(profile_id)
+                self._cached_models.pop(profile_id, None)
+                self._cached_commands.clear()
+        finally:
+            with self._lock:
+                self._switching_profile = False
+        _append_log(f"Switched active Agy account to {profile_id}")
 
     @staticmethod
     def _watch_login_process(
-        profile_id: str, proc: subprocess.Popen, flow: CodeLoginFlow | None = None,
+        profile_id: str,
+        proc: subprocess.Popen,
+        flow: CodeLoginFlow | None = None,
+        on_exit: Callable[[], None] | None = None,
     ) -> None:
         # Do not tie lock ownership to manager bookkeeping: cancellation and
         # shutdown may clear their references before the child actually exits.
@@ -2493,7 +2616,13 @@ class AgyRuntimeManager:
             finally:
                 proc.wait()
                 child_job.forget(proc.pid)
-                agy_profile.release_profile_lock(profile_id)
+                try:
+                    if on_exit is not None:
+                        on_exit()
+                except Exception:
+                    log.debug("Login post-exit workspace sync skipped", exc_info=True)
+                finally:
+                    agy_profile.release_profile_lock(profile_id)
 
         try:
             threading.Thread(target=watch, daemon=True).start()
@@ -2510,6 +2639,16 @@ class AgyRuntimeManager:
                 agy_profile.release_profile_lock(profile_id)
             raise
 
+    def _on_profile_login_finished(self, profile_id: str) -> None:
+        if not agy_profile.has_local_credentials(profile_id):
+            return
+        agy_profile.record_auth_state(profile_id, "authenticated")
+        with self._lock:
+            active, _ = agy_profile.snapshot()
+            can_activate = active == profile_id and self._active_turn_count() == 0
+        if can_activate:
+            agy_profile.activate_profile_in_workspace(profile_id, force_reload=True)
+
     def login_profile(self, profile_id: str) -> None:
         with self._lock:
             if os.name != "nt":
@@ -2523,11 +2662,12 @@ class AgyRuntimeManager:
             if self._active_turn_count() > 0:
                 raise AgyProfileError(409, "请等当前任务结束后再打开官方登录窗口")
             executable = agy_profile.agy_executable()
+            agy_profile.clear_host_import_disabled(profile_id)
             agy_profile.claim_profile_lock(profile_id)
             try:
                 agy_profile.prepare_profile(profile_id)
-                env = agy_profile.clean_agy_env(profile_id)
-                cwd = agy_profile.profile_home(profile_id)
+                env = agy_profile.clean_agy_env(profile_id, vault_only=True)
+                cwd = agy_profile.profile_vault_home(profile_id)
                 proc = child_job.spawn(
                     [executable],
                     kind="agy-login",
@@ -2541,7 +2681,11 @@ class AgyRuntimeManager:
                 if isinstance(exc, OSError):
                     raise AgyProfileError(503, "无法打开官方 agy 登录窗口") from exc
                 raise
-            self._watch_login_process(profile_id, proc)
+            self._watch_login_process(
+                profile_id,
+                proc,
+                on_exit=lambda pid=profile_id: self._on_profile_login_finished(pid),
+            )
             self._login = proc
             self._login_profile = profile_id
 
@@ -2557,6 +2701,7 @@ class AgyRuntimeManager:
             self._require_login_closed(profile_id)
             self._require_profile_exited_locked(profile_id)
             executable = agy_profile.agy_executable()
+            agy_profile.clear_host_import_disabled(profile_id)
             agy_profile.claim_profile_lock(profile_id)
             temp_dir = None
             try:
@@ -2568,7 +2713,7 @@ class AgyRuntimeManager:
                     cmd,
                     kind="agy-code-login",
                     marker=executable,
-                    cwd=str(agy_profile.profile_gemini_dir(profile_id)),
+                    cwd=str(agy_profile.profile_vault_gemini_dir(profile_id)),
                     env=env,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
@@ -2586,7 +2731,12 @@ class AgyRuntimeManager:
                     raise AgyProfileError(503, "无法启动 agy 登录流程") from exc
                 raise
             flow = CodeLoginFlow(flow_id=uuid4().hex, profile_id=profile_id, process=proc, temp_dir=temp_dir)
-            self._watch_login_process(profile_id, proc, flow)
+            self._watch_login_process(
+                profile_id,
+                proc,
+                flow,
+                on_exit=lambda pid=profile_id: self._on_profile_login_finished(pid),
+            )
             self._code_login = flow
 
         deadline = time.monotonic() + 20.0

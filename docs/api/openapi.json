@@ -5920,17 +5920,45 @@
         ],
         "summary": "Gateway Quota",
         "operationId": "gateway_quota_api_anti_quota_get",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/AntiQuotaPool"
                   },
-                  "type": "array",
                   "title": "Response Gateway Quota Api Anti Quota Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -5945,15 +5973,33 @@
         ],
         "summary": "Reset Gateway Breaker",
         "operationId": "reset_gateway_breaker_api_anti_breaker_reset_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile Id"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AntiBreakerResetReq"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "204": {
@@ -5979,15 +6025,33 @@
         ],
         "summary": "Calibrate Gateway Quota",
         "operationId": "calibrate_gateway_quota_api_anti_quota_calibrate_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile Id"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AntiQuotaCalibrateReq"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -6031,6 +6095,22 @@
               "minimum": 0,
               "default": 24,
               "title": "Window Hours"
+            }
+          },
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile Id"
             }
           }
         ],
@@ -6545,58 +6625,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AntiRunResp"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/anti/sessions/{sid}/profile": {
-      "patch": {
-        "tags": [
-          "anti"
-        ],
-        "summary": "Set Session Profile",
-        "operationId": "set_session_profile_api_anti_sessions__sid__profile_patch",
-        "parameters": [
-          {
-            "name": "sid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Sid"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AntiSessionProfileUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AntiSessionResp"
                 }
               }
             }
@@ -7947,6 +7975,18 @@
               }
             ],
             "title": "Model Group"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
           }
         },
         "type": "object",
@@ -8571,6 +8611,18 @@
               }
             ],
             "title": "Note"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
           }
         },
         "type": "object",
@@ -8761,19 +8813,6 @@
               }
             ],
             "title": "Permission Mode"
-          },
-          "profile_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 64,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile Id"
           }
         },
         "type": "object",
@@ -9082,19 +9121,6 @@
               }
             ],
             "title": "Permission Mode"
-          },
-          "profile_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 64,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile Id"
           }
         },
         "type": "object",
@@ -9127,24 +9153,6 @@
           "project"
         ],
         "title": "AntiSessionCreate"
-      },
-      "AntiSessionProfileUpdate": {
-        "properties": {
-          "profile_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 64
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile Id"
-          }
-        },
-        "type": "object",
-        "title": "AntiSessionProfileUpdate"
       },
       "AntiSessionRename": {
         "properties": {

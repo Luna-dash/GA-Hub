@@ -19,7 +19,7 @@ type Action =
   | { kind: 'capture'; name: string }
   | { kind: 'switch' | 'login' | 'logout' | 'delete'; profile: Profile }
   | { kind: 'rename'; profile: Profile; name: string }
-  | { kind: 'check-usage' }
+  | { kind: 'check-usage'; profileId?: string; profileName?: string }
 const key = ['agy-profiles'] as const
 
 const resetTimeFormat = new Intl.DateTimeFormat('zh-CN', {
@@ -90,7 +90,6 @@ export function AntiAgyProfiles({
   daemon,
   open: controlledOpen,
   onOpenChange,
-  targetProfileId,
   focusSection = 'default',
 }: {
   profiles: ReturnType<typeof useAgyProfiles>
@@ -98,7 +97,6 @@ export function AntiAgyProfiles({
   daemon?: ReturnType<typeof useAntiDaemonStatus>
   open?: boolean
   onOpenChange?: (open: boolean) => void
-  targetProfileId?: string
   focusSection?: 'default' | 'orchestrator'
 }) {
   const cache = useQueryClient()
@@ -143,19 +141,17 @@ export function AntiAgyProfiles({
     prevLoginProfile.current = current
   }, [profiles.data?.login_profile, refresh])
 
-  const effectivePid = targetProfileId || profiles.data?.active || 'default'
-  const overridePid = targetProfileId && targetProfileId !== profiles.data?.active ? targetProfileId : undefined
-  const effectiveProfileName = profiles.data?.profiles.find(p => p.id === effectivePid)?.name ?? effectivePid
+  const effectivePid = profiles.data?.active || 'default'
 
   const modelsQuery = useQuery({
     queryKey: ['anti-models', effectivePid],
     enabled: open && activeTab === 'models' && Boolean(effectivePid),
-    queryFn: ({ signal }) => antiApi.models(signal, overridePid),
+    queryFn: ({ signal }) => antiApi.models(signal),
     staleTime: 60_000,
     retry: false,
   })
   const syncModels = useMutation({
-    mutationFn: () => antiApi.syncModels(overridePid),
+    mutationFn: () => antiApi.syncModels(),
     onMutate: () => {
       setMessage('')
     },
@@ -251,9 +247,14 @@ export function AntiAgyProfiles({
         setEditing(null)
         setMessage(`已重命名为「${profile.name}」。`)
       } else if (args.kind === 'switch') {
-        const data = await request<Profiles>(`/${encodeURIComponent(args.profile.id)}/switch`, write)
+        const data = await antiApi.switchProfile(args.profile.id)
         cache.setQueryData(key, data)
         setConfirmDeleteId(null)
+        void cache.invalidateQueries({ queryKey: ['anti-models'] })
+        void cache.invalidateQueries({ queryKey: ['anti-commands'] })
+        void cache.invalidateQueries({ queryKey: ['anti-workers'] })
+        void cache.invalidateQueries({ queryKey: ['anti-sessions'] })
+        void cache.invalidateQueries({ queryKey: ['anti-daemon-status'] })
         setMessage(`已切换到「${args.profile.name}」。`)
       } else if (args.kind === 'delete') {
         await antiApi.deleteProfile(args.profile.id)
@@ -269,12 +270,14 @@ export function AntiAgyProfiles({
           ...old,
           profiles: old.profiles.map(p => p.id === updated.id ? updated : p),
         }))
+        void cache.invalidateQueries({ queryKey: ['anti-daemon-status'] })
         setMessage(`已清除「${args.profile.name}」凭据（保留会话记录）。`)
       } else if (args.kind === 'check-usage') {
-        const usage = await antiApi.accountUsage()
+        const usage = await antiApi.accountUsage(args.profileId)
+        const targetLabel = args.profileName ? `「${args.profileName}」` : ''
         setMessage(
           usage.rows.length > 0
-            ? `已刷新额度（${usage.rows.length} 项模型）。`
+            ? `已刷新${targetLabel}额度（${usage.rows.length} 项模型）。`
             : (usage.detail || '未读取到额度信息，请确认已登录后重试。'),
         )
       } else {
@@ -413,9 +416,8 @@ export function AntiAgyProfiles({
     const checkedLabel = Number.isFinite(checkedAt) ? resetTimeFormat.format(checkedAt) : null
     const cooldownSec = profile.cooldown_seconds ?? 0
     const isEditing = editing?.profile.id === profile.id
-    const canClearCredentials = profile.id !== 'default'
-      && (profile.has_credentials || profile.auth_state === 'authenticated')
-      && (!isActive || !daemon || daemon.state === 'stopped')
+    const canClearCredentials = (profile.has_credentials || profile.auth_state === 'authenticated')
+      && !(isActive && (daemon?.status.data?.active_count ?? 0) > 0)
     const showRightDivider = !isActive && profile.id !== 'default'
 
     return (
@@ -453,28 +455,41 @@ export function AntiAgyProfiles({
               </span>
             )}
           </div>
-          <div className="shrink-0">
+          <div className="flex shrink-0 items-center gap-1.5">
             {isActive ? (
               daemon?.running && (
                 <button
                   type="button"
                   className={compactBtn}
                   disabled={disabled}
-                  onClick={() => action.mutate({ kind: 'check-usage' })}
+                  onClick={() => action.mutate({ kind: 'check-usage', profileName: profile.name })}
                 >
                   刷新额度
                 </button>
               )
             ) : (
-              <button
-                type="button"
-                className={compactPrimaryBtn}
-                disabled={disabled}
-                aria-label={`切换到${profile.name}`}
-                onClick={() => action.mutate({ kind: 'switch', profile })}
-              >
-                切换
-              </button>
+              <>
+                {daemon?.running && profile.has_credentials && (
+                  <button
+                    type="button"
+                    className={compactBtn}
+                    disabled={disabled}
+                    aria-label={`刷新额度：${profile.name}`}
+                    onClick={() => action.mutate({ kind: 'check-usage', profileId: profile.id, profileName: profile.name })}
+                  >
+                    刷新额度
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={compactPrimaryBtn}
+                  disabled={disabled}
+                  aria-label={`切换到${profile.name}`}
+                  onClick={() => action.mutate({ kind: 'switch', profile })}
+                >
+                  切换
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -631,6 +646,16 @@ export function AntiAgyProfiles({
 
   const triggerLabel = selected ? `Agy 账号：${selected.name}` : 'Agy 账号'
   const customActive = Boolean(selected && selected.id !== 'default')
+  const activeCooldown = selected?.cooldown_seconds ?? 0
+  const activeNeedLogin = Boolean(selected && (selected.auth_state === 'login_required' || selected.has_credentials === false))
+  const activeMinPct = selected?.usage?.min_remaining_pct
+  const triggerTitle = activeCooldown > 0
+    ? `${triggerLabel} · 风控冷却 ${activeCooldown}s`
+    : activeNeedLogin
+      ? `${triggerLabel} · 需要登录`
+      : typeof activeMinPct === 'number'
+        ? `${triggerLabel} · 最低剩余 ${activeMinPct}%`
+        : triggerLabel
 
   const daemonDotClass = daemon?.running
     ? 'bg-status-success'
@@ -649,20 +674,32 @@ export function AntiAgyProfiles({
   return <>
     <button
       type="button"
+      data-anti-account-pill
       className={clsx(
-        'ga-btn-icon relative',
-        customActive ? 'text-accent' : 'text-ink-muted hover:text-ink',
+        'ga-btn inline-flex h-[35px] max-w-full shrink-0 items-center gap-1.5 rounded-[9px] px-2.5 text-xs leading-none transition-colors',
+        activeNeedLogin
+          ? 'border-status-danger-line/80 text-status-danger hover:text-status-danger'
+          : customActive
+            ? 'border-accent/45 text-ink hover:border-accent/70'
+            : 'text-ink-muted hover:text-ink',
       )}
       aria-label={triggerLabel}
-      title={triggerLabel}
+      title={triggerTitle}
       aria-haspopup="dialog"
       aria-expanded={open}
       onClick={() => setOpen(true)}
     >
-      <UserRound className="h-4 w-4" strokeWidth={1.85} aria-hidden="true" />
-      {customActive && (
-        <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-accent" aria-hidden="true" />
-      )}
+      <UserRound className={clsx('h-3.5 w-3.5 shrink-0', customActive && !activeNeedLogin && 'text-accent')} strokeWidth={1.85} aria-hidden="true" />
+      <span className="max-w-[7.5rem] truncate font-medium text-ink">{selected?.name ?? 'Agy 账号'}</span>
+      {activeCooldown > 0 ? (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-warning" aria-hidden="true" />
+      ) : activeNeedLogin ? (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-danger" aria-hidden="true" />
+      ) : typeof activeMinPct === 'number' ? (
+        <span className={clsx('shrink-0 text-[11px] font-semibold tabular-nums', quotaTone(activeMinPct))}>
+          {activeMinPct}%
+        </span>
+      ) : null}
     </button>
     {open && createPortal(<ModalOverlay onClose={close} labelledBy="agy-accounts-title"
       panelClassName="flex max-h-[86vh] w-[40rem] max-w-[94vw] flex-col overflow-hidden p-0">
@@ -671,7 +708,7 @@ export function AntiAgyProfiles({
           <div className="min-w-0">
             <h2 id="agy-accounts-title" className="text-sm font-semibold text-ink">Agy CLI 账号</h2>
             <p className="mt-0.5 truncate text-[11px] text-ink-muted">
-              账号隔离凭据与上下文，切换默认不影响运行中会话
+              所有会话共用上下文与配置，切换账号仅切换额度凭据
             </p>
           </div>
           <button type="button" className={compactBtn} onClick={close} disabled={action.isPending}>
@@ -1035,7 +1072,7 @@ export function AntiAgyProfiles({
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <h3 id="agy-models-orch-title" className="truncate text-sm font-semibold text-ink">
-                    模型目录（{effectiveProfileName}）
+                    全局模型目录
                   </h3>
                   <p className="mt-0.5 text-[11px] text-ink-muted">
                     {modelsQuery.data?.items
@@ -1063,7 +1100,7 @@ export function AntiAgyProfiles({
               <div data-anti-orchestrator-section className="space-y-2.5 border-t border-line/60 pt-2.5">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-xs font-semibold text-ink">Orchestrator 角色模型</span>
-                  <span className="text-[11px] text-ink-muted">写入账号 settings.json，新会话生效</span>
+                  <span className="text-[11px] text-ink-muted">全局生效，切换账号后保持不变；空闲进程自动刷新</span>
                 </div>
                 <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                   <label className="block space-y-1">

@@ -82,15 +82,15 @@ export function AntiAccountUsageButton({
   onChecked: () => void
 }) {
   const usage = useMutation({ mutationFn: () => checkUsage(profileId), onSettled: onChecked })
-  const pools = useMutation({ mutationFn: () => antiApi.quota() })
-  const stats = useMutation({ mutationFn: () => antiApi.stats(24) })
+  const pools = useMutation({ mutationFn: () => antiApi.quota(undefined, profileId) })
+  const stats = useMutation({ mutationFn: () => antiApi.stats(24, undefined, profileId) })
   const resetBreaker = useMutation({
-    mutationFn: (modelGroup?: string) => antiApi.resetBreaker(modelGroup),
+    mutationFn: (modelGroup?: string) => antiApi.resetBreaker(modelGroup, profileId),
     onSuccess: () => { pools.mutate() },
   })
   const calibrate = useMutation({
     mutationFn: ({ modelGroup, remainingPct, note }: { modelGroup: string; remainingPct: number; note?: string }) =>
-      antiApi.calibrateQuota(modelGroup, remainingPct, note),
+      antiApi.calibrateQuota(modelGroup, remainingPct, note, profileId),
     onSuccess: updated => {
       pools.reset()
       pools.mutate()

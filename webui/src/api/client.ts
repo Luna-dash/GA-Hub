@@ -672,7 +672,6 @@ export type AntiSubmission = {
   effort: string
   mode?: AntiMode
   permission_mode?: AntiPermissionMode
-  profile_id?: string | null
   references?: { id: number; path: string }[]
   attachments?: AntiAttachmentRef[]
 }
@@ -720,6 +719,10 @@ export const antiApi = {
     antiHttp<AntiWorkerList>('GET', '/api/anti/workers', undefined, { signal }),
   profiles: (signal?: AbortSignal) =>
     antiHttp<AgyProfiles>('GET', '/api/anti/profiles', undefined, { signal }),
+  switchProfile: (id: string) =>
+    antiHttp<AgyProfiles>('POST', `/api/anti/profiles/${encodeURIComponent(id)}/switch`, undefined, {
+      headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' },
+    }),
   captureProfile: (name: string) =>
     antiHttp<AgyProfile>('POST', '/api/anti/profiles/capture', { name }, {
       headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' },
@@ -742,22 +745,40 @@ export const antiApi = {
         timeoutMs: 25_000,
       },
     ),
-  quota: (signal?: AbortSignal) =>
-    antiHttp<AntiQuotaPool[]>('GET', '/api/anti/quota', undefined, { signal }),
-  resetBreaker: (modelGroup?: string) =>
-    antiHttp<void>('POST', '/api/anti/breaker/reset', { model_group: modelGroup ?? null }, {
-      headers: { 'X-GA-Hub-Action': 'manage-anti-gateway' },
-    }),
-  calibrateQuota: (modelGroup: string, remainingPct: number, note?: string) =>
-    antiHttp<AntiQuotaPool>('POST', '/api/anti/quota/calibrate', {
-      model_group: modelGroup,
-      remaining_pct: remainingPct,
-      note: note ?? null,
-    }, {
-      headers: { 'X-GA-Hub-Action': 'manage-anti-gateway' },
-    }),
-  stats: (windowHours = 24, signal?: AbortSignal) =>
-    antiHttp<AntiUsageStats>('GET', `/api/anti/stats?window_hours=${windowHours}`, undefined, { signal }),
+  quota: (signal?: AbortSignal, profileId?: string) =>
+    antiHttp<AntiQuotaPool[]>(
+      'GET',
+      profileId ? `/api/anti/quota?profile_id=${encodeURIComponent(profileId)}` : '/api/anti/quota',
+      undefined,
+      { signal },
+    ),
+  resetBreaker: (modelGroup?: string, profileId?: string) =>
+    antiHttp<void>(
+      'POST',
+      profileId ? `/api/anti/breaker/reset?profile_id=${encodeURIComponent(profileId)}` : '/api/anti/breaker/reset',
+      { model_group: modelGroup ?? null },
+      { headers: { 'X-GA-Hub-Action': 'manage-anti-gateway' } },
+    ),
+  calibrateQuota: (modelGroup: string, remainingPct: number, note?: string, profileId?: string) =>
+    antiHttp<AntiQuotaPool>(
+      'POST',
+      profileId ? `/api/anti/quota/calibrate?profile_id=${encodeURIComponent(profileId)}` : '/api/anti/quota/calibrate',
+      {
+        model_group: modelGroup,
+        remaining_pct: remainingPct,
+        note: note ?? null,
+      },
+      { headers: { 'X-GA-Hub-Action': 'manage-anti-gateway' } },
+    ),
+  stats: (windowHours = 24, signal?: AbortSignal, profileId?: string) =>
+    antiHttp<AntiUsageStats>(
+      'GET',
+      profileId
+        ? `/api/anti/stats?window_hours=${windowHours}&profile_id=${encodeURIComponent(profileId)}`
+        : `/api/anti/stats?window_hours=${windowHours}`,
+      undefined,
+      { signal },
+    ),
   models: (signal?: AbortSignal, profileId?: string) =>
     // Allow the gateway attempt (2s connect + 23s read) and the 24s CLI fallback.
     antiHttp<AntiModels>(
@@ -806,8 +827,6 @@ export const antiApi = {
     antiHttp<AntiSession>('POST', '/api/anti/sessions', { project }),
   renameSession: (id: string, title: string) =>
     antiHttp<AntiSession>('PATCH', `/api/anti/sessions/${id}`, { title }),
-  setSessionProfile: (id: string, profileId: string | null) =>
-    antiHttp<AntiSession>('PATCH', `/api/anti/sessions/${id}/profile`, { profile_id: profileId }),
   clearSessionGrants: (id: string, kind?: string) =>
     antiHttp<AntiSession>(
       'DELETE',
@@ -820,7 +839,6 @@ export const antiApi = {
       effort?: string
       mode?: AntiMode
       permission_mode?: AntiPermissionMode
-      profile_id?: string | null
     },
   ) => antiHttp<AntiRun>('POST', `/api/anti/sessions/${id}/compact`, body ?? {}),
   resetSession: (id: string, force = false) =>

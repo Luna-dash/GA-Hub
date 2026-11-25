@@ -1,6 +1,7 @@
 """Project-scoped Antigravity (agy) session & run engine over unified ACP."""
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import re
@@ -177,6 +178,41 @@ class AntiSessions:
                     """).fetchall():
                         conn.execute("UPDATE sessions SET title=? WHERE id=?", (_prompt_title(first_prompt or ""), sid))
         self.ledger.ensure_schema(conn)
+        missing_convs = conn.execute(
+            "SELECT id, profile_id FROM sessions "
+            "WHERE (conversation IS NULL OR conversation='') "
+            "AND EXISTS(SELECT 1 FROM profile_conversations pc WHERE pc.session_id=sessions.id)"
+        ).fetchall()
+        if missing_convs:
+            with conn:
+                for row in missing_convs:
+                    s_id, s_pid = row[0], row[1]
+                    conv_val = None
+                    if isinstance(s_pid, str) and s_pid.strip():
+                        found = conn.execute(
+                            "SELECT conversation FROM profile_conversations WHERE session_id=? AND profile_id=?",
+                            (s_id, s_pid.strip()),
+                        ).fetchone()
+                        if found and found[0]:
+                            conv_val = found[0]
+                    if not conv_val:
+                        found = conn.execute(
+                            "SELECT pc.conversation FROM runs ru "
+                            "JOIN profile_conversations pc ON pc.session_id=ru.session_id AND pc.profile_id=ru.profile_id "
+                            "WHERE ru.session_id=? ORDER BY ru.rowid DESC LIMIT 1",
+                            (s_id,),
+                        ).fetchone()
+                        if found and found[0]:
+                            conv_val = found[0]
+                    if not conv_val:
+                        found = conn.execute(
+                            "SELECT conversation FROM profile_conversations WHERE session_id=? ORDER BY rowid DESC LIMIT 1",
+                            (s_id,),
+                        ).fetchone()
+                        if found and found[0]:
+                            conv_val = found[0]
+                    if conv_val:
+                        conn.execute("UPDATE sessions SET conversation=? WHERE id=?", (conv_val, s_id))
 
     def connect(self):
         self.db.parent.mkdir(parents=True, exist_ok=True)
@@ -243,11 +279,7 @@ class AntiSessions:
     def _enrich_session(self, item: dict) -> dict:
         fn = getattr(self.runtime, "session_connected", None)
         item["acp_connected"] = bool(fn(str(self._db_key), item["id"])) if callable(fn) else False
-        pid = item.get("profile_id")
-        if pid:
-            _, profiles = agy_profile.snapshot()
-            if not any(p.id == pid for p in profiles):
-                item["profile_id"] = None
+        item["profile_id"] = None
         grants_fn = getattr(self.runtime, "session_grants", None)
         item["grants"] = list(grants_fn(str(self._db_key), item["id"])) if callable(grants_fn) else []
         return item
@@ -263,10 +295,8 @@ class AntiSessions:
         where = "WHERE s.id=?" if sid is not None else ""
         params = (*statuses, sid) if sid is not None else statuses
         rows = db.execute(f"""
-            SELECT s.id, s.project, s.title, s.workspace, s.updated_at, s.profile_id,
-                (s.conversation IS NOT NULL OR EXISTS(
-                    SELECT 1 FROM profile_conversations pc WHERE pc.session_id=s.id
-                )) AS has_conversation,
+            SELECT s.id, s.project, s.title, s.workspace, s.updated_at, NULL AS profile_id,
+                (s.conversation IS NOT NULL AND s.conversation != '') AS has_conversation,
                 (SELECT r.id FROM runs r WHERE r.session_id=s.id
                  AND r.status IN ({placeholders}) ORDER BY r.rowid DESC LIMIT 1) AS active_run_id
             FROM sessions s {where} ORDER BY s.rowid DESC
@@ -305,6 +335,9 @@ class AntiSessions:
             db.execute("DELETE FROM run_events WHERE run_id IN (SELECT id FROM runs WHERE session_id=?)", (sid,))
             db.execute("DELETE FROM profile_conversations WHERE session_id=?", (sid,))
             db.execute("DELETE FROM runs WHERE session_id=?", (sid,))
+        forget_fn = getattr(self.runtime, "forget_session_grants", None)
+        if callable(forget_fn):
+            forget_fn(str(self._db_key), sid)
         self.runtime.close_session(str(self._db_key), sid)
 
     def _close_session_runtime(self, sid: str, *, force: bool = False) -> None:
@@ -342,32 +375,9 @@ class AntiSessions:
             db.execute("DELETE FROM profile_conversations WHERE profile_id=?", (profile_id,))
             db.execute("UPDATE sessions SET profile_id=NULL WHERE profile_id=?", (profile_id,))
 
-    def resolve_session_profile(self, sid: str, explicit_profile_id: str | None = None) -> str | None:
-        explicit = self._validate_optional_profile(explicit_profile_id)
-        if explicit is not None:
-            return explicit
-        bound = self.session(sid).get("profile_id")
-        if not isinstance(bound, str) or not bound.strip():
-            return None
-        _, profiles = agy_profile.snapshot()
-        return bound if any(p.id == bound for p in profiles) else None
-
-    def set_session_profile(self, sid: str, profile_id: str | None) -> dict:
+    def resolve_session_profile(self, sid: str, explicit_profile_id: str | None = None) -> str:  # noqa: ARG002
         self.session(sid)
-        normalized = self._validate_optional_profile(profile_id)
-        placeholders = ",".join("?" * len(ACTIVE))
-        with self.connect() as db:
-            busy = db.execute(
-                f"SELECT 1 FROM runs WHERE session_id=? AND status IN ({placeholders}) LIMIT 1",
-                (sid, *ACTIVE),
-            ).fetchone()
-        if busy is not None:
-            raise AntiError(409, "当前会话有正在运行的任务，请等待结束后再切换本会话账号。")
-        with self.connect() as db, db:
-            db.execute("UPDATE sessions SET profile_id=?, updated_at=? WHERE id=?", (normalized, _now(), sid))
-        self._close_session_runtime(sid)
-        with self.connect() as db:
-            return self._enrich_session(self._public_sessions(db, sid)[0])
+        return agy_profile.snapshot()[0]
 
     def clear_session_grants(self, sid: str, kind: str | None = None) -> dict:
         self.session(sid)
@@ -496,6 +506,40 @@ class AntiSessions:
             sections.append(prompt)
         return "\n\n".join(sections)
 
+    @staticmethod
+    def _build_handoff_summary(
+        db: sqlite3.Connection,
+        sid: str,
+        *,
+        max_turns: int = 6,
+        max_chars: int = 4000,
+    ) -> str | None:
+        rows = db.execute(
+            "SELECT prompt, answer FROM runs WHERE session_id=? AND status='success' ORDER BY rowid DESC LIMIT ?",
+            (sid, max_turns),
+        ).fetchall()
+        if not rows:
+            return None
+        ordered = list(reversed(rows))
+        lines = [
+            "[前文对话交接摘要]",
+            "（以下为本会话先前已完成轮次的摘要，供你无缝续接上下文）",
+        ]
+        used = sum(len(x) + 1 for x in lines)
+        for idx, row in enumerate(ordered, 1):
+            p_raw = " ".join(str(row[0] or "").split())
+            a_raw = " ".join(str(row[1] or "").split())
+            if len(p_raw) > 240:
+                p_raw = p_raw[:237] + "..."
+            if len(a_raw) > 420:
+                a_raw = a_raw[:417] + "..."
+            block = f"{idx}. 用户: {p_raw or '（附件/指令）'}\n   助手: {a_raw or '（无文本回复）'}"
+            if used + len(block) + 1 > max_chars and idx > 1:
+                break
+            lines.append(block)
+            used += len(block) + 1
+        return "\n".join(lines) if len(lines) > 2 else None
+
     def _run_background(
         self,
         *,
@@ -512,6 +556,7 @@ class AntiSessions:
         staged: list[Path],
         staging_dirs: list[Path],
         attachments: list[dict],
+        fallback_handoff_context: str | None = None,
     ) -> None:
         key = (self._db_key, rid)
         add_dirs = tuple(str(d) for d in staging_dirs)
@@ -553,20 +598,30 @@ class AntiSessions:
             worker = self.runtime.get_worker(str(self._db_key), profile_id, sid, workspace)
             self.runtime.register_turn(self._db_key, rid, worker)
             registered = True
-            result = worker.run_turn(
-                run_id=rid,
-                prompt_text=prompt_text,
-                model=model,
-                effort=effort,
-                mode=mode,
-                permission_mode=permission_mode,
-                resume_conversation=conversation,
-                add_dirs=add_dirs,
-                staged_paths=staged,
-                attachments=attachments,
-                allowed_roots=allowed_roots,
-                on_event=on_event,
-            )
+            turn_kwargs: dict[str, Any] = {
+                "run_id": rid,
+                "prompt_text": prompt_text,
+                "model": model,
+                "effort": effort,
+                "mode": mode,
+                "permission_mode": permission_mode,
+                "resume_conversation": conversation,
+                "add_dirs": add_dirs,
+                "staged_paths": staged,
+                "attachments": attachments,
+                "allowed_roots": allowed_roots,
+                "on_event": on_event,
+            }
+            if fallback_handoff_context is not None:
+                try:
+                    params = inspect.signature(worker.run_turn).parameters
+                    if "fallback_handoff_context" in params or any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+                    ):
+                        turn_kwargs["fallback_handoff_context"] = fallback_handoff_context
+                except (ValueError, TypeError):
+                    pass
+            result = worker.run_turn(**turn_kwargs)
         except AntiError as exc:
             result = {"status": "cli_error", "error": str(exc), "usage": {}}
         except Exception as exc:
@@ -602,19 +657,18 @@ class AntiSessions:
         effective_model = result.get("effective_model") or model
         fallback_notice = result.get("fallback_notice")
         error_detail = None
-        if isinstance(error, str) and ("login" in error.lower() or "auth" in error.lower()):
+        if not result.get("auth_transient") and isinstance(error, str) and ("login" in error.lower() or "auth" in error.lower()):
             error_detail = "请先在顶部账号管理完成官方 Agy 登录后再试。"
 
         try:
             with self.connect() as db, db:
                 if isinstance(conv_id, str) and conv_id:
+                    db.execute("UPDATE sessions SET conversation=? WHERE id=?", (conv_id, sid))
                     db.execute(
                         "INSERT INTO profile_conversations (session_id,profile_id,conversation) VALUES (?,?,?) "
                         "ON CONFLICT(session_id,profile_id) DO UPDATE SET conversation=excluded.conversation",
                         (sid, profile_id, conv_id),
                     )
-                    if profile_id == agy_profile.DEFAULT:
-                        db.execute("UPDATE sessions SET conversation=? WHERE id=?", (conv_id, sid))
                 db.execute(
                     "UPDATE runs SET status=?, answer=?, error=?, error_detail=?, usage_json=?, finished_at=?, progress_messages_json=?, effective_model=?, fallback_notice=? WHERE id=? "
                     "AND status IN ('submitting','queued','running','unknown')",
@@ -708,11 +762,19 @@ class AntiSessions:
                     raise AntiError(422, str(exc)) from exc
 
                 cli_prompt = self._build_cli_prompt(prompt, staged_attachments, staged, workspace_dir)
-                conv_row = db.execute(
-                    "SELECT conversation FROM profile_conversations WHERE session_id=? AND profile_id=?",
-                    (sid, profile_id),
-                ).fetchone()
-                conversation = conv_row[0] if conv_row else (session["conversation"] if profile_id == "default" else None)
+                conversation = session.get("conversation")
+                if not conversation:
+                    conv_row = db.execute(
+                        "SELECT conversation FROM profile_conversations WHERE session_id=? ORDER BY rowid DESC LIMIT 1",
+                        (sid,),
+                    ).fetchone()
+                    conversation = conv_row[0] if conv_row else None
+                handoff_summary = self._build_handoff_summary(db, sid) if conversation else None
+                if isinstance(conversation, str) and conversation:
+                    try:
+                        agy_profile.rescue_conversation_files(conversation)
+                    except Exception:
+                        log.debug("Could not rescue conversation files for %s", conversation, exc_info=True)
 
                 now = _now()
                 run = {
@@ -767,6 +829,7 @@ class AntiSessions:
                     "staged": staged,
                     "staging_dirs": staging_dirs,
                     "attachments": staged_attachments,
+                    "fallback_handoff_context": handoff_summary,
                 },
                 daemon=True,
             ).start()

@@ -136,7 +136,7 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     const accountButton = () => [...host.querySelectorAll('header button')]
       .find(button => button.getAttribute('aria-label')?.startsWith('Agy 账号')) as HTMLButtonElement | undefined
     await wait(() => expect(accountButton()?.getAttribute('aria-label')).toBe('Agy 账号：系统默认'))
-    expect(accountButton()?.textContent?.trim()).toBe('')
+    expect(accountButton()?.textContent?.trim()).toBe('系统默认')
     await act(async () => accountButton()!.click())
     const dialog = document.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')
     expect(dialog?.parentElement?.parentElement).toBe(document.body)
@@ -1843,7 +1843,7 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
   }
 })
 
-it('supports session account binding, grant revocation, /compact action, and 429 one-click failover retry', async () => {
+it('converges UI to single-account mode with account pill, backup quota refresh, grant revocation, /compact action, and 429 switch+retry', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   let session = {
     id: 's-p3',
@@ -1854,6 +1854,7 @@ it('supports session account binding, grant revocation, /compact action, and 429
     profile_id: null as string | null,
     grants: ['edit', 'execute'],
   }
+  let activeProfile = 'default'
   const called: Array<{ method: string; path: string; body?: unknown }> = []
   let failOnceWith429 = true
 
@@ -1871,33 +1872,57 @@ it('supports session account binding, grant revocation, /compact action, and 429
     if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
     if (path === '/api/anti/profiles') {
       return reply({
-        active: 'default',
+        active: activeProfile,
         profiles: [
           {
             id: 'default',
             name: '系统默认',
             has_credentials: true,
             auth_state: 'authenticated',
-            usage: { state: 'authenticated', rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 5 }] },
+            usage: { state: 'authenticated', checked_at: '2026-11-25T08:00:00Z', min_remaining_pct: 5, rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 5 }] },
           },
           {
             id: 'backup',
             name: '备用账号',
             has_credentials: true,
             auth_state: 'authenticated',
-            usage: { state: 'authenticated', rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 85 }] },
+            usage: { state: 'authenticated', checked_at: '2026-11-25T08:00:00Z', min_remaining_pct: 85, rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 85 }] },
+          },
+        ],
+      })
+    }
+    if (path === '/api/anti/account-usage?profile_id=backup' && method === 'POST') {
+      return reply({
+        state: 'authenticated',
+        rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 88 }],
+      })
+    }
+    if (path === '/api/anti/profiles/backup/switch' && method === 'POST') {
+      activeProfile = 'backup'
+      return reply({
+        active: 'backup',
+        profiles: [
+          {
+            id: 'default',
+            name: '系统默认',
+            has_credentials: true,
+            auth_state: 'authenticated',
+            usage: { state: 'authenticated', checked_at: '2026-11-25T08:00:00Z', min_remaining_pct: 5, rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 5 }] },
+          },
+          {
+            id: 'backup',
+            name: '备用账号',
+            has_credentials: true,
+            auth_state: 'authenticated',
+            usage: { state: 'authenticated', checked_at: '2026-11-25T08:00:00Z', min_remaining_pct: 88, rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 88 }] },
           },
         ],
       })
     }
     if (path.startsWith('/api/anti/models')) return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
     if (path.startsWith('/api/anti/commands')) return reply({ items: [{ name: 'compact', description: '压缩上下文', hint: null }] })
-    if (path === '/api/anti/workers') return reply([])
+    if (path === '/api/anti/workers') return reply({ items: [] })
     if (path === '/api/anti/sessions') return reply([session])
-    if (path === `/api/anti/sessions/${session.id}/profile` && method === 'PATCH') {
-      session = { ...session, profile_id: (body as { profile_id: string | null }).profile_id }
-      return reply(session)
-    }
     if (path === `/api/anti/sessions/${session.id}/grants` && method === 'DELETE') {
       session = { ...session, grants: [] }
       return reply(session)
@@ -1947,6 +1972,30 @@ it('supports session account binding, grant revocation, /compact action, and 429
       expect(host.querySelector('[data-anti-session-grants]')).not.toBeNull()
     })
 
+    // 0. Composer has NO per-session account selector or isolated account label; top bar shows IDE account pill
+    expect(host.querySelector('select[aria-label="本会话 Agy 账号"]')).toBeNull()
+    expect(host.textContent).not.toContain('当前隔离账号')
+    const accountPill = host.querySelector<HTMLButtonElement>('[data-anti-account-pill]')!
+    expect(accountPill.textContent).toContain('系统默认')
+    expect(accountPill.textContent).toContain('5%')
+
+    // Backup account quota refresh works non-disruptively inside modal
+    await act(async () => { accountPill.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(document.body.querySelector('button[aria-label="刷新额度：备用账号"]')).not.toBeNull()
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="刷新额度：备用账号"]')!.click()
+    })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.method === 'POST' && c.path === '/api/anti/account-usage?profile_id=backup')).toBe(true)
+    })
+    const closeModalBtn = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === '关闭')!
+    await act(async () => { closeModalBtn.click() })
+    await flush()
+
     // 1. Revoke all session grants via [data-anti-session-grants]
     const revokeAllBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-session-grants] button')].find(
       b => b.textContent?.includes('全部收回'),
@@ -1967,7 +2016,7 @@ it('supports session account binding, grant revocation, /compact action, and 429
     })
     await act(async () => { slashMenuBtn.click() })
 
-    // 3. Submit triggers 429 -> one-click failover button switches session profile & retries run
+    // 3. Submit triggers 429 -> one-click failover switches active account via /switch & retries run in same session
     const textarea = host.querySelector('textarea')!
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Retry after 429')
@@ -1988,7 +2037,8 @@ it('supports session account binding, grant revocation, /compact action, and 429
     await act(async () => { oneClickBtn.click() })
     await vi.waitFor(async () => {
       await flush()
-      expect(called.some(c => c.method === 'PATCH' && c.path === `/api/anti/sessions/${session.id}/profile`)).toBe(true)
+      expect(called.some(c => c.method === 'POST' && c.path === '/api/anti/profiles/backup/switch')).toBe(true)
+      expect(called.some(c => c.method === 'PATCH' && c.path.includes('/profile'))).toBe(false)
       expect(called.filter(c => c.method === 'POST' && c.path === `/api/anti/sessions/${session.id}/runs`).length).toBe(2)
     })
   } finally {

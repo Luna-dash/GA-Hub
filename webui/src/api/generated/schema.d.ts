@@ -2770,23 +2770,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/anti/sessions/{sid}/profile": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Set Session Profile */
-        patch: operations["set_session_profile_api_anti_sessions__sid__profile_patch"];
-        trace?: never;
-    };
     "/api/anti/sessions/{sid}/grants": {
         parameters: {
             query?: never;
@@ -3289,6 +3272,8 @@ export interface components {
         AntiBreakerResetReq: {
             /** Model Group */
             model_group?: string | null;
+            /** Profile Id */
+            profile_id?: string | null;
         };
         /** AntiCommandItem */
         AntiCommandItem: {
@@ -3460,6 +3445,8 @@ export interface components {
             remaining_pct: number;
             /** Note */
             note?: string | null;
+            /** Profile Id */
+            profile_id?: string | null;
         };
         /** AntiQuotaPool */
         AntiQuotaPool: {
@@ -3517,8 +3504,6 @@ export interface components {
             mode: "plan" | "accept-edits";
             /** Permission Mode */
             permission_mode?: ("approval-required" | "auto-accept-edits" | "auto" | "full-access") | null;
-            /** Profile Id */
-            profile_id?: string | null;
         };
         /** AntiRunResp */
         AntiRunResp: {
@@ -3623,8 +3608,6 @@ export interface components {
             mode: "plan" | "accept-edits";
             /** Permission Mode */
             permission_mode?: ("approval-required" | "auto-accept-edits" | "auto" | "full-access") | null;
-            /** Profile Id */
-            profile_id?: string | null;
         };
         /** AntiSessionCreate */
         AntiSessionCreate: {
@@ -3632,11 +3615,6 @@ export interface components {
             project: string;
             /** Title */
             title?: string | null;
-        };
-        /** AntiSessionProfileUpdate */
-        AntiSessionProfileUpdate: {
-            /** Profile Id */
-            profile_id?: string | null;
         };
         /** AntiSessionRename */
         AntiSessionRename: {
@@ -11119,7 +11097,9 @@ export interface operations {
     };
     gateway_quota_api_anti_quota_get: {
         parameters: {
-            query?: never;
+            query?: {
+                profile_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -11135,11 +11115,22 @@ export interface operations {
                     "application/json": components["schemas"]["AntiQuotaPool"][];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     reset_gateway_breaker_api_anti_breaker_reset_post: {
         parameters: {
-            query?: never;
+            query?: {
+                profile_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -11170,7 +11161,9 @@ export interface operations {
     };
     calibrate_gateway_quota_api_anti_quota_calibrate_post: {
         parameters: {
-            query?: never;
+            query?: {
+                profile_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -11205,6 +11198,7 @@ export interface operations {
         parameters: {
             query?: {
                 window_hours?: number;
+                profile_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -11581,41 +11575,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AntiRunResp"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_session_profile_api_anti_sessions__sid__profile_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                sid: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AntiSessionProfileUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AntiSessionResp"];
                 };
             };
             /** @description Validation Error */

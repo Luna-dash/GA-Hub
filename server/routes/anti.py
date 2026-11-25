@@ -244,7 +244,6 @@ class AntiRunCreate(BaseModel):
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=256)
     mode: Literal["plan", "accept-edits"] = "plan"
     permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] | None = None
-    profile_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)] | None = None
 
     @model_validator(mode="after")
     def _require_input(self) -> "AntiRunCreate":
@@ -253,16 +252,11 @@ class AntiRunCreate(BaseModel):
         return self
 
 
-class AntiSessionProfileUpdate(BaseModel):
-    profile_id: str | None = Field(default=None, max_length=64)
-
-
 class AntiSessionCompactReq(BaseModel):
     model: Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$")] | None = None
     effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
     mode: Literal["plan", "accept-edits"] = "plan"
     permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] | None = None
-    profile_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)] | None = None
 
 
 class AntiRunSteer(BaseModel):
@@ -458,12 +452,24 @@ class AntiQuotaPool(BaseModel):
 
 class AntiBreakerResetReq(BaseModel):
     model_group: str | None = Field(default=None, max_length=64)
+    profile_id: str | None = Field(default=None, max_length=64)
 
 
 class AntiQuotaCalibrateReq(BaseModel):
     model_group: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
     remaining_pct: float = Field(ge=0, le=100)
     note: str | None = Field(default=None, max_length=200)
+    profile_id: str | None = Field(default=None, max_length=64)
+
+
+def _resolve_target_profile(profile_id: str | None) -> str:
+    active_id, profiles = anti_profiles.snapshot()
+    if isinstance(profile_id, str) and profile_id.strip():
+        target = profile_id.strip()
+        if not any(p.id == target for p in profiles):
+            raise HTTPException(404, "找不到指定的 Agy 账号")
+        return target
+    return active_id
 
 
 def _profile_action(request: Request) -> None:
@@ -615,10 +621,7 @@ def logout_agy_profile(profile_id: str, request: Request):
 def check_account_usage(request: Request, profile_id: str | None = Query(default=None)):
     _require_action(request, "check-anti-usage", "Missing Anti usage action")
     try:
-        active_id, profiles = anti_profiles.snapshot()
-        target_id = profile_id.strip() if isinstance(profile_id, str) and profile_id.strip() else active_id
-        if not any(p.id == target_id for p in profiles):
-            raise HTTPException(404, "找不到指定的 Agy 账号")
+        target_id = _resolve_target_profile(profile_id)
         report = agy_usage.probe_account_usage(target_id)
         parsed = AntiAccountUsage.model_validate(report)
         anti_profiles.record_usage(
@@ -634,10 +637,10 @@ def check_account_usage(request: Request, profile_id: str | None = Query(default
 
 
 @router.get("/quota", response_model=list[AntiQuotaPool])
-def gateway_quota():
+def gateway_quota(profile_id: str | None = Query(default=None)):
     try:
-        profile_id = anti_profiles.snapshot()[0]
-        data = AntiSessions().ledger.quota_pools(profile_id=profile_id)
+        target_id = _resolve_target_profile(profile_id)
+        data = AntiSessions().ledger.quota_pools(profile_id=target_id)
         return [AntiQuotaPool.model_validate(item) for item in data]
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
@@ -646,21 +649,29 @@ def gateway_quota():
 
 
 @router.post("/breaker/reset", status_code=204)
-def reset_gateway_breaker(body: AntiBreakerResetReq, request: Request):
+def reset_gateway_breaker(
+    body: AntiBreakerResetReq,
+    request: Request,
+    profile_id: str | None = Query(default=None),
+):
     _require_action(request, "manage-anti-gateway", "Missing Anti gateway action")
     try:
-        profile_id = anti_profiles.snapshot()[0]
-        AntiSessions().ledger.reset_breaker(body.model_group, profile_id=profile_id)
+        target_id = _resolve_target_profile(profile_id or body.profile_id)
+        AntiSessions().ledger.reset_breaker(body.model_group, profile_id=target_id)
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
 
 @router.post("/quota/calibrate", response_model=AntiQuotaPool)
-def calibrate_gateway_quota(body: AntiQuotaCalibrateReq, request: Request):
+def calibrate_gateway_quota(
+    body: AntiQuotaCalibrateReq,
+    request: Request,
+    profile_id: str | None = Query(default=None),
+):
     _require_action(request, "manage-anti-gateway", "Missing Anti gateway action")
     try:
-        profile_id = anti_profiles.snapshot()[0]
-        data = AntiSessions().ledger.calibrate_quota(body.model_group, body.remaining_pct, body.note, profile_id=profile_id)
+        target_id = _resolve_target_profile(profile_id or body.profile_id)
+        data = AntiSessions().ledger.calibrate_quota(body.model_group, body.remaining_pct, body.note, profile_id=target_id)
         return AntiQuotaPool.model_validate(data)
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
@@ -669,10 +680,13 @@ def calibrate_gateway_quota(body: AntiQuotaCalibrateReq, request: Request):
 
 
 @router.get("/stats", response_model=AntiUsageStats)
-def gateway_stats(window_hours: int = Query(default=24, ge=0, le=8760)):
+def gateway_stats(
+    window_hours: int = Query(default=24, ge=0, le=8760),
+    profile_id: str | None = Query(default=None),
+):
     try:
-        profile_id = anti_profiles.snapshot()[0]
-        data = AntiSessions().ledger.stats(window_hours, profile_id=profile_id)
+        target_id = _resolve_target_profile(profile_id)
+        data = AntiSessions().ledger.stats(window_hours, profile_id=target_id)
         return AntiUsageStats.model_validate(data)
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
@@ -745,20 +759,6 @@ def runs(sid: str):
     return _call("history", sid)
 
 
-def _submission_ctx(profile_id: str | None):
-    if profile_id is not None:
-        try:
-            return daemon.submission(profile_id)
-        except TypeError:
-            pass
-    return daemon.submission()
-
-
-@router.patch("/sessions/{sid}/profile", response_model=AntiSessionResp)
-def set_session_profile(sid: str, body: AntiSessionProfileUpdate):
-    return _call("set_session_profile", sid, body.profile_id)
-
-
 @router.delete("/sessions/{sid}/grants", response_model=AntiSessionResp)
 def clear_session_grants(sid: str, kind: str | None = Query(default=None)):
     return _call("clear_session_grants", sid, kind)
@@ -768,12 +768,11 @@ def clear_session_grants(sid: str, kind: str | None = Query(default=None)):
 def compact_session(sid: str, body: AntiSessionCompactReq | None = None):
     req = body or AntiSessionCompactReq()
     try:
-        target_profile = _call("resolve_session_profile", sid, req.profile_id)
-        with _submission_ctx(target_profile) as profile_id:
+        with daemon.submission() as profile_id:
             return _call(
                 "compact",
                 sid,
-                profile_id=target_profile or profile_id,
+                profile_id=profile_id,
                 model=req.model,
                 effort=req.effort,
                 mode=req.mode,
@@ -786,8 +785,7 @@ def compact_session(sid: str, body: AntiSessionCompactReq | None = None):
 @router.post("/sessions/{sid}/runs", response_model=AntiRunResp)
 def submit_run(sid: str, body: AntiRunCreate):
     try:
-        target_profile = _call("resolve_session_profile", sid, body.profile_id)
-        with _submission_ctx(target_profile) as profile_id:
+        with daemon.submission() as profile_id:
             return _call(
                 "submit",
                 sid,
@@ -796,7 +794,7 @@ def submit_run(sid: str, body: AntiRunCreate):
                 body.model,
                 body.effort,
                 [(ref.id, ref.path) for ref in body.references],
-                target_profile or profile_id,
+                profile_id,
                 [att.model_dump() for att in body.attachments],
                 body.mode,
                 body.permission_mode,

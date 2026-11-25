@@ -226,29 +226,56 @@ def _make_http_session() -> requests.Session:
 def _probe_endpoints(profile_id: str) -> tuple[str, ...]:
     """Match T3 Code ENDPOINTS priority (`oauth-business` -> prod first, else daily first)."""
     auth_type = "oauth-personal"
-    try:
-        settings_path = agy_profile.profile_app_data_dir(profile_id) / "settings.json"
-        if settings_path.is_file() and not settings_path.is_symlink():
-            raw = json.loads(settings_path.read_text(encoding="utf-8"))
-            auth_obj = raw.get("auth") if isinstance(raw, dict) else None
-            if isinstance(auth_obj, dict) and auth_obj.get("type") == "oauth-business":
-                auth_type = "oauth-business"
-    except Exception:
-        pass
+    candidates = [agy_profile.profile_vault_app_data_dir(profile_id) / "settings.json"]
+    if agy_profile.active_workspace_profile() == profile_id:
+        candidates.append(agy_profile.workspace_app_data_dir() / "settings.json")
+    for settings_path in candidates:
+        try:
+            if settings_path.is_file() and not settings_path.is_symlink():
+                raw = json.loads(settings_path.read_text(encoding="utf-8"))
+                auth_obj = raw.get("auth") if isinstance(raw, dict) else None
+                if isinstance(auth_obj, dict) and auth_obj.get("type") == "oauth-business":
+                    auth_type = "oauth-business"
+                    break
+        except Exception:
+            continue
     return (PROD_ENDPOINT, DAILY_ENDPOINT) if auth_type == "oauth-business" else (DAILY_ENDPOINT, PROD_ENDPOINT)
 
 
-def _read_cli_token_record(profile_id: str) -> tuple[str | None, datetime | None]:
-    """Read `(access_token, expiry)` from `antigravity-oauth-token` or Windows keyring."""
+def workspace_token_fingerprint() -> str | None:
+    """Return a short non-secret digest of the active workspace's OAuth token file."""
+    path = agy_profile.workspace_app_data_dir() / "antigravity-oauth-token"
+    try:
+        if path.is_file() and not path.is_symlink() and path.stat().st_size > 0:
+            return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    except OSError:
+        pass
+    return None
+
+
+def _read_cli_token_raw(profile_id: str) -> bytes | None:
+    try:
+        agy_profile.sync_workspace_credentials_to_vault(profile_id)
+    except Exception:
+        pass
     cli_tok_path = agy_profile.find_credential_file(profile_id, "antigravity-oauth-token")
-    raw_cli: bytes | None = None
     if cli_tok_path is not None:
         try:
-            raw_cli = cli_tok_path.read_bytes()
+            return cli_tok_path.read_bytes()
         except OSError:
-            raw_cli = None
-    elif profile_id == agy_profile.DEFAULT and os.name == "nt":
-        raw_cli = read_windows_cli_credential()
+            return None
+    if (
+        profile_id == agy_profile.DEFAULT
+        and not agy_profile._default_host_import_disabled().exists()
+        and os.name == "nt"
+    ):
+        return read_windows_cli_credential()
+    return None
+
+
+def _read_cli_token_record(profile_id: str) -> tuple[str | None, datetime | None]:
+    """Read `(access_token, expiry)` from vault, workspace, or Windows keyring."""
+    raw_cli = _read_cli_token_raw(profile_id)
     if not raw_cli:
         return None, None
     try:
@@ -266,18 +293,39 @@ def _read_cli_token_record(profile_id: str) -> tuple[str | None, datetime | None
     return access, _parse_iso(token_obj.get("expiry") if isinstance(token_obj.get("expiry"), str) else None)
 
 
-def _refresh_cli_token_via_models(profile_id: str, timeout: float = CLI_REFRESH_TIMEOUT) -> bool:
-    """Refresh an expired 1.5.x CLI OAuth token via bounded `agy models` (DEVNULL + Job Object)."""
+def _has_cli_refresh_token(profile_id: str) -> bool:
+    raw_cli = _read_cli_token_raw(profile_id)
+    if not raw_cli:
+        return False
+    try:
+        text = raw_cli.decode("utf-8", errors="replace").strip("\x00 \t\r\n")
+        parsed = json.loads(text)
+    except Exception:
+        return False
+    token_obj = parsed.get("token") if isinstance(parsed, dict) else None
+    if not isinstance(token_obj, dict):
+        return False
+    rtok = token_obj.get("refresh_token")
+    return isinstance(rtok, str) and bool(rtok.strip())
+
+
+def _refresh_cli_token_status(profile_id: str, timeout: float = CLI_REFRESH_TIMEOUT) -> str:
+    """Refresh an expired 1.5.x CLI OAuth token via bounded `agy models` inside profile's vault.
+
+    Returns `"ok"`, `"exited_nonzero"`, `"timeout"`, or `"unavailable"`.
+    """
     executable = agy_profile.agy_executable_or_none()
     if not executable:
-        return False
+        return "unavailable"
+    if profile_id == agy_profile.DEFAULT:
+        agy_profile._seed_default_vault_if_empty()
     temp_dir = agy_profile.make_runtime_temp_dir(profile_id)
-    gemini_dir = agy_profile.profile_gemini_dir(profile_id)
+    gemini_dir = agy_profile.profile_vault_gemini_dir(profile_id)
     proc: subprocess.Popen | None = None
     group: child_job.ProcessGroupHandle | None = None
     try:
         gemini_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        env = agy_profile.clean_agy_env(profile_id, temp_dir=temp_dir)
+        env = agy_profile.clean_agy_env(profile_id, temp_dir=temp_dir, vault_only=True)
         proc = child_job.spawn(
             [executable, "models"],
             kind="agy-token-refresh",
@@ -291,21 +339,29 @@ def _refresh_cli_token_via_models(profile_id: str, timeout: float = CLI_REFRESH_
         )
         group = child_job.create_process_group(proc)
         proc.wait(timeout=timeout)
-        return proc.returncode == 0
+        if proc.returncode == 0:
+            agy_profile.sync_vault_token_to_workspace_if_newer(profile_id)
+            return "ok"
+        return "exited_nonzero"
     except subprocess.TimeoutExpired:
         if group is not None and proc is not None:
             group.terminate(proc.pid)
         elif proc is not None:
             child_job.terminate_tree(proc.pid)
-        return False
+        return "timeout"
     except (OSError, subprocess.SubprocessError):
-        return False
+        return "unavailable"
     finally:
         if group is not None:
             group.close()
         if proc is not None:
             child_job.forget(proc.pid)
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _refresh_cli_token_via_models(profile_id: str, timeout: float = CLI_REFRESH_TIMEOUT) -> bool:
+    """Refresh an expired 1.5.x CLI OAuth token via bounded `agy models` inside profile's vault."""
+    return _refresh_cli_token_status(profile_id, timeout=timeout) == "ok"
 
 
 def _resolve_access_token(
@@ -364,14 +420,29 @@ def _resolve_access_token(
     if access:
         if expiry is None or expiry > now + timedelta(seconds=60):
             return access, None, "cli_token", "ok"
-        if allow_cli_refresh and _refresh_cli_token_via_models(profile_id):
-            refreshed_access, refreshed_expiry = _read_cli_token_record(profile_id)
-            now_after = datetime.now(timezone.utc)
-            if refreshed_access and (refreshed_expiry is None or refreshed_expiry > now_after + timedelta(seconds=60)):
-                return refreshed_access, None, "cli_token", "ok"
+        if allow_cli_refresh:
+            refresh_status = _refresh_cli_token_status(profile_id)
+            if refresh_status == "ok":
+                refreshed_access, refreshed_expiry = _read_cli_token_record(profile_id)
+                now_after = datetime.now(timezone.utc)
+                if refreshed_access and (refreshed_expiry is None or refreshed_expiry > now_after + timedelta(seconds=60)):
+                    return refreshed_access, None, "cli_token", "ok"
+            if refresh_status == "exited_nonzero" and not _has_cli_refresh_token(profile_id):
+                return None, None, "cli_token", "refresh_failed"
         return None, None, "cli_token", "expired"
 
     return None, None, "none", "missing"
+
+
+def refresh_profile_token(profile_id: str) -> str:
+    """Attempt silent vault token renewal and classify outcome (`ok` | `login_required` | `transient_error`)."""
+    access, _, _, status = _resolve_access_token(profile_id, allow_cli_refresh=True)
+    if access:
+        agy_profile.record_auth_state(profile_id, "authenticated")
+        return "ok"
+    if status in {"refresh_failed", "missing"}:
+        return "login_required"
+    return "transient_error"
 
 
 def _extract_access_token(profile_id: str) -> tuple[str | None, str | None]:
@@ -534,7 +605,7 @@ def _parse_available_model_catalog(data: dict[str, Any]) -> list[dict[str, Any]]
 
 def probe_available_models(profile_id: str) -> dict[str, Any]:
     """Fetch upstream model catalog directly via CloudCode `fetchAvailableModels`."""
-    access_token, project_id, _, _ = _resolve_access_token(profile_id, allow_cli_refresh=False)
+    access_token, project_id, _, _ = _resolve_access_token(profile_id, allow_cli_refresh=True)
     if not access_token:
         return {"state": "login_required", "items": []}
     session = _make_http_session()
@@ -635,9 +706,10 @@ def probe_account_usage(
             return {
                 "state": "unverified",
                 "rows": [],
-                "detail": "本地登录凭据已过期，请先发起一次对话或重新登录以续期，再重新检测额度。",
+                "detail": "本地短效访问凭据已过期且后台静默续期未完成，请稍后重试；如多次失败再重新登录。",
             }
         if token_status == "refresh_failed":
+            agy_profile.record_auth_state(profile_id, "login_required")
             return {
                 "state": "login_required",
                 "rows": [],
@@ -650,6 +722,8 @@ def probe_account_usage(
                 "detail": "连接 Google 鉴权服务超时或网络不可达，请检查网络与代理设置后重试。",
             }
         state = "unverified" if agy_profile.has_local_credentials(profile_id) else "login_required"
+        if state == "login_required":
+            agy_profile.record_auth_state(profile_id, "login_required")
         return {
             "state": state,
             "rows": [],
@@ -666,6 +740,7 @@ def probe_account_usage(
             _parse_summary_rows,
         )
         if summary_rows:
+            agy_profile.record_auth_state(profile_id, "authenticated")
             return {"state": "authenticated", "rows": summary_rows}
         model_rows, mod_unauth, mod_net = _fetch_operation_rows(
             access_token,
@@ -675,6 +750,7 @@ def probe_account_usage(
             _parse_model_rows,
         )
         if model_rows:
+            agy_profile.record_auth_state(profile_id, "authenticated")
             return {"state": "authenticated", "rows": model_rows}
 
         unauthorized = sum_unauth or mod_unauth
@@ -687,6 +763,7 @@ def probe_account_usage(
                     access_token = new_access
                     continue
         if unauthorized:
+            agy_profile.record_auth_state(profile_id, "login_required")
             return {
                 "state": "login_required",
                 "rows": [],
@@ -700,6 +777,7 @@ def probe_account_usage(
             }
         break
 
+    agy_profile.record_auth_state(profile_id, "authenticated")
     return {
         "state": "authenticated",
         "rows": [],

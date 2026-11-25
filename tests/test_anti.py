@@ -37,6 +37,7 @@ class FakeWorker:
         attachments,
         allowed_roots,
         on_event,
+        fallback_handoff_context=None,
     ):
         self.manager.calls.append({
             "profile_id": self.profile_id,
@@ -355,22 +356,23 @@ def test_selected_references_and_attachments_stage_properly(tmp_path, monkeypatc
         assert local.as_posix() in runtime.calls[0]["prompt"]
 
 
-def test_conversation_resume_is_per_agy_profile(tmp_path, monkeypatch):
+def test_conversation_resume_is_shared_across_agy_profiles(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "project", lambda name: (tmp_path, tmp_path / "artifacts"))
     runtime = FakeRuntime()
     sessions = engine.AntiSessions(tmp_path / "anti.sqlite", runtime)
     sid = sessions.create("project")["id"]
-    seen = {}
+    shared_conv = None
     for index, profile in enumerate(("default", "alpha", "beta", "alpha", "default", "beta")):
-        runtime.conv_map[profile] = f"conv-{profile}"
+        runtime.conv_map[profile] = shared_conv or f"conv-{profile}"
         run = sessions.submit(sid, f"op{index}", "hello", profile_id=profile, mode="accept-edits" if index % 2 else "plan")
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
             if sessions.refresh(sid, run["id"])["status"] == "success":
                 break
             time.sleep(0.02)
-        assert runtime.calls[-1]["conversation"] == seen.get(profile)
-        seen[profile] = f"conv-{profile}"
+        assert runtime.calls[-1]["conversation"] == shared_conv
+        shared_conv = shared_conv or f"conv-{profile}"
+        assert sessions.session(sid)["conversation"] == shared_conv
 
 
 def test_events_stream_sse_emits_live_events(tmp_path, monkeypatch):
@@ -669,8 +671,9 @@ def test_workers_listing_and_mid_turn_steer_endpoint(tmp_path, monkeypatch):
         assert done_steer.status_code == 409
 
 
-def test_session_profile_binding_grants_and_compact_endpoints(tmp_path, monkeypatch):
+def test_session_grants_compact_and_shared_context_across_account_switches(tmp_path, monkeypatch):
     from contextlib import nullcontext
+    import sqlite3
     from server.services import agy_profile
 
     workspace = tmp_path / "workspace"
@@ -690,7 +693,6 @@ def test_session_profile_binding_grants_and_compact_endpoints(tmp_path, monkeypa
             self._grants: dict[str, set[str]] = {}
             self.model_profile_queries: list[str | None] = []
             self.command_profile_queries: list[str | None] = []
-            self.closed_sessions: list[tuple[str, str]] = []
 
         def models(self, profile_id=None):
             self.model_profile_queries.append(profile_id)
@@ -714,14 +716,11 @@ def test_session_profile_binding_grants_and_compact_endpoints(tmp_path, monkeypa
                 current.clear()
             return sorted(current)
 
-        def close_session(self, db_path, session_id, *, force=False):
-            self.closed_sessions.append((str(db_path), session_id))
-            super().close_session(db_path, session_id)
-
     runtime = Phase3Runtime()
     db = tmp_path / "anti.sqlite"
     monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(db, runtime))
-    monkeypatch.setattr(anti.daemon, "submission", lambda profile_id=None: nullcontext(profile_id or "default"))
+    active_holder = {"pid": "default"}
+    monkeypatch.setattr(anti.daemon, "submission", lambda: nullcontext(active_holder["pid"]))
 
     app = FastAPI()
     app.include_router(anti.router)
@@ -736,43 +735,39 @@ def test_session_profile_binding_grants_and_compact_endpoints(tmp_path, monkeypa
         assert session["profile_id"] is None
         assert session["grants"] == []
 
-        # Unknown profile -> 404; compact without conversation -> 409
-        assert client.patch(f"/api/anti/sessions/{sid}/profile", json={"profile_id": "nonexistent"}).status_code == 404
+        # Per-session account binding endpoint is removed; compact without conversation -> 409
+        assert client.patch(f"/api/anti/sessions/{sid}/profile", json={"profile_id": alt.id}).status_code in {404, 405}
         assert client.post(f"/api/anti/sessions/{sid}/compact", json={}).status_code == 409
 
-        # Bind session to alt profile
-        bound = client.patch(f"/api/anti/sessions/{sid}/profile", json={"profile_id": alt.id})
-        assert bound.status_code == 200
-        assert bound.json()["profile_id"] == alt.id
-        assert (str(db.resolve()), sid) in runtime.closed_sessions or any(s == sid for _, s in runtime.closed_sessions)
-
-        # Start an active run on alt profile; switching this session's profile while active -> 409
+        # Turn 1 runs on active account 'default'
         run = client.post(
             f"/api/anti/sessions/{sid}/runs",
             json={"operation": "op-bind", "prompt": "check", "mode": "accept-edits", "permission_mode": "approval-required"},
         ).json()
         rid = run["id"]
         deadline = time.monotonic() + 2.0
-        while (str(db.resolve()), alt.id, sid) not in runtime.workers and time.monotonic() < deadline:
+        while (str(db.resolve()), "default", sid) not in runtime.workers and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert (str(db.resolve()), alt.id, sid) in runtime.workers
-        assert client.patch(f"/api/anti/sessions/{sid}/profile", json={"profile_id": "default"}).status_code == 409
+        assert (str(db.resolve()), "default", sid) in runtime.workers
 
         runtime._grants[sid] = {"edit", "execute"}
-        runtime.workers[(str(db.resolve()), alt.id, sid)].perm_event.set()
+        runtime.workers[(str(db.resolve()), "default", sid)].perm_event.set()
         assert _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{rid}")["status"] == "success"
 
         # Session lists accumulated grants and supports per-kind / full revoke
         listed = next(item for item in client.get("/api/anti/sessions").json() if item["id"] == sid)
-        assert listed["profile_id"] == alt.id
+        assert listed["profile_id"] is None
         assert listed["grants"] == ["edit", "execute"]
+        assert listed["has_conversation"] is True
 
         revoked_one = client.delete(f"/api/anti/sessions/{sid}/grants?kind=edit")
         assert revoked_one.status_code == 200 and revoked_one.json()["grants"] == ["execute"]
         revoked_all = client.delete(f"/api/anti/sessions/{sid}/grants")
         assert revoked_all.status_code == 200 and revoked_all.json()["grants"] == []
 
-        # Compact checks cached commands list when available, then submits /compact
+        # Switch active account -> next run (/compact) resumes the exact same conversation ID!
+        active_holder["pid"] = alt.id
+        runtime.conv_map[alt.id] = "conv-default"
         assert client.post(f"/api/anti/sessions/{sid}/compact", json={}).status_code == 409
         runtime._commands.append({"name": "compact", "description": "压缩上下文", "hint": None})
         compact_resp = client.post(f"/api/anti/sessions/{sid}/compact", json={})
@@ -780,14 +775,32 @@ def test_session_profile_binding_grants_and_compact_endpoints(tmp_path, monkeypa
         compact_run = compact_resp.json()
         assert compact_run["prompt"] == "/compact"
         deadline = time.monotonic() + 2.0
-        while runtime.workers[(str(db.resolve()), alt.id, sid)].perm_event.is_set() and time.monotonic() < deadline:
+        while (str(db.resolve()), alt.id, sid) not in runtime.workers and time.monotonic() < deadline:
             time.sleep(0.01)
         runtime.workers[(str(db.resolve()), alt.id, sid)].perm_event.set()
         assert _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{compact_run['id']}")["status"] == "success"
+        assert runtime.calls[-1]["profile_id"] == alt.id
+        assert runtime.calls[-1]["conversation"] == "conv-default"
 
-        # Unbind back to global active account
-        unbound = client.patch(f"/api/anti/sessions/{sid}/profile", json={"profile_id": None})
-        assert unbound.status_code == 200 and unbound.json()["profile_id"] is None
+        # Deleting legacy profile_conversations must NEVER delete sessions.conversation
+        engine.AntiSessions(db, runtime).delete_profile_conversations(alt.id)
+        assert engine.AntiSessions(db, runtime).session(sid)["conversation"] == "conv-default"
+
+    # Legacy SQLite DB with NULL sessions.conversation + profile_conversations row backfills automatically
+    leg_db = tmp_path / "legacy_backfill.sqlite"
+    engine.AntiSessions(leg_db, runtime).list()
+    with sqlite3.connect(leg_db) as conn, conn:
+        conn.execute(
+            "INSERT INTO sessions (id, project, workspace, title, conversation, updated_at, profile_id) VALUES (?,?,?,?,?,?,?)",
+            ("s-backfill", "project", str(workspace), "Legacy", None, "2026-11-25T00:00:00Z", alt.id),
+        )
+        conn.execute(
+            "INSERT INTO profile_conversations (session_id, profile_id, conversation) VALUES (?,?,?)",
+            ("s-backfill", alt.id, "conv-from-alt"),
+        )
+    engine.AntiSessions._initialized_dbs.clear()
+    backfilled = engine.AntiSessions(leg_db, runtime).session("s-backfill")
+    assert backfilled["conversation"] == "conv-from-alt"
 
 
 def test_models_config_sync_and_run_effective_model_persistence(tmp_path, monkeypatch):

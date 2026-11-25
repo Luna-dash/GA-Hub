@@ -1,7 +1,9 @@
-"""Standalone Antigravity (agy) profile isolation, env hygiene, and login support.
+"""Standalone Antigravity (agy) unified workspace + credential vault manager.
 
-Directly implements T3 Code's isolated GEMINI_HOME + file-storage ACP strategy
-inside GA-Hub without requiring an external AntiCLI HTTP daemon.
+Runs all Agy ACP sessions inside one shared `GEMINI_HOME` workspace
+(`ADMIN_DATA/agy-profiles/workspace`) so conversation history, brain artifacts,
+and Orchestrator configuration persist seamlessly across account switches while
+keeping each account's OAuth credentials isolated in its own vault.
 """
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ import logging
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import threading
 import time
@@ -31,17 +34,22 @@ from . import child_job
 log = logging.getLogger(__name__)
 
 DEFAULT = "default"
+WORKSPACE_LOCK_ID = "workspace"
 PROFILE_ID = r"(?:default|[0-9a-f]{32})"
+_LOCK_ID = r"(?:default|workspace|[0-9a-f]{32})"
 APP_DATA_DIR_NAME = "antigravity-cli"
 
 _PROXY_KEYS = {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}
 _LOOPBACK = "localhost,127.0.0.1,::1"
-_CLI_CREDENTIAL_FILES = (
+_VAULT_CREDENTIAL_FILES = (
     "antigravity-oauth-token",
     "acp_token.json",
+    "jetski_state.pbtxt",
+)
+_CLI_CREDENTIAL_FILES = (
+    *_VAULT_CREDENTIAL_FILES,
     "settings.json",
     "installation_id",
-    "jetski_state.pbtxt",
 )
 
 # Match T3 Code's removedEnvironmentKeys so host Gemini/Vertex overrides or dead
@@ -137,13 +145,43 @@ def snapshot() -> tuple[str, list[Profile]]:
     return active, profiles
 
 
-# Serialize in-process profiles.json read/modify/write transactions.
-_profile_metadata_lock = threading.Lock()
+# Serialize in-process profiles.json and workspace credential transactions.
+_profile_metadata_lock = threading.RLock()
+
+
+def _atomic_write_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    stage: Path | None = None
+    try:
+        with NamedTemporaryFile(mode="wb", dir=path.parent, delete=False) as fp:
+            stage = Path(fp.name)
+            fp.write(data)
+        for attempt in range(6):
+            try:
+                stage.replace(path)
+                break
+            except PermissionError as exc:
+                if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 5:
+                    raise
+                time.sleep(0.01 * (2 ** attempt))
+        try:
+            os.chmod(path, mode)
+        except OSError:
+            pass
+    finally:
+        if stage is not None:
+            stage.unlink(missing_ok=True)
+
+
+def _atomic_write_json(path: Path, payload: Any, *, mode: int = 0o600, indent: int | None = None) -> None:
+    text = json.dumps(payload, ensure_ascii=False, indent=indent)
+    if indent is not None:
+        text += "\n"
+    _atomic_write_bytes(path, text.encode("utf-8"), mode=mode)
 
 
 def _save(active: str, profiles: list[Profile], meta: dict[str, dict[str, Any]] | None = None) -> None:
     path = _root() / "profiles.json"
-    stage = None
     if meta is None:
         _, _, existing_meta = _load_raw()
         ids = {p.id for p in profiles}
@@ -155,35 +193,72 @@ def _save(active: str, profiles: list[Profile], meta: dict[str, dict[str, Any]] 
     if meta:
         payload["meta"] = meta
     try:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as file:
-            stage = Path(file.name)
-            json.dump(payload, file, ensure_ascii=False)
-        stage.replace(path)
+        _atomic_write_json(path, payload)
     except OSError as exc:
         raise AgyProfileError(503, "无法保存 Agy 账号设置") from exc
-    finally:
-        if stage is not None:
-            stage.unlink(missing_ok=True)
 
 
-def profile_home(profile_id: str) -> Path:
-    if profile_id == DEFAULT:
-        return Path.home()
+def workspace_home() -> Path:
+    return _root() / WORKSPACE_LOCK_ID / "home"
+
+
+def workspace_gemini_dir() -> Path:
+    return workspace_home() / ".gemini"
+
+
+def workspace_app_data_dir() -> Path:
+    return workspace_gemini_dir() / APP_DATA_DIR_NAME
+
+
+def workspace_runtime_temp_root() -> Path:
+    return _root() / WORKSPACE_LOCK_ID / "runtime-tmp"
+
+
+def _workspace_active_marker() -> Path:
+    return _root() / WORKSPACE_LOCK_ID / ".active-profile"
+
+
+def _workspace_migrated_marker() -> Path:
+    return _root() / WORKSPACE_LOCK_ID / ".migrated_v1"
+
+
+def _default_host_import_disabled() -> Path:
+    return _root() / DEFAULT / ".host_import_disabled"
+
+
+def _host_default_gemini_dir() -> Path:
+    return Path.home() / ".gemini"
+
+
+def profile_vault_home(profile_id: str) -> Path:
     if not re.fullmatch(PROFILE_ID, profile_id):
         raise AgyProfileError(404, "找不到 Agy 账号")
     return _root() / profile_id / "home"
 
 
+def profile_vault_gemini_dir(profile_id: str) -> Path:
+    return profile_vault_home(profile_id) / ".gemini"
+
+
+def profile_vault_app_data_dir(profile_id: str) -> Path:
+    return profile_vault_gemini_dir(profile_id) / APP_DATA_DIR_NAME
+
+
+def profile_home(profile_id: str) -> Path:
+    return profile_vault_home(profile_id)
+
+
 def profile_gemini_dir(profile_id: str) -> Path:
-    return profile_home(profile_id) / ".gemini"
+    return profile_vault_gemini_dir(profile_id)
 
 
 def profile_app_data_dir(profile_id: str) -> Path:
-    return profile_gemini_dir(profile_id) / APP_DATA_DIR_NAME
+    return profile_vault_app_data_dir(profile_id)
 
 
 def profile_runtime_temp_root(profile_id: str) -> Path:
+    if profile_id == WORKSPACE_LOCK_ID:
+        return workspace_runtime_temp_root()
     if profile_id == DEFAULT:
         return _root() / "default-runtime-tmp"
     if not re.fullmatch(PROFILE_ID, profile_id):
@@ -191,19 +266,114 @@ def profile_runtime_temp_root(profile_id: str) -> Path:
     return _root() / profile_id / "runtime-tmp"
 
 
-def find_credential_file(profile_id: str, filename: str) -> Path | None:
-    """Return existing credential file inside antigravity-cli or antigravity-acp."""
-    if not re.fullmatch(PROFILE_ID, profile_id):
+def active_workspace_profile() -> str | None:
+    try:
+        raw = _workspace_active_marker().read_text(encoding="utf-8").strip()
+        return raw if raw and re.fullmatch(PROFILE_ID, raw) else None
+    except OSError:
         return None
-    gemini = profile_gemini_dir(profile_id)
+
+
+def _find_file_in_gemini_dir(gemini_dir: Path, filename: str) -> Path | None:
     for app_dir in (APP_DATA_DIR_NAME, "antigravity-acp"):
-        candidate = gemini / app_dir / filename
+        candidate = gemini_dir / app_dir / filename
         try:
+            if candidate.is_symlink():
+                continue
             if candidate.is_file() and candidate.stat().st_size > 0:
                 return candidate
         except OSError:
             continue
     return None
+
+
+def find_credential_file(profile_id: str, filename: str) -> Path | None:
+    """Return existing credential file for `profile_id` (preferring fresher active workspace copy)."""
+    if not re.fullmatch(PROFILE_ID, profile_id):
+        return None
+    vault_candidate = _find_file_in_gemini_dir(profile_vault_gemini_dir(profile_id), filename)
+    if active_workspace_profile() == profile_id:
+        ws_candidate = _find_file_in_gemini_dir(workspace_gemini_dir(), filename)
+        if ws_candidate is not None:
+            if vault_candidate is None:
+                return ws_candidate
+            try:
+                if ws_candidate.stat().st_mtime_ns >= vault_candidate.stat().st_mtime_ns:
+                    return ws_candidate
+            except OSError:
+                return ws_candidate
+    if vault_candidate is not None:
+        return vault_candidate
+    if profile_id == DEFAULT and not _default_host_import_disabled().exists():
+        return _find_file_in_gemini_dir(_host_default_gemini_dir(), filename)
+    return None
+
+
+def _read_windows_keyring_safely() -> bytes | None:
+    if os.name != "nt":
+        return None
+    try:
+        from .agy_usage import read_windows_cli_credential
+        return read_windows_cli_credential()
+    except Exception:
+        return None
+
+
+def _read_host_default_credentials() -> tuple[dict[str, bytes], str | None]:
+    """Read host `~/.gemini` / keyring credentials strictly read-only."""
+    host_gemini = _host_default_gemini_dir()
+    creds: dict[str, bytes] = {}
+    for fname in _VAULT_CREDENTIAL_FILES:
+        src = _find_file_in_gemini_dir(host_gemini, fname)
+        if src is not None:
+            try:
+                if src.resolve() == src:
+                    creds[fname] = src.read_bytes()
+            except OSError:
+                continue
+    if "antigravity-oauth-token" not in creds:
+        keyring_blob = _read_windows_keyring_safely()
+        if keyring_blob:
+            creds["antigravity-oauth-token"] = keyring_blob
+    auth_type: str | None = None
+    settings_src = host_gemini / APP_DATA_DIR_NAME / "settings.json"
+    try:
+        if settings_src.is_file() and not settings_src.is_symlink() and settings_src.resolve() == settings_src:
+            parsed = json.loads(settings_src.read_text(encoding="utf-8"))
+            raw_auth = parsed.get("auth") if isinstance(parsed, dict) else None
+            if isinstance(raw_auth, dict) and isinstance(raw_auth.get("type"), str):
+                auth_type = raw_auth["type"].strip() or None
+    except (OSError, ValueError):
+        pass
+    return creds, auth_type
+
+
+def _seed_default_vault_if_empty() -> bool:
+    """Copy host `~/.gemini` or keyring credentials once into Hub's `default` vault."""
+    with _profile_metadata_lock:
+        if _default_host_import_disabled().exists():
+            return False
+        vault_gemini = profile_vault_gemini_dir(DEFAULT)
+        if (
+            _find_file_in_gemini_dir(vault_gemini, "antigravity-oauth-token") is not None
+            or _find_file_in_gemini_dir(vault_gemini, "acp_token.json") is not None
+        ):
+            return False
+        creds, auth_type = _read_host_default_credentials()
+        if "antigravity-oauth-token" not in creds and "acp_token.json" not in creds:
+            return False
+        vault_app = profile_vault_app_data_dir(DEFAULT)
+        try:
+            for fname, blob in creds.items():
+                if blob:
+                    _atomic_write_bytes(vault_app / fname, blob, mode=0o600)
+            settings_path = vault_app / "settings.json"
+            if auth_type and not settings_path.exists():
+                _atomic_write_json(settings_path, {"auth": {"type": auth_type}}, mode=0o600, indent=2)
+            return True
+        except OSError:
+            log.debug("Failed to seed default Agy vault from host credentials", exc_info=True)
+            return False
 
 
 def has_local_credentials(profile_id: str) -> bool:
@@ -212,14 +382,32 @@ def has_local_credentials(profile_id: str) -> bool:
     for fname in ("acp_token.json", "antigravity-oauth-token"):
         if find_credential_file(profile_id, fname) is not None:
             return True
-    if profile_id == DEFAULT and os.name == "nt":
-        # agy 1.5+ stores default personal OAuth tokens in Windows Credential Manager.
-        try:
-            from .agy_usage import read_windows_cli_credential
-            return read_windows_cli_credential() is not None
-        except Exception:
-            return False
+    if profile_id == DEFAULT and not _default_host_import_disabled().exists():
+        return _read_windows_keyring_safely() is not None
     return False
+
+
+def effective_auth_state(profile_id: str, meta_entry: dict[str, Any] | None = None) -> str | None:
+    """Resolve auth state from local credentials + metadata, invalidating stale warnings."""
+    has_creds = has_local_credentials(profile_id)
+    entry = profile_meta(profile_id) if meta_entry is None else meta_entry
+    raw_state = entry.get("auth_state") if isinstance(entry.get("auth_state"), str) else None
+    if not has_creds:
+        return "login_required" if raw_state == "login_required" else None
+    if raw_state != "login_required":
+        return raw_state
+    marked_at_raw = entry.get("auth_state_at") if isinstance(entry.get("auth_state_at"), str) else None
+    if marked_at_raw:
+        try:
+            marked_dt = datetime.fromisoformat(marked_at_raw.replace("Z", "+00:00"))
+            marked_ns = marked_dt.timestamp() * 1_000_000_000
+            for fname in ("acp_token.json", "antigravity-oauth-token"):
+                cred = find_credential_file(profile_id, fname)
+                if cred is not None and cred.stat().st_mtime_ns > marked_ns:
+                    return "authenticated"
+        except (ValueError, OSError):
+            pass
+    return "login_required"
 
 
 def snapshot_details() -> tuple[str, list[dict[str, Any]]]:
@@ -232,11 +420,11 @@ def snapshot_details() -> tuple[str, list[dict[str, Any]]]:
             "has_credentials": has_local_credentials(p.id),
         }
         p_meta = meta.get(p.id)
-        if p_meta:
-            if isinstance(p_meta.get("auth_state"), str):
-                entry["auth_state"] = p_meta["auth_state"]
-            if isinstance(p_meta.get("usage"), dict):
-                entry["usage"] = p_meta["usage"]
+        eff_auth = effective_auth_state(p.id, p_meta or {})
+        if eff_auth:
+            entry["auth_state"] = eff_auth
+        if p_meta and isinstance(p_meta.get("usage"), dict):
+            entry["usage"] = p_meta["usage"]
         items.append(entry)
     return active, items
 
@@ -287,7 +475,7 @@ def delete(profile_id: str) -> None:
             active, profiles, meta = _load_raw()
             if not any(p.id == profile_id for p in profiles):
                 raise AgyProfileError(404, "找不到 Agy 账号")
-            if active == profile_id:
+            if active == profile_id or active_workspace_profile() == profile_id:
                 raise AgyProfileError(409, "请先切换到其他账号后再删除当前账号")
             next_profiles = [p for p in profiles if p.id != profile_id]
             meta.pop(profile_id, None)
@@ -303,47 +491,33 @@ def delete(profile_id: str) -> None:
 
 
 def capture_default(name: str) -> Profile:
-    """Clone the host default CLI/ACP credentials into a new isolated profile."""
-    src_cli = Path.home() / ".gemini" / APP_DATA_DIR_NAME
-    token_file = find_credential_file(DEFAULT, "antigravity-oauth-token") or find_credential_file(
-        DEFAULT, "acp_token.json"
-    )
-    keyring_blob: bytes | None = None
-    if token_file is None and os.name == "nt":
-        try:
-            from .agy_usage import read_windows_cli_credential
-            keyring_blob = read_windows_cli_credential()
-        except Exception:
-            keyring_blob = None
-    if token_file is None and keyring_blob is None:
-        raise AgyProfileError(409, "系统默认账号尚未登录 agy CLI，无法另存")
-    if src_cli.exists():
-        try:
-            if src_cli.resolve() != src_cli:
-                raise AgyProfileError(409, "系统默认 agy 目录不得重定向")
-        except OSError as exc:
-            raise AgyProfileError(503, "无法读取系统默认 agy 凭据目录") from exc
-
-    profile = Profile(uuid4().hex, name)
-    dest_cli = profile_app_data_dir(profile.id)
-    try:
-        dest_cli.mkdir(mode=0o700, parents=True, exist_ok=True)
-        for fname in _CLI_CREDENTIAL_FILES:
-            src_file = src_cli / fname
-            if src_file.is_file() and src_file.resolve() == src_file:
-                dst_file = dest_cli / fname
-                shutil.copy2(src_file, dst_file)
+    """Clone the host default CLI/ACP (or default vault) credentials into a new account vault."""
+    creds, auth_type = _read_host_default_credentials()
+    if "antigravity-oauth-token" not in creds and "acp_token.json" not in creds:
+        # Also allow capturing from default vault if already seeded/logged in via Hub.
+        default_gemini = profile_vault_gemini_dir(DEFAULT)
+        for fname in _VAULT_CREDENTIAL_FILES:
+            cand = _find_file_in_gemini_dir(default_gemini, fname)
+            if cand is not None:
                 try:
-                    os.chmod(dst_file, 0o600)
+                    creds[fname] = cand.read_bytes()
                 except OSError:
                     pass
-        if keyring_blob is not None and not (dest_cli / "antigravity-oauth-token").exists():
-            dst_tok = dest_cli / "antigravity-oauth-token"
-            dst_tok.write_bytes(keyring_blob)
-            try:
-                os.chmod(dst_tok, 0o600)
-            except OSError:
-                pass
+    if "antigravity-oauth-token" not in creds and "acp_token.json" not in creds:
+        raise AgyProfileError(409, "系统默认账号尚未登录 agy CLI，无法另存")
+
+    profile = Profile(uuid4().hex, name)
+    dest_cli = profile_vault_app_data_dir(profile.id)
+    try:
+        for fname, blob in creds.items():
+            if blob:
+                _atomic_write_bytes(dest_cli / fname, blob, mode=0o600)
+        _atomic_write_json(
+            dest_cli / "settings.json",
+            {"auth": {"type": auth_type or "oauth-personal"}},
+            mode=0o600,
+            indent=2,
+        )
     except OSError as exc:
         shutil.rmtree(_root() / profile.id, ignore_errors=True)
         raise AgyProfileError(503, "无法复制系统默认 agy 凭据") from exc
@@ -362,9 +536,24 @@ def capture_default(name: str) -> Profile:
     return profile
 
 
+def _remove_vault_credentials_in_gemini(gemini_dir: Path) -> None:
+    if not gemini_dir.exists():
+        return
+    for sub in (APP_DATA_DIR_NAME, "antigravity-acp"):
+        cli_dir = gemini_dir / sub
+        if not cli_dir.exists():
+            continue
+        if cli_dir.resolve() != cli_dir:
+            raise AgyProfileError(409, "Agy 账号目录不得重定向")
+        for fname in _VAULT_CREDENTIAL_FILES:
+            candidate = cli_dir / fname
+            if candidate.is_symlink():
+                raise AgyProfileError(409, "Agy 账号凭据文件不得重定向")
+            if candidate.is_file():
+                candidate.unlink(missing_ok=True)
+
+
 def clear_credentials(profile_id: str) -> dict[str, Any]:
-    if profile_id == DEFAULT:
-        raise AgyProfileError(409, "系统默认账号凭据由系统 agy CLI 管理，不支持在 Hub 内清除")
     if not re.fullmatch(PROFILE_ID, profile_id):
         raise AgyProfileError(404, "找不到 Agy 账号")
     with profile_lock(profile_id), _profile_metadata_lock:
@@ -372,20 +561,14 @@ def clear_credentials(profile_id: str) -> dict[str, Any]:
         target_profile = next((p for p in profiles if p.id == profile_id), None)
         if target_profile is None:
             raise AgyProfileError(404, "找不到 Agy 账号")
-        gemini_dir = profile_gemini_dir(profile_id)
         try:
-            for sub in (APP_DATA_DIR_NAME, "antigravity-acp"):
-                cli_dir = gemini_dir / sub
-                if not cli_dir.exists():
-                    continue
-                if cli_dir.resolve() != cli_dir:
-                    raise AgyProfileError(409, "Agy 账号目录不得重定向")
-                for fname in _CLI_CREDENTIAL_FILES:
-                    candidate = cli_dir / fname
-                    if candidate.is_symlink():
-                        raise AgyProfileError(409, "Agy 账号凭据文件不得重定向")
-                    if candidate.is_file():
-                        candidate.unlink(missing_ok=True)
+            _remove_vault_credentials_in_gemini(profile_vault_gemini_dir(profile_id))
+            if active_workspace_profile() == profile_id:
+                _remove_vault_credentials_in_gemini(workspace_gemini_dir())
+            if profile_id == DEFAULT:
+                disabled_marker = _default_host_import_disabled()
+                disabled_marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                disabled_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
         except OSError as exc:
             raise AgyProfileError(503, "无法清除 Agy 账号凭据") from exc
         retire_runtime_temp_dirs(profile_runtime_temp_root(profile_id))
@@ -394,8 +577,50 @@ def clear_credentials(profile_id: str) -> dict[str, Any]:
         return {
             "id": target_profile.id,
             "name": target_profile.name,
-            "has_credentials": has_local_credentials(profile_id),
+            "has_credentials": False,
         }
+
+
+def clear_host_import_disabled(profile_id: str) -> None:
+    if profile_id == DEFAULT:
+        try:
+            _default_host_import_disabled().unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def record_auth_state(profile_id: str, auth_state: str | None) -> None:
+    if not re.fullmatch(PROFILE_ID, profile_id):
+        return
+    with _profile_metadata_lock:
+        try:
+            active, profiles, meta = _load_raw()
+        except AgyProfileError:
+            return
+        if not any(p.id == profile_id for p in profiles):
+            return
+        entry = dict(meta.get(profile_id) or {})
+        if auth_state:
+            entry["auth_state"] = auth_state
+            entry["auth_state_at"] = datetime.now(timezone.utc).isoformat()
+        else:
+            entry.pop("auth_state", None)
+            entry.pop("auth_state_at", None)
+        meta[profile_id] = entry
+        try:
+            _save(active, profiles, meta)
+        except AgyProfileError:
+            pass
+
+
+def profile_meta(profile_id: str) -> dict[str, Any]:
+    if not re.fullmatch(PROFILE_ID, profile_id):
+        return {}
+    try:
+        _, _, meta = _load_raw()
+        return dict(meta.get(profile_id) or {})
+    except AgyProfileError:
+        return {}
 
 
 def record_usage(profile_id: str, auth_state: str, rows: list[dict[str, Any]]) -> None:
@@ -408,11 +633,13 @@ def record_usage(profile_id: str, auth_state: str, rows: list[dict[str, Any]]) -
             return
         if not any(p.id == profile_id for p in profiles):
             return
+        now_iso = datetime.now(timezone.utc).isoformat()
         pcts = [float(r["remaining_pct"]) for r in rows if isinstance(r.get("remaining_pct"), (int, float))]
         entry = dict(meta.get(profile_id) or {})
         entry["auth_state"] = auth_state
+        entry["auth_state_at"] = now_iso
         entry["usage"] = {
-            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "checked_at": now_iso,
             "min_remaining_pct": min(pcts) if pcts else None,
             "rows": rows,
         }
@@ -563,7 +790,7 @@ def _profile_lock_file(profile_id: str) -> Path:
 
 
 def _read_live_lock_pid(profile_id: str) -> int | None:
-    if profile_id == DEFAULT or not re.fullmatch(PROFILE_ID, profile_id):
+    if not re.fullmatch(_LOCK_ID, profile_id):
         return None
     lock_file = _profile_lock_file(profile_id)
     try:
@@ -588,8 +815,8 @@ def _profile_guard_file(profile_id: str) -> Path:
 
 
 def claim_profile_lock(profile_id: str) -> None:
-    if profile_id == DEFAULT:
-        return
+    if not re.fullmatch(_LOCK_ID, profile_id):
+        raise AgyProfileError(404, "找不到 Agy 账号")
     legacy = _profile_lock_file(profile_id)
     path = _profile_guard_file(profile_id)
     with _profile_locks_guard:
@@ -613,11 +840,21 @@ def claim_profile_lock(profile_id: str) -> None:
                     fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as exc:
                 if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
-                    raise AgyProfileError(409, "当前隔离账号正被另一个 GA-Hub 进程占用") from exc
+                    msg = (
+                        "当前 Agy 工作区正被另一个 GA-Hub 进程占用"
+                        if profile_id == WORKSPACE_LOCK_ID
+                        else "当前隔离账号正被另一个 GA-Hub 进程占用"
+                    )
+                    raise AgyProfileError(409, msg) from exc
                 raise
             pid = _read_live_lock_pid(profile_id)
             if pid is not None and pid != os.getpid():
-                raise AgyProfileError(409, f"当前隔离账号正被另一个 GA-Hub 进程（PID {pid}）占用")
+                msg = (
+                    f"当前 Agy 工作区正被另一个 GA-Hub 进程（PID {pid}）占用"
+                    if profile_id == WORKSPACE_LOCK_ID
+                    else f"当前隔离账号正被另一个 GA-Hub 进程（PID {pid}）占用"
+                )
+                raise AgyProfileError(409, msg)
             # Keep the PID marker for older Hub builds. Only the OS lock
             # arbitrates concurrent claims by upgraded builds.
             legacy.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -625,14 +862,14 @@ def claim_profile_lock(profile_id: str) -> None:
             _profile_locks[path] = (stream, 1)
             stream = None
         except OSError as exc:
-            raise AgyProfileError(503, "无法锁定 Agy 隔离账号") from exc
+            raise AgyProfileError(503, "无法锁定 Agy 工作区或账号") from exc
         finally:
             if stream is not None:
                 stream.close()
 
 
 def release_profile_lock(profile_id: str) -> None:
-    if profile_id == DEFAULT:
+    if not re.fullmatch(_LOCK_ID, profile_id):
         return
     path = _profile_guard_file(profile_id)
     with _profile_locks_guard:
@@ -652,6 +889,14 @@ def release_profile_lock(profile_id: str) -> None:
             stream.close()
 
 
+def claim_workspace_lock() -> None:
+    claim_profile_lock(WORKSPACE_LOCK_ID)
+
+
+def release_workspace_lock() -> None:
+    release_profile_lock(WORKSPACE_LOCK_ID)
+
+
 @contextmanager
 def profile_lock(profile_id: str) -> Iterator[None]:
     claim_profile_lock(profile_id)
@@ -661,21 +906,20 @@ def profile_lock(profile_id: str) -> Iterator[None]:
         release_profile_lock(profile_id)
 
 
-def sync_user_customizations(profile_id: str) -> None:
-    """Mirror global skills & instruction files from ~/.gemini into isolated profiles (T3 Code pattern)."""
-    if profile_id == DEFAULT:
+def sync_user_customizations_to(dest_gemini: Path) -> None:
+    """Mirror global skills & instruction files from host `~/.gemini` into `dest_gemini`."""
+    user_gemini = _host_default_gemini_dir()
+    if dest_gemini == user_gemini:
         return
-    user_gemini = Path.home() / ".gemini"
-    prof_gemini = profile_gemini_dir(profile_id)
-    prof_gemini.mkdir(mode=0o700, parents=True, exist_ok=True)
+    dest_gemini.mkdir(mode=0o700, parents=True, exist_ok=True)
     for segments in _USER_CONFIG_FILES:
         src = user_gemini.joinpath(*segments)
-        dst = prof_gemini.joinpath(*segments)
+        dst = dest_gemini.joinpath(*segments)
         try:
             if not src.is_file() or src.is_symlink():
                 continue
             if dst.exists() and not dst.is_symlink():
-                # Keep user-edited profile overrides untouched once initialized.
+                # Keep user-edited overrides untouched once initialized.
                 continue
             if dst.is_symlink():
                 dst.unlink(missing_ok=True)
@@ -687,7 +931,7 @@ def sync_user_customizations(profile_id: str) -> None:
         src = (user_gemini.joinpath(*segments)).resolve() if user_gemini.joinpath(*segments).exists() else None
         if src is None or not src.is_dir():
             continue
-        dst = prof_gemini.joinpath(*segments)
+        dst = dest_gemini.joinpath(*segments)
         if dst.exists() or dst.is_symlink():
             continue
         try:
@@ -705,21 +949,330 @@ def sync_user_customizations(profile_id: str) -> None:
             continue
 
 
-def prepare_profile(profile_id: str) -> Path:
-    """Ensure the profile directories and settings exist; return its GEMINI_HOME path."""
-    gemini_dir = profile_gemini_dir(profile_id)
-    app_dir = profile_app_data_dir(profile_id)
+def sync_user_customizations(profile_id: str) -> None:
+    """Mirror global skills & instruction files from `~/.gemini` into a profile vault."""
+    sync_user_customizations_to(profile_vault_gemini_dir(profile_id))
+
+
+def _copy_sqlite_safe(src: Path, dst: Path) -> None:
+    if not src.is_file() or src.is_symlink() or src.resolve() != src:
+        return
+    dst.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    stage: Path | None = None
     try:
-        if profile_id != DEFAULT:
-            home = profile_home(profile_id)
+        with NamedTemporaryFile(mode="wb", dir=dst.parent, delete=False) as fp:
+            stage = Path(fp.name)
+        try:
+            src_conn = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+            try:
+                dst_conn = sqlite3.connect(stage)
+                try:
+                    src_conn.backup(dst_conn)
+                finally:
+                    dst_conn.close()
+            finally:
+                src_conn.close()
+        except sqlite3.Error:
+            shutil.copy2(src, stage)
+        for attempt in range(6):
+            try:
+                stage.replace(dst)
+                break
+            except PermissionError as exc:
+                if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 5:
+                    raise
+                time.sleep(0.01 * (2 ** attempt))
+        try:
+            os.chmod(dst, 0o600)
+        except OSError:
+            pass
+    finally:
+        if stage is not None:
+            stage.unlink(missing_ok=True)
+
+
+def _legacy_conversation_roots() -> list[Path]:
+    roots: list[Path] = []
+    try:
+        active, profiles, _ = _load_raw()
+        ordered = [active, *(p.id for p in profiles if p.id != active)]
+    except AgyProfileError:
+        ordered = [DEFAULT]
+    for pid in ordered:
+        cand = profile_vault_app_data_dir(pid)
+        if cand not in roots:
+            roots.append(cand)
+    host_app = _host_default_gemini_dir() / APP_DATA_DIR_NAME
+    if host_app not in roots:
+        roots.append(host_app)
+    return roots
+
+
+def rescue_conversation_files(conv_id: str, extra_roots: list[Path] | None = None) -> bool:
+    """Ensure `conversations/{conv_id}.db` and `brain/{conv_id}/` live in workspace on demand."""
+    clean_id = (conv_id or "").strip()
+    if not clean_id or "/" in clean_id or "\\" in clean_id or clean_id in {".", ".."}:
+        return False
+    ws_app = workspace_app_data_dir()
+    dst_db = ws_app / "conversations" / f"{clean_id}.db"
+    dst_brain = ws_app / "brain" / clean_id
+    if dst_db.is_file():
+        return True
+    roots = list(extra_roots) if extra_roots is not None else _legacy_conversation_roots()
+    found = False
+    for root in roots:
+        if root == ws_app:
+            continue
+        src_db = root / "conversations" / f"{clean_id}.db"
+        if src_db.is_file() and not src_db.is_symlink():
+            try:
+                _copy_sqlite_safe(src_db, dst_db)
+                found = True
+            except OSError:
+                log.debug("Failed to rescue conversation DB %s", src_db, exc_info=True)
+        src_brain = root / "brain" / clean_id
+        if src_brain.is_dir() and not src_brain.is_symlink() and not dst_brain.exists():
+            try:
+                shutil.copytree(src_brain, dst_brain, dirs_exist_ok=True)
+            except OSError:
+                log.debug("Failed to rescue brain dir %s", src_brain, exc_info=True)
+        if found:
+            break
+    return found
+
+
+def _read_settings_dict(path: Path) -> dict[str, Any]:
+    if not path.is_file() or path.is_symlink():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        return dict(loaded) if isinstance(loaded, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _migrate_legacy_workspace_locked() -> None:
+    ws_app = workspace_app_data_dir()
+    try:
+        active, profiles, _ = _load_raw()
+        ordered = [active, *(p.id for p in profiles if p.id != active)]
+    except AgyProfileError:
+        active = DEFAULT
+        ordered = [DEFAULT]
+
+    legacy_dirs: list[Path] = []
+    for pid in ordered:
+        app_dir = profile_vault_app_data_dir(pid)
+        if app_dir.is_dir() and not app_dir.is_symlink():
+            legacy_dirs.append(app_dir)
+
+    for src_app in legacy_dirs:
+        conv_dir = src_app / "conversations"
+        if conv_dir.is_dir() and not conv_dir.is_symlink():
+            for db_file in conv_dir.glob("*.db"):
+                dst_db = ws_app / "conversations" / db_file.name
+                if not dst_db.exists():
+                    try:
+                        _copy_sqlite_safe(db_file, dst_db)
+                    except OSError:
+                        log.debug("Failed migrating conversation %s", db_file, exc_info=True)
+        brain_dir = src_app / "brain"
+        if brain_dir.is_dir() and not brain_dir.is_symlink():
+            for entry in brain_dir.iterdir():
+                if entry.is_dir() and not entry.is_symlink():
+                    dst_brain = ws_app / "brain" / entry.name
+                    if not dst_brain.exists():
+                        try:
+                            shutil.copytree(entry, dst_brain, dirs_exist_ok=True)
+                        except OSError:
+                            log.debug("Failed migrating brain %s", entry, exc_info=True)
+
+    active_legacy_app = profile_vault_app_data_dir(active)
+    sum_dst = ws_app / "conversation_summaries.db"
+    if not sum_dst.exists():
+        for src_app in (active_legacy_app, *legacy_dirs):
+            sum_src = src_app / "conversation_summaries.db"
+            if sum_src.is_file() and not sum_src.is_symlink():
+                try:
+                    _copy_sqlite_safe(sum_src, sum_dst)
+                    break
+                except OSError:
+                    pass
+
+    ws_settings_path = ws_app / "settings.json"
+    ws_settings = _read_settings_dict(ws_settings_path)
+    if "orchestrator" not in ws_settings:
+        orch_sources = [active_legacy_app / "settings.json"]
+        if active == DEFAULT:
+            orch_sources.append(_host_default_gemini_dir() / APP_DATA_DIR_NAME / "settings.json")
+        orch_sources.extend(src / "settings.json" for src in legacy_dirs)
+        for src_settings in orch_sources:
+            parsed = _read_settings_dict(src_settings)
+            if isinstance(parsed.get("orchestrator"), dict) and parsed["orchestrator"]:
+                ws_settings["orchestrator"] = dict(parsed["orchestrator"])
+                if "auth" not in ws_settings:
+                    ws_settings["auth"] = {"type": "oauth-personal"}
+                _atomic_write_json(ws_settings_path, ws_settings, mode=0o600, indent=2)
+                break
+
+
+def ensure_workspace_ready() -> Path:
+    """Create the single shared GEMINI_HOME workspace and migrate legacy isolated state once."""
+    with _profile_metadata_lock:
+        home = workspace_home()
+        gemini_dir = workspace_gemini_dir()
+        app_dir = workspace_app_data_dir()
+        try:
             if home.exists() and home.resolve() != home:
-                raise AgyProfileError(409, "Agy 账号目录不得重定向")
+                raise AgyProfileError(409, "Agy 工作区目录不得重定向")
             home.mkdir(mode=0o700, parents=True, exist_ok=True)
             gemini_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            app_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            settings_path = app_dir / "settings.json"
+            if not settings_path.exists():
+                _atomic_write_json(settings_path, {"auth": {"type": "oauth-personal"}}, mode=0o600, indent=2)
+            sync_user_customizations_to(gemini_dir)
+            marker = _workspace_migrated_marker()
+            if not marker.exists():
+                _migrate_legacy_workspace_locked()
+                marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+            retire_runtime_temp_dirs(workspace_runtime_temp_root())
+        except OSError as exc:
+            raise AgyProfileError(503, "无法准备 Agy 运行工作区") from exc
+        return gemini_dir
+
+
+def sync_workspace_credentials_to_vault(expected_profile_id: str | None = None) -> bool:
+    """Persist refreshed workspace tokens back into the active account's credential vault."""
+    with _profile_metadata_lock:
+        loaded_pid = active_workspace_profile()
+        if not loaded_pid:
+            return False
+        if expected_profile_id is not None and loaded_pid != expected_profile_id:
+            return False
+        try:
+            _, profiles, _ = _load_raw()
+        except AgyProfileError:
+            return False
+        if not any(p.id == loaded_pid for p in profiles):
+            return False
+        ws_gemini = workspace_gemini_dir()
+        vault_app = profile_vault_app_data_dir(loaded_pid)
+        updated = False
+        for fname in _VAULT_CREDENTIAL_FILES:
+            src = _find_file_in_gemini_dir(ws_gemini, fname)
+            if src is None:
+                continue
+            dst = vault_app / fname
+            try:
+                src_bytes = src.read_bytes()
+                if not src_bytes:
+                    continue
+                if dst.is_file() and dst.read_bytes() == src_bytes:
+                    continue
+                _atomic_write_bytes(dst, src_bytes, mode=0o600)
+                updated = True
+            except OSError:
+                log.debug("Failed syncing workspace %s to vault %s", fname, loaded_pid, exc_info=True)
+        return updated
+
+
+def sync_vault_token_to_workspace_if_newer(profile_id: str) -> None:
+    """Push a fresher vault token (e.g. from background refresh) into workspace if active."""
+    with _profile_metadata_lock:
+        if active_workspace_profile() != profile_id:
+            return
+        vault_app = profile_vault_app_data_dir(profile_id)
+        ws_app = workspace_app_data_dir()
+        for fname in _VAULT_CREDENTIAL_FILES:
+            src = vault_app / fname
+            dst = ws_app / fname
+            if not src.is_file() or src.is_symlink():
+                continue
+            try:
+                if not dst.exists() or src.stat().st_mtime_ns > dst.stat().st_mtime_ns:
+                    data = src.read_bytes()
+                    if data and (not dst.is_file() or dst.read_bytes() != data):
+                        _atomic_write_bytes(dst, data, mode=0o600)
+            except OSError:
+                continue
+
+
+def activate_profile_in_workspace(profile_id: str, *, force_reload: bool = False) -> Path:
+    """Hot-swap credential files inside the unified workspace while keeping context & settings."""
+    with _profile_metadata_lock:
+        _, profiles, _ = _load_raw()
+        if not any(p.id == profile_id for p in profiles):
+            raise AgyProfileError(404, "找不到 Agy 账号")
+        ensure_workspace_ready()
+        loaded_pid = active_workspace_profile()
+        if loaded_pid and loaded_pid != profile_id:
+            sync_workspace_credentials_to_vault(loaded_pid)
+        if profile_id == DEFAULT:
+            _seed_default_vault_if_empty()
+
+        vault_gemini = profile_vault_gemini_dir(profile_id)
+        vault_app = profile_vault_app_data_dir(profile_id)
+        ws_gemini = workspace_gemini_dir()
+        ws_app = workspace_app_data_dir()
+        try:
+            if loaded_pid != profile_id or force_reload:
+                _remove_vault_credentials_in_gemini(ws_gemini)
+                for fname in _VAULT_CREDENTIAL_FILES:
+                    src = _find_file_in_gemini_dir(vault_gemini, fname)
+                    if src is not None:
+                        _atomic_write_bytes(ws_app / fname, src.read_bytes(), mode=0o600)
+            else:
+                for fname in _VAULT_CREDENTIAL_FILES:
+                    src = _find_file_in_gemini_dir(vault_gemini, fname)
+                    dst = ws_app / fname
+                    if src is None:
+                        continue
+                    if not dst.exists() or src.stat().st_mtime_ns > dst.stat().st_mtime_ns:
+                        data = src.read_bytes()
+                        if data and (not dst.is_file() or dst.read_bytes() != data):
+                            _atomic_write_bytes(dst, data, mode=0o600)
+
+            vault_settings = _read_settings_dict(vault_app / "settings.json")
+            auth_block = vault_settings.get("auth") if isinstance(vault_settings.get("auth"), dict) else None
+            auth_type = (
+                str(auth_block.get("type")).strip()
+                if auth_block and isinstance(auth_block.get("type"), str) and auth_block["type"].strip()
+                else "oauth-personal"
+            )
+            ws_settings_path = ws_app / "settings.json"
+            ws_settings = _read_settings_dict(ws_settings_path)
+            cur_auth = ws_settings.get("auth") if isinstance(ws_settings.get("auth"), dict) else {}
+            if cur_auth.get("type") != auth_type:
+                ws_settings["auth"] = {**cur_auth, "type": auth_type}
+                _atomic_write_json(ws_settings_path, ws_settings, mode=0o600, indent=2)
+
+            _atomic_write_bytes(_workspace_active_marker(), profile_id.encode("utf-8"), mode=0o600)
+            retire_runtime_temp_dirs(workspace_runtime_temp_root())
+        except OSError as exc:
+            raise AgyProfileError(503, f"无法切换 Agy 工作区凭据: {exc}") from exc
+        return ws_gemini
+
+
+def prepare_workspace(profile_id: str) -> Path:
+    return activate_profile_in_workspace(profile_id)
+
+
+def prepare_profile(profile_id: str) -> Path:
+    """Prepare the isolated credential vault for `profile_id` (used for logins & sandbox probes)."""
+    gemini_dir = profile_vault_gemini_dir(profile_id)
+    app_dir = profile_vault_app_data_dir(profile_id)
+    try:
+        home = profile_vault_home(profile_id)
+        if home.exists() and home.resolve() != home:
+            raise AgyProfileError(409, "Agy 账号目录不得重定向")
+        home.mkdir(mode=0o700, parents=True, exist_ok=True)
+        gemini_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         app_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         settings_path = app_dir / "settings.json"
-        if profile_id != DEFAULT and not settings_path.exists():
-            settings_path.write_text(json.dumps({"auth": {"type": "oauth-personal"}}) + "\n", encoding="utf-8")
+        if not settings_path.exists():
+            _atomic_write_json(settings_path, {"auth": {"type": "oauth-personal"}}, mode=0o600, indent=2)
         sync_user_customizations(profile_id)
         retire_runtime_temp_dirs(profile_runtime_temp_root(profile_id))
     except OSError as exc:
@@ -733,32 +1286,28 @@ def clean_agy_env(
     *,
     temp_dir: Path | None = None,
     headless_login: bool = False,
+    vault_only: bool = False,
 ) -> dict[str, str]:
     """Build a sanitized child environment matching T3 Code's antigravityEnvironment."""
     raw = os.environ if base_env is None else base_env
     env = {k: v for k, v in raw.items() if k.upper() not in _REMOVED_ENV_KEYS}
-    gemini_dir = profile_gemini_dir(profile_id)
+    use_vault = bool(vault_only or headless_login)
+    home = profile_vault_home(profile_id) if use_vault else workspace_home()
+    gemini_dir = profile_vault_gemini_dir(profile_id) if use_vault else workspace_gemini_dir()
     env.update({
         "GEMINI_HOME": str(gemini_dir),
+        "HOME": str(home),
+        "AGY_ACP_FORCE_FILE_STORAGE": "1",
         "AGY_CLI_DISABLE_AUTO_UPDATE": "1",
         "PYTHONUNBUFFERED": "1",
+        # Match T3 Code: SSH_CONNECTION forces isolated file-storage OAuth tokens instead of OS keyring.
+        "SSH_CONNECTION": raw.get("SSH_CONNECTION") or "127.0.0.1 0 127.0.0.1 0",
     })
-    if profile_id != DEFAULT or headless_login:
-        # Default profile reads OS keyring (Windows Credential Manager on agy 1.5+);
-        # isolated profiles and headless code-login must force isolated file storage.
-        env["AGY_ACP_FORCE_FILE_STORAGE"] = "1"
-    if profile_id != DEFAULT:
-        home = profile_home(profile_id)
-        env["HOME"] = str(home)
-        if os.name == "nt":
-            env.update(USERPROFILE=str(home), HOMEDRIVE=home.drive, HOMEPATH=str(home)[len(home.drive):])
-        # Match T3 Code: agy 1.5 stores Google sign-ins in a single shared OS keyring
-        # entry unless SSH_CONNECTION is present, which forces isolated file storage.
-        env["SSH_CONNECTION"] = raw.get("SSH_CONNECTION") or "127.0.0.1 0 127.0.0.1 0"
+    if os.name == "nt":
+        env.update(USERPROFILE=str(home), HOMEDRIVE=home.drive, HOMEPATH=str(home)[len(home.drive):])
     if headless_login:
         env.pop("DISPLAY", None)
         env.pop("WAYLAND_DISPLAY", None)
-        env.setdefault("SSH_CONNECTION", raw.get("SSH_CONNECTION") or "127.0.0.1 0 127.0.0.1 0")
     if temp_dir is not None:
         if os.name == "nt":
             env["TEMP"] = str(temp_dir)
@@ -773,31 +1322,7 @@ def clean_agy_env(
 
 def profile_env(profile_id: str, env: dict[str, str]) -> dict[str, str]:
     """Compatibility wrapper used by existing profile callers and tests."""
-    if profile_id == DEFAULT:
-        return env.copy()
-    if not re.fullmatch(PROFILE_ID, profile_id):
-        raise AgyProfileError(404, "找不到 Agy 账号")
-    home = profile_home(profile_id)
-    try:
-        if home.resolve() != home:
-            raise AgyProfileError(409, "Agy 账号目录不得重定向")
-        home.mkdir(mode=0o700, parents=True, exist_ok=True)
-    except OSError as exc:
-        raise AgyProfileError(503, "无法创建 Agy 账号目录") from exc
-    result = {
-        **env,
-        "HOME": str(home),
-        "GEMINI_HOME": str(home / ".gemini"),
-        "AGY_ACP_FORCE_FILE_STORAGE": "1",
-        "AGY_CLI_DISABLE_AUTO_UPDATE": "1",
-        "SSH_CONNECTION": env.get("SSH_CONNECTION") or "127.0.0.1 0 127.0.0.1 0",
-    }
-    executable = agy_executable_or_none()
-    if executable:
-        result["ANTICLI_AGY_PATH"] = executable
-    if os.name == "nt":
-        result.update(USERPROFILE=str(home), HOMEDRIVE=home.drive, HOMEPATH=str(home)[len(home.drive):])
-    return result
+    return clean_agy_env(profile_id, env, vault_only=True)
 
 
 def acp_spawn_command(
@@ -809,7 +1334,7 @@ def acp_spawn_command(
     login: bool = False,
 ) -> list[str]:
     """Build `agy acp` argv matching T3 Code's --gemini-dir + --app-data-dir contract."""
-    gemini_dir = profile_gemini_dir(profile_id)
+    gemini_dir = profile_vault_gemini_dir(profile_id) if login else workspace_gemini_dir()
     cmd = [
         executable,
         "acp",
@@ -942,11 +1467,9 @@ class CodeLoginFlow:
         return True
 
 
-def _profile_settings_file(profile_id: str) -> Path:
-    _, profiles = snapshot()
-    if not any(p.id == profile_id for p in profiles):
-        raise AgyProfileError(404, "找不到 Agy 账号")
-    app_dir = profile_app_data_dir(profile_id)
+def _workspace_settings_file() -> Path:
+    ensure_workspace_ready()
+    app_dir = workspace_app_data_dir()
     settings_file = app_dir / "settings.json"
     if app_dir.is_symlink() or settings_file.is_symlink():
         raise AgyProfileError(409, "Agy 设置文件不得使用符号链接")
@@ -954,8 +1477,11 @@ def _profile_settings_file(profile_id: str) -> Path:
 
 
 def get_orchestrator_settings(profile_id: str) -> dict[str, str | None]:
-    """Read official Antigravity CLI `"orchestrator": {"planner", "executor"}` for a profile."""
-    settings_file = _profile_settings_file(profile_id)
+    """Read shared workspace Antigravity CLI `"orchestrator": {"planner", "executor"}`."""
+    _, profiles = snapshot()
+    if not any(p.id == profile_id for p in profiles):
+        raise AgyProfileError(404, "找不到 Agy 账号")
+    settings_file = _workspace_settings_file()
     if not settings_file.exists():
         return {"profile_id": profile_id, "planner": None, "executor": None}
     try:
@@ -980,11 +1506,14 @@ def set_orchestrator_settings(
     planner: str | None = None,
     executor: str | None = None,
 ) -> dict[str, str | None]:
-    """Persist sparse `"orchestrator": {"planner", "executor"}` in profile `settings.json`."""
+    """Persist shared `"orchestrator": {"planner", "executor"}` in workspace `settings.json`."""
     clean_planner = planner.strip() if isinstance(planner, str) and planner.strip() else None
     clean_executor = executor.strip() if isinstance(executor, str) and executor.strip() else None
     with _profile_metadata_lock:
-        settings_file = _profile_settings_file(profile_id)
+        _, profiles = snapshot()
+        if not any(p.id == profile_id for p in profiles):
+            raise AgyProfileError(404, "找不到 Agy 账号")
+        settings_file = _workspace_settings_file()
         data: dict[str, Any] = {}
         if settings_file.exists():
             try:
@@ -1004,28 +1533,8 @@ def set_orchestrator_settings(
         else:
             data.pop("orchestrator", None)
 
-        settings_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        stage: Path | None = None
         try:
-            with NamedTemporaryFile(mode="w", encoding="utf-8", dir=settings_file.parent, delete=False) as fp:
-                stage = Path(fp.name)
-                json.dump(data, fp, ensure_ascii=False, indent=2)
-                fp.write("\n")
-            for attempt in range(6):
-                try:
-                    stage.replace(settings_file)
-                    break
-                except PermissionError as exc:
-                    if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 5:
-                        raise
-                    time.sleep(0.01 * (2 ** attempt))
-            try:
-                os.chmod(settings_file, 0o600)
-            except OSError:
-                pass
+            _atomic_write_json(settings_file, data, mode=0o600, indent=2)
         except OSError as exc:
             raise AgyProfileError(503, f"无法保存 Agy Orchestrator 设置: {exc}") from exc
-        finally:
-            if stage is not None:
-                stage.unlink(missing_ok=True)
         return {"profile_id": profile_id, "planner": clean_planner, "executor": clean_executor}

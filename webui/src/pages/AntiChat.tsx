@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import type { TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
-import { Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, Slash, SlidersHorizontal, UserCheck, X } from 'lucide-react'
+import { Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, Slash, SlidersHorizontal, X } from 'lucide-react'
 import { RotateCw, Square } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/components/ChatLayout'
 import { ConversationCollapseControl, ConversationCollapseProvider } from '@/components/ConversationCollapse'
@@ -302,12 +302,7 @@ export default function AntiChat() {
   }
   const closeCreate = () => { if (!create.isPending) setCreating(false) }
   const selectedProfile = profiles.data?.profiles.find(item => item.id === profiles.data?.active)
-  const effectiveHeaderProfileId = selected?.profile_id ?? profiles.data?.active ?? 'default'
-  const effectiveHeaderProfile = profiles.data?.profiles.find(item => item.id === effectiveHeaderProfileId) ?? selectedProfile
-  const usageOverrideProfileId = selected?.profile_id && selected.profile_id !== profiles.data?.active
-    ? selected.profile_id
-    : undefined
-  const cachedUsage = effectiveHeaderProfile?.usage
+  const cachedUsage = selectedProfile?.usage
   return <PageShell title="Agy 会话" wrapHeader
     titleExtra={<AntiDaemonControl {...daemon} />}
     actions={<>
@@ -321,14 +316,12 @@ export default function AntiChat() {
           if (!next) setProfilesSection('default')
           setProfilesOpen(next)
         }}
-        targetProfileId={effectiveHeaderProfileId}
         focusSection={profilesSection}
       />
       <AntiAccountUsageButton
-        key={effectiveHeaderProfileId}
+        key={profiles.data?.active ?? 'default'}
         running={daemon.running}
-        profileId={usageOverrideProfileId}
-        profileName={usageOverrideProfileId ? effectiveHeaderProfile?.name : undefined}
+        profileName={selectedProfile?.name}
         cachedUsage={cachedUsage}
         onChecked={() => {
           daemon.refresh()
@@ -384,7 +377,7 @@ export default function AntiChat() {
         )}
         <Errors items={[sessions.error, rename.error, remove.error]} />
         {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions}
-          profileId={profiles.data?.active} profileName={selectedProfile?.name}
+          profileId={profiles.data?.active}
           profilesData={profiles.data}
           supportsSteering={daemon.status.data?.supports_steering}
           onOpenProfiles={() => openProfilesModal('default')}
@@ -429,8 +422,8 @@ export default function AntiChat() {
   </PageShell>
 }
 
-function Conversation({ session, headerActions, profileId, profileName, profilesData, supportsSteering, onOpenProfiles, onOpenOrchestratorSettings }: {
-  session: Session; headerActions: HTMLDivElement | null; profileId?: string; profileName?: string; profilesData?: AgyProfiles; supportsSteering?: boolean | null; onOpenProfiles: () => void; onOpenOrchestratorSettings: () => void
+function Conversation({ session, headerActions, profileId, profilesData, supportsSteering, onOpenProfiles, onOpenOrchestratorSettings }: {
+  session: Session; headerActions: HTMLDivElement | null; profileId?: string; profilesData?: AgyProfiles; supportsSteering?: boolean | null; onOpenProfiles: () => void; onOpenOrchestratorSettings: () => void
 }) {
   const { id: sid, project, workspace } = session
   const cache = useQueryClient()
@@ -442,9 +435,7 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
   const [pending, setPending] = useState<Submission>()
   const [lastRateLimitedInput, setLastRateLimitedInput] = useState<Submission | null>(null)
   const [queuedPrompt, setQueuedPrompt] = useState<{ prompt: string; attachments: PasteAttachment[] } | null>(null)
-  const effectiveProfileId = session.profile_id ?? profileId ?? 'default'
-  const effectiveProfileName = profilesData?.profiles.find(item => item.id === effectiveProfileId)?.name
-    ?? (session.profile_id ? session.profile_id : (profileName ?? effectiveProfileId))
+  const effectiveProfileId = profileId ?? 'default'
   const [clock, setClock] = useState(Date.now)
   const [stoppingRunId, setStoppingRunId] = useState<string | null>(null)
   const [forceStopEligible, setForceStopEligible] = useState(false)
@@ -516,7 +507,7 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
   const models = useQuery({
     queryKey: ['anti-models', effectiveProfileId],
     enabled: Boolean(effectiveProfileId),
-    queryFn: ({ signal }) => antiApi.models(signal, session.profile_id ?? undefined),
+    queryFn: ({ signal }) => antiApi.models(signal),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     refetchIntervalInBackground: false,
@@ -658,7 +649,7 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
   const commands = useQuery({
     queryKey: ['anti-commands', effectiveProfileId],
     enabled: Boolean(effectiveProfileId && (showSlashMenu || session.has_conversation)),
-    queryFn: ({ signal }) => antiApi.commands(signal, session.profile_id ?? undefined),
+    queryFn: ({ signal }) => antiApi.commands(signal),
     staleTime: showSlashMenu ? 0 : 60_000,
     retry: false,
   })
@@ -961,28 +952,13 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
       effort,
       mode,
       permission_mode: effectivePermission,
-      ...(session.profile_id ? { profile_id: session.profile_id } : {}),
       operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     }
-  }, [effort, mode, model, permissionMode, session.profile_id])
-  const setSessionProfile = useMutation({
-    mutationFn: (nextProfileId: string | null) => antiApi.setSessionProfile(sid, nextProfileId),
-    onSuccess: updated => {
-      cache.setQueryData<Session[]>(sessionsKey, old => old?.map(row => row.id === updated.id ? { ...row, ...updated } : row))
-      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
-      void cache.invalidateQueries({ queryKey: ['anti-models'] })
-      void cache.invalidateQueries({ queryKey: ['anti-commands'] })
-      void cache.invalidateQueries({ queryKey: ['anti-workers'] })
-      const targetName = updated.profile_id
-        ? (profilesData?.profiles.find(p => p.id === updated.profile_id)?.name ?? updated.profile_id)
-        : `跟随全局默认（${profileName ?? '系统默认'}）`
-      toast.success(`本会话已切换为「${targetName}」`)
-    },
-  })
+  }, [effort, mode, model, permissionMode])
   const switchAndRetry = useMutation({
     mutationFn: async (targetProfileId: string) => {
-      const updated = await antiApi.setSessionProfile(sid, targetProfileId)
-      cache.setQueryData<Session[]>(sessionsKey, old => old?.map(row => row.id === updated.id ? { ...row, ...updated } : row))
+      const updatedProfiles = await antiApi.switchProfile(targetProfileId)
+      cache.setQueryData(['agy-profiles'], updatedProfiles)
       const lastRateRun = !lastRateLimitedInput ? [...runs].reverse().find(r => r.status === 'rate_limited') : undefined
       const baseBody = lastRateLimitedInput ?? (lastRateRun
         ? createSubmission(lastRateRun.prompt, toUserAttachments(lastRateRun.id, lastRateRun.attachments))
@@ -990,7 +966,6 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
       if (!baseBody) return null
       const retryBody: Submission = {
         ...baseBody,
-        profile_id: targetProfileId,
         operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       }
       return await antiApi.submitRun(sid, retryBody)
@@ -1002,11 +977,15 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
         cache.setQueryData<Run[]>(key, old => [...(old ?? []).filter(row => row.id !== run.id), run])
         useDraftStore.getState().clearDraft(draftKey)
       }
+      void cache.invalidateQueries({ queryKey: ['agy-profiles'], exact: true })
+      void cache.invalidateQueries({ queryKey: ['anti-daemon-status'] })
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
       void cache.invalidateQueries({ queryKey: key })
+      void cache.invalidateQueries({ queryKey: ['anti-models'] })
+      void cache.invalidateQueries({ queryKey: ['anti-commands'] })
       void cache.invalidateQueries({ queryKey: ['anti-workers'] })
       const targetName = profilesData?.profiles.find(p => p.id === targetProfileId)?.name ?? targetProfileId
-      toast.success(`已切换本会话至「${targetName}」并重试`)
+      toast.success(`已切换至「${targetName}」并沿用当前上下文重试`)
     },
   })
   const clearGrants = useMutation({
@@ -1104,7 +1083,7 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
           disabled={Boolean(current || pending)}
           aria-label="Orchestrator 角色设置"
           title={[
-            `设置 Orchestrator（Planner + Executor）角色（${effectiveProfileName}）`,
+            `设置 Orchestrator（Planner + Executor）角色（全局生效）`,
             orchestratorSettings.data?.planner ? `Planner: ${orchestratorSettings.data.planner}` : 'Planner: 默认 (High)',
             orchestratorSettings.data?.executor ? `Executor: ${orchestratorSettings.data.executor}` : 'Executor: 默认 (High)',
           ].join(' · ')}
@@ -1370,7 +1349,6 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
             live.error,
             send.error,
             steer.error instanceof HttpError && steer.error.status === 409 ? null : steer.error,
-            setSessionProfile.error,
             switchAndRetry.error,
             clearGrants.error,
             cancel.error,
@@ -1379,7 +1357,7 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
           ]} />
           {isRateLimited && (
             <div data-anti-rate-limit-switch className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-status-warning-line bg-status-warning-soft px-3 py-2 text-xs text-status-warning">
-              <span>当前账号处于风控冷却或配额保护中，可切换至其他可用账号继续对话。</span>
+              <span>当前账号处于风控冷却或配额保护中，可切换至其他有额度的账号继续当前上下文。</span>
               <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                 {fallbackProfile && (
                   <button
@@ -1421,70 +1399,35 @@ function Conversation({ session, headerActions, profileId, profileName, profiles
     )}
     <div ref={composerWrapRef}>
       <ChatComposerFrame>
-        {((profilesData?.profiles.length ?? 0) > 1 || Boolean(session.profile_id) || effectiveProfileId !== 'default' || grants.length > 0) && (
-          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-3.5 pt-2 text-[11px] text-ink-muted">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <UserCheck size={12} className="shrink-0 text-accent" aria-hidden="true" />
-              {(profilesData?.profiles.length ?? 0) > 1 ? (
-                <label className="inline-flex items-center gap-1.5">
-                  <span>会话账号：</span>
-                  <select
-                    aria-label="本会话 Agy 账号"
-                    value={session.profile_id ?? ''}
-                    disabled={Boolean(current || pending || setSessionProfile.isPending)}
-                    onChange={e => setSessionProfile.mutate(e.target.value || null)}
-                    className="rounded-md border border-line/70 bg-bg-card px-1.5 py-0.5 text-[11px] text-ink outline-none focus:border-accent disabled:opacity-50"
-                  >
-                    <option value="">跟随全局默认（{profileName ?? '系统默认'}）</option>
-                    {profilesData!.profiles.map(item => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                        {(item.cooldown_seconds ?? 0) > 0
-                          ? `（冷却 ${item.cooldown_seconds}s）`
-                          : typeof item.usage?.min_remaining_pct === 'number'
-                            ? `（剩余 ${item.usage.min_remaining_pct}%）`
-                            : ''}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : (
-                <span>
-                  当前隔离账号：<span className="font-medium text-ink">{effectiveProfileName}</span>（多轮上下文按账号独立续接）
-                </span>
-              )}
-            </div>
-            {grants.length > 0 && (
-              <div data-anti-session-grants className="flex flex-wrap items-center gap-1">
-                <span>已常驻授权：</span>
-                {grants.map(kind => (
-                  <span
-                    key={kind}
-                    className="inline-flex items-center gap-1 rounded-md border border-line/70 bg-bg-soft px-1.5 py-0.5 text-[11px] text-ink"
-                  >
-                    <span>{grantLabels[kind] ?? kind}</span>
-                    <button
-                      type="button"
-                      disabled={clearGrants.isPending}
-                      aria-label={`收回 ${grantLabels[kind] ?? kind} 授权`}
-                      title="收回此项授权"
-                      onClick={() => clearGrants.mutate(kind)}
-                      className="text-ink-muted hover:text-status-danger"
-                    >
-                      <X size={10} aria-hidden="true" />
-                    </button>
-                  </span>
-                ))}
+        {grants.length > 0 && (
+          <div data-anti-session-grants className="flex flex-wrap items-center justify-end gap-1 px-3.5 pt-2 text-[11px] text-ink-muted">
+            <span>已常驻授权：</span>
+            {grants.map(kind => (
+              <span
+                key={kind}
+                className="inline-flex items-center gap-1 rounded-md border border-line/70 bg-bg-soft px-1.5 py-0.5 text-[11px] text-ink"
+              >
+                <span>{grantLabels[kind] ?? kind}</span>
                 <button
                   type="button"
                   disabled={clearGrants.isPending}
-                  onClick={() => clearGrants.mutate(undefined)}
-                  className="ga-btn-link px-1 py-0 text-[11px] text-status-danger"
+                  aria-label={`收回 ${grantLabels[kind] ?? kind} 授权`}
+                  title="收回此项授权"
+                  onClick={() => clearGrants.mutate(kind)}
+                  className="text-ink-muted hover:text-status-danger"
                 >
-                  全部收回
+                  <X size={10} aria-hidden="true" />
                 </button>
-              </div>
-            )}
+              </span>
+            ))}
+            <button
+              type="button"
+              disabled={clearGrants.isPending}
+              onClick={() => clearGrants.mutate(undefined)}
+              className="ga-btn-link px-1 py-0 text-[11px] text-status-danger"
+            >
+              全部收回
+            </button>
           </div>
         )}
         <ImagePasteInput

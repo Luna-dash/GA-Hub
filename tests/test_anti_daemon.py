@@ -1,6 +1,7 @@
 """Standalone Agy runtime, profile isolation, login, and CloudCode usage ledger tests."""
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -95,10 +96,23 @@ def test_t3_profile_env_isolation_strips_keys_and_forces_file_storage(tmp_path, 
     assert env["AGY_ACP_FORCE_FILE_STORAGE"] == "1"
     assert env["AGY_CLI_DISABLE_AUTO_UPDATE"] == "1"
     assert env["SSH_CONNECTION"] == "127.0.0.1 0 127.0.0.1 0"
-    assert env["GEMINI_HOME"] == str(tmp_path / "agy-profiles" / pid / "home" / ".gemini")
+    assert env["GEMINI_HOME"] == str(tmp_path / "agy-profiles" / "workspace" / "home" / ".gemini")
 
-    cmd = agy_profile.acp_spawn_command("C:/fake/agy.exe", pid, login=True)
-    assert cmd == [
+    vault_env = agy_profile.clean_agy_env(pid, base, vault_only=True)
+    assert vault_env["GEMINI_HOME"] == str(tmp_path / "agy-profiles" / pid / "home" / ".gemini")
+
+    ws_cmd = agy_profile.acp_spawn_command("C:/fake/agy.exe", pid)
+    assert ws_cmd == [
+        "C:/fake/agy.exe",
+        "acp",
+        "--gemini-dir",
+        str(tmp_path / "agy-profiles" / "workspace" / "home" / ".gemini"),
+        "--app-data-dir",
+        "antigravity-cli",
+    ]
+
+    login_cmd = agy_profile.acp_spawn_command("C:/fake/agy.exe", pid, login=True)
+    assert login_cmd == [
         "C:/fake/agy.exe",
         "acp",
         "--gemini-dir",
@@ -262,6 +276,13 @@ def test_sync_user_customizations_preserves_isolated_overrides(tmp_path, monkeyp
     agy_profile.prepare_profile(prof.id)
     assert dst.read_text(encoding="utf-8") == "custom isolated rules"
 
+    agy_profile.ensure_workspace_ready()
+    ws_agents = agy_profile.workspace_gemini_dir() / "AGENTS.md"
+    assert ws_agents.read_text(encoding="utf-8") == "host rules"
+    ws_agents.write_text("custom workspace rules", encoding="utf-8")
+    agy_profile.ensure_workspace_ready()
+    assert ws_agents.read_text(encoding="utf-8") == "custom workspace rules"
+
 
 def test_worker_holds_profile_lock_until_child_exits(tmp_path, monkeypatch):
     from threading import Event
@@ -400,8 +421,11 @@ def test_slow_worker_close_does_not_hold_manager_lock(runtime_manager, tmp_path,
 
     monkeypatch.setattr(agy_profile, "select", select)
     changed = []
+    activated = []
     monkeypatch.setattr(agy_profile, "clear_credentials", lambda pid: changed.append(pid))
     monkeypatch.setattr(agy_profile, "delete", lambda pid: changed.append(pid))
+    monkeypatch.setattr(agy_profile, "sync_workspace_credentials_to_vault", lambda pid: None)
+    monkeypatch.setattr(agy_profile, "activate_profile_in_workspace", lambda pid: activated.append(pid))
     db = str(tmp_path / "sessions.db")
     worker_profile = secondary if operation in {"clear", "delete"} else profile
     worker = mgr.get_worker(db, worker_profile, "same", tmp_path)
@@ -418,10 +442,11 @@ def test_slow_worker_close_does_not_hold_manager_lock(runtime_manager, tmp_path,
         assert mgr.panel_status().active_count == 0
         assert not mgr.session_connected(db, "same")
         assert not changed
+        assert not activated
         with pytest.raises(agy_profile.AgyProfileError) as blocked:
             mgr.get_worker(db, profile if operation == "switch" else worker_profile, "same", tmp_path)
         assert blocked.value.status == 409
-        if operation == "shutdown":
+        if operation == "shutdown" or operation == "switch":
             with pytest.raises(agy_profile.AgyProfileError) as blocked:
                 mgr.get_worker(db, profile, "unrelated", tmp_path)
             assert blocked.value.status == 409
@@ -456,6 +481,8 @@ def test_slow_worker_close_does_not_hold_manager_lock(runtime_manager, tmp_path,
     assert retired.value.status == 409
     if operation in {"clear", "delete"}:
         assert changed == [worker_profile]
+    if operation == "switch":
+        assert activated == [secondary]
     if operation not in {"delete", "shutdown"}:
         replacement = mgr.get_worker(db, profile, "same", new_workspace)
         assert replacement is not worker
@@ -545,11 +572,16 @@ def test_models_parses_agy_tsv_without_json_flag_and_default_env_preserves_keyri
 
     monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
     monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+    monkeypatch.setattr(agy_profile, "_read_windows_keyring_safely", lambda: None)
 
     default_env = agy_profile.clean_agy_env("default", {"PATH": "C:/bin", "WSL_INTEROP": "1", "ANTIGRAVITY_AGENT": "1"})
-    assert "AGY_ACP_FORCE_FILE_STORAGE" not in default_env
+    assert default_env["AGY_ACP_FORCE_FILE_STORAGE"] == "1"
+    assert default_env["GEMINI_HOME"] == str(tmp_path / "agy-profiles" / "workspace" / "home" / ".gemini")
     assert "WSL_INTEROP" not in default_env
     assert "ANTIGRAVITY_AGENT" not in default_env
+
+    vault_env = agy_profile.clean_agy_env("default", {"PATH": "C:/bin"}, vault_only=True)
+    assert vault_env["GEMINI_HOME"] == str(tmp_path / "agy-profiles" / "default" / "home" / ".gemini")
 
     captured_cmd = []
 
@@ -1521,17 +1553,27 @@ def test_switch_profile_decoupled_from_active_turns_and_grant_controls(tmp_path,
     try:
         assert mgr.session_grants(str(db), "s-busy") == ["edit", "read"]
 
-        # Global switch succeeds while another session is mid-turn, retiring idle workers only.
+        # Account switch is safely blocked with 409 while a turn is running in the shared workspace.
+        with pytest.raises(agy_profile.AgyProfileError) as busy_err:
+            mgr.switch_profile(secondary.id)
+        assert busy_err.value.status == 409
+        assert agy_profile.snapshot()[0] == "default"
+
+        # Once active turn ends, switch succeeds, closes idle workers, activates workspace, and preserves grants!
+        mgr.unregister_turn(db, "r-busy")
+        w_busy.active_turn = None
+        w_busy.proc = None
+        busy_closed = []
+        monkeypatch.setattr(w_busy, "close", lambda **kwargs: busy_closed.append(kwargs))
+
         mgr.switch_profile(secondary.id)
         assert agy_profile.snapshot()[0] == secondary.id
-        assert len(idle_closed) == 1
-        assert w_busy.active_turn is not None and w_busy.active_turn.run_id == "r-busy"
-        assert (db, "r-busy") in mgr._active_turns
+        assert agy_profile.active_workspace_profile() == secondary.id
+        assert len(idle_closed) == 1 and len(busy_closed) == 1
+        assert mgr.session_grants(str(db), "s-busy") == ["edit", "read"]
 
-        with mgr.submission(profile_id="default") as pid_default:
-            assert pid_default == "default"
-        with mgr.submission(profile_id=secondary.id) as pid_sec:
-            assert pid_sec == secondary.id
+        with mgr.submission() as active_pid:
+            assert active_pid == secondary.id
 
         assert mgr.clear_session_grants(str(db), "s-busy", kind="read") == ["edit"]
         assert mgr.session_grants(str(db), "s-busy") == ["edit"]
@@ -1777,10 +1819,11 @@ def test_models_sync_cloudcode_merge_and_orchestrator_settings_endpoints(tmp_pat
     )
     assert cfg_patch.status_code == 200 and cfg_patch.json()["aliases"] == {"neon": "gemini-4-neon-high"}
 
-    # Preserve unrelated keys in ~/.gemini/antigravity-cli/settings.json while editing flat orchestrator keys
-    default_settings = agy_profile.profile_app_data_dir("default") / "settings.json"
-    default_settings.parent.mkdir(parents=True, exist_ok=True)
-    default_settings.write_text(json.dumps({"colorScheme": "tokyo night"}), encoding="utf-8")
+    # Preserve unrelated keys in shared workspace settings.json while editing flat orchestrator keys
+    alt = agy_profile.add("Second")
+    ws_settings = agy_profile.workspace_app_data_dir() / "settings.json"
+    ws_settings.parent.mkdir(parents=True, exist_ok=True)
+    ws_settings.write_text(json.dumps({"colorScheme": "tokyo night"}), encoding="utf-8")
 
     headers = {"X-GA-Hub-Action": "manage-agy-profiles"}
     assert client.get("/api/anti/profiles/default/orchestrator").json() == {"profile_id": "default", "planner": None, "executor": None}
@@ -1792,9 +1835,15 @@ def test_models_sync_cloudcode_merge_and_orchestrator_settings_endpoints(tmp_pat
     )
     assert updated.status_code == 200
     assert updated.json() == {"profile_id": "default", "planner": "gemini-4-neon-xhigh", "executor": "gemini-4-hydrogen-high"}
-    saved_json = json.loads(default_settings.read_text(encoding="utf-8"))
+    saved_json = json.loads(ws_settings.read_text(encoding="utf-8"))
     assert saved_json["colorScheme"] == "tokyo night"
     assert saved_json["orchestrator"] == {"planner": "gemini-4-neon-xhigh", "executor": "gemini-4-hydrogen-high"}
+    # Orchestrator settings are globally shared across accounts
+    assert client.get(f"/api/anti/profiles/{alt.id}/orchestrator").json() == {
+        "profile_id": alt.id,
+        "planner": "gemini-4-neon-xhigh",
+        "executor": "gemini-4-hydrogen-high",
+    }
 
     cleared = client.patch(
         "/api/anti/profiles/default/orchestrator",
@@ -1802,7 +1851,7 @@ def test_models_sync_cloudcode_merge_and_orchestrator_settings_endpoints(tmp_pat
         headers=headers,
     )
     assert cleared.status_code == 200
-    cleared_json = json.loads(default_settings.read_text(encoding="utf-8"))
+    cleared_json = json.loads(ws_settings.read_text(encoding="utf-8"))
     assert "orchestrator" not in cleared_json and cleared_json["colorScheme"] == "tokyo night"
 
 
@@ -2200,6 +2249,317 @@ def test_runtime_prompt_usage_replaces_stale_usage_update_and_normalizes_steer(t
     # Prompt 1 normalized to 500 input / 400 cached / 20 out; Prompt 2 = 200 input / 30 out; stale 999/888 replaced!
     assert res["usage"] == {"input_tokens": 700, "output_tokens": 50, "cache_read_tokens": 400}
     mgr.shutdown()
+
+
+def test_workspace_credential_sync_back_and_hot_swap(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile.Path, "home", staticmethod(lambda: tmp_path / "empty_host"))
+    monkeypatch.setattr(agy_profile, "_read_windows_keyring_safely", lambda: None)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.16")
+
+    alt = agy_profile.add("Business")
+    def_app = agy_profile.profile_vault_app_data_dir("default")
+    alt_app = agy_profile.profile_vault_app_data_dir(alt.id)
+    def_app.mkdir(parents=True, exist_ok=True)
+    alt_app.mkdir(parents=True, exist_ok=True)
+    (def_app / "antigravity-oauth-token").write_text('{"token":{"access_token":"def-v1"}}', encoding="utf-8")
+    (def_app / "jetski_state.pbtxt").write_bytes(b"def-jetski")
+    (def_app / "settings.json").write_text(json.dumps({"auth": {"type": "oauth-personal"}}), encoding="utf-8")
+    (alt_app / "antigravity-oauth-token").write_text('{"token":{"access_token":"alt-v1"}}', encoding="utf-8")
+    (alt_app / "jetski_state.pbtxt").write_bytes(b"alt-jetski")
+    (alt_app / "settings.json").write_text(json.dumps({"auth": {"type": "oauth-business"}}), encoding="utf-8")
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    try:
+        agy_profile.activate_profile_in_workspace("default")
+        ws_app = agy_profile.workspace_app_data_dir()
+        (ws_app / "conversations").mkdir(parents=True, exist_ok=True)
+        (ws_app / "conversations" / "shared-c1.db").write_bytes(b"shared-conv-bytes")
+        mgr.set_profile_orchestrator("default", planner="gemini-4-neon-xhigh", executor="gemini-4-hydrogen-high")
+
+        # Simulate agy acp refreshing default's access_token inside the shared workspace
+        (ws_app / "antigravity-oauth-token").write_text('{"token":{"access_token":"def-refreshed"}}', encoding="utf-8")
+
+        mgr.switch_profile(alt.id)
+        assert json.loads((def_app / "antigravity-oauth-token").read_text(encoding="utf-8"))["token"]["access_token"] == "def-refreshed"
+        assert json.loads((ws_app / "antigravity-oauth-token").read_text(encoding="utf-8"))["token"]["access_token"] == "alt-v1"
+        assert (ws_app / "jetski_state.pbtxt").read_bytes() == b"alt-jetski"
+        ws_settings = json.loads((ws_app / "settings.json").read_text(encoding="utf-8"))
+        assert ws_settings["auth"]["type"] == "oauth-business"
+        assert ws_settings["orchestrator"] == {"planner": "gemini-4-neon-xhigh", "executor": "gemini-4-hydrogen-high"}
+        assert (ws_app / "conversations" / "shared-c1.db").read_bytes() == b"shared-conv-bytes"
+
+        # Switching back restores the refreshed default token while preserving shared conversations & orchestrator
+        mgr.switch_profile("default")
+        assert json.loads((ws_app / "antigravity-oauth-token").read_text(encoding="utf-8"))["token"]["access_token"] == "def-refreshed"
+        assert (ws_app / "jetski_state.pbtxt").read_bytes() == b"def-jetski"
+        ws_settings2 = json.loads((ws_app / "settings.json").read_text(encoding="utf-8"))
+        assert ws_settings2["auth"]["type"] == "oauth-personal"
+        assert ws_settings2["orchestrator"] == {"planner": "gemini-4-neon-xhigh", "executor": "gemini-4-hydrogen-high"}
+        assert (ws_app / "conversations" / "shared-c1.db").read_bytes() == b"shared-conv-bytes"
+    finally:
+        mgr.shutdown()
+
+
+def test_workspace_lossless_migration_and_conversation_rescue(tmp_path, monkeypatch):
+    import json
+    import sqlite3
+
+    admin = tmp_path / "admin"
+    fake_home = tmp_path / "host"
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", admin)
+    monkeypatch.setattr(agy_profile.Path, "home", staticmethod(lambda: fake_home))
+
+    alpha = agy_profile.add("Alpha")
+    agy_profile.select(alpha.id)
+
+    def write_sqlite(path: Path, val: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(path) as c, c:
+            c.execute("CREATE TABLE t (v TEXT)")
+            c.execute("INSERT INTO t VALUES (?)", (val,))
+
+    alpha_app = agy_profile.profile_vault_app_data_dir(alpha.id)
+    def_app = agy_profile.profile_vault_app_data_dir("default")
+    write_sqlite(alpha_app / "conversations" / "conv-alpha.db", "alpha-data")
+    write_sqlite(alpha_app / "conversation_summaries.db", "alpha-summary")
+    (alpha_app / "brain" / "conv-alpha").mkdir(parents=True, exist_ok=True)
+    (alpha_app / "brain" / "conv-alpha" / "notes.md").write_text("alpha brain", encoding="utf-8")
+    (alpha_app / "settings.json").write_text(
+        json.dumps({"auth": {"type": "oauth-personal"}, "orchestrator": {"planner": "gemini-4-neon-high"}}),
+        encoding="utf-8",
+    )
+    write_sqlite(def_app / "conversations" / "conv-def.db", "def-data")
+
+    agy_profile.ensure_workspace_ready()
+    ws_app = agy_profile.workspace_app_data_dir()
+    assert (ws_app / "conversations" / "conv-alpha.db").is_file()
+    assert (ws_app / "conversations" / "conv-def.db").is_file()
+    assert (ws_app / "brain" / "conv-alpha" / "notes.md").read_text(encoding="utf-8") == "alpha brain"
+    assert (ws_app / "conversation_summaries.db").is_file()
+    assert agy_profile.get_orchestrator_settings(alpha.id)["planner"] == "gemini-4-neon-high"
+    # Legacy originals remain untouched (non-destructive migration)
+    assert (alpha_app / "conversations" / "conv-alpha.db").is_file()
+
+    # On-demand rescue from host ~/.gemini/antigravity-cli for historical default-profile sessions
+    host_app = fake_home / ".gemini" / agy_profile.APP_DATA_DIR_NAME
+    write_sqlite(host_app / "conversations" / "conv-host.db", "host-data")
+    (host_app / "brain" / "conv-host").mkdir(parents=True, exist_ok=True)
+    (host_app / "brain" / "conv-host" / "artifact.txt").write_text("rescued", encoding="utf-8")
+    assert agy_profile.rescue_conversation_files("conv-host") is True
+    with sqlite3.connect(ws_app / "conversations" / "conv-host.db") as c:
+        assert c.execute("SELECT v FROM t").fetchone()[0] == "host-data"
+    assert (ws_app / "brain" / "conv-host" / "artifact.txt").read_text(encoding="utf-8") == "rescued"
+
+
+def test_quota_stats_breaker_calibrate_follow_profile_id_and_active_account(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_profile.Path, "home", staticmethod(lambda: tmp_path / "empty_host"))
+    monkeypatch.setattr(agy_profile, "_read_windows_keyring_safely", lambda: None)
+
+    alt = agy_profile.add("Backup")
+    db = tmp_path / "anti_sessions.sqlite3"
+    ledger = agy_usage.AgyLedger(db)
+    ledger.record_run("r-d1", "gemini-4-hydrogen-high", "rate_limited", profile_id="default", input_tokens=2000, cooldown_seconds=120)
+    ledger.record_run("r-a1", "gemini-4-hydrogen-high", "success", profile_id=alt.id, input_tokens=500, output_tokens=100)
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    monkeypatch.setattr(anti, "daemon", mgr)
+    monkeypatch.setattr(anti, "anti_profiles", agy_profile)
+    monkeypatch.setattr(anti, "AntiSessions", lambda: anti_engine.AntiSessions(db, mgr))
+    app = FastAPI()
+    app.include_router(anti.router)
+    with TestClient(app) as client:
+        # Active == default: stats/quota default to 'default', explicit ?profile_id queries alt
+        assert client.get("/api/anti/stats?window_hours=24").json()["total_tokens"] == 2000
+        assert client.get(f"/api/anti/stats?window_hours=24&profile_id={alt.id}").json()["total_tokens"] == 600
+        assert client.get("/api/anti/quota?profile_id=nonexistent").status_code == 404
+
+        alt_pools = client.get(f"/api/anti/quota?profile_id={alt.id}").json()
+        assert next(p for p in alt_pools if p["model_group"] == "gemini-4")["status"] == "normal"
+
+        # Calibrate & breaker reset support explicit profile_id cleanly without touching other account
+        cal_alt = client.post(
+            f"/api/anti/quota/calibrate?profile_id={alt.id}",
+            json={"model_group": "gemini-4", "remaining_pct": 42},
+            headers={"X-GA-Hub-Action": "manage-anti-gateway"},
+        )
+        assert cal_alt.status_code == 200 and cal_alt.json()["calibrated_remaining_pct"] == 42
+        def_pools = client.get("/api/anti/quota").json()
+        def_g4 = next(p for p in def_pools if p["model_group"] == "gemini-4")
+        assert def_g4["status"] == "cooling_down" and def_g4["calibrated_remaining_pct"] is None
+
+        # Switch active account to alt -> default endpoints now target alt uniformly
+        assert client.post(f"/api/anti/profiles/{alt.id}/switch", headers={"X-GA-Hub-Action": "manage-agy-profiles"}).status_code == 200
+        assert client.get("/api/anti/stats?window_hours=24").json()["total_tokens"] == 600
+        assert next(p for p in client.get("/api/anti/quota").json() if p["model_group"] == "gemini-4")["calibrated_remaining_pct"] == 42
+
+        assert client.post(
+            "/api/anti/breaker/reset?profile_id=default",
+            json={"model_group": "gemini-4"},
+            headers={"X-GA-Hub-Action": "manage-anti-gateway"},
+        ).status_code == 204
+        assert next(p for p in client.get("/api/anti/quota?profile_id=default").json() if p["model_group"] == "gemini-4")["status"] == "normal"
+    mgr.shutdown()
+
+
+def test_resume_fallback_injects_handoff_summary_and_401_transient_recovery(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.16")
+
+    def_app = agy_profile.profile_vault_app_data_dir("default")
+    def_app.mkdir(parents=True, exist_ok=True)
+    (def_app / "antigravity-oauth-token").write_text('{"token":{"access_token":"tok-1"}}', encoding="utf-8")
+
+    # 1. Resume failure prepends fallback_handoff_context to prompt and emits fallback_notice
+    worker = agy_runtime.AgySessionWorker(
+        profile_id="default",
+        session_id="s-handoff",
+        workspace=tmp_path,
+        executable="fake-agy",
+        version="1.5.16",
+    )
+    worker.init_result = {"agentInfo": {"version": "1.5.16"}, "agentCapabilities": {"promptCapabilities": {}}}
+    worker.setup_result = {"sessionId": "acp-new-fb", "models": {"currentModelId": "gemini-4-hydrogen-high"}}
+
+    def fake_ensure_with_fallback(*, resume_conversation, add_dirs):
+        if resume_conversation:
+            worker.resumed_fallback = True
+            worker._resume_fallback_reason = "resume failed"
+        worker.acp_session_id = "acp-new-fb"
+        return "acp-new-fb"
+
+    dispatched_prompts: list[str] = []
+
+    def fake_send_frame(frame):
+        method = frame.get("method")
+        rid = frame.get("id")
+        if method == "session/prompt":
+            blocks = frame["params"]["prompt"]
+            dispatched_prompts.append(blocks[0]["text"])
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(rid, None)
+            if entry is not None:
+                entry[1]["result"] = {"stopReason": "end_turn", "usage": {}}
+                entry[0].set()
+        elif rid is not None and method is not None:
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(rid, None)
+            if entry is not None:
+                entry[1]["result"] = {}
+                entry[0].set()
+
+    monkeypatch.setattr(worker, "ensure_started", fake_ensure_with_fallback)
+    monkeypatch.setattr(worker, "_send_frame", fake_send_frame)
+    worker.proc = SimpleNamespace(pid=7199, stdin=None, stdout=None, poll=lambda: None)
+
+    events: list[dict] = []
+    res = worker.run_turn(
+        run_id="r-fb",
+        prompt_text="继续完成重构",
+        model="gemini-4-hydrogen-high",
+        effort="high",
+        mode="plan",
+        permission_mode="approval-required",
+        resume_conversation="old-conv-id",
+        add_dirs=(),
+        staged_paths=[],
+        attachments=[],
+        allowed_roots=[tmp_path],
+        on_event=events.append,
+        fallback_handoff_context="[前文对话交接摘要]\n1. 用户: 先做梳理\n   助手: 已梳理完毕",
+    )
+    assert res["status"] == "success"
+    assert "[前文对话交接摘要]" in dispatched_prompts[0]
+    assert "继续完成重构" in dispatched_prompts[0]
+    assert "原生上下文续接失败，已自动附带前文摘要继续对话" in (res.get("fallback_notice") or "")
+
+    # 2. Transient 401 when refresh succeeds returns auth_transient=True & does not mark login_required
+    agy_profile.activate_profile_in_workspace("default")
+    monkeypatch.setattr(agy_usage, "refresh_profile_token", lambda pid: "ok")
+    worker2 = agy_runtime.AgySessionWorker(
+        profile_id="default",
+        session_id="s-401",
+        workspace=tmp_path,
+        executable="fake-agy",
+        version="1.5.16",
+    )
+    worker2.acp_session_id = "acp-401"
+    worker2.init_result = {"agentInfo": {"version": "1.5.16"}}
+    worker2.setup_result = {"sessionId": "acp-401"}
+    worker2.proc = SimpleNamespace(pid=7200, stdin=None, stdout=None, poll=lambda: None)
+    monkeypatch.setattr(worker2, "ensure_started", lambda **kw: "acp-401")
+
+    def fake_send_401(frame):
+        method = frame.get("method")
+        rid = frame.get("id")
+        if method == "session/prompt":
+            with worker2._rpc_lock:
+                entry = worker2._pending_rpcs.pop(rid, None)
+            if entry is not None:
+                entry[1]["error"] = {"code": -32000, "message": "401 UNAUTHENTICATED"}
+                entry[0].set()
+        elif rid is not None and method is not None:
+            with worker2._rpc_lock:
+                entry = worker2._pending_rpcs.pop(rid, None)
+            if entry is not None:
+                entry[1]["result"] = {}
+                entry[0].set()
+
+    monkeypatch.setattr(worker2, "_send_frame", fake_send_401)
+    res_401 = worker2.run_turn(
+        run_id="r-401",
+        prompt_text="hi",
+        model="gemini-4-hydrogen-high",
+        effort="high",
+        mode="plan",
+        permission_mode="approval-required",
+        resume_conversation=None,
+        add_dirs=(),
+        staged_paths=[],
+        attachments=[],
+        allowed_roots=[tmp_path],
+        on_event=lambda e: None,
+    )
+    assert res_401["status"] == "cli_error"
+    assert res_401.get("auth_transient") is True
+    assert "瞬态 401" in (res_401.get("error") or "")
+    assert worker2._dirty is True
+    assert agy_profile.effective_auth_state("default") == "authenticated"
+
+
+def test_default_clear_credentials_uses_vault_without_touching_host(tmp_path, monkeypatch):
+    admin = tmp_path / "admin"
+    fake_home = tmp_path / "host"
+    host_tok = fake_home / ".gemini" / agy_profile.APP_DATA_DIR_NAME / "antigravity-oauth-token"
+    host_tok.parent.mkdir(parents=True, exist_ok=True)
+    host_tok.write_text('{"token":{"access_token":"host-tok"}}', encoding="utf-8")
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", admin)
+    monkeypatch.setattr(agy_profile.Path, "home", staticmethod(lambda: fake_home))
+    monkeypatch.setattr(agy_profile, "_read_windows_keyring_safely", lambda: None)
+
+    agy_profile.activate_profile_in_workspace("default")
+    assert agy_profile.has_local_credentials("default") is True
+    assert (agy_profile.workspace_app_data_dir() / "antigravity-oauth-token").is_file()
+
+    cleared = agy_profile.clear_credentials("default")
+    assert cleared["has_credentials"] is False
+    assert agy_profile.has_local_credentials("default") is False
+    assert not (agy_profile.profile_vault_app_data_dir("default") / "antigravity-oauth-token").exists()
+    assert not (agy_profile.workspace_app_data_dir() / "antigravity-oauth-token").exists()
+    assert agy_profile._default_host_import_disabled().is_file()
+    # Host ~/.gemini credential file remains completely untouched!
+    assert host_tok.read_text(encoding="utf-8") == '{"token":{"access_token":"host-tok"}}'
+
 
 
 
