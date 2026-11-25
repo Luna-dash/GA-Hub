@@ -873,6 +873,7 @@ it('supports Edit mode switching, permission policy selection, and interactive A
 
     expect(runs[0]).toMatchObject({ mode: 'accept-edits', permission_mode: 'auto-accept-edits' })
     const scrollArea = host.querySelector('[data-anti-chat-scroll]')!
+    expect(scrollArea.querySelector('[data-anti-turn="0"] p[role="status"]')).toBeNull()
     const dock = host.querySelector('[data-anti-approval-dock]')!
     expect(dock).not.toBeNull()
     expect(scrollArea.contains(dock)).toBe(false)

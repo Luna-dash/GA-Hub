@@ -1209,7 +1209,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
                           </div>
                         )}
                       </div>
-                      {displayRun.status !== 'success' && displayRun.status !== 'cancelled' && (
+                      {(!isRunActive || Boolean(displayRun.error || displayRun.error_detail)) && displayRun.status !== 'success' && displayRun.status !== 'cancelled' && (
                         <p role="status" className="mb-2 text-xs text-ink-muted">
                           {formatRunStatusLabel(displayRun.status)}{displayRun.error ? ` · ${displayRun.error}` : ''}
                           {displayRun.error_detail && <span className="mt-1 block text-sm text-ink">{displayRun.error_detail}</span>}
