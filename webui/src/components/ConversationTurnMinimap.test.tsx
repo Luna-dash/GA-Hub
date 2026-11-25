@@ -212,4 +212,74 @@ describe('ConversationTurnMinimap', () => {
     expect(bottomSlotFree).toBe(bottomSlotStuck)
     expect(bottomSlotFree.className).toContain('h-[132px]')
   })
+
+  it('does not capture pointer before drag threshold so clicking compressed dot buttons selects the turn', () => {
+    const onSelect = vi.fn()
+    const { host: el } = mount(makeTurns(30), 29, onSelect)
+    const nav = el.querySelector<HTMLElement>('[aria-label="多轮会话选择器"]')!
+    const setPointerCapture = vi.fn()
+    nav.setPointerCapture = setPointerCapture
+
+    const dotButtons = [...nav.querySelectorAll<HTMLButtonElement>('button')]
+    const targetSlotIdx = 0
+    const targetBtn = dotButtons[targetSlotIdx]
+    const PointerCtor = typeof PointerEvent !== 'undefined' ? PointerEvent : MouseEvent
+
+    act(() => {
+      targetBtn.dispatchEvent(new PointerCtor('pointerdown', { bubbles: true, button: 0, clientY: 100 }))
+      window.dispatchEvent(new PointerCtor('pointermove', { bubbles: true, clientY: 103 }))
+      targetBtn.dispatchEvent(new PointerCtor('pointerup', { bubbles: true, button: 0, clientY: 103 }))
+      targetBtn.click()
+    })
+
+    expect(setPointerCapture).not.toHaveBeenCalled()
+    expect(onSelect).toHaveBeenCalledTimes(1)
+    expect(onSelect).toHaveBeenCalledWith(0)
+  })
+
+  it('acquires pointer capture once scrubbing crosses drag threshold and suppresses trailing click', () => {
+    const onSelect = vi.fn()
+    const { host: el } = mount(makeTurns(30), 0, onSelect)
+    const nav = el.querySelector<HTMLElement>('[aria-label="多轮会话选择器"]')!
+    const setPointerCapture = vi.fn()
+    const releasePointerCapture = vi.fn()
+    nav.setPointerCapture = setPointerCapture
+    nav.hasPointerCapture = vi.fn(() => true)
+    nav.releasePointerCapture = releasePointerCapture
+    vi.spyOn(nav, 'getBoundingClientRect').mockReturnValue({
+      top: 100,
+      bottom: 300,
+      left: 0,
+      right: 28,
+      width: 28,
+      height: 200,
+      x: 0,
+      y: 100,
+      toJSON: () => ({}),
+    })
+
+    const dotButtons = [...nav.querySelectorAll<HTMLButtonElement>('button')]
+    const PointerCtor = typeof PointerEvent !== 'undefined' ? PointerEvent : MouseEvent
+
+    act(() => {
+      const down = new PointerCtor('pointerdown', { bubbles: true, button: 0, clientY: 110 })
+      Object.defineProperty(down, 'pointerId', { value: 7 })
+      dotButtons[0].dispatchEvent(down)
+      expect(setPointerCapture).not.toHaveBeenCalled()
+
+      const move = new PointerCtor('pointermove', { bubbles: true, clientY: 200 })
+      Object.defineProperty(move, 'pointerId', { value: 7 })
+      window.dispatchEvent(move)
+      expect(setPointerCapture).toHaveBeenCalledWith(7)
+
+      const up = new PointerCtor('pointerup', { bubbles: true, button: 0, clientY: 200 })
+      Object.defineProperty(up, 'pointerId', { value: 7 })
+      window.dispatchEvent(up)
+      dotButtons[5].click()
+    })
+
+    expect(releasePointerCapture).toHaveBeenCalledWith(7)
+    expect(onSelect).toHaveBeenCalledTimes(1)
+    expect(onSelect).toHaveBeenCalledWith(15)
+  })
 })

@@ -81,6 +81,7 @@ export function ConversationTurnMinimap({
   const scrubStartYRef = useRef<number | null>(null)
   const scrubbingRef = useRef(false)
   const scrubIndexRef = useRef<number | null>(null)
+  const scrubCleanupRef = useRef<(() => void) | null>(null)
   const suppressClickRef = useRef(false)
 
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -170,6 +171,11 @@ export function ConversationTurnMinimap({
     scrubIndexRef.current = null
   }
 
+  useEffect(() => () => {
+    scrubCleanupRef.current?.()
+    scrubCleanupRef.current = null
+  }, [])
+
   return (
     <div
       ref={wrapperRef}
@@ -183,54 +189,77 @@ export function ConversationTurnMinimap({
         aria-label="多轮会话选择器"
         onPointerDown={(event) => {
           if (!isCompressed || event.button !== 0) return
+          scrubCleanupRef.current?.()
+          const pointerId = event.pointerId
           scrubStartYRef.current = event.clientY
           scrubbingRef.current = false
           scrubIndexRef.current = null
-          try {
-            event.currentTarget.setPointerCapture?.(event.pointerId)
-          } catch {
-            // Ignore synthetic test events without active pointerId.
+
+          // Wait until pointer movement crosses the scrub threshold before acquiring
+          // pointer capture; capturing on pointerdown retargets pointerup to <nav> in
+          // Chromium and suppresses native <button> click events when simply clicking a dot.
+          const onWindowPointerMove = (moveEvent: PointerEvent) => {
+            if (pointerId !== undefined && moveEvent.pointerId !== pointerId) return
+            if (scrubStartYRef.current === null) return
+            if (!scrubbingRef.current) {
+              if (Math.abs(moveEvent.clientY - scrubStartYRef.current) <= 4) return
+              scrubbingRef.current = true
+              if (pointerId !== undefined) {
+                try {
+                  navRef.current?.setPointerCapture?.(pointerId)
+                } catch {
+                  // Ignore synthetic test events without active pointerId.
+                }
+              }
+            }
+            const nextIdx = resolveScrubIndex(moveEvent.clientY)
+            scrubIndexRef.current = nextIdx
+            setHoveredIdx(nextIdx)
+            const wrapperRect = wrapperRef.current?.getBoundingClientRect()
+            const navRect = navRef.current?.getBoundingClientRect()
+            if (wrapperRect && navRect && navRect.height > 0) {
+              const clampedY = Math.max(navRect.top, Math.min(navRect.bottom, moveEvent.clientY))
+              setTooltipTop(clampedY - wrapperRect.top)
+            }
           }
-        }}
-        onPointerMove={(event) => {
-          if (!isCompressed || scrubStartYRef.current === null) return
-          if (!scrubbingRef.current && Math.abs(event.clientY - scrubStartYRef.current) > 4) {
-            scrubbingRef.current = true
+
+          const finishPointer = (endEvent: PointerEvent, canceled: boolean) => {
+            if (pointerId !== undefined && endEvent.pointerId !== pointerId) return
+            scrubCleanupRef.current?.()
+            scrubCleanupRef.current = null
+            if (pointerId !== undefined) {
+              try {
+                if (navRef.current?.hasPointerCapture?.(pointerId) ?? true) {
+                  navRef.current?.releasePointerCapture?.(pointerId)
+                }
+              } catch {
+                // Ignore when pointer capture was not acquired.
+              }
+            }
+            if (!canceled && scrubbingRef.current && scrubIndexRef.current !== null) {
+              suppressClickRef.current = true
+              onSelect(scrubIndexRef.current)
+              window.setTimeout(() => {
+                suppressClickRef.current = false
+              }, 0)
+            }
+            if (canceled) {
+              setHoveredIdx(null)
+            }
+            resetScrubState()
           }
-          if (!scrubbingRef.current) return
-          const nextIdx = resolveScrubIndex(event.clientY)
-          scrubIndexRef.current = nextIdx
-          setHoveredIdx(nextIdx)
-          const wrapperRect = wrapperRef.current?.getBoundingClientRect()
-          const navRect = navRef.current?.getBoundingClientRect()
-          if (wrapperRect && navRect && navRect.height > 0) {
-            const clampedY = Math.max(navRect.top, Math.min(navRect.bottom, event.clientY))
-            setTooltipTop(clampedY - wrapperRect.top)
+
+          const onWindowPointerUp = (upEvent: PointerEvent) => finishPointer(upEvent, false)
+          const onWindowPointerCancel = (cancelEvent: PointerEvent) => finishPointer(cancelEvent, true)
+
+          window.addEventListener('pointermove', onWindowPointerMove)
+          window.addEventListener('pointerup', onWindowPointerUp)
+          window.addEventListener('pointercancel', onWindowPointerCancel)
+          scrubCleanupRef.current = () => {
+            window.removeEventListener('pointermove', onWindowPointerMove)
+            window.removeEventListener('pointerup', onWindowPointerUp)
+            window.removeEventListener('pointercancel', onWindowPointerCancel)
           }
-        }}
-        onPointerUp={(event) => {
-          try {
-            event.currentTarget.releasePointerCapture?.(event.pointerId)
-          } catch {
-            // Ignore when pointer capture was not acquired.
-          }
-          if (scrubbingRef.current && scrubIndexRef.current !== null) {
-            suppressClickRef.current = true
-            onSelect(scrubIndexRef.current)
-            window.setTimeout(() => {
-              suppressClickRef.current = false
-            }, 0)
-          }
-          resetScrubState()
-        }}
-        onPointerCancel={(event) => {
-          try {
-            event.currentTarget.releasePointerCapture?.(event.pointerId)
-          } catch {
-            // Ignore when pointer capture was not acquired.
-          }
-          resetScrubState()
-          setHoveredIdx(null)
         }}
         className="flex w-7 flex-col items-center gap-[3px] rounded-full border border-line/65 bg-bg-card/88 px-1 py-2.5 shadow-[inset_0_1px_0_rgba(255,250,232,0.82),0_4px_14px_rgba(45,34,22,0.09)] backdrop-blur-md touch-none"
       >
