@@ -9,6 +9,7 @@ import { antiApi, type AgyCodeLoginState } from '@/api/client'
 import { buildOrchestratorRoleChoices, DEFAULT_MODEL } from '@/components/AntiModelSelector'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
+import { fiveHourRemainingPct, quotaWindowShortLabel } from '@/utils/antiUsage'
 import type { useAntiDaemonStatus } from './AntiDaemonControl'
 
 type Profiles = components['schemas']['AgyProfiles']
@@ -411,7 +412,7 @@ export function AntiAgyProfiles({
   const renderAccountRow = (profile: Profile, isActive: boolean) => {
     const badge = authBadge(profile, loginProfile === profile.id)
     const usage = profile.usage
-    const pct = usage?.min_remaining_pct
+    const pct = fiveHourRemainingPct(usage)
     const checkedAt = usage?.checked_at ? new Date(usage.checked_at).getTime() : NaN
     const checkedLabel = Number.isFinite(checkedAt) ? resetTimeFormat.format(checkedAt) : null
     const cooldownSec = profile.cooldown_seconds ?? 0
@@ -451,7 +452,7 @@ export function AntiAgyProfiles({
                 className={clsx('shrink-0 text-xs font-semibold tabular-nums', quotaTone(pct))}
                 title={checkedLabel ? `检测于 ${checkedLabel}` : undefined}
               >
-                最低剩余 {pct}%
+                5h 剩余 {pct}%
               </span>
             )}
           </div>
@@ -496,18 +497,23 @@ export function AntiAgyProfiles({
 
         {isActive && profile.usage?.rows?.length ? (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
-            {profile.usage.rows.map(row => (
-              <span
-                key={`${row.model}-${row.limit}`}
-                className="inline-flex items-center gap-1.5 rounded bg-bg-soft px-2 py-0.5"
-                title={`${row.model} · ${row.limit}`}
-              >
-                <span className="max-w-[11rem] truncate text-ink-muted">{row.model}</span>
-                <span className={clsx('font-semibold tabular-nums', quotaTone(row.remaining_pct))}>
-                  {row.remaining_pct}%
+            {profile.usage.rows.map(row => {
+              const winTag = quotaWindowShortLabel(row.limit)
+              return (
+                <span
+                  key={`${row.model}-${row.limit}`}
+                  className="inline-flex items-center gap-1.5 rounded bg-bg-soft px-2 py-0.5"
+                  title={`${row.model} · ${row.limit}`}
+                >
+                  <span className="max-w-[11rem] truncate text-ink-muted">
+                    {row.model}{winTag ? ` · ${winTag}` : ''}
+                  </span>
+                  <span className={clsx('font-semibold tabular-nums', quotaTone(row.remaining_pct))}>
+                    {row.remaining_pct}%
+                  </span>
                 </span>
-              </span>
-            ))}
+              )
+            })}
           </div>
         ) : null}
 
@@ -648,13 +654,13 @@ export function AntiAgyProfiles({
   const customActive = Boolean(selected && selected.id !== 'default')
   const activeCooldown = selected?.cooldown_seconds ?? 0
   const activeNeedLogin = Boolean(selected && (selected.auth_state === 'login_required' || selected.has_credentials === false))
-  const activeMinPct = selected?.usage?.min_remaining_pct
+  const activeFiveHourPct = fiveHourRemainingPct(selected?.usage)
   const triggerTitle = activeCooldown > 0
     ? `${triggerLabel} · 风控冷却 ${activeCooldown}s`
     : activeNeedLogin
       ? `${triggerLabel} · 需要登录`
-      : typeof activeMinPct === 'number'
-        ? `${triggerLabel} · 最低剩余 ${activeMinPct}%`
+      : typeof activeFiveHourPct === 'number'
+        ? `${triggerLabel} · 5h 剩余 ${activeFiveHourPct}%`
         : triggerLabel
 
   const daemonDotClass = daemon?.running
@@ -695,9 +701,9 @@ export function AntiAgyProfiles({
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-warning" aria-hidden="true" />
       ) : activeNeedLogin ? (
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-danger" aria-hidden="true" />
-      ) : typeof activeMinPct === 'number' ? (
-        <span className={clsx('shrink-0 text-[11px] font-semibold tabular-nums', quotaTone(activeMinPct))}>
-          {activeMinPct}%
+      ) : typeof activeFiveHourPct === 'number' ? (
+        <span className={clsx('shrink-0 text-[11px] font-semibold tabular-nums', quotaTone(activeFiveHourPct))}>
+          {activeFiveHourPct}%
         </span>
       ) : null}
     </button>

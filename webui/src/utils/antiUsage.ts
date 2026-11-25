@@ -25,6 +25,35 @@ export function formatCompactTokens(rawValue: number): string {
   return `${trimDecimal(value / 1_000_000_000, value >= 10_000_000_000 ? 1 : 2)}B`
 }
 
+export function quotaWindowShortLabel(limit?: string | null): string | null {
+  if (!limit) return null
+  if (limit === 'Five Hour Limit Remaining' || /five\s*hour|\b5h\b/i.test(limit)) return '5h'
+  if (limit === 'Weekly Limit Remaining' || /weekly/i.test(limit)) return '周'
+  return null
+}
+
+/**
+ * Pick the minimum remaining percentage for the 5-hour quota window from a profile usage snapshot.
+ * Falls back to non-weekly rows (e.g. `Reported Quota`) when upstream only reports a single quota row,
+ * and returns `null` when only weekly rows are present so weekly limits are never shown as 5h.
+ */
+export function fiveHourRemainingPct(
+  usage?: { rows?: ReadonlyArray<{ limit?: string | null; remaining_pct?: number | null }> } | null,
+): number | null {
+  const rows = usage?.rows
+  if (!rows?.length) return null
+  const valid = rows.filter(
+    (row): row is { limit?: string | null; remaining_pct: number } =>
+      typeof row.remaining_pct === 'number' && Number.isFinite(row.remaining_pct),
+  )
+  if (!valid.length) return null
+  const fiveHour = valid.filter(row => quotaWindowShortLabel(row.limit) === '5h')
+  if (fiveHour.length) return Math.min(...fiveHour.map(row => row.remaining_pct))
+  const nonWeekly = valid.filter(row => quotaWindowShortLabel(row.limit) !== '周')
+  if (nonWeekly.length) return Math.min(...nonWeekly.map(row => row.remaining_pct))
+  return null
+}
+
 export function formatRunUsage(usage?: AntiRunUsage | null): FormattedRunUsage | null {
   if (!usage) return null
   const rawIn = Math.max(0, Math.round(usage.input_tokens ?? 0))

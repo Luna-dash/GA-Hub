@@ -6,11 +6,17 @@ import { MemoryRouter, useLocation } from 'react-router-dom'
 import { expect, it, vi, beforeEach } from 'vitest'
 import AntiChat from './AntiChat'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
+import {
+  AntiAccountUsageButton,
+  AUTO_USAGE_REFRESH_INTERVAL_MS,
+  resetAntiUsageAutoRefreshForTests,
+} from '@/components/AntiAccountUsageButton'
 import { resetPageState } from '@/utils/pageState'
 
 beforeEach(() => {
   localStorage.clear()
   resetPageState()
+  resetAntiUsageAutoRefreshForTests()
 })
 
 vi.mock('@/api/client', async (importOriginal) => {
@@ -423,7 +429,10 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
       usage: {
         checked_at: '2026-11-20T08:00:00Z',
         min_remaining_pct: 65,
-        rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 65, resets_at: '2026-11-20T08:00:00Z' }],
+        rows: [
+          { model: 'Gemini 4', limit: 'Five Hour Limit Remaining', remaining_pct: 80, resets_at: '2026-11-20T08:00:00Z' },
+          { model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 65, resets_at: '2026-11-20T08:00:00Z' },
+        ],
       },
     },
     { id: 'work', name: '工作', has_credentials: false, auth_state: 'login_required' },
@@ -551,7 +560,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await flush()
     expect(document.body.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('账号管理')
     expect(document.body.textContent).toContain('已验证登录')
-    expect(document.body.textContent).toContain('最低剩余 65%')
+    expect(document.body.textContent).toContain('5h 剩余 80%')
 
     const logsBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === 'ACP 日志') as HTMLButtonElement
     await act(async () => { logsBtn.click() })
@@ -1785,24 +1794,66 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
       expect(host.querySelector('button[aria-label="插话纠偏"]')).not.toBeNull()
     })
 
-    // 1. Mid-turn steering button sends POST .../steer while active
+    // 1. Mid-turn steering Split Button: Enter & primary click steer by default without layout-jumping bottom bar,
+    //    while the split dropdown & Ctrl+Enter allow queueing without interrupting.
+    expect(host.querySelector('button[aria-label="选择发送或排队方式"]')).not.toBeNull()
     const textarea = host.querySelector('textarea')!
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '先跑单测')
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="插话纠偏"]')!.click() })
+    expect(host.textContent).not.toContain('不想打断当前推理')
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
     await vi.waitFor(async () => {
       await flush()
       expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/runs/r-active-1/steer`)).toBe(true)
     })
 
-    // 2. When supports_steering is false, submitting while running queues and auto-sends once completed.
+    // Split menu -> "加入排队" queues even while native steering is supported
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '先排个队')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="选择发送或排队方式"]')!.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[role="menu"][aria-label="运行中发送方式"]')).not.toBeNull()
+    })
+    const queueMenuItem = [...host.querySelectorAll<HTMLButtonElement>('[role="menu"][aria-label="运行中发送方式"] [role="menuitem"]')]
+      .find(b => b.textContent?.includes('加入排队'))!
+    await act(async () => { queueMenuItem.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-queued-bar]')?.textContent).toContain('先排个队')
+    })
+
+    // Ctrl+Enter directly queues without opening menu
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Ctrl回车排队')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-queued-bar]')?.textContent).toContain('Ctrl回车排队')
+    })
+
+    // Dismiss queued bar before switching supports_steering mode
+    const cancelQueueBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-queued-bar] button')]
+      .find(b => b.textContent?.trim() === '取消排队')!
+    await act(async () => { cancelQueueBtn.click() })
+
+    // 2. When supports_steering is false, split dropdown hides and single queue button auto-sends once completed.
     supportsSteering = false
     await act(async () => { await cache.invalidateQueries({ queryKey: ['anti-daemon-status'] }) })
     await vi.waitFor(async () => {
       await flush()
       expect(host.querySelector('button[aria-label="加入排队"]')).not.toBeNull()
+      expect(host.querySelector('button[aria-label="选择发送或排队方式"]')).toBeNull()
     })
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '排队补充总结')
@@ -1916,14 +1967,30 @@ it('converges UI to single-account mode with account pill, backup quota refresh,
             name: '系统默认',
             has_credentials: true,
             auth_state: 'authenticated',
-            usage: { state: 'authenticated', checked_at: '2026-11-25T08:00:00Z', min_remaining_pct: 5, rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 5 }] },
+            usage: {
+              state: 'authenticated',
+              checked_at: '2026-11-25T08:00:00Z',
+              min_remaining_pct: 5,
+              rows: [
+                { model: 'Gemini 4', limit: 'Five Hour Limit Remaining', remaining_pct: 12 },
+                { model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 5 },
+              ],
+            },
           },
           {
             id: 'backup',
             name: '备用账号',
             has_credentials: true,
             auth_state: 'authenticated',
-            usage: { state: 'authenticated', checked_at: '2026-11-25T08:00:00Z', min_remaining_pct: 85, rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 85 }] },
+            usage: {
+              state: 'authenticated',
+              checked_at: '2026-11-25T08:00:00Z',
+              min_remaining_pct: 85,
+              rows: [
+                { model: 'Gemini 4', limit: 'Five Hour Limit Remaining', remaining_pct: 92 },
+                { model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 85 },
+              ],
+            },
           },
         ],
       })
@@ -1931,7 +1998,10 @@ it('converges UI to single-account mode with account pill, backup quota refresh,
     if (path === '/api/anti/account-usage?profile_id=backup' && method === 'POST') {
       return reply({
         state: 'authenticated',
-        rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 88 }],
+        rows: [
+          { model: 'Gemini 4', limit: 'Five Hour Limit Remaining', remaining_pct: 94 },
+          { model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 88 },
+        ],
       })
     }
     if (path === '/api/anti/profiles/backup/switch' && method === 'POST') {
@@ -1944,14 +2014,30 @@ it('converges UI to single-account mode with account pill, backup quota refresh,
             name: '系统默认',
             has_credentials: true,
             auth_state: 'authenticated',
-            usage: { state: 'authenticated', checked_at: '2026-11-25T08:00:00Z', min_remaining_pct: 5, rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 5 }] },
+            usage: {
+              state: 'authenticated',
+              checked_at: '2026-11-25T08:00:00Z',
+              min_remaining_pct: 5,
+              rows: [
+                { model: 'Gemini 4', limit: 'Five Hour Limit Remaining', remaining_pct: 12 },
+                { model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 5 },
+              ],
+            },
           },
           {
             id: 'backup',
             name: '备用账号',
             has_credentials: true,
             auth_state: 'authenticated',
-            usage: { state: 'authenticated', checked_at: '2026-11-25T08:00:00Z', min_remaining_pct: 88, rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 88 }] },
+            usage: {
+              state: 'authenticated',
+              checked_at: '2026-11-25T08:00:00Z',
+              min_remaining_pct: 88,
+              rows: [
+                { model: 'Gemini 4', limit: 'Five Hour Limit Remaining', remaining_pct: 94 },
+                { model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 88 },
+              ],
+            },
           },
         ],
       })
@@ -2014,7 +2100,8 @@ it('converges UI to single-account mode with account pill, backup quota refresh,
     expect(host.textContent).not.toContain('当前隔离账号')
     const accountPill = host.querySelector<HTMLButtonElement>('[data-anti-account-pill]')!
     expect(accountPill.textContent).toContain('系统默认')
-    expect(accountPill.textContent).toContain('5%')
+    expect(accountPill.textContent).toContain('12%')
+    expect(accountPill.textContent).not.toContain('5%')
 
     // Backup account quota refresh works non-disruptively inside modal
     await act(async () => { accountPill.click() })
@@ -2315,6 +2402,87 @@ it('displays compact k/M usage units with exact breakdown tooltip and repairs le
     cache.clear()
     host.remove()
     vi.unstubAllGlobals()
+  }
+})
+
+it('auto-refreshes usage after 10 minutes of visible dwell, pauses when hidden, and resets timer on manual refresh', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-11-25T10:00:00Z'))
+
+  let visibility: DocumentVisibilityState = 'visible'
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    get: () => visibility,
+  })
+
+  let usageCalls = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/anti/account-usage') {
+      usageCalls += 1
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          state: 'authenticated',
+          rows: [{ model: 'Gemini', limit: 'Weekly Limit Remaining', remaining_pct: 90, resets_at: '2026-11-30T08:00:00Z' }],
+        }),
+      }
+    }
+    throw new Error(`Unexpected request: ${path}`)
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+
+  try {
+    await act(async () => root.render(
+      <QueryClientProvider client={cache}>
+        <AntiAccountUsageButton running autoRefreshKey="default" onChecked={() => {}} />
+      </QueryClientProvider>,
+    ))
+
+    // 4 minutes visible -> still no auto-refresh
+    await act(async () => { await vi.advanceTimersByTimeAsync(4 * 60 * 1000) })
+    expect(usageCalls).toBe(0)
+
+    // Hide page for 20 minutes -> paused, 0 requests while hidden
+    visibility = 'hidden'
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(20 * 60 * 1000) })
+    expect(usageCalls).toBe(0)
+
+    // Resume visible -> accumulates 6 more minutes (4 + 6 = 10 min) -> fires once
+    visibility = 'visible'
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60 * 1000) })
+    expect(usageCalls).toBe(0)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1 * 60 * 1000) })
+    expect(usageCalls).toBe(1)
+
+    // 5 minutes later user clicks icon manually -> fires immediately (call #2) and resets 10-min dwell timer
+    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60 * 1000) })
+    expect(usageCalls).toBe(1)
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('button[aria-label="检测反重力额度"]')!.click()
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(usageCalls).toBe(2)
+
+    // Next 9 minutes -> must NOT fire early; at 10 minutes after manual click -> fires call #3
+    await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_USAGE_REFRESH_INTERVAL_MS - 60 * 1000) })
+    expect(usageCalls).toBe(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
+    expect(usageCalls).toBe(3)
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    delete (document as unknown as Record<string, unknown>).visibilityState
   }
 })
 

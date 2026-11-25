@@ -313,6 +313,7 @@ export default function AntiChat() {
         key={profiles.data?.active ?? 'default'}
         running={daemon.running}
         profileName={selectedProfile?.name}
+        autoRefreshKey={profiles.data?.active ?? 'default'}
         cachedUsage={cachedUsage}
         onChecked={() => {
           daemon.refresh()
@@ -1433,7 +1434,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
             ? (activeApprovalId
               ? '当前任务正在等待上方审批确认；可提前输入下一条消息加入排队…'
               : canNativeSteer
-                ? '任务运行中，可直接发送插话纠偏，或加入排队等待本轮结束…'
+                ? '任务运行中：Enter 默认插话纠偏，Ctrl+Enter 加入排队…'
                 : '任务运行中，输入内容后可加入排队，本轮结束后自动发送…')
             : '发给 Agy，输入 / 查看原生命令，可粘贴/拖放图片或文件…'}
           readOnly={Boolean(pending)}
@@ -1443,10 +1444,19 @@ function Conversation({ session, headerActions, profileId, profilesData, support
           activeSubmit={current && !pending ? {
             label: canNativeSteer ? '插话纠偏' : '加入排队',
             title: canNativeSteer
-              ? '向运行中的 Agy 任务发送插话纠偏（保留后台工具与子代理）'
+              ? '向运行中的 Agy 任务发送插话纠偏（Enter 默认插话 · Ctrl+Enter 加入排队）'
               : '加入排队，本轮结束后自动发送',
             disabled: steer.isPending || send.isPending || !history.isSuccess,
             onSubmit: steerOrQueue,
+            ...(canNativeSteer ? {
+              secondary: {
+                label: '加入排队',
+                description: '不打断当前推理，本轮成功后自动发送',
+                shortcutHint: 'Ctrl+Enter',
+                disabled: send.isPending || !history.isSuccess,
+                onSubmit: queueCurrentInput,
+              },
+            } : {}),
           } : undefined}
           slashAutocomplete={{
             open: showSlashMenu,
@@ -1546,14 +1556,6 @@ function Conversation({ session, headerActions, profileId, profilesData, support
             cancel.mutate({ rid: current.id, force: canForceStop })
           }}
         />
-        {canNativeSteer && !pending && (prompt.trim() || attachments.length > 0) && (
-          <div className="flex items-center justify-end gap-1.5 border-t border-line/40 px-3 py-1 text-[11px] text-ink-muted">
-            <span>不想打断当前推理？</span>
-            <button type="button" className="text-accent hover:underline" onClick={queueCurrentInput}>
-              改为等本轮结束后排队发送
-            </button>
-          </div>
-        )}
         {queuedPrompt && (
           <div
             data-anti-queued-bar
