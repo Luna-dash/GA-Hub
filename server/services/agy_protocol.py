@@ -729,15 +729,24 @@ _USAGE_FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 _TOTAL_TOKEN_KEYS = ("totalTokens", "total_tokens", "totalTokenCount")
 _ANTHROPIC_EXCLUSIVE_CACHE_KEYS = frozenset({"cache_read_input_tokens", "cache_creation_input_tokens"})
+_ACP_EXCLUSIVE_CACHE_KEYS = frozenset({
+    "cachedReadTokens",
+    "cacheReadTokens",
+    "cachedWriteTokens",
+    "cacheWriteTokens",
+    "cacheCreationTokens",
+})
 _GEMINI_INCLUSIVE_KEYS = frozenset({"promptTokenCount", "cachedContentTokenCount"})
 
 
-def normalize_usage_payload(payload: Any) -> dict[str, int]:
+def normalize_usage_payload(payload: Any, *, gemini_prompt_usage: bool = True) -> dict[str, int]:
     """Normalize ACP `usage_update` or `session/prompt` results to canonical inclusive totals.
 
-    Matches T3 Code's canonical token contract: `input_tokens` ALWAYS represents total
-    prompt input (fresh input + cache_read + cache_write), ensuring
-    `0 <= cache_read_tokens + cache_write_tokens <= input_tokens`.
+    Matches T3 Code's canonical token contract (`geminiPromptUsage: true` for
+    Antigravity 1.5+): `inputTokens` leaves out `cachedReadTokens`, while
+    `outputTokens` already includes `thoughtTokens`. Ensures `input_tokens`
+    ALWAYS represents total prompt input (fresh input + cache_read + cache_write),
+    so `0 <= cache_read_tokens + cache_write_tokens <= input_tokens`.
     """
     if not isinstance(payload, dict):
         return {}
@@ -756,6 +765,7 @@ def normalize_usage_payload(payload: Any) -> dict[str, int]:
     raw: dict[str, int] = {}
     raw_total: int | None = None
     has_anthropic_exclusive = False
+    has_acp_exclusive_cache = False
     has_gemini_inclusive = False
 
     for source in candidates:
@@ -766,6 +776,8 @@ def normalize_usage_payload(payload: Any) -> dict[str, int]:
                     raw[dst] = val
                     if src in _ANTHROPIC_EXCLUSIVE_CACHE_KEYS:
                         has_anthropic_exclusive = True
+                    if src in _ACP_EXCLUSIVE_CACHE_KEYS:
+                        has_acp_exclusive_cache = True
                     if src in _GEMINI_INCLUSIVE_KEYS:
                         has_gemini_inclusive = True
         for src in _TOTAL_TOKEN_KEYS:
@@ -798,6 +810,8 @@ def normalize_usage_payload(payload: Any) -> dict[str, int]:
             )
             is_exclusive = excl_err < incl_err
         elif has_anthropic_exclusive and not has_gemini_inclusive:
+            is_exclusive = True
+        elif gemini_prompt_usage and has_acp_exclusive_cache and not has_gemini_inclusive:
             is_exclusive = True
         else:
             is_exclusive = False

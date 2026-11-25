@@ -140,7 +140,7 @@ def test_session_update_normalizer_and_model_calls():
     assert ev3[0]["step"]["state"] == "DONE" and ev3[0]["step"]["exit_code"] == 0
     msg_ev = next(e for e in ev4 if e["type"] == "message.delta")
     assert msg_ev["text"] == "All done"
-    assert ev5 == [] and norm.usage == {"input_tokens": 100, "output_tokens": 25, "cache_read_tokens": 40}
+    assert ev5 == [] and norm.usage == {"input_tokens": 140, "output_tokens": 25, "cache_read_tokens": 40}
     assert any(e["step"]["kind"] == "agent_response" and e["step"]["state"] == "DONE" for e in end)
 
     setup = {
@@ -188,6 +188,33 @@ def test_normalize_usage_payload_unifies_exclusive_inclusive_and_atomic_updates(
         "output_tokens": 90_537,
         "cache_read_tokens": 4_683_759,
         "thinking_tokens": 29_726,
+    }
+
+    # Antigravity 1.5+ ACP exclusive inputTokens without totalTokens even when cachedReadTokens <= inputTokens (T3 Code geminiPromptUsage)
+    excl_low_cache = proto.normalize_usage_payload({
+        "inputTokens": 100_000,
+        "cachedReadTokens": 40_000,
+        "outputTokens": 1_200,
+        "thoughtTokens": 300,
+    })
+    assert excl_low_cache == {
+        "input_tokens": 140_000,
+        "output_tokens": 1_200,
+        "cache_read_tokens": 40_000,
+        "thinking_tokens": 300,
+    }
+
+    excl_with_write_no_total = proto.normalize_usage_payload({
+        "inputTokens": 100_000,
+        "cachedReadTokens": 30_000,
+        "cachedWriteTokens": 10_000,
+        "outputTokens": 500,
+    })
+    assert excl_with_write_no_total == {
+        "input_tokens": 140_000,
+        "output_tokens": 500,
+        "cache_read_tokens": 30_000,
+        "cache_write_tokens": 10_000,
     }
 
     # Anthropic explicit exclusive cache keys
