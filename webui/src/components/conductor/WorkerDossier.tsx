@@ -288,7 +288,7 @@ export function WorkerDossier({
             <>
               <button
                 type="button"
-                className="ga-btn ga-btn-primary px-3 py-1 text-xs"
+                className="ga-btn-primary px-3 py-1 text-xs"
                 disabled={control.busy}
                 onClick={control.onAccept}
               >
@@ -329,7 +329,7 @@ export function WorkerDossier({
               <button type="button" className="ga-btn px-3 py-1 text-xs" onClick={control.onReworkCancel}>取消</button>
               <button
                 type="button"
-                className="ga-btn ga-btn-primary px-3 py-1 text-xs"
+                className="ga-btn-primary px-3 py-1 text-xs"
                 disabled={!control.reworkReason.trim() || control.busy}
                 onClick={control.onReworkSubmit}
               >

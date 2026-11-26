@@ -6,7 +6,8 @@
 // timezone (matches the backend's interpretation; see
 // services/autonomous_scheduler.py).
 import { useMemo } from 'react'
-import cronstrue from 'cronstrue/i18n'
+import cronstrue from 'cronstrue'
+import 'cronstrue/locales/zh_CN'
 import { CronExpressionParser } from 'cron-parser'
 
 function formatLocal(d: Date): string {

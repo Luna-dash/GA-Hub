@@ -34,7 +34,7 @@ function DesktopMessage() {
   }
   return <div ref={panel} role="dialog" aria-modal={config?.kind !== 'notification'} aria-labelledby="message-dialog-title">
     {config && <MessageDialog config={config} onResult={finish} desktop />}
-    {failure && <p role="alert" className="text-xs text-red-700 p-2">消息窗口连接失败，请关闭此窗口以取消操作。</p>}
+    {failure && <p role="alert" className="text-xs text-status-danger p-2">消息窗口连接失败，请关闭此窗口以取消操作。</p>}
   </div>
 }
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><DesktopMessage /></React.StrictMode>)

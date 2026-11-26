@@ -40,7 +40,10 @@ import { invoke } from '@tauri-apps/api/core'
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 afterEach(() => {
   cleanup()
-  useDialogStore.setState({ open: false, config: null, resolve: null, queue: [] })
+  useDialogStore.setState({
+    open: false, config: null, resolve: null, queue: [],
+    notificationConfig: null, notificationResolve: null, notificationQueue: [],
+  })
   delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
   vi.resetAllMocks()
 })
@@ -173,5 +176,45 @@ describe('desktop dispatch', () => {
     await expect(second).resolves.toBeNull()
     expect(invoke).toHaveBeenCalledTimes(2)
     vi.restoreAllMocks()
+  })
+
+  it('opens modal confirm immediately in-page while a 12s notification is active', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<DialogHost />)
+      let notif!: Promise<boolean | null>, confirmPromise!: Promise<boolean>
+      act(() => {
+        notif = requestDialog<boolean | null>({ kind: 'notification', title: '后台完成', confirmText: '查看会话' })
+        confirmPromise = dialog.confirm('确认删除？', '不可恢复')
+      })
+      expect(screen.getByText('后台完成')).toBeTruthy()
+      expect(screen.getByText('确认删除？')).toBeTruthy()
+
+      fireEvent.click(screen.getByText('确认'))
+      await expect(confirmPromise).resolves.toBe(true)
+      expect(useDialogStore.getState().open).toBe(true)
+
+      act(() => { vi.advanceTimersByTime(12_000) })
+      await expect(notif).resolves.toBeNull()
+      expect(useDialogStore.getState().open).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not block desktop modal confirm behind a pending notification invoke', async () => {
+    Object.assign(window, { __TAURI_INTERNALS__: {} })
+    let finishNotif!: (value: boolean | null) => void
+    vi.mocked(invoke)
+      .mockImplementationOnce(() => new Promise<boolean | null>(r => { finishNotif = r }) as never)
+      .mockResolvedValueOnce(true as never)
+
+    const notif = requestDialog<boolean | null>({ kind: 'notification', title: '完成提醒' })
+    const confirmPromise = dialog.confirm('确认删除？')
+
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(2))
+    await expect(confirmPromise).resolves.toBe(true)
+    finishNotif(null)
+    await expect(notif).resolves.toBeNull()
   })
 })

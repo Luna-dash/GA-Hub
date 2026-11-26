@@ -34,7 +34,7 @@ import {
   rewindTurnCountFromAssistant,
   type SlashCommand,
 } from '@/components/slashCommands'
-import type { TransferredFile } from '@/components/FileTransferBox'
+import { guessTransferMime, type TransferredFile } from '@/components/FileTransferBox'
 import { PageShell } from '@/components/PageShell'
 import { dialog } from '@/stores/dialogStore'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
@@ -250,6 +250,16 @@ export default function LiveChat() {
     && selectedLlmKey
     && session.llm_key !== selectedLlmKey,
   )
+  const [llmRepairFailedSid, setLlmRepairFailedSid] = useState<string | null>(null)
+  const llmRepairBlocking = sessionLlmNeedsRepair && llmRepairFailedSid !== session?.id
+
+  useEffect(() => {
+    const sid = session?.id
+    setLlmRepairFailedSid((prev) => (prev === sid ? prev : null))
+    return () => {
+      if (sid) llmRepairAttemptedRef.current.delete(sid)
+    }
+  }, [session?.id])
 
   // Old positional bindings, empty bindings, and bindings to deleted models
   // all converge on the first configured model. Persist the resolved key so
@@ -272,10 +282,12 @@ export default function LiveChat() {
     setLlmSaving(true)
     void api.updateSessionModel(sid, selectedLlmKey)
       .then((updated) => {
-        if (sessionIdRef.current !== sid || llmChangeSeqRef.current !== changeSeq) return
         queryClient.setQueryData<SessionListData>(queryKeys.sessions, (cached) => upsertSessionInList(cached, updated))
+        llmRepairAttemptedRef.current.delete(sid)
+        setLlmRepairFailedSid((prev) => (prev === sid ? null : prev))
       })
       .catch((e: any) => {
+        setLlmRepairFailedSid(sid)
         if (sessionIdRef.current === sid && llmChangeSeqRef.current === changeSeq) {
           pushSystem(`_保存会话模型失败:${errorMessageFromError(e)}_`, noticeKeys.llmSwitchFail)
         }
@@ -316,7 +328,7 @@ export default function LiveChat() {
       handleSlashCommand(t, draft)
       return
     }
-    if (streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair || creatingSessionRef.current) return
+    if (streaming || sessionRunning || llmSaving || llmRepairBlocking || creatingSessionRef.current) return
     if (session && !selectedLlmKey) {
       pushSystem('_当前没有可用模型，请先在「LLM管理」中配置模型。草稿已保留。_', noticeKeys.sendBlocked)
       return
@@ -363,6 +375,27 @@ export default function LiveChat() {
       } else if (sessionIdRef.current !== sid) {
         useDraftStore.getState().failSubmission(transaction.id)
         return
+      } else if (sessionLlmNeedsRepair && selectedLlmKey) {
+        const changeSeq = ++llmChangeSeqRef.current
+        setLlmSaving(true)
+        try {
+          const repaired = await api.updateSessionModel(sid, selectedLlmKey)
+          queryClient.setQueryData<SessionListData>(queryKeys.sessions, (cached) => upsertSessionInList(cached, repaired))
+          llmRepairAttemptedRef.current.delete(sid)
+          setLlmRepairFailedSid((prev) => (prev === sid ? null : prev))
+        } catch (e: any) {
+          useDraftStore.getState().failSubmission(transaction.id)
+          if (sessionIdRef.current === sid) {
+            pushSystem(`_保存会话模型失败:${errorMessageFromError(e)}_`, noticeKeys.llmSwitchFail)
+          }
+          return
+        } finally {
+          if (llmChangeSeqRef.current === changeSeq) setLlmSaving(false)
+        }
+        if (sessionIdRef.current !== sid) {
+          useDraftStore.getState().failSubmission(transaction.id)
+          return
+        }
       }
 
       const promptText = buildSessionPromptText(t, sourceAtts)
@@ -448,7 +481,7 @@ export default function LiveChat() {
       setScheduleError('发送时间不能超过未来 48 小时。')
       return
     }
-    if (llmSaving || sessionLlmNeedsRepair) {
+    if (llmSaving || llmRepairBlocking) {
       setScheduleError('正在应用默认模型，请稍候。')
       return
     }
@@ -665,8 +698,11 @@ export default function LiveChat() {
         return
       }
 
+      sessionIdRef.current = null
       setSelectedSessionId(null)
       localStorage.removeItem(storageKeys.currentSessionId)
+      teardownChat()
+      clearLocal()
       nav('/chat', { replace: true })
     } catch (error: any) {
       const detail = error?.status === 409
@@ -675,7 +711,7 @@ export default function LiveChat() {
       pushSystem(`_移除会话失败：${detail}_`)
       throw error
     }
-  }, [dropSessionView, nav, pushSystem, queryClient, sessions])
+  }, [clearLocal, dropSessionView, nav, pushSystem, queryClient, sessions, teardownChat])
 
   // Keep the callback stable while streaming chunks update `msgs`; otherwise
   // every completed assistant bubble receives a new prop and rebuilds Markdown.
@@ -745,12 +781,9 @@ export default function LiveChat() {
     const drafts = useDraftStore.getState()
     const existing = drafts.attachments[draftKey] ?? []
     if (existing.some(item => item.path === file.path)) return
-    const extension = file.name.split('.').pop()?.toLowerCase()
-    const mime = extension && ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(extension)
-      ? `image/${extension === 'jpg' ? 'jpeg' : extension}` : 'application/octet-stream'
     drafts.setAttachments(draftKey, [...existing, {
       file_id: `transfer:${file.id}`, url: '',
-      path: file.path, name: file.name, size: file.size, mime, source: 'local_ref',
+      path: file.path, name: file.name, size: file.size, mime: guessTransferMime(file.name), source: 'local_ref',
     }])
   }
 
@@ -842,7 +875,11 @@ export default function LiveChat() {
               ref={transcriptRef}
               sessionId={session?.id ?? null}
               sessionError={sessionError}
-              fileTransfer={{ canInsert: Boolean(session), onInsert: insertTransferredFile }}
+              fileTransfer={{
+                canInsert: Boolean(session),
+                source: session ? { engine: 'chat', sessionId: session.id, ...(activeProjectLabel ? { project: activeProjectLabel } : {}) } : undefined,
+                onInsert: insertTransferredFile,
+              }}
               scheduledChats={scheduledChats}
               scheduleNow={scheduleNow}
               onCancelSchedule={cancelSchedule}
@@ -880,8 +917,8 @@ export default function LiveChat() {
               onSlashCommand={handleSlashCommand}
               placeholder="输入消息，或输入 / 查看命令"
               disabled={creatingSession}
-              submitDisabled={streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair}
-              scheduleDisabled={llmSaving || sessionLlmNeedsRepair}
+              submitDisabled={streaming || sessionRunning || llmSaving || llmRepairBlocking}
+              scheduleDisabled={llmSaving || llmRepairBlocking}
             />
           </div>
         </div>
@@ -916,7 +953,7 @@ export default function LiveChat() {
               >取消</button>
               <button
                 type="button"
-                className="ga-btn ga-btn-primary"
+                className="ga-btn-primary"
                 disabled={scheduleSaving || !scheduleAt}
                 onClick={() => { void saveSchedule() }}
               >{scheduleSaving ? '保存中…' : '确认定时'}</button>

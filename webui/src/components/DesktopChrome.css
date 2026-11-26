@@ -80,9 +80,9 @@ html[data-boot-splash="1"] .ga-desktop-controls button:active {
   z-index: 2;
   padding: 2px 8px;
   border-radius: 6px;
-  border: 1px solid #E8CFC7;
+  border: 1px solid rgb(var(--c-status-danger-line-rgb));
   background: var(--c-bg-card);
   font-size: 12px;
-  color: #9E3328;
+  color: rgb(var(--c-status-danger-rgb));
   box-shadow: 0 2px 6px rgba(45, 34, 22, 0.14);
 }

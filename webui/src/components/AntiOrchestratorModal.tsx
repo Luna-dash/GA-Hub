@@ -110,7 +110,7 @@ function RoleConfigRow({
               className={clsx(
                 'rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors disabled:opacity-50',
                 active
-                  ? 'bg-accent text-white shadow-sm'
+                  ? 'bg-accent text-[var(--c-accent-fg)] shadow-sm'
                   : 'border border-line/70 bg-bg-soft/50 text-ink-muted hover:border-accent/60 hover:text-ink',
               )}
             >

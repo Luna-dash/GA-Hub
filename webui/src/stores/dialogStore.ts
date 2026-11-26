@@ -30,9 +30,13 @@ interface DialogState {
   config: DialogConfig | null
   resolve: ((v: DialogResult) => void) | null
   queue: PendingDialog[]
+  notificationConfig: DialogConfig | null
+  notificationResolve: ((v: DialogResult) => void) | null
+  notificationQueue: PendingDialog[]
 
   show: <T = unknown>(cfg: DialogConfig) => Promise<T>
   resolveCurrent: (v: DialogResult) => void
+  resolveNotification: (v: DialogResult) => void
 }
 
 export const useDialogStore = create<DialogState>((set, get) => ({
@@ -40,33 +44,78 @@ export const useDialogStore = create<DialogState>((set, get) => ({
   config: null,
   resolve: null,
   queue: [],
+  notificationConfig: null,
+  notificationResolve: null,
+  notificationQueue: [],
 
   show: <T = unknown>(cfg: DialogConfig) =>
     new Promise<T>((resolve) => {
       const entry = { config: cfg, resolve: resolve as (v: DialogResult) => void }
-      if (get().open) set({ queue: [...get().queue, entry] })
+      const state = get()
+      if (cfg.kind === 'notification') {
+        if (state.notificationConfig) set({ notificationQueue: [...state.notificationQueue, entry] })
+        else set({ open: true, notificationConfig: cfg, notificationResolve: entry.resolve })
+        return
+      }
+      if (state.config) set({ queue: [...state.queue, entry] })
       else set({ open: true, config: cfg, resolve: entry.resolve })
     }),
 
   resolveCurrent: (v: DialogResult) => {
-    const { resolve, queue } = get()
+    const { config, resolve, queue, notificationConfig } = get()
+    if (!config && notificationConfig) {
+      get().resolveNotification(v)
+      return
+    }
     const [next, ...rest] = queue
-    set(next
-      ? { open: true, config: next.config, resolve: next.resolve, queue: rest }
-      : { open: false, config: null, resolve: null, queue: [] })
+    const nextConfig = next?.config ?? null
+    set({
+      open: Boolean(nextConfig || notificationConfig),
+      config: nextConfig,
+      resolve: next?.resolve ?? null,
+      queue: next ? rest : [],
+    })
     resolve?.(v)
+  },
+
+  resolveNotification: (v: DialogResult) => {
+    const { config, notificationResolve, notificationQueue } = get()
+    const [next, ...rest] = notificationQueue
+    const nextNotification = next?.config ?? null
+    set({
+      open: Boolean(config || nextNotification),
+      notificationConfig: nextNotification,
+      notificationResolve: next?.resolve ?? null,
+      notificationQueue: next ? rest : [],
+    })
+    notificationResolve?.(v)
   },
 }))
 
-// Keep desktop failures in the same FIFO lane, including browser fallback.
-let desktopLane: Promise<unknown> = Promise.resolve()
+// Keep desktop failures in the same lane per channel (modal vs notification).
+let desktopModalLane: Promise<unknown> = Promise.resolve()
+let desktopNotificationLane: Promise<unknown> = Promise.resolve()
+let tauriCorePromise: Promise<typeof import('@tauri-apps/api/core')> | null = null
+
+function loadTauriCore() {
+  if (!tauriCorePromise) {
+    tauriCorePromise = import('@tauri-apps/api/core').catch((error) => {
+      tauriCorePromise = null
+      throw error
+    })
+  }
+  return tauriCorePromise
+}
+
 export function requestDialog<T>(config: DialogConfig): Promise<T> {
   if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
     return useDialogStore.getState().show<T>(config)
   }
-  const request = desktopLane.then(async () => {
+  const isNotification = config.kind === 'notification'
+  const lane = isNotification ? desktopNotificationLane : desktopModalLane
+  const request = lane.then(async () => {
     try {
-      const { invoke } = await import('@tauri-apps/api/core')
+      const { invoke } = await loadTauriCore()
       return await invoke<T>('show_message_dialog', { config })
     } catch (error) {
       console.warn('Desktop message window unavailable; using in-page dialog', error)
@@ -75,7 +124,9 @@ export function requestDialog<T>(config: DialogConfig): Promise<T> {
       return useDialogStore.getState().show<T>(config)
     }
   })
-  desktopLane = request.catch(() => undefined)
+  const settled = request.catch(() => undefined)
+  if (isNotification) desktopNotificationLane = settled
+  else desktopModalLane = settled
   return request
 }
 

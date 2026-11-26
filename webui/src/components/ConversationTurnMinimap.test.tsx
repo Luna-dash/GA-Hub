@@ -282,4 +282,19 @@ describe('ConversationTurnMinimap', () => {
     expect(onSelect).toHaveBeenCalledTimes(1)
     expect(onSelect).toHaveBeenCalledWith(15)
   })
+
+  it('survives 1-turn <-> multi-turn transitions without changing hook order', () => {
+    const { host: el } = mount(makeTurns(3), 1)
+    expect(el.querySelectorAll('[aria-label="多轮会话选择器"] button')).toHaveLength(3)
+
+    act(() => {
+      root!.render(<ConversationTurnMinimap items={makeTurns(1)} activeIndex={0} onSelect={vi.fn()} />)
+    })
+    expect(el.querySelector('[aria-label="多轮会话选择器"]')).toBeNull()
+
+    act(() => {
+      root!.render(<ConversationTurnMinimap items={makeTurns(3)} activeIndex={2} onSelect={vi.fn()} />)
+    })
+    expect(el.querySelectorAll('[aria-label="多轮会话选择器"] button')).toHaveLength(3)
+  })
 })

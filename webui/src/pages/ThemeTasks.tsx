@@ -206,8 +206,8 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
         <div className="flex min-w-0 items-center gap-2">
           <h2 className="min-w-0 truncate text-sm font-semibold" title={title}>{title}</h2>
           {showUnread && !expanded && (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-red-500/35 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-700">
-              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-status-danger-line bg-status-danger-soft px-2 py-0.5 text-[11px] font-semibold text-status-danger">
+              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-status-danger animate-pulse" />
               <span>新完成</span>
             </span>
           )}
@@ -340,8 +340,8 @@ export default function ThemeTasks() {
           <span>主题 {tasks.length} 项</span>
         </span>
         {unreadCount > 0 && (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/35 bg-red-500/10 px-2.5 py-0.5 tabular-nums text-red-700">
-            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-status-danger-line bg-status-danger-soft px-2.5 py-0.5 tabular-nums text-status-danger">
+            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-status-danger animate-pulse" />
             <span>待查看 {unreadCount} 项</span>
           </span>
         )}

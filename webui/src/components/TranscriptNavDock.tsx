@@ -39,8 +39,8 @@ export function TranscriptNavDock({
         onClick={onJumpToBottom}
         className={`relative inline-flex h-10 w-10 items-center justify-center rounded-full border backdrop-blur-md transition-[background-color,border-color,color,transform,box-shadow] active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
           unread > 0
-            ? 'border-accent/60 bg-bg-card/95 text-accent shadow-[inset_0_1px_0_rgba(255,250,232,0.8),0_4px_14px_rgba(166,91,42,0.18)] hover:border-accent hover:bg-bg-soft'
-            : 'border-line/75 bg-bg-card/92 text-ink shadow-[inset_0_1px_0_rgba(255,250,232,0.78),0_4px_12px_rgba(45,34,22,0.12)] hover:border-accent/55 hover:bg-bg-soft hover:text-accent'
+            ? 'border-accent/60 bg-bg-card/95 text-accent shadow-[inset_0_1px_0_var(--c-inset-highlight),0_4px_14px_rgba(166,91,42,0.18)] hover:border-accent hover:bg-bg-soft'
+            : 'border-line/75 bg-bg-card/95 text-ink shadow-[inset_0_1px_0_var(--c-inset-highlight),0_4px_12px_rgba(45,34,22,0.12)] hover:border-accent/55 hover:bg-bg-soft hover:text-accent'
         }`}
         aria-label={unread > 0 ? `跳到底部（${unread} 条新消息）` : '跳到底部'}
         title={unread > 0 ? `${unread} 条新消息，跳到最新` : '跳到最新消息'}
@@ -49,13 +49,13 @@ export function TranscriptNavDock({
         {unread > 0 && (
           <span
             aria-hidden="true"
-            className="absolute -right-1 -top-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none tabular-nums text-white shadow-sm ring-2 ring-bg-soft"
+            className="absolute -right-1 -top-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none tabular-nums text-[var(--c-accent-fg)] shadow-sm ring-2 ring-bg-soft"
           >
             {unread > 99 ? '99+' : unread}
           </span>
         )}
       </button>
-      <div className="flex flex-col items-center rounded-full border border-line/75 bg-bg-card/92 p-1 shadow-[inset_0_1px_0_rgba(255,250,232,0.78),0_4px_14px_rgba(45,34,22,0.11)] backdrop-blur-md">
+      <div className="flex flex-col items-center rounded-full border border-line/75 bg-bg-card/95 p-1 shadow-[inset_0_1px_0_var(--c-inset-highlight),0_4px_14px_rgba(45,34,22,0.11)] backdrop-blur-md">
         <button
           type="button"
           onClick={onPrev}

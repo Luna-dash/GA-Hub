@@ -139,7 +139,7 @@ export function AntiDaemonControl({
         <button
           type="button"
           className={clsx('ga-badge', canStart
-            ? 'border-status-danger bg-status-danger text-white cursor-pointer hover:border-status-danger-strong hover:bg-status-danger-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
+            ? 'border-[var(--c-solid-danger-bg)] bg-[var(--c-solid-danger-bg)] text-[var(--c-solid-danger-fg)] cursor-pointer hover:border-[var(--c-solid-danger-hover)] hover:bg-[var(--c-solid-danger-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
             : statusBadgeToneClass(gatewayKind))}
           aria-label={label}
           disabled={!canStart}
@@ -164,7 +164,7 @@ export function AntiDaemonControl({
             type="button"
             disabled={!managed}
             className={clsx(
-              'inline-flex h-7 w-7 items-center justify-center rounded-lg border border-line/80 bg-bg-card/90 text-ink-muted shadow-[inset_0_1px_0_rgba(255,250,232,0.72),0_1px_2px_rgba(45,34,22,0.06)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40',
+              'inline-flex h-7 w-7 items-center justify-center rounded-lg border border-line/80 bg-bg-card/90 text-ink-muted shadow-[inset_0_1px_0_var(--c-inset-highlight),0_1px_2px_rgba(45,34,22,0.06)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40',
               managed ? 'cursor-pointer hover:border-accent/60 hover:bg-bg-soft/90 hover:text-ink active:scale-[0.96]' : 'cursor-not-allowed opacity-45',
             )}
             aria-label="重置 Agy 运行时"
@@ -177,9 +177,9 @@ export function AntiDaemonControl({
             type="button"
             disabled={!managed}
             className={clsx(
-              'inline-flex h-7 w-7 items-center justify-center rounded-lg border shadow-[inset_0_1px_0_rgba(255,250,232,0.78),0_1px_2px_rgba(158,51,40,0.08)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/45',
+              'inline-flex h-7 w-7 items-center justify-center rounded-lg border shadow-[inset_0_1px_0_var(--c-inset-highlight),0_1px_2px_rgba(158,51,40,0.08)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/45',
               managed
-                ? 'cursor-pointer border-status-danger/35 bg-status-danger-soft text-status-danger hover:border-status-danger hover:bg-status-danger hover:text-white active:scale-[0.96] active:bg-status-danger-strong'
+                ? 'cursor-pointer border-status-danger/35 bg-status-danger-soft text-status-danger hover:border-[var(--c-solid-danger-bg)] hover:bg-[var(--c-solid-danger-bg)] hover:text-[var(--c-solid-danger-fg)] active:scale-[0.96] active:bg-[var(--c-solid-danger-hover)]'
                 : 'cursor-not-allowed border-status-danger-line/70 bg-status-danger-soft/50 text-status-danger/55 opacity-45',
             )}
             aria-label="停止 Agy 运行时"

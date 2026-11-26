@@ -179,7 +179,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
                   setActiveTab(SETTINGS_TABS[next].id)
                   event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
                 }}
-                className={`flex flex-col sm:flex-row items-center gap-1 sm:gap-2.5 rounded-lg px-2 sm:px-3 py-2 text-xs sm:text-sm text-center sm:text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${activeTab === id ? 'bg-accent/12 text-accent font-medium' : 'text-ink-muted hover:bg-bg-soft hover:text-ink'}`}
+                className={`flex flex-col sm:flex-row items-center gap-1 sm:gap-2.5 rounded-lg px-2 sm:px-3 py-2 text-xs sm:text-sm text-center sm:text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${activeTab === id ? 'bg-accent/15 text-accent font-medium' : 'text-ink-muted hover:bg-bg-soft hover:text-ink'}`}
               >
                 <Icon size={16} className="shrink-0" aria-hidden="true" />
                 <span className="truncate">{label}</span>

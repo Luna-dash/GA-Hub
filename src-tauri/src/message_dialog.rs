@@ -11,10 +11,44 @@ struct Request {
     ready: bool,
 }
 #[derive(Default)]
-struct Queue {
+struct Lane {
     pending: VecDeque<Request>,
     active: Option<Request>,
+}
+
+#[derive(Default)]
+struct Queue {
+    modal: Lane,
+    notification: Lane,
     closing: bool,
+}
+
+impl Queue {
+    fn lane_mut(&mut self, notification: bool) -> &mut Lane {
+        if notification { &mut self.notification } else { &mut self.modal }
+    }
+
+    fn find_active(&self, label: &str) -> Option<&Request> {
+        self.modal.active.as_ref().filter(|r| r.label == label)
+            .or_else(|| self.notification.active.as_ref().filter(|r| r.label == label))
+    }
+
+    fn find_active_mut(&mut self, label: &str) -> Option<&mut Request> {
+        if self.modal.active.as_ref().is_some_and(|r| r.label == label) {
+            return self.modal.active.as_mut();
+        }
+        self.notification.active.as_mut().filter(|r| r.label == label)
+    }
+
+    fn take_active(&mut self, label: &str) -> Option<Request> {
+        if self.modal.active.as_ref().is_some_and(|r| r.label == label) {
+            return self.modal.active.take();
+        }
+        if self.notification.active.as_ref().is_some_and(|r| r.label == label) {
+            return self.notification.active.take();
+        }
+        None
+    }
 }
 #[derive(Default)]
 pub struct MessageDialogs(Mutex<Queue>);
@@ -52,14 +86,10 @@ fn valid_result(config: &Value, result: &Value) -> bool {
 // Called on the main thread, including timeouts and close handlers.
 fn complete(app: &AppHandle, label: &str, result: Option<Result<Value, String>>) {
     let state = app.state::<MessageDialogs>();
-    let request = {
-        let mut queue = state.0.lock().unwrap();
-        if queue.active.as_ref().map(|r| r.label.as_str()) != Some(label) { return; }
-        queue.active.take().unwrap()
-    };
+    let Some(request) = state.0.lock().unwrap().take_active(label) else { return; };
+    let notification = request.config["kind"] == "notification";
     // Take before destroy: the Destroyed event cannot settle this request twice.
     if let Some(window) = app.get_webview_window(label) { let _ = window.destroy(); }
-    let notification = request.config["kind"] == "notification";
     if let Some(parent) = app.get_webview_window("main") {
         if !notification { let _ = parent.set_enabled(true); }
         let open = result.as_ref().is_some_and(|r| matches!(r, Ok(Value::Bool(true))));
@@ -71,20 +101,21 @@ fn complete(app: &AppHandle, label: &str, result: Option<Result<Value, String>>)
     }
     let result = result.unwrap_or_else(|| Ok(cancelled(&request.config)));
     let _ = request.reply.send(result);
-    start_next(app);
+    start_next(app, notification);
 }
 
-fn start_next(app: &AppHandle) {
+fn start_next(app: &AppHandle, notification: bool) {
     let state = app.state::<MessageDialogs>();
-    let (label, title, notification) = {
+    let (label, title) = {
         let mut queue = state.0.lock().unwrap();
-        if queue.closing || queue.active.is_some() { return; }
-        let Some(request) = queue.pending.pop_front() else { return; };
+        if queue.closing { return; }
+        let lane = queue.lane_mut(notification);
+        if lane.active.is_some() { return; }
+        let Some(request) = lane.pending.pop_front() else { return; };
         let label = request.label.clone();
         let title = request.config["title"].as_str().unwrap_or("GA-Hub").to_string();
-        let notification = request.config["kind"] == "notification";
-        queue.active = Some(request);
-        (label, title, notification)
+        lane.active = Some(request);
+        (label, title)
     };
     let create = || -> Result<(), String> {
         let parent = app.get_webview_window("main").ok_or("Main window unavailable")?;
@@ -113,8 +144,8 @@ fn start_next(app: &AppHandle) {
         std::thread::sleep(Duration::from_secs(15));
         let timer_app = handle.clone();
         let _ = handle.run_on_main_thread(move || {
-            let timed_out = timer_app.state::<MessageDialogs>().0.lock().unwrap().active
-                .as_ref().is_some_and(|r| r.label == label && !r.ready);
+            let timed_out = timer_app.state::<MessageDialogs>().0.lock().unwrap()
+                .find_active(&label).is_some_and(|r| !r.ready);
             if timed_out { complete(&timer_app, &label, Some(Err("Message window did not load".into()))); }
         });
     });
@@ -124,6 +155,7 @@ fn start_next(app: &AppHandle) {
 pub async fn show_message_dialog(window: WebviewWindow, app: AppHandle, config: Value) -> Result<Value, String> {
     if window.label() != "main" { return Err("Only main can open a message dialog".into()); }
     validate(&config)?;
+    let notification = config["kind"] == "notification";
     let (tx, rx) = mpsc::channel();
     let request = Request { label: format!("message-{}", uuid::Uuid::new_v4()), config, reply: tx, ready: false };
     let handle = app.clone();
@@ -132,9 +164,9 @@ pub async fn show_message_dialog(window: WebviewWindow, app: AppHandle, config: 
         {
             let mut queue = state.0.lock().unwrap();
             if queue.closing { let _ = request.reply.send(Ok(cancelled(&request.config))); return; }
-            queue.pending.push_back(request);
+            queue.lane_mut(notification).pending.push_back(request);
         }
-        start_next(&handle);
+        start_next(&handle, notification);
     }).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || rx.recv().map_err(|e| e.to_string()))
         .await.map_err(|e| e.to_string())?
@@ -144,7 +176,7 @@ pub async fn show_message_dialog(window: WebviewWindow, app: AppHandle, config: 
 #[tauri::command]
 pub fn message_dialog_config(window: WebviewWindow, state: tauri::State<MessageDialogs>) -> Result<Value, String> {
     let queue = state.0.lock().unwrap();
-    queue.active.as_ref().filter(|r| r.label == window.label())
+    queue.find_active(window.label())
         .map(|r| r.config.clone()).ok_or("Not the active message window".into())
 }
 
@@ -154,13 +186,13 @@ pub async fn message_dialog_ready(window: WebviewWindow, app: AppHandle, height:
     let handle = app.clone();
     app.run_on_main_thread(move || {
         let state = handle.state::<MessageDialogs>();
-        {
+        let notification = {
             let mut queue = state.0.lock().unwrap();
-            let Some(request) = queue.active.as_mut().filter(|r| r.label == label) else { return; };
+            let Some(request) = queue.find_active_mut(&label) else { return; };
             if request.ready { return; }
             request.ready = true;
-        }
-        let notification = state.0.lock().unwrap().active.as_ref().is_some_and(|r| r.config["kind"] == "notification");
+            request.config["kind"] == "notification"
+        };
         let reveal = || -> Result<(), String> {
             let window = handle.get_webview_window(&label).ok_or("Message window unavailable")?;
             let max_height = window.current_monitor().ok().flatten()
@@ -190,7 +222,7 @@ pub async fn message_dialog_finish(window: WebviewWindow, app: AppHandle, result
     {
         let state = app.state::<MessageDialogs>();
         let queue = state.0.lock().unwrap();
-        let request = queue.active.as_ref().filter(|r| r.label == label).ok_or("Not the active message window")?;
+        let request = queue.find_active(&label).ok_or("Not the active message window")?;
         if !valid_result(&request.config, &result) { return Err("Invalid message result".into()); }
     }
     let handle = app.clone();
@@ -199,12 +231,17 @@ pub async fn message_dialog_finish(window: WebviewWindow, app: AppHandle, result
 
 pub fn shutdown(app: &AppHandle) {
     let state = app.state::<MessageDialogs>();
-    let (active, pending) = {
+    let (modal_active, modal_pending, notif_active, notif_pending) = {
         let mut queue = state.0.lock().unwrap();
         queue.closing = true;
-        (queue.active.take(), std::mem::take(&mut queue.pending))
+        (
+            queue.modal.active.take(),
+            std::mem::take(&mut queue.modal.pending),
+            queue.notification.active.take(),
+            std::mem::take(&mut queue.notification.pending),
+        )
     };
-    for request in active.into_iter().chain(pending) {
+    for request in modal_active.into_iter().chain(modal_pending).chain(notif_active).chain(notif_pending) {
         if let Some(window) = app.get_webview_window(&request.label) { let _ = window.destroy(); }
         let _ = request.reply.send(Ok(cancelled(&request.config)));
     }
@@ -250,5 +287,25 @@ mod tests {
         assert!(!valid_result(&json!({"kind":"confirm"}), &json!("true")));
         assert!(valid_result(&json!({"kind":"prompt"}), &json!("新名字")));
         assert!(!valid_result(&json!({"kind":"alert"}), &json!(true)));
+    }
+    #[test]
+    fn separates_modal_and_notification_lanes() {
+        let mut queue = Queue::default();
+        let (tx_notif, _rx_notif) = mpsc::channel();
+        let (tx_modal, _rx_modal) = mpsc::channel();
+        queue.lane_mut(true).active = Some(Request {
+            label: "notif-1".into(), config: json!({"kind":"notification","title":"n"}), reply: tx_notif, ready: true,
+        });
+        queue.lane_mut(false).pending.push_back(Request {
+            label: "modal-1".into(), config: json!({"kind":"confirm","title":"m"}), reply: tx_modal, ready: false,
+        });
+        assert!(queue.lane_mut(false).active.is_none());
+        let next_modal = queue.lane_mut(false).pending.pop_front().unwrap();
+        queue.lane_mut(false).active = Some(next_modal);
+        assert!(queue.find_active("notif-1").is_some());
+        assert!(queue.find_active("modal-1").is_some());
+        assert_eq!(queue.take_active("modal-1").unwrap().label, "modal-1");
+        assert!(queue.find_active("notif-1").is_some());
+        assert_eq!(queue.take_active("notif-1").unwrap().label, "notif-1");
     }
 }

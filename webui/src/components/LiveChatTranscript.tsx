@@ -658,7 +658,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
                   {loadingAllHistory ? `正在加载全部历史…（已加载 ${allHistoryLoadedItems} 条）` : '加载全部历史'}
                 </button>
               </div>
-              {allHistoryNotice && <span role="status" className="text-xs text-muted-foreground">{allHistoryNotice}</span>}
+              {allHistoryNotice && <span role="status" className="text-xs text-ink-muted">{allHistoryNotice}</span>}
               {olderHistoryStatus === 'error' && (
                 <span className="text-xs text-status-danger">{olderHistoryError || '加载失败，请重试'}</span>
               )}

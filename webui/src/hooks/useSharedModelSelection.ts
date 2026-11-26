@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { llmIndexForKey, resolveMainLlmKey, resolveSubagentLlmKey, type LlmIdentity } from '@/utils/llm'
 import { storageKeys } from '@/config/storageKeys'
-import { syncUiSetting, UI_SETTINGS_HYDRATED_EVENT, type DurableUiSettingKey } from '@/stores/uiSettingsStore'
+import {
+  isUiSettingsHydrating,
+  syncUiSetting,
+  UI_SETTINGS_HYDRATED_EVENT,
+  UI_SETTINGS_HYDRATION_SETTLED_EVENT,
+  type DurableUiSettingKey,
+} from '@/stores/uiSettingsStore'
 
 export const MAIN_LLM_PREFERENCE_KEY = storageKeys.modelSelectionMainLlm
 export const SUBAGENT_LLM_PREFERENCE_KEY = storageKeys.modelSelectionSubagentLlm
@@ -29,12 +35,13 @@ function writePreference(key: DurableUiSettingKey, value: string | null, syncRem
 export function useSharedModelSelection(llms: ReadonlyArray<LlmIdentity>) {
   const [savedMainLlmKey, setSavedMainLlmKey] = useState<string | null>(() => readPreference(MAIN_LLM_PREFERENCE_KEY))
   const [savedSubagentLlmKey, setSavedSubagentLlmKey] = useState<string | null>(() => readPreference(SUBAGENT_LLM_PREFERENCE_KEY))
+  const [hydrationEpoch, setHydrationEpoch] = useState(0)
 
   const mainLlmKey = resolveMainLlmKey(llms, savedMainLlmKey)
   const subagentLlmKey = resolveSubagentLlmKey(llms, savedSubagentLlmKey)
 
   useEffect(() => {
-    if (llms.length === 0) return
+    if (llms.length === 0 || isUiSettingsHydrating()) return
 
     const repairedMainKey = mainLlmKey ?? null
     if (savedMainLlmKey !== repairedMainKey) {
@@ -46,7 +53,7 @@ export function useSharedModelSelection(llms: ReadonlyArray<LlmIdentity>) {
       setSavedSubagentLlmKey(subagentLlmKey)
       writePreference(SUBAGENT_LLM_PREFERENCE_KEY, subagentLlmKey)
     }
-  }, [llms.length, mainLlmKey, savedMainLlmKey, savedSubagentLlmKey, subagentLlmKey])
+  }, [hydrationEpoch, llms.length, mainLlmKey, savedMainLlmKey, savedSubagentLlmKey, subagentLlmKey])
 
   const selectMainLlm = useCallback((llmKey: string) => {
     setSavedMainLlmKey(llmKey)
@@ -62,9 +69,14 @@ export function useSharedModelSelection(llms: ReadonlyArray<LlmIdentity>) {
     const sync = () => {
       setSavedMainLlmKey(readPreference(MAIN_LLM_PREFERENCE_KEY))
       setSavedSubagentLlmKey(readPreference(SUBAGENT_LLM_PREFERENCE_KEY))
+      setHydrationEpoch((epoch) => epoch + 1)
     }
     window.addEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
-    return () => window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
+    window.addEventListener(UI_SETTINGS_HYDRATION_SETTLED_EVENT, sync)
+    return () => {
+      window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
+      window.removeEventListener(UI_SETTINGS_HYDRATION_SETTLED_EVENT, sync)
+    }
   }, [])
 
   const effectiveSubagentLlmKey = subagentLlmKey ?? mainLlmKey

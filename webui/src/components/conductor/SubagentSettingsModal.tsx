@@ -133,7 +133,7 @@ export function SubagentSettingsModal({ llms, value, locked, autoAccept, engineS
               </p>
               <button
                 type="button"
-                className="ga-btn ga-btn-danger mt-3 inline-flex items-center gap-1.5"
+                className="ga-btn-danger mt-3"
                 disabled={!engineStarted || engineStopping}
                 onClick={onStopEngine}
               >
@@ -143,7 +143,7 @@ export function SubagentSettingsModal({ llms, value, locked, autoAccept, engineS
           </div>
           <div className="flex justify-end gap-2 border-t border-line/70 px-5 py-4">
             <button type="button" className="ga-btn" onClick={closeDialog}>取消</button>
-            <button type="button" className="ga-btn ga-btn-primary" onClick={save}>保存</button>
+            <button type="button" className="ga-btn-primary" onClick={save}>保存</button>
           </div>
         </ModalOverlay>
       )}

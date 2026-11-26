@@ -142,6 +142,11 @@ export function ConversationTurnMinimap({
     list.scrollTop = Math.max(0, activeEl.offsetTop - list.clientHeight / 2 + activeEl.offsetHeight / 2)
   }, [directoryOpen, clampedActive])
 
+  useEffect(() => () => {
+    scrubCleanupRef.current?.()
+    scrubCleanupRef.current = null
+  }, [])
+
   if (items.length <= 1) return null
 
   const hoveredItem = !directoryOpen && hoveredIdx !== null ? items[hoveredIdx] : undefined
@@ -170,11 +175,6 @@ export function ConversationTurnMinimap({
     scrubbingRef.current = false
     scrubIndexRef.current = null
   }
-
-  useEffect(() => () => {
-    scrubCleanupRef.current?.()
-    scrubCleanupRef.current = null
-  }, [])
 
   return (
     <div
@@ -261,7 +261,7 @@ export function ConversationTurnMinimap({
             window.removeEventListener('pointercancel', onWindowPointerCancel)
           }
         }}
-        className="flex w-7 flex-col items-center gap-[3px] rounded-full border border-line/65 bg-bg-card/88 px-1 py-2.5 shadow-[inset_0_1px_0_rgba(255,250,232,0.82),0_4px_14px_rgba(45,34,22,0.09)] backdrop-blur-md touch-none"
+        className="flex w-7 flex-col items-center gap-[3px] rounded-full border border-line/65 bg-bg-card/90 px-1 py-2.5 shadow-[inset_0_1px_0_var(--c-inset-highlight),0_4px_14px_rgba(45,34,22,0.09)] backdrop-blur-md touch-none"
       >
         {slots.map((turnIdx, slotIdx) => {
           const item = items[turnIdx]
@@ -277,7 +277,7 @@ export function ConversationTurnMinimap({
                 ? 'h-[7px] w-[5px] bg-ink/30 group-hover/dot:bg-accent/80'
                 : isBoundaryAnchor || (!isCompressed && slotIdx === slots.length - 1)
                   ? 'h-[6px] w-[6px] bg-ink/55 ring-2 ring-ink/10 group-hover/dot:scale-125 group-hover/dot:bg-accent'
-                  : 'h-[5px] w-[5px] bg-ink/22 group-hover/dot:scale-125 group-hover/dot:bg-accent/80'
+                  : 'h-[5px] w-[5px] bg-ink/25 group-hover/dot:scale-125 group-hover/dot:bg-accent/80'
 
           return (
             <button
@@ -329,9 +329,9 @@ export function ConversationTurnMinimap({
             return next
           })
         }}
-        className={`inline-flex h-5 min-w-9 max-w-full items-center justify-center rounded-full border px-1.5 text-[10px] font-medium leading-none tabular-nums shadow-[inset_0_1px_0_rgba(255,250,232,0.78),0_2px_8px_rgba(45,34,22,0.08)] backdrop-blur-md transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+        className={`inline-flex h-5 min-w-9 max-w-full items-center justify-center rounded-full border px-1.5 text-[10px] font-medium leading-none tabular-nums shadow-[inset_0_1px_0_var(--c-inset-highlight),0_2px_8px_rgba(45,34,22,0.08)] backdrop-blur-md transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
           directoryOpen
-            ? 'border-accent/65 bg-accent-soft/85 text-accent-deep'
+            ? 'border-accent/65 bg-accent-soft/85 text-accent'
             : 'border-line/70 bg-bg-card/90 text-ink-muted hover:border-accent/55 hover:text-ink'
         }`}
       >
@@ -345,7 +345,7 @@ export function ConversationTurnMinimap({
           style={{ top: tooltipTop }}
         >
           <div className="flex items-center justify-between gap-2 text-[10px] font-semibold">
-            <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft/85 px-1.5 py-0.5 text-accent-deep">
+            <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft/85 px-1.5 py-0.5 text-accent">
               第 {hoveredItem.index} 轮
             </span>
             <span className="tabular-nums text-ink-faint">{hoveredItem.index} / {items.length}</span>
@@ -440,7 +440,7 @@ export function ConversationTurnMinimap({
                   }}
                   className={`flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
                     isActive
-                      ? 'bg-accent-soft/80 font-medium text-accent-deep ring-1 ring-accent/30'
+                      ? 'bg-accent-soft/80 font-medium text-accent ring-1 ring-accent/30'
                       : 'text-ink hover:bg-bg-soft/80'
                   }`}
                 >

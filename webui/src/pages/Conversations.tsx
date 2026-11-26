@@ -540,7 +540,7 @@ export default function Conversations() {
                 onClick={() => { setQ(''); setPage(0) }}
                 aria-label="清空搜索"
                 title="清空搜索"
-                className="absolute right-1.5 flex h-5 w-5 items-center justify-center rounded text-ink-faint transition-colors hover:bg-ink/8 hover:text-ink"
+                className="absolute right-1.5 flex h-5 w-5 items-center justify-center rounded text-ink-faint transition-colors hover:bg-ink/10 hover:text-ink"
               >
                 <X size={12} strokeWidth={2} aria-hidden="true" />
               </button>
@@ -563,7 +563,7 @@ export default function Conversations() {
                     onClick={() => { setSourceFilter(f.value); setPage(0) }}
                     className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
                       activeFilter
-                        ? 'bg-accent-soft text-accent-deep ring-1 ring-accent/35'
+                        ? 'bg-accent-soft text-accent ring-1 ring-accent/35'
                         : 'text-ink-muted hover:bg-bg-soft/75 hover:text-ink'
                     }`}
                   >
@@ -577,8 +577,8 @@ export default function Conversations() {
             {listLoading && items.length === 0 && (
               Array.from({ length: 4 }, (_, idx) => (
                 <div key={`skeleton-${idx}`} className="rounded-lg bg-bg-card/60 px-2.5 py-2.5 animate-pulse space-y-2">
-                  <div className="h-3.5 w-3/4 rounded bg-ink/8" />
-                  <div className="h-2.5 w-1/2 rounded bg-ink/6" />
+                  <div className="h-3.5 w-3/4 rounded bg-ink/10" />
+                  <div className="h-2.5 w-1/2 rounded bg-ink/5" />
                 </div>
               ))
             )}
@@ -653,7 +653,7 @@ export default function Conversations() {
           {!active && (
             <div className="flex h-full items-center justify-center p-2">
               <div className="ga-paper-card max-w-sm px-8 py-9 text-center">
-                <div className="mx-auto mb-3.5 flex h-11 w-11 items-center justify-center rounded-xl bg-accent-soft/80 text-accent-deep ring-1 ring-accent/20">
+                <div className="mx-auto mb-3.5 flex h-11 w-11 items-center justify-center rounded-xl bg-accent-soft/80 text-accent ring-1 ring-accent/20">
                   <History size={20} strokeWidth={1.85} aria-hidden="true" />
                 </div>
                 <p className="text-sm font-medium text-ink">选择左侧会话查看详情</p>

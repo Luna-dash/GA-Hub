@@ -48,7 +48,7 @@ function getFocusableElements(panel: HTMLElement): HTMLElement[] {
 }
 
 function onWindowKeyDown(event: KeyboardEvent): void {
-  if (event.defaultPrevented) return
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return
   const top = pickTopOverlay()
   if (!top) return
 
@@ -101,6 +101,11 @@ function syncGlobalHooks(): void {
 export function isTopOverlay(id: number | null): boolean {
   if (id === null) return false
   return pickTopOverlay()?.id === id
+}
+
+/** Whether any managed overlay layer is currently mounted on top of the page. */
+export function hasActiveOverlay(): boolean {
+  return stack.length > 0
 }
 
 export function restoreOverlayFocus(opener: HTMLElement | null): void {

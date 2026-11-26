@@ -25,6 +25,16 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined
           const normalized = id.replace(/\\/g, '/')
+          if (
+            normalized.includes('/node_modules/react/')
+            || normalized.includes('/node_modules/react-dom/')
+            || normalized.includes('/node_modules/scheduler/')
+            || normalized.includes('/node_modules/react-router-dom/')
+            || normalized.includes('/node_modules/react-router/')
+            || normalized.includes('/node_modules/@remix-run/router/')
+          ) {
+            return 'vendor-react'
+          }
           if (normalized.includes('/react-markdown/') || normalized.includes('/remark-gfm/') || normalized.includes('/micromark') || normalized.includes('/mdast') || normalized.includes('/unist')) {
             return 'vendor-markdown'
           }

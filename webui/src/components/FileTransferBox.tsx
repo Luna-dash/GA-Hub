@@ -98,7 +98,7 @@ export function FileTransferBox({ canInsert, onInsert }: FileTransferBoxProps) {
       <span aria-hidden="true" className="h-10 w-8 bg-current"
         style={{ mask: `url(${fileTransferSymbol}) center / contain no-repeat` }} />
       {fileCount > 0 && <span aria-hidden="true"
-        className="absolute right-0 top-0 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none text-white tabular-nums ring-2 ring-bg-card">
+        className="absolute right-0 top-0 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none text-[var(--c-accent-fg)] tabular-nums ring-2 ring-bg-card">
         {fileCount > 99 ? '99+' : fileCount}
       </span>}
     </button>

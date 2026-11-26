@@ -724,7 +724,7 @@ export default function Conductor() {
                a later status poll or a successfully sent message. */
             <div className="conductor-header-engine flex items-center gap-2">
               <button onClick={retryEnsure}
-                className={`ga-btn ga-btn-primary ${ENGINE_TOGGLE_LAYOUT}`}
+                className={`ga-btn-primary ${ENGINE_TOGGLE_LAYOUT}`}
                 title="重新启动 Conductor 引擎">
                 <Play size={13} />重试启动
               </button>

@@ -291,6 +291,7 @@ export function CommandPalette() {
   }
 
   const onKey = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return
     if (!isTopOverlay(overlayIdRef.current)) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()

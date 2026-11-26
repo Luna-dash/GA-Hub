@@ -742,13 +742,13 @@ describe('SessionRail', () => {
       expect(classes).not.toContain('bg-status-success-soft')
       expect(classes).not.toContain('bg-status-info-soft')
       expect(classes).not.toContain('bg-status-danger-soft')
-      expect(classes).not.toContain('bg-[#F7F1E5]')
+      expect(classes).not.toContain('bg-bg-card')
     }
 
     const idleActiveRow = host.querySelector('[data-session-id="state-idle"]') as HTMLDivElement
     expect(idleActiveRow.getAttribute('data-current')).toBe('true')
     const activeClasses = idleActiveRow.className.split(/\s+/)
-    expect(activeClasses).toContain('bg-[#F7F1E5]')
+    expect(activeClasses).toContain('bg-bg-card')
     expect(activeClasses).toContain('ring-accent/35')
     expect(activeClasses).toContain('before:bg-accent')
     expect(activeClasses).toContain('shadow-sm')
@@ -768,7 +768,68 @@ describe('SessionRail', () => {
     renderWithCurrent('state-active')
     const activeSelectedRow = host.querySelector('[data-session-id="state-active"]') as HTMLDivElement
     expect(activeSelectedRow.getAttribute('data-current')).toBe('true')
-    expect(activeSelectedRow.className.split(/\s+/)).toContain('bg-[#F7F1E5]')
+    expect(activeSelectedRow.className.split(/\s+/)).toContain('bg-bg-card')
     expect(dotClasses('state-active')).toContain('bg-[#D97706]')
+  })
+
+  it('syncs inert between expanded rail and collapsed strip, and guards rename IME/Escape/rejections', async () => {
+    const onRename = vi.fn().mockRejectedValue(new Error('rename failed'))
+    const onWindowEscape = vi.fn()
+    const handleWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onWindowEscape(event)
+    }
+    window.addEventListener('keydown', handleWindowKeyDown)
+
+    try {
+      act(() => root.render(
+        <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} onRename={onRename} />,
+      ))
+
+      const aside = host.querySelector('aside[aria-label="会话工作区"]') as HTMLElement
+      const attentionStrip = host.querySelector('[aria-label="最近活动会话"]') as HTMLElement
+      expect(aside.inert).toBe(false)
+      expect(attentionStrip.inert).toBe(true)
+
+      act(() => (host.querySelector('[aria-label="折叠会话管理"]') as HTMLButtonElement).click())
+      expect(aside.inert).toBe(true)
+      expect(attentionStrip.inert).toBe(false)
+
+      act(() => (host.querySelector('[aria-label="展开会话管理"]') as HTMLButtonElement).click())
+      expect(aside.inert).toBe(false)
+
+      const rowBtn = host.querySelector('[aria-current="page"]') as HTMLButtonElement
+      act(() => { rowBtn.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
+      const input = host.querySelector('input[aria-label="重命名 研究任务"]') as HTMLInputElement
+      expect(input).not.toBeNull()
+
+      const composingEnter = new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true })
+      act(() => { input.dispatchEvent(composingEnter) })
+      expect(host.querySelector('input[aria-label="重命名 研究任务"]')).not.toBeNull()
+
+      const legacy229 = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      Object.defineProperty(legacy229, 'keyCode', { value: 229 })
+      act(() => { input.dispatchEvent(legacy229) })
+      expect(host.querySelector('input[aria-label="重命名 研究任务"]')).not.toBeNull()
+
+      // Escape cancels rename and does not propagate to global overlay shortcuts.
+      act(() => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+      expect(onWindowEscape).not.toHaveBeenCalled()
+      expect(host.querySelector('input[aria-label="重命名 研究任务"]')).toBeNull()
+
+      // Rejected onRename during blur must not leak an unhandled rejection.
+      const rowBtnAgain = host.querySelector('[aria-current="page"]') as HTMLButtonElement
+      act(() => { rowBtnAgain.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
+      const inputAgain = host.querySelector('input[aria-label="重命名 研究任务"]') as HTMLInputElement
+      act(() => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+        setter?.call(inputAgain, '会失败的名称')
+        inputAgain.dispatchEvent(new Event('input', { bubbles: true }))
+        inputAgain.blur()
+      })
+      await act(async () => {})
+      expect(onRename).toHaveBeenCalledWith(sessions[0].id, '会失败的名称')
+    } finally {
+      window.removeEventListener('keydown', handleWindowKeyDown)
+    }
   })
 })

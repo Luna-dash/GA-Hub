@@ -196,7 +196,7 @@ export default function MyKey() {
       wrapHeader
       title="LLM管理"
       actions={
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center justify-end gap-2 text-sm">
           <div className="ga-segmented text-xs" role="tablist" aria-label="编辑模式">
             {(['structured', 'raw'] as Tab[]).map((t) => (
               <button

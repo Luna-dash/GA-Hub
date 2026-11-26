@@ -2,12 +2,22 @@
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { hydrateUiSettings, isUiSettingsHydrating } from '@/stores/uiSettingsStore'
 import {
   MAIN_LLM_PREFERENCE_KEY,
   SUBAGENT_LLM_PREFERENCE_KEY,
   useSharedModelSelection,
 } from './useSharedModelSelection'
+
+const apiMocks = vi.hoisted(() => ({
+  uiPreferences: vi.fn(),
+  saveUiPreferences: vi.fn().mockResolvedValue({ configured: true, settings: {} }),
+}))
+
+vi.mock('@/api/client', () => ({
+  api: apiMocks,
+}))
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -105,5 +115,33 @@ describe('shared non-session model selection', () => {
     expect(probe.dataset.subagentIndex).toBe('0')
     expect(localStorage.getItem(MAIN_LLM_PREFERENCE_KEY)).toBe('alpha')
     expect(localStorage.getItem(SUBAGENT_LLM_PREFERENCE_KEY)).toBeNull()
+  })
+
+  it('defers model auto-repair while uiSettingsStore hydration is in flight and deduplicates calls', async () => {
+    let resolveRemote!: (val: { configured: boolean; settings: Record<string, string> }) => void
+    apiMocks.uiPreferences.mockReset()
+    apiMocks.saveUiPreferences.mockClear()
+    apiMocks.uiPreferences.mockImplementation(() => new Promise((resolve) => { resolveRemote = resolve }))
+
+    const p1 = hydrateUiSettings()
+    const p2 = hydrateUiSettings()
+    expect(p1).toBe(p2)
+    expect(apiMocks.uiPreferences).toHaveBeenCalledTimes(1)
+    expect(isUiSettingsHydrating()).toBe(true)
+
+    act(() => root.render(<Probe />))
+    expect(apiMocks.saveUiPreferences).not.toHaveBeenCalled()
+    expect(localStorage.getItem(MAIN_LLM_PREFERENCE_KEY)).toBeNull()
+
+    await act(async () => {
+      resolveRemote({ configured: true, settings: { [MAIN_LLM_PREFERENCE_KEY]: 'beta' } })
+      await p1
+    })
+
+    expect(isUiSettingsHydrating()).toBe(false)
+    const probe = host.firstElementChild as HTMLElement
+    expect(probe.dataset.mainKey).toBe('beta')
+    expect(localStorage.getItem(MAIN_LLM_PREFERENCE_KEY)).toBe('beta')
+    expect(apiMocks.saveUiPreferences).not.toHaveBeenCalled()
   })
 })

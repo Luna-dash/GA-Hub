@@ -32,7 +32,10 @@ describe('Overlay stack arbitration across ModalOverlay, CommandPalette, and Dia
   beforeEach(() => {
     vi.resetAllMocks()
     document.body.style.overflow = ''
-    useDialogStore.setState({ open: false, config: null, resolve: null, queue: [] })
+    useDialogStore.setState({
+      open: false, config: null, resolve: null, queue: [],
+      notificationConfig: null, notificationResolve: null, notificationQueue: [],
+    })
     useChatStore.setState({ sessionId: null, msgs: [] })
     vi.mocked(api.llms).mockResolvedValue({ llms: [] } as never)
     vi.mocked(api.schedules).mockResolvedValue({ schedules: [] } as never)
@@ -50,7 +53,10 @@ describe('Overlay stack arbitration across ModalOverlay, CommandPalette, and Dia
     host.remove()
     client.clear()
     document.body.style.overflow = ''
-    useDialogStore.setState({ open: false, config: null, resolve: null, queue: [] })
+    useDialogStore.setState({
+      open: false, config: null, resolve: null, queue: [],
+      notificationConfig: null, notificationResolve: null, notificationQueue: [],
+    })
     vi.restoreAllMocks()
   })
 
@@ -164,5 +170,32 @@ describe('Overlay stack arbitration across ModalOverlay, CommandPalette, and Dia
     expect(document.getElementById('base-modal-title')).toBeNull()
     expect(document.activeElement).toBe(opener)
     expect(document.body.style.overflow).toBe('')
+  })
+
+  it('ignores IME composing Escape and keyCode 229 in global overlay keydown listener', () => {
+    act(() => root.render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <DialogHost />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    ))
+    act(() => { void dialog.alert('输入法提示', '确认') })
+    expect(document.getElementById('message-dialog-title')?.textContent).toBe('输入法提示')
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true, cancelable: true }))
+    })
+    expect(document.getElementById('message-dialog-title')).not.toBeNull()
+
+    const legacy = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    Object.defineProperty(legacy, 'keyCode', { value: 229 })
+    act(() => { window.dispatchEvent(legacy) })
+    expect(document.getElementById('message-dialog-title')).not.toBeNull()
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(document.getElementById('message-dialog-title')).toBeNull()
   })
 })

@@ -431,4 +431,32 @@ describe('MarkdownView responsive wrapping', () => {
     expect(cells[1].textContent).toBe('绝对值')
   })
 
+  it('offers transfer-box saving on local artifact images only inside conclusions', async () => {
+    const md = '![产物预览](/api/files-by-path?path=D%3A%2Ftemp%2Fchart.png)'
+    act(() => root.render(
+      <FileLinkContext.Provider value={{ sessionId: 'anti-session', project: 'docs', engine: 'anti' }}>
+        <MarkdownView mode="chat">{md}</MarkdownView>
+      </FileLinkContext.Provider>,
+    ))
+    expect(host.querySelector('img')?.getAttribute('src')).toBe('/api/files-by-path?path=D%3A%2Ftemp%2Fchart.png')
+    expect(host.querySelector('button[aria-label="将图片放入中转箱"]')).toBeNull()
+
+    act(() => root.render(
+      <FileLinkContext.Provider value={{ sessionId: 'anti-session', project: 'docs', engine: 'anti' }}>
+        <FileTransferConclusion.Provider value={{ engine: 'anti', project: 'docs' }}>
+          <MarkdownView mode="chat">{md}</MarkdownView>
+        </FileTransferConclusion.Provider>
+      </FileLinkContext.Provider>,
+    ))
+    const btn = host.querySelector<HTMLButtonElement>('button[aria-label="将图片放入中转箱"]')
+    expect(btn).not.toBeNull()
+    await act(async () => { btn!.click() })
+    expect(mocks.addTransferFile).toHaveBeenCalledWith({
+      path: 'D:/temp/chart.png',
+      engine: 'anti',
+      session_id: 'anti-session',
+      project: 'docs',
+    })
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('已放入中转箱')
+  })
 })

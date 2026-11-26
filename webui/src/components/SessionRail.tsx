@@ -20,6 +20,7 @@ import {
   useSessionUnreadSnapshot,
   type SessionScope,
 } from '@/stores/sessionUnreadStore'
+import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { usePageState } from '@/utils/pageState'
 import { RAIL_TITLE_SCALE_EVENT, railTitlePercent, getRailTitleScale } from '@/utils/railAppearance'
 import { storageKeys } from '@/config/storageKeys'
@@ -59,9 +60,9 @@ const activityDot = {
   unknown: 'bg-[#A89C8B]/75',
 }
 
-// 激活态高亮与状态完全正交：非当前行不再铺状态底色，当前行以暖白浮起纸卡 + 左侧复古棕竖条强高亮。
+// 激活态高亮与状态完全正交：非当前行不再铺状态底色，当前行以浮起纸卡 + 左侧主色竖条强高亮。
 const ACTIVE_ROW_CLASS =
-  "bg-[#F7F1E5] text-ink ring-1 ring-accent/35 shadow-sm before:pointer-events-none before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-r-full before:bg-accent before:content-['']"
+  "bg-bg-card text-ink ring-1 ring-accent/35 shadow-sm before:pointer-events-none before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-r-full before:bg-accent before:content-['']"
 const INACTIVE_ROW_CLASS = 'text-ink-muted hover:bg-bg-card/75 hover:text-ink'
 
 const activityLabel = {
@@ -111,6 +112,8 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const deleteConfirmRef = useRef<HTMLDivElement>(null)
+  const asideRef = useRef<HTMLElement>(null)
+  const attentionRailRef = useRef<HTMLDivElement>(null)
   const { unread, seen } = useSessionUnreadSnapshot(scope)
   // 置顶的分组键按置顶先后排列，持久化到本设备；未置顶组仍按关注度与最近活动排序。
   const [pinnedGroups, setPinnedGroups] = useState<string[]>(() => {
@@ -355,9 +358,18 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
   const [titleScale, setTitleScale] = useState(getRailTitleScale)
   useEffect(() => {
     const sync = (event: Event) => setTitleScale((event as CustomEvent<number>).detail || getRailTitleScale())
+    const syncHydrated = () => setTitleScale(getRailTitleScale())
     window.addEventListener(RAIL_TITLE_SCALE_EVENT, sync)
-    return () => window.removeEventListener(RAIL_TITLE_SCALE_EVENT, sync)
+    window.addEventListener(UI_SETTINGS_HYDRATED_EVENT, syncHydrated)
+    return () => {
+      window.removeEventListener(RAIL_TITLE_SCALE_EVENT, sync)
+      window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, syncHydrated)
+    }
   }, [])
+  useEffect(() => {
+    if (asideRef.current) asideRef.current.inert = collapsed
+    if (attentionRailRef.current) attentionRailRef.current.inert = !collapsed
+  }, [collapsed])
 
   return (
     <div
@@ -368,6 +380,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
       )}
     >
       <aside
+        ref={asideRef}
         aria-label="会话工作区"
         aria-hidden={collapsed}
         className={clsx(
@@ -461,10 +474,14 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                           autoFocus
                           value={titleDraft}
                           onChange={(event) => setTitleDraft(event.target.value)}
-                          onBlur={() => { void finishRename(session) }}
+                          onBlur={() => { void finishRename(session).catch(() => {}) }}
                           onKeyDown={(event) => {
+                            if (event.nativeEvent.isComposing || event.keyCode === 229) return
                             if (event.key === 'Enter') event.currentTarget.blur()
-                            if (event.key === 'Escape') setEditingId(null)
+                            if (event.key === 'Escape') {
+                              event.stopPropagation()
+                              setEditingId(null)
+                            }
                           }}
                           disabled={savingId === session.id}
                           aria-label={`重命名 ${sessionTitle(session)}`}
@@ -604,6 +621,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
         </div>
       </aside>
       <div
+        ref={attentionRailRef}
         aria-label="最近活动会话"
         className={clsx(
           // z-25 is not a Tailwind scale step — the class never generated
@@ -625,7 +643,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
               aria-label={`${sessionTitle(session)}，${activityLabel[activity]}`}
               className={clsx(
                 'group flex h-6 w-6 min-w-6 flex-none items-center justify-center rounded-full border border-line bg-bg-card/95 p-0 shadow-sm backdrop-blur-sm transition-[background-color,box-shadow,transform] hover:-translate-y-px hover:bg-bg-card hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 md:hover:-translate-x-px md:hover:translate-y-0',
-                currentId === session.id && 'border-accent bg-[#F7F1E5] ring-1 ring-accent/40 shadow-md',
+                currentId === session.id && 'border-accent bg-bg-card ring-1 ring-accent/40 shadow-md',
               )}
             >
               <span

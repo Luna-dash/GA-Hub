@@ -65,7 +65,7 @@ export default function Dashboard() {
           <section className={`ga-paper-card px-5 py-4 ${verdictTone[verdict.tone]}`}>
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-start gap-3 min-w-0">
-                <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-current/20 bg-bg-card/65 ${verdict.tone === 'busy' ? 'animate-pulse' : ''}`}>
+                <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[color:color-mix(in_srgb,currentColor_22%,transparent)] bg-bg-card/65 ${verdict.tone === 'busy' ? 'animate-pulse' : ''}`}>
                   <VerdictIcon className="h-4 w-4" aria-hidden="true" />
                 </span>
                 <div className="min-w-0">
@@ -74,7 +74,7 @@ export default function Dashboard() {
                 </div>
               </div>
               {!panel.isLoading && (
-                <div className="flex items-center gap-3 text-xs tabular-nums shrink-0 rounded-lg border border-current/15 bg-bg-card/55 px-3 py-1.5">
+                <div className="flex items-center gap-3 text-xs tabular-nums shrink-0 rounded-lg border border-[color:color-mix(in_srgb,currentColor_18%,transparent)] bg-bg-card/55 px-3 py-1.5">
                   <span>模块 <b>{services.length}</b></span>
                   <span className="opacity-35">·</span>
                   <span>活动 <b>{active.length}</b></span>

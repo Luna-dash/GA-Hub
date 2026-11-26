@@ -25,9 +25,13 @@ export function isLocalCitation(target: string): boolean {
   return /^(?:file:|[a-z]:[\\/]|\\\\|\/|\.\.?[\\/])/i.test(target) || /[\\/]/.test(target) || /\.[^/\\:?#]+(?:[?#].*)?$/.test(target)
 }
 
-// Preserve local citations before react-markdown filters drive letters; all
-// other schemes still pass through its default sanitizer.
-export const citationUrlTransform = (url: string) => isLocalCitation(url) ? url : defaultUrlTransform(url)
+// Preserve local citations only on anchor hrefs before react-markdown filters
+// drive letters; other elements/attributes still pass through defaultUrlTransform.
+export const citationUrlTransform = (
+  url: string,
+  key?: string,
+  node?: { tagName?: string },
+) => (node?.tagName === 'a' && key === 'href' && isLocalCitation(url)) ? url : defaultUrlTransform(url)
 
 // Markdown hrefs are URLs, unlike raw [FILE:...] paths. Decode once here;
 // file: URLs keep their explicit decoding boundary in the backend resolver.
@@ -137,7 +141,7 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
       }}>{busy ? '处理中…' : display}</button>
     {menu && createPortal(<>
       <div className="fixed inset-0" style={{ zIndex: Z_LAYERS.contextMenu }} onClick={() => setMenu(null)} />
-      <div className="fixed max-h-[70vh] min-w-48 max-w-[90vw] overflow-auto rounded-lg border border-[#D8C6A6] bg-[#FFF9ED] py-1 shadow-lg"
+      <div className="ga-paper-popover fixed max-h-[70vh] min-w-48 max-w-[90vw] overflow-auto rounded-lg py-1 text-ink"
         style={{ left: Math.min(menu.x, Math.max(8, window.innerWidth - 440)), top: Math.min(menu.y, Math.max(8, window.innerHeight - 260)), zIndex: Z_LAYERS.contextMenu + 1 }}>
         <div className="px-3 py-1 text-xs break-all">匹配范围：{info?.scope || projectPath || '未绑定项目'}</div>
         {info && !resolved && <div className="px-3 py-1 text-sm">{info.incomplete ? '搜索达到预算或部分目录不可读，结果未完整；请选择明确路径' : info.ambiguous ? '存在多个匹配，请选择' : '未找到文件，请使用完整路径'}</div>}

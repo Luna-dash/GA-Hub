@@ -14,6 +14,7 @@ import { api } from '@/api/client'
 import { AttachmentImage, isImageAttachment } from './AttachmentImage'
 import type { PasteAttachment, UploadResult } from '@/api/types'
 import { canReferenceLocalFiles, selectAttachmentPaths, clipboardAttachmentPaths, referenceAttachments } from '@/utils/desktop'
+import { hasActiveOverlay } from '@/utils/overlayStack'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import {
   filterSlashCommands,
@@ -119,6 +120,7 @@ export function ImagePasteInput({
   const alive = useRef(true)
   const actionRef = useRef(0)
   const addPathsRef = useRef<(paths: string[]) => Promise<void>>(async () => { })
+  const attachmentLocked = Boolean(disabled || readOnly)
   const attachmentsOverLimit = attachments.length + pendingUploads.length > MAX_ATTACHMENTS
   const attachmentsBlocked = pendingUploads.length > 0 || referenceBusy || attachmentsOverLimit
   const attachmentHint = attachmentsOverLimit ? ATTACHMENT_LIMIT_HINT : pendingUploads.some((item) => item.error)
@@ -187,14 +189,26 @@ export function ImagePasteInput({
   const wasDisabled = useRef(disabled)
   useEffect(() => {
     if (!autoFocus) return
+    const canStealFocus = (target: HTMLTextAreaElement) => {
+      if (hasActiveOverlay()) return false
+      const active = document.activeElement
+      if (active instanceof Element && active !== target) {
+        if (active.matches('input, textarea, select, [contenteditable="true"]') || (active as HTMLElement).isContentEditable) {
+          return false
+        }
+      }
+      return true
+    }
     const justReEnabled = wasDisabled.current && !disabled
     wasDisabled.current = !!disabled
     if (disabled) return
     const el = taRef.current
-    if (!el) return
+    if (!el || !canStealFocus(el)) return
     el.focus()
     // Initial mount + re-enable both deserve the rAF retry; cheap.
-    const r = requestAnimationFrame(() => el.focus())
+    const r = requestAnimationFrame(() => {
+      if (canStealFocus(el)) el.focus()
+    })
     if (justReEnabled) {
       // Place caret at the end so re-focus doesn't lose typing position.
       const len = el.value.length
@@ -242,6 +256,7 @@ export function ImagePasteInput({
   }
 
   const removeAttachment = (id: string) => {
+    if (attachmentLocked) return
     const next = attachmentsRef.current.filter((item) => item.file_id !== id)
     attachmentsRef.current = next
     onAttachments(next)
@@ -285,7 +300,7 @@ export function ImagePasteInput({
     attachmentsRef.current.length + pendingUploadsRef.current.length + additional > MAX_ATTACHMENTS
 
   const upload = (files: File[]) => {
-    if (disabled || !acceptFiles || !files.length) return
+    if (attachmentLocked || !acceptFiles || !files.length) return
     if (capacityExceeded(files.length)) {
       setReferenceError(ATTACHMENT_LIMIT_HINT)
       return
@@ -301,7 +316,7 @@ export function ImagePasteInput({
   }
 
   const withReference = async (action: () => Promise<void>) => {
-    if (disabled || !acceptFiles || referenceBusyRef.current) return
+    if (attachmentLocked || !acceptFiles || referenceBusyRef.current) return
     referenceBusyRef.current = true
     setReferenceBusy(true)
     setReferenceError(undefined)
@@ -418,8 +433,9 @@ export function ImagePasteInput({
                 label={`移除 ${a.name}`}
                 variant="badge"
                 iconSize={11}
+                disabled={attachmentLocked}
                 onClick={() => removeAttachment(a.file_id)}
-                className="absolute right-1 top-1 border-line bg-bg/90 text-ink hover:border-status-danger-line hover:text-status-danger"
+                className="absolute right-1 top-1 border-line bg-bg/90 text-ink hover:border-status-danger-line hover:text-status-danger disabled:pointer-events-none disabled:opacity-45"
               />
             </div>
           ) : (
@@ -434,8 +450,9 @@ export function ImagePasteInput({
                 label={`移除 ${a.name}`}
                 variant="badge"
                 iconSize={11}
+                disabled={attachmentLocked}
                 onClick={() => removeAttachment(a.file_id)}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 border-transparent bg-transparent text-ink-muted hover:bg-bg-card hover:text-status-danger"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 border-transparent bg-transparent text-ink-muted hover:bg-bg-card hover:text-status-danger disabled:pointer-events-none disabled:opacity-45"
               />
             </div>
           ))}
@@ -533,17 +550,27 @@ export function ImagePasteInput({
         {acceptFiles && (
           <label
             role="button"
-            tabIndex={0}
+            tabIndex={attachmentLocked ? -1 : 0}
             aria-label="添加文件"
-            className="mb-0.5 flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl text-accent transition hover:bg-accent/10 hover:text-accent"
+            aria-disabled={attachmentLocked || undefined}
+            className={`mb-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-accent transition ${
+              attachmentLocked
+                ? 'cursor-not-allowed opacity-45'
+                : 'cursor-pointer hover:bg-accent/10 hover:text-accent'
+            }`}
             title="添加文件"
             onKeyDown={(e) => {
+              if (attachmentLocked) return
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()
                 e.currentTarget.click()
               }
             }}
             onClick={(e) => {
+              if (attachmentLocked) {
+                e.preventDefault()
+                return
+              }
               if (canReferenceLocalFiles()) {
                 e.preventDefault()
                 const token = actionRef.current
@@ -558,6 +585,7 @@ export function ImagePasteInput({
             <input
               type="file"
               multiple
+              disabled={attachmentLocked}
               className="hidden"
               onChange={(e) => {
                 upload(Array.from(e.target.files || []))
@@ -586,7 +614,7 @@ export function ImagePasteInput({
             setComposing(false)
           }}
           onPaste={(e) => {
-            if (disabled || !acceptFiles) return
+            if (attachmentLocked || !acceptFiles) return
             const items = Array.from(e.clipboardData.items || [])
             const files: File[] = []
             for (const it of items) {
@@ -872,7 +900,7 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
           disabled={loading || !text.trim()}
           aria-label="提问"
           title="发送旁路提问"
-          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-status-warning text-white transition-colors hover:bg-status-warning-strong disabled:bg-[var(--c-disabled-bg)] disabled:text-[var(--c-disabled-text)] disabled:border disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:cursor-not-allowed"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-status-warning text-[var(--c-accent-fg)] transition-colors hover:bg-status-warning-strong disabled:bg-[var(--c-disabled-bg)] disabled:text-[var(--c-disabled-text)] disabled:border disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:cursor-not-allowed"
         ><SendHorizontal className="h-4 w-4" aria-hidden="true" /></button>
       </div>
     </div>

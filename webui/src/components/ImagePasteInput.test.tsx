@@ -5,6 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ChatComposerFrame } from './ChatLayout'
 import { ImagePasteInput } from './ImagePasteInput'
+import { Z_LAYERS } from '@/config/zLayers'
+import { registerOverlay } from '@/utils/overlayStack'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -347,5 +349,98 @@ describe('ImagePasteInput attachment presentation', () => {
     expect(cardClasses).toContain('focus-within:border-accent/70')
     expect(cardClasses).not.toContain('border-2')
     expect(cardClasses.some((cls) => cls.startsWith('ring-') || cls.includes(':ring-'))).toBe(false)
+  })
+
+  it('locks attachment controls and removal when readOnly is true', () => {
+    const onAttachments = vi.fn()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    act(() => {
+      root?.render(
+        <ImagePasteInput
+          text="只读会话"
+          onText={vi.fn()}
+          readOnly
+          acceptFiles
+          attachments={[
+            {
+              file_id: 'file-ro',
+              name: 'readonly.txt',
+              url: '/api/files/file-ro',
+              path: '/tmp/readonly.txt',
+              mime: 'text/plain',
+              size: 12,
+            },
+          ]}
+          onAttachments={onAttachments}
+          onSubmit={vi.fn()}
+        />,
+      )
+    })
+
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    expect(fileInput.disabled).toBe(true)
+
+    const addBtn = container.querySelector<HTMLElement>('[aria-label="添加文件"]')!
+    expect(addBtn.getAttribute('aria-disabled')).toBe('true')
+    expect(addBtn.tabIndex).toBe(-1)
+
+    const removeBtn = container.querySelector<HTMLButtonElement>('[aria-label="移除 readonly.txt"]')!
+    expect(removeBtn.disabled).toBe(true)
+    act(() => { removeBtn.click() })
+    expect(onAttachments).not.toHaveBeenCalled()
+  })
+
+  it('does not steal focus with autoFocus when an overlay is open or another input is active', () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    const externalInput = document.createElement('input')
+    document.body.appendChild(externalInput)
+    externalInput.focus()
+    expect(document.activeElement).toBe(externalInput)
+
+    try {
+      act(() => {
+        root?.render(
+          <ImagePasteInput
+            text=""
+            onText={vi.fn()}
+            attachments={[]}
+            onAttachments={vi.fn()}
+            onSubmit={vi.fn()}
+            autoFocus
+          />,
+        )
+      })
+      expect(document.activeElement).toBe(externalInput)
+
+      externalInput.blur()
+      const overlay = registerOverlay({ zIndex: Z_LAYERS.palette, getPanel: () => null, onEscape: () => {} })
+      try {
+        act(() => {
+          root?.render(
+            <ImagePasteInput
+              text=""
+              onText={vi.fn()}
+              attachments={[]}
+              onAttachments={vi.fn()}
+              onSubmit={vi.fn()}
+              autoFocus
+              disabled={false}
+            />,
+          )
+        })
+        const textarea = container.querySelector('textarea')!
+        expect(document.activeElement).not.toBe(textarea)
+      } finally {
+        overlay.unregister()
+      }
+    } finally {
+      externalInput.remove()
+    }
   })
 })

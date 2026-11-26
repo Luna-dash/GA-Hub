@@ -22,7 +22,14 @@ export const DURABLE_UI_SETTING_KEYS = [
 export type DurableUiSettingKey = (typeof DURABLE_UI_SETTING_KEYS)[number]
 
 export const UI_SETTINGS_HYDRATED_EVENT = 'gahub:ui-settings-hydrated'
+export const UI_SETTINGS_HYDRATION_SETTLED_EVENT = 'gahub:ui-settings-hydration-settled'
 const ALLOWED_KEYS = new Set<string>(DURABLE_UI_SETTING_KEYS)
+let hydratingCount = 0
+let inFlightHydration: Promise<void> | null = null
+
+export function isUiSettingsHydrating(): boolean {
+  return hydratingCount > 0
+}
 const keyRevisions = new Map<string, number>()
 let saveQueue = Promise.resolve()
 
@@ -64,7 +71,26 @@ export function syncUiSetting(key: DurableUiSettingKey, value: string | null): v
   queuePatch({ [key]: value })
 }
 
-export async function hydrateUiSettings(): Promise<void> {
+/** Fetch durable UI settings once, deduplicating concurrent calls while tracking settlement. */
+export function hydrateUiSettings(): Promise<void> {
+  if (typeof api.uiPreferences !== 'function') return Promise.resolve()
+  if (inFlightHydration) return inFlightHydration
+  let run: Promise<void> | null = null
+  run = (async () => {
+    hydratingCount += 1
+    try {
+      await runHydrateUiSettings()
+    } finally {
+      hydratingCount = Math.max(0, hydratingCount - 1)
+      if (inFlightHydration === run) inFlightHydration = null
+      window.dispatchEvent(new Event(UI_SETTINGS_HYDRATION_SETTLED_EVENT))
+    }
+  })()
+  inFlightHydration = run
+  return run
+}
+
+async function runHydrateUiSettings(): Promise<void> {
   if (typeof api.uiPreferences !== 'function') return
   const startRevisions = new Map<string, number>()
   for (const key of DURABLE_UI_SETTING_KEYS) {

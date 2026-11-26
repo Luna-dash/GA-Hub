@@ -1,6 +1,6 @@
 /**
  * Open http(s) URLs outside the embedded WebView so the SPA is never replaced.
- * Open through the desktop shell's native handler; fall back in browser mode.
+ * Open through the desktop shell's native handler.
  */
 
 export function isHttpUrl(href: string | null | undefined): boolean {
@@ -22,6 +22,18 @@ export function isAppInternalUrl(href: string): boolean {
   }
 }
 
+let desktopModulePromise: Promise<typeof import('./desktop')> | null = null
+
+function loadDesktopModule() {
+  if (!desktopModulePromise) {
+    desktopModulePromise = import('./desktop').catch((error) => {
+      desktopModulePromise = null
+      throw error
+    })
+  }
+  return desktopModulePromise
+}
+
 /**
  * External = different origin http(s). Open in OS default browser.
  * Returns true if we handled (caller should preventDefault).
@@ -33,34 +45,20 @@ export async function openExternalIfNeeded(href: string | null | undefined): Pro
 
   const url = new URL(href, window.location.href).href
 
-  const { openExternalUrl } = await import('./desktop')
+  const { openExternalUrl } = await loadDesktopModule()
   await openExternalUrl(url)
   return true
 }
 
-function fallbackOpen(url: string) {
-  try {
-    const w = window.open(url, '_blank', 'noopener,noreferrer')
-    if (w) return
-  } catch {
-    /* ignore */
-  }
-  const a = document.createElement('a')
-  a.href = url
-  a.target = '_blank'
-  a.rel = 'noopener noreferrer'
-  a.style.display = 'none'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-}
-
-/** Capture-phase listener: any external <a> click → OS browser. */
+/** Capture-phase listener: any external <a> click/auxclick → OS browser. */
 export function installExternalLinkInterceptor(): () => void {
-  const onClick = (ev: MouseEvent) => {
+  const isDesktopShell = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+  const onPointerOpen = (ev: MouseEvent) => {
     if (ev.defaultPrevented) return
-    if (ev.button !== 0) return
-    if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return
+    const isAuxClick = ev.type === 'auxclick'
+    if (isAuxClick ? ev.button !== 1 : ev.button !== 0) return
+    // Browser mode lets modifier/middle clicks open tabs natively; desktop WebView must trap them.
+    if (!isDesktopShell() && (isAuxClick || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey)) return
     const t = ev.target as Element | null
     const a = t?.closest?.('a[href]') as HTMLAnchorElement | null
     if (!a) return
@@ -71,6 +69,10 @@ export function installExternalLinkInterceptor(): () => void {
       ev.stopPropagation()
     }
   }
-  document.addEventListener('click', onClick, true)
-  return () => document.removeEventListener('click', onClick, true)
+  document.addEventListener('click', onPointerOpen, true)
+  document.addEventListener('auxclick', onPointerOpen, true)
+  return () => {
+    document.removeEventListener('click', onPointerOpen, true)
+    document.removeEventListener('auxclick', onPointerOpen, true)
+  }
 }

@@ -241,4 +241,24 @@ describe('command palette new conversation', () => {
     expect(api.switchLLM).not.toHaveBeenCalled()
     expect(client.getQueryData<SessionListData>(queryKeys.sessions)?.items.find((s) => s.id === 'old')?.llm_key).toBe('global-model')
   })
+
+  it('ignores Enter and keyCode 229 while IME composition is active', async () => {
+    await act(async () => { window.dispatchEvent(new Event('gahub:command-palette')) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)) })
+
+    const input = host.querySelector<HTMLInputElement>('[role="dialog"] input')!
+    const composingEnter = new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true })
+    act(() => { input.dispatchEvent(composingEnter) })
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+
+    const legacy229 = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    Object.defineProperty(legacy229, 'keyCode', { value: 229 })
+    act(() => { input.dispatchEvent(legacy229) })
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+  })
 })

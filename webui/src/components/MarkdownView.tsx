@@ -1,4 +1,9 @@
-import { CitationLink, PathLink, citationUrlTransform } from './FileCitation'
+import { CitationLink, FileLinkContext, FileTransferConclusion, PathLink, citationUrlTransform } from './FileCitation'
+import { addTransferFile, fileTransferQueryKey } from './FileTransferBox'
+import { QueryClientContext } from '@tanstack/react-query'
+import { PackagePlus } from 'lucide-react'
+import { toast } from '@/stores/toastStore'
+import { errorMessageFromError } from '@/utils/sessionUi'
 // MarkdownView — small wrapper over react-markdown that:
 //   1. Tightens spacing for chat bubbles (.prose-chat in styles/index.css)
 //   2. Fenced code: language label + hover copy + syntax highlight (rehype-highlight)
@@ -17,7 +22,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeHighlight from 'rehype-highlight'
 import katex from 'katex'
-import { memo, ReactNode, useMemo } from 'react'
+import { memo, ReactNode, useContext, useMemo, useState } from 'react'
 import { useCopy } from '@/utils/clipboard'
 import { looksLikeToolTrace } from '@/utils/toolTrace'
 import { renderMarkdownTree } from '@/utils/markdownRenderCache'
@@ -29,6 +34,78 @@ import 'highlight.js/styles/github.css'
 /** chat = full prose; plain = tool-safe; auto = plain when looksLikeToolTrace. */
 export type MarkdownMode = 'chat' | 'plain' | 'auto'
 
+function extractTransferPathFromImageSrc(src: string): string | null {
+  try {
+    const parsed = new URL(src, 'http://localhost')
+    if (parsed.pathname !== '/api/files-by-path') return null
+    const path = parsed.searchParams.get('path')?.trim()
+    return path || null
+  } catch {
+    return null
+  }
+}
+
+function MarkdownTransferImage({ src, alt, title }: { src: string; alt: string; title?: string }) {
+  const conclusion = useContext(FileTransferConclusion)
+  const { sessionId, project: ctxProject } = useContext(FileLinkContext)
+  const cache = useContext(QueryClientContext)
+  const [saving, setSaving] = useState(false)
+  const transferPath = extractTransferPathFromImageSrc(src)
+  const targetSessionId = conclusion?.sessionId ?? sessionId
+  const resolvedProject = conclusion?.project ?? ctxProject
+  const canTransfer = Boolean(conclusion && targetSessionId && transferPath)
+
+  const img = (
+    <img
+      src={src}
+      alt={alt}
+      title={title}
+      loading="lazy"
+      className={canTransfer
+        ? 'block max-h-96 max-w-full rounded-lg border border-line/60 object-contain'
+        : 'my-2 max-h-96 max-w-full rounded-lg border border-line/60 object-contain'}
+    />
+  )
+
+  if (!canTransfer || !conclusion || !targetSessionId || !transferPath) return img
+
+  const saveImage = async () => {
+    if (saving) return
+    setSaving(true)
+    try {
+      await addTransferFile({
+        path: transferPath,
+        engine: conclusion.engine,
+        session_id: targetSessionId,
+        ...(resolvedProject ? { project: resolvedProject } : {}),
+      })
+      void cache?.invalidateQueries({ queryKey: fileTransferQueryKey })
+      toast.success('已放入中转箱')
+    } catch (error) {
+      toast.error(errorMessageFromError(error, '放入中转箱失败'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <span className="group/img relative my-2 inline-block max-w-full">
+      {img}
+      <button
+        type="button"
+        disabled={saving}
+        title="放入中转箱"
+        aria-label="将图片放入中转箱"
+        onClick={() => { void saveImage() }}
+        className="absolute right-2 top-2 inline-flex h-7 items-center gap-1 rounded-md border border-line bg-bg-card/95 px-2 text-xs font-medium text-ink shadow-sm opacity-0 transition-opacity hover:border-accent hover:text-accent focus-visible:opacity-100 group-hover/img:opacity-100 [@media(hover:none)]:opacity-100 disabled:opacity-50"
+      >
+        <PackagePlus size={13} strokeWidth={1.85} aria-hidden="true" />
+        <span>放入中转箱</span>
+      </button>
+    </span>
+  )
+}
+
 const BASE_MD_COMPONENTS = {
   // Wide GFM tables: scroll container (styles in .md-table-wrap)
   table: ({ children, ...props }: any) => (
@@ -37,6 +114,16 @@ const BASE_MD_COMPONENTS = {
     </div>
   ),
   a: ({ href, children }: any) => <CitationLink href={href}>{children}</CitationLink>,
+  img: ({ src, alt, title }: any) => {
+    if (typeof src !== 'string' || !src.trim()) return null
+    return (
+      <MarkdownTransferImage
+        src={src.trim()}
+        alt={typeof alt === 'string' ? alt : ''}
+        title={typeof title === 'string' ? title : undefined}
+      />
+    )
+  },
   // Linkify paths in flowing prose
   p: ({ children }: any) => <p>{linkifyChildren(children)}</p>,
   li: ({ children, className, ...props }: any) => (

@@ -184,8 +184,8 @@ export default function GoalHive() {
         />
       }
       actions={
-        <div className="flex items-center gap-2 whitespace-nowrap">
-          <span className="text-xs text-ink-muted">主模型</span>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs text-ink-muted whitespace-nowrap">主模型</span>
           <MainModelSelect
             llms={llms}
             value={mainLlmKey}

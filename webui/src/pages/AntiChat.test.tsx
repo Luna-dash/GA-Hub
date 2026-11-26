@@ -110,7 +110,7 @@ it('starts Anti on demand from the page header without leaving the chat', async 
       <MemoryRouter initialEntries={['/anti']}><AntiChat /><CurrentPage /></MemoryRouter>
     </QueryClientProvider>))
     await wait(() => expect(button('启用 Agy')?.disabled).toBe(false))
-    expect(button('启用 Agy')?.classList.contains('bg-status-danger')).toBe(true)
+    expect(button('启用 Agy')?.classList.contains('bg-[var(--c-solid-danger-bg)]')).toBe(true)
     expect(fetchMock.mock.calls.filter(([path]) => path === '/api/anti/start')).toHaveLength(0)
     const usageButton = button('检测反重力额度')!
     const usageRequests = () => fetchMock.mock.calls.filter(([path]) => path === '/api/anti/account-usage')

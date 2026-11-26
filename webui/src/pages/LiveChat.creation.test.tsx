@@ -21,28 +21,31 @@ type CreatedSession = Awaited<ReturnType<typeof api.createSession>>
 vi.mock('@/api/client', () => ({ api: {
   sessions: vi.fn(), llms: vi.fn(), projects: vi.fn(), sessionRuntimes: vi.fn(), sessionRuntime: vi.fn(),
   scheduledChats: vi.fn(), createScheduledChat: vi.fn(), createSession: vi.fn(), sessionRun: vi.fn(), createProject: vi.fn(), bindProject: vi.fn(),
-  deleteSession: vi.fn(), rewindSession: vi.fn(),
+  deleteSession: vi.fn(), rewindSession: vi.fn(), updateSessionModel: vi.fn(),
 } }))
 vi.mock('@/hooks/useHubEvent', () => ({ useHubEvent: vi.fn() }))
 vi.mock('@/components/PageShell', () => ({ PageShell: ({ children, middleArea }: { children: ReactNode; middleArea: ReactNode }) => <div>{middleArea}{children}</div> }))
 vi.mock('@/components/ProjectSelect', () => ({ ProjectSelect: ({ onChange, options }: { onChange: (value: string) => void; options: { key: string; name: string }[] }) => <><button data-new-project onClick={() => onChange('__new__')}>New project</button><span data-project-options>{options.map(option => option.name).join('|')}</span></> }))
 vi.mock('@/stores/dialogStore', () => ({ dialog: { confirm: vi.fn(), prompt: vi.fn(), alert: vi.fn() } }))
 vi.mock('@/utils/desktop', () => ({ isTauriDesktop: () => true, selectDirectory: vi.fn() }))
-vi.mock('@/components/SessionRail', () => ({ SessionRail: ({ onCreate, onDelete }: { onCreate: () => void; onDelete?: (id: string) => void }) => <>
+vi.mock('@/components/SessionRail', () => ({ SessionRail: ({ onCreate, onDelete, onSelect }: { onCreate: () => void; onDelete?: (id: string) => void; onSelect?: (id: string) => void }) => <>
   <button data-create onClick={onCreate}>Create</button>
+  {onSelect && <button data-select-second onClick={() => onSelect('second')}>Select second</button>}
   {onDelete && <button data-delete-old onClick={() => void onDelete('old')}>Delete old</button>}
 </> }))
 vi.mock('@/components/ModelSelect', () => ({ MainModelSelect: () => null }))
 vi.mock('@/components/LiveChatTranscript', () => ({ LiveChatTranscript: forwardRef(() => null) }))
 vi.mock('@/components/LiveChatComposer', () => ({
-  LiveChatComposer: ({ draftKey, onSubmit, onSlashCommand, onSchedule }: {
+  LiveChatComposer: ({ draftKey, onSubmit, onSlashCommand, onSchedule, submitDisabled, scheduleDisabled }: {
     draftKey: string
     onSchedule: () => void
     onSubmit: (draft: { draftKey: string; text: string; attachments: [] }) => void
     onSlashCommand: (command: '/new' | '/rewind', draft: { draftKey: string; text: string; attachments: [] }) => void
+    submitDisabled?: boolean
+    scheduleDisabled?: boolean
   }) => <>
-    <button data-schedule onClick={onSchedule}>Schedule</button>
-    <button data-submit onClick={() => onSubmit({ draftKey, text: 'hello', attachments: [] })}>Send</button>
+    <button data-schedule disabled={Boolean(scheduleDisabled)} onClick={onSchedule}>Schedule</button>
+    <button data-submit disabled={Boolean(submitDisabled)} onClick={() => onSubmit({ draftKey, text: 'hello', attachments: [] })}>Send</button>
     <button data-submit-rewind onClick={() => onSubmit({ draftKey, text: '/rewind', attachments: [] })}>SubmitRewind</button>
     <button data-slash onClick={() => onSlashCommand('/new', { draftKey, text: '/new', attachments: [] })}>New</button>
   </>,
@@ -343,4 +346,82 @@ describe('LiveChat creation ownership', () => {
     expect(useChatStore.getState().sessionId).toBe('theme-1')
   })
 
+  it('allows creating and sending a first message after deleting the last regular session on /chat', async () => {
+    let serverSessions = [row('old')]
+    vi.mocked(api.sessions).mockImplementation(() => Promise.resolve({ total: serverSessions.length, items: [...serverSessions] }))
+    vi.mocked(api.deleteSession).mockImplementation(async (id) => {
+      serverSessions = serverSessions.filter((s) => s.id !== id)
+      return { ok: true } as never
+    })
+    vi.mocked(api.sessionRun).mockResolvedValue({} as never)
+    localStorage.setItem(storageKeys.currentSessionId, 'old')
+
+    await act(async () => root.render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/chat']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <Navigation />
+          <Routes><Route path="/chat" element={<LiveChat />} /></Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ))
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
+    expect(useChatStore.getState().sessionId).toBe('old')
+
+    await click('[data-delete-old]')
+    expect(useChatStore.getState().sessionId).toBeNull()
+    expect(host.querySelector('output')?.textContent).toBe('/chat')
+
+    act(() => useDraftStore.getState().setText('liveChat:pending', 'hello'))
+    await click('[data-submit]')
+    expect(api.createSession).toHaveBeenCalledOnce()
+
+    const created = row('new')
+    serverSessions = [created]
+    await act(async () => finish(created))
+    expect(api.sessionRun).toHaveBeenCalledWith('new', 'hello', [], [])
+    expect(host.querySelector('output')?.textContent).toBe('/chat?session=new')
+    expect(useChatStore.getState().sessionId).toBe('new')
+  })
+
+  it('unlocks sending after auto-repair failure and caches mid-flight repair across session switches', async () => {
+    const staleOld: CreatedSession = { ...row('old'), llm_key: 'removed-model' }
+    const healthySecond: CreatedSession = row('second')
+    let serverSessions = [staleOld, healthySecond]
+    vi.mocked(api.sessions).mockImplementation(() => Promise.resolve({ total: serverSessions.length, items: [...serverSessions] }))
+    vi.mocked(api.sessionRun).mockResolvedValue({} as never)
+
+    // 1. Initial auto-repair fails -> composer should unlock so user can retry on send
+    vi.mocked(api.updateSessionModel).mockRejectedValueOnce(new Error('repair failed'))
+    await mount()
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
+    expect(api.updateSessionModel).toHaveBeenCalledWith('old', 'model')
+    expect(host.querySelector<HTMLButtonElement>('[data-submit]')?.disabled).toBe(false)
+
+    // Clicking send retries repair, succeeds, and delivers the message
+    vi.mocked(api.updateSessionModel).mockImplementationOnce(async () => {
+      const repaired = { ...staleOld, llm_key: 'model' }
+      serverSessions = [repaired, healthySecond]
+      return repaired
+    })
+    act(() => useDraftStore.getState().setText('liveChat:old', 'hello'))
+    await click('[data-submit]')
+    expect(api.updateSessionModel).toHaveBeenCalledTimes(2)
+    expect(api.sessionRun).toHaveBeenCalledWith('old', 'hello', [], [])
+
+    // 2. Switching away while auto-repair is in flight still caches the resolved repair
+    await act(async () => root.unmount())
+    root = createRoot(host)
+    client.clear()
+    vi.mocked(api.updateSessionModel).mockReset()
+    serverSessions = [staleOld, healthySecond]
+    vi.mocked(api.sessions).mockImplementation(() => Promise.resolve({ total: serverSessions.length, items: [...serverSessions] }))
+    let finishRepair!: (s: CreatedSession) => void
+    vi.mocked(api.updateSessionModel).mockImplementationOnce(() => new Promise((resolve) => { finishRepair = resolve }))
+    await mount()
+    await click('[data-select-second]')
+    const repairedOld = { ...staleOld, llm_key: 'model' }
+    serverSessions = [repairedOld, healthySecond]
+    await act(async () => finishRepair(repairedOld))
+    expect(client.getQueryData<SessionListData>(queryKeys.sessions)?.items.find((s) => s.id === 'old')?.llm_key).toBe('model')
+  })
 })
