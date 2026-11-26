@@ -2798,6 +2798,165 @@ def test_worker_session_load_fallback_and_broken_thread_run_turn(tmp_path, monke
     assert worker._dirty is True
 
 
+def test_worker_run_turn_prefers_db_generation_ms_over_partial_stream(tmp_path, monkeypatch):
+    import sqlite3
+
+    from server.services import agy_protocol
+
+    def _enc_varint(v: int) -> bytes:
+        out = bytearray()
+        while v >= 0x80:
+            out.append((v & 0x7F) | 0x80)
+            v >>= 7
+        out.append(v)
+        return bytes(out)
+
+    def _enc_len(field_num: int, payload: bytes) -> bytes:
+        return _enc_varint((field_num << 3) | 2) + _enc_varint(len(payload)) + payload
+
+    def _enc_ts(sec: int, nanos: int = 0) -> bytes:
+        body = bytearray(_enc_varint((1 << 3) | 0) + _enc_varint(sec))
+        if nanos:
+            body.extend(_enc_varint((2 << 3) | 0) + _enc_varint(nanos))
+        return bytes(body)
+
+    def _enc_step(sec_start: int, sec_end: int) -> bytes:
+        meta = _enc_len(1, _enc_ts(sec_start)) + _enc_len(8, _enc_ts(sec_end))
+        return _enc_len(5, meta)
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path / "admin")
+    agy_profile.ensure_workspace_ready()
+    app_dir = agy_profile.workspace_app_data_dir()
+    (app_dir / "conversations").mkdir(parents=True, exist_ok=True)
+    conv_db = app_dir / "conversations" / "conv-speed.db"
+    c = sqlite3.connect(conv_db)
+    c.execute("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)")
+    c.execute("INSERT INTO steps VALUES (0, 15, ?)", (_enc_step(1_764_000_000, 1_764_000_050),))
+    c.commit()
+    c.close()
+
+    worker = agy_runtime.AgySessionWorker(
+        profile_id="default",
+        session_id="s-speed",
+        workspace=tmp_path,
+        executable="agy",
+        version="1.5.2",
+    )
+
+    class DummyProc:
+        pid = 998
+        stdin = None
+        stdout = None
+
+        def poll(self):
+            return None
+
+    def fake_rpc(method, params=None, *, timeout=60.0, cancel_event=None):
+        if method == "initialize":
+            return {"agentInfo": {"version": "1.5.2"}, "agentCapabilities": {"loadSession": True}}
+        if method == "session/resume":
+            raise agy_profile.AgyProfileError(502, "resume unsupported")
+        if method == "session/load":
+            return {
+                "sessionId": "conv-speed",
+                "models": {"currentModelId": "gemini-4-hydrogen-high", "availableModels": [{"modelId": "gemini-4-hydrogen-high"}]},
+            }
+        return {}
+
+    rt_tmp = tmp_path / "rt-speed"
+    rt_tmp.mkdir()
+    monkeypatch.setattr(worker, "_rpc", fake_rpc)
+    monkeypatch.setattr(agy_runtime.agy_profile, "activate_profile_in_workspace", lambda pid: None)
+    monkeypatch.setattr(agy_runtime.agy_profile, "acp_spawn_command", lambda *a, **kw: ["agy"])
+    monkeypatch.setattr(agy_runtime.agy_profile, "clean_agy_env", lambda *a, **kw: {})
+    monkeypatch.setattr(agy_runtime.agy_profile, "make_runtime_temp_dir", lambda pid: rt_tmp)
+    monkeypatch.setattr(agy_runtime.agy_profile, "claim_workspace_lock", lambda: None)
+    monkeypatch.setattr(agy_runtime.agy_profile, "release_workspace_lock", lambda: None)
+    monkeypatch.setattr(agy_runtime.child_job, "spawn", lambda *a, **kw: DummyProc())
+    monkeypatch.setattr(agy_runtime.threading, "Thread", lambda *a, **kw: SimpleNamespace(start=lambda: None))
+
+    mono = [1000.0]
+    monkeypatch.setattr(agy_protocol.time, "monotonic", lambda: mono[0])
+
+    sid = worker.ensure_started(resume_conversation="conv-speed", add_dirs=())
+    assert sid == "conv-speed"
+
+    pending_steps: list[tuple[int, int, bytes]] = []
+
+    def fake_send(frame):
+        rid = frame.get("id")
+        if frame.get("method") == "session/prompt":
+            worker._handle_session_update({
+                "sessionId": "conv-speed",
+                "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "hello "}},
+            })
+            mono[0] += 0.8
+            worker._handle_session_update({
+                "sessionId": "conv-speed",
+                "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "world"}},
+            })
+            conn = sqlite3.connect(conv_db)
+            conn.executemany("INSERT INTO steps VALUES (?, ?, ?)", pending_steps)
+            conn.commit()
+            conn.close()
+        if rid is not None:
+            with worker._rpc_lock:
+                entry = worker._pending_rpcs.pop(rid, None)
+            if entry is not None:
+                entry[1]["result"] = {
+                    "stopReason": "end_turn",
+                    "usage": {"inputTokens": 1000, "outputTokens": 500},
+                }
+                entry[0].set()
+
+    monkeypatch.setattr(worker, "_send_frame", fake_send)
+
+    def _run(run_id: str, steps: list[tuple[int, int, bytes]]) -> dict:
+        pending_steps[:] = steps
+        worker._closed = False
+        return worker.run_turn(
+            run_id=run_id,
+            prompt_text="go",
+            model="gemini-4-hydrogen-high",
+            effort="high",
+            mode="plan",
+            permission_mode="approval-required",
+            resume_conversation="conv-speed",
+            add_dirs=(),
+            staged_paths=[],
+            attachments=[],
+            allowed_roots=[tmp_path],
+            on_event=lambda e: None,
+        )
+
+    # Case 1: Multi-call DB timestamps beat partial 800ms stream burst.
+    res_timed = _run("run-timed", [
+        (1, 15, _enc_step(1_764_000_100, 1_764_000_106)),
+        (2, 132, _enc_step(1_764_000_106, 1_764_000_166)),
+        (3, 15, _enc_step(1_764_000_167, 1_764_000_171)),
+    ])
+    assert res_timed["status"] == "success"
+    assert res_timed["usage"]["model_calls"] == 2
+    assert res_timed["usage"]["generation_ms"] == 10_000
+
+    # Case 2: Multi-call untimed DB omits generation_ms instead of falling back to partial stream burst.
+    res_untimed_multi = _run("run-untimed-multi", [
+        (4, 15, b"dummy-call-1"),
+        (5, 15, b"dummy-call-2"),
+    ])
+    assert res_untimed_multi["status"] == "success"
+    assert res_untimed_multi["usage"]["model_calls"] == 2
+    assert "generation_ms" not in res_untimed_multi["usage"]
+
+    # Case 3: Single-call untimed DB safely falls back to normalizer streaming duration (800ms).
+    res_untimed_single = _run("run-untimed-single", [
+        (6, 15, b"dummy-single"),
+    ])
+    assert res_untimed_single["status"] == "success"
+    assert res_untimed_single["usage"]["model_calls"] == 1
+    assert res_untimed_single["usage"]["generation_ms"] == 800
+
+
 
 
 

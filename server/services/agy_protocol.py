@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
 from urllib.parse import unquote, urlsplit
 
 from .agy_profile import AgyProfileError
@@ -1984,6 +1984,10 @@ _GO_DURATION_UNITS = {
 _PENDING_REPLY_TAIL_BYTES = 64 * 1024
 _TRANSCRIPT_BYTE_CAP = 1024 * 1024
 _MAX_STEP_BYTES = 1024 * 1024
+_PLANNER_META_PREFIX_BYTES = 4096
+_PROTO_TS_MIN_SEC = 1_000_000_000
+_PROTO_TS_MAX_SEC = 4_102_444_800
+_MAX_PLANNER_STEP_DURATION_SEC = 3600.0
 _MAX_MESSAGE_FILES = 500
 _MAX_DETACHED_CHILDREN = 256
 _HIGH_PRIORITY_MESSAGE = "MESSAGE_PRIORITY_HIGH"
@@ -2140,6 +2144,132 @@ def evaluate_turn_outcome(
     }
 
 
+def _read_varint(data: bytes, pos: int) -> tuple[int, int] | None:
+    """Decode an unsigned base-128 protobuf varint within a 10-byte guard."""
+    val = 0
+    shift = 0
+    n = len(data)
+    while pos < n and shift < 70:
+        b = data[pos]
+        pos += 1
+        val |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return val, pos
+        shift += 7
+    return None
+
+
+def _iter_proto_fields(data: bytes) -> Iterator[tuple[int, int, Any]]:
+    """Yield `(field_number, wire_type, value)` pairs, stopping cleanly on truncation."""
+    pos = 0
+    n = len(data)
+    while pos < n:
+        tag_res = _read_varint(data, pos)
+        if tag_res is None:
+            return
+        tag, pos = tag_res
+        field_num = tag >> 3
+        wire_type = tag & 0x07
+        if field_num <= 0:
+            return
+        if wire_type == 0:
+            val_res = _read_varint(data, pos)
+            if val_res is None:
+                return
+            val, pos = val_res
+            yield field_num, wire_type, val
+        elif wire_type == 1:
+            if pos + 8 > n:
+                return
+            yield field_num, wire_type, data[pos : pos + 8]
+            pos += 8
+        elif wire_type == 2:
+            len_res = _read_varint(data, pos)
+            if len_res is None:
+                return
+            length, pos = len_res
+            if length < 0 or pos + length > n:
+                return
+            yield field_num, wire_type, data[pos : pos + length]
+            pos += length
+        elif wire_type == 5:
+            if pos + 4 > n:
+                return
+            yield field_num, wire_type, data[pos : pos + 4]
+            pos += 4
+        else:
+            return
+
+
+def _decode_proto_timestamp(data: bytes) -> float | None:
+    """Decode a protobuf `google.protobuf.Timestamp` strictly into epoch seconds."""
+    if not data or len(data) > 32:
+        return None
+    pos = 0
+    n = len(data)
+    seconds: int | None = None
+    nanos = 0
+    while pos < n:
+        tag_res = _read_varint(data, pos)
+        if tag_res is None:
+            return None
+        tag, pos = tag_res
+        field_num = tag >> 3
+        wire_type = tag & 0x07
+        if wire_type != 0 or field_num not in (1, 2):
+            return None
+        val_res = _read_varint(data, pos)
+        if val_res is None:
+            return None
+        val, pos = val_res
+        if field_num == 1:
+            seconds = val
+        else:
+            nanos = val
+    if seconds is None or seconds < _PROTO_TS_MIN_SEC or seconds > _PROTO_TS_MAX_SEC:
+        return None
+    if nanos < 0 or nanos >= 1_000_000_000:
+        return None
+    return seconds + nanos / 1_000_000_000.0
+
+
+def _extract_planner_step_duration_ms(payload: bytes) -> int | None:
+    """Extract `completed_at - created_at` (ms) from `PLANNER_RESPONSE` metadata field 5."""
+    if not payload:
+        return None
+    for field_num, wire_type, value in _iter_proto_fields(payload):
+        if field_num != 5 or wire_type != 2:
+            continue
+        created_at: float | None = None
+        completed_8: float | None = None
+        completed_7: float | None = None
+        completed_32: float | None = None
+        for meta_num, meta_wire, meta_val in _iter_proto_fields(value):
+            if meta_wire != 2:
+                continue
+            if meta_num == 1:
+                created_at = _decode_proto_timestamp(meta_val)
+            elif meta_num == 8:
+                completed_8 = _decode_proto_timestamp(meta_val)
+            elif meta_num == 7:
+                completed_7 = _decode_proto_timestamp(meta_val)
+            elif meta_num == 32:
+                completed_32 = _decode_proto_timestamp(meta_val)
+        completed_at = (
+            completed_8
+            if completed_8 is not None
+            else (completed_7 if completed_7 is not None else completed_32)
+        )
+        if created_at is None or completed_at is None:
+            return None
+        delta_sec = completed_at - created_at
+        if delta_sec <= 0.0 or delta_sec > _MAX_PLANNER_STEP_DURATION_SEC:
+            return None
+        ms = int(round(delta_sec * 1000.0))
+        return ms if ms > 0 else None
+    return None
+
+
 def _read_steps_readonly(db_path: Path, fn: Any) -> Any:
     try:
         uri = f"{db_path.resolve().as_uri()}?mode=ro"
@@ -2241,28 +2371,56 @@ class PromptOutcomeWatcher:
 
         return evaluate_turn_outcome(stop_reason, step_type, payload, reached_model)
 
-    def model_call_count(self) -> int:
-        """Count planner/model generation steps recorded in local `steps` during this turn."""
+    def turn_model_metrics(self) -> tuple[int, int]:
+        """Return `(model_calls, generation_ms)` for planner steps recorded during this turn."""
         if self._untrusted:
-            return 0
+            return 0, 0
         seg = ("conversations", f"{self.session_id}.db")
         resolved = _resolve_managed_path(self.app_data_dir, seg, "file")
         if resolved is None:
-            return 0
+            return 0, 0
         db_path, st = resolved
         if self._identity is not None and (st.st_dev, st.st_ino) != self._identity:
-            return 0
+            return 0, 0
         start_idx = self._turn_start_index
-        row = _read_steps_readonly(
-            db_path,
-            lambda conn: conn.execute(
-                "SELECT COUNT(*) FROM steps WHERE idx > ? AND step_type = ?",
-                (start_idx, _PLANNER_RESPONSE_STEP_TYPE),
-            ).fetchone(),
-        )
-        if isinstance(row, tuple) and isinstance(row[0], int) and row[0] > 0:
-            return row[0]
-        return 0
+
+        def _query(conn: sqlite3.Connection) -> tuple[int, int]:
+            rows = conn.execute(
+                "SELECT idx, substr(step_payload, 1, ?), length(step_payload) "
+                "FROM steps WHERE idx > ? AND step_type = ? ORDER BY idx",
+                (_PLANNER_META_PREFIX_BYTES, start_idx, _PLANNER_RESPONSE_STEP_TYPE),
+            ).fetchall()
+            model_calls = len(rows)
+            if model_calls == 0:
+                return 0, 0
+            total_ms = 0
+            timed_calls = 0
+            for idx, prefix, full_len in rows:
+                raw = (
+                    bytes(prefix)
+                    if isinstance(prefix, (bytes, bytearray, memoryview))
+                    else (prefix.encode("utf-8", errors="replace") if isinstance(prefix, str) else b"")
+                )
+                dur_ms = _extract_planner_step_duration_ms(raw)
+                if (
+                    dur_ms is None
+                    and isinstance(full_len, int)
+                    and _PLANNER_META_PREFIX_BYTES < full_len <= _MAX_STEP_BYTES
+                ):
+                    full_row = conn.execute("SELECT step_payload FROM steps WHERE idx = ?", (idx,)).fetchone()
+                    if full_row and isinstance(full_row[0], (bytes, bytearray, memoryview)):
+                        dur_ms = _extract_planner_step_duration_ms(bytes(full_row[0]))
+                if dur_ms is not None:
+                    total_ms += dur_ms
+                    timed_calls += 1
+            return model_calls, total_ms if timed_calls == model_calls else 0
+
+        res = _read_steps_readonly(db_path, _query)
+        return res if isinstance(res, tuple) else (0, 0)
+
+    def model_call_count(self) -> int:
+        """Count planner/model generation steps recorded in local `steps` during this turn."""
+        return self.turn_model_metrics()[0]
 
 
 def _read_inbox_messages(app_data_dir: Path, conversation_id: str) -> list[dict[str, Any]] | None:

@@ -768,6 +768,110 @@ def test_normalizer_generation_ms_and_watcher_model_call_count(tmp_path):
     conn.close()
 
     assert watcher.model_call_count() == 3
+    assert watcher.turn_model_metrics() == (3, 0)
+
+
+def test_prompt_outcome_watcher_turn_model_metrics_protobuf_durations(tmp_path):
+    import sqlite3
+
+    def _enc_varint(v: int) -> bytes:
+        out = bytearray()
+        while v >= 0x80:
+            out.append((v & 0x7F) | 0x80)
+            v >>= 7
+        out.append(v)
+        return bytes(out)
+
+    def _enc_len(field_num: int, payload: bytes) -> bytes:
+        return _enc_varint((field_num << 3) | 2) + _enc_varint(len(payload)) + payload
+
+    def _enc_ts(sec: int, nanos: int = 0) -> bytes:
+        body = bytearray(_enc_varint((1 << 3) | 0) + _enc_varint(sec))
+        if nanos:
+            body.extend(_enc_varint((2 << 3) | 0) + _enc_varint(nanos))
+        return bytes(body)
+
+    def _enc_step(
+        created: tuple[int, int] | None,
+        completed: tuple[int, int] | None,
+        *,
+        completed_field: int = 8,
+        extra_prefix_bytes: int = 0,
+    ) -> bytes:
+        meta = bytearray()
+        if created is not None:
+            meta.extend(_enc_len(1, _enc_ts(*created)))
+        if completed is not None:
+            meta.extend(_enc_len(completed_field, _enc_ts(*completed)))
+        buf = bytearray()
+        if extra_prefix_bytes > 0:
+            buf.extend(_enc_len(2, b"x" * extra_prefix_bytes))
+        buf.extend(_enc_len(5, bytes(meta)))
+        return bytes(buf)
+
+    app_dir = tmp_path / "antigravity-cli"
+    (app_dir / "conversations").mkdir(parents=True)
+    db_path = app_dir / "conversations" / "conv-pb.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)")
+    # Prior turn planner step must be excluded by prepare().
+    conn.execute("INSERT INTO steps VALUES (0, 15, ?)", (_enc_step((1_764_000_000, 0), (1_764_000_099, 0)),))
+    conn.commit()
+
+    watcher = proto.PromptOutcomeWatcher(app_dir, "conv-pb")
+    watcher.prepare()
+
+    # Call 1 (12.345s via f5.8), non-planner tool step (60s ignored), Call 2 (4.500s via fallback f5.7).
+    conn.execute(
+        "INSERT INTO steps VALUES (1, 15, ?)",
+        (_enc_step((1_764_000_100, 0), (1_764_000_112, 345_000_000), completed_field=8),),
+    )
+    conn.execute(
+        "INSERT INTO steps VALUES (2, 132, ?)",
+        (_enc_step((1_764_000_112, 500_000_000), (1_764_000_172, 500_000_000)),),
+    )
+    conn.execute(
+        "INSERT INTO steps VALUES (3, 15, ?)",
+        (_enc_step((1_764_000_173, 0), (1_764_000_177, 500_000_000), completed_field=7),),
+    )
+    conn.commit()
+
+    # Mid-turn steer preserves _turn_start_index; Call 3 places f5 beyond 4096-byte prefix (3.155s via f5.32).
+    watcher.prepare(reset_turn=False)
+    conn.execute(
+        "INSERT INTO steps VALUES (4, 15, ?)",
+        (_enc_step((1_764_000_178, 0), (1_764_000_181, 155_000_000), completed_field=32, extra_prefix_bytes=5000),),
+    )
+    conn.commit()
+    conn.close()
+
+    assert watcher.turn_model_metrics() == (3, 20_000)
+    assert watcher.model_call_count() == 3
+
+    # Reject text noise, zero deltas, out-of-range deltas (>3600s), and partial timing across multi-call turns.
+    assert proto._extract_planner_step_duration_ms(b"INVALID_ARGUMENT (code 400)") is None
+    assert proto._extract_planner_step_duration_ms(_enc_step((1_764_000_100, 0), (1_764_000_100, 0))) is None
+    assert proto._extract_planner_step_duration_ms(_enc_step((1_764_000_100, 0), (1_764_004_000, 0))) is None
+
+    partial_db = app_dir / "conversations" / "conv-partial.db"
+    pconn = sqlite3.connect(partial_db)
+    pconn.execute("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)")
+    pconn.commit()
+    partial_watcher = proto.PromptOutcomeWatcher(app_dir, "conv-partial")
+    partial_watcher.prepare()
+    pconn.execute(
+        "INSERT INTO steps VALUES (1, 15, ?)",
+        (_enc_step((1_764_000_100, 0), (1_764_000_110, 0)),),
+    )
+    pconn.execute(
+        "INSERT INTO steps VALUES (2, 15, ?)",
+        (_enc_step((1_764_000_120, 0), (1_764_000_115, 0)),),
+    )
+    pconn.commit()
+    pconn.close()
+
+    assert partial_watcher.turn_model_metrics() == (2, 0)
+    assert partial_watcher.model_call_count() == 2
 
 
 

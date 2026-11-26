@@ -1479,10 +1479,10 @@ class AgySessionWorker:
             answer = turn.normalizer.final_answer
             progress_messages = list(turn.normalizer.progress_messages)
             usage = dict(turn.normalizer.usage)
-            model_calls = outcome_watcher.model_call_count()
+            model_calls, db_gen_ms = outcome_watcher.turn_model_metrics()
             if model_calls > 0:
                 usage["model_calls"] = model_calls
-            gen_ms = turn.normalizer.generation_ms
+            gen_ms = db_gen_ms if db_gen_ms > 0 else (turn.normalizer.generation_ms if model_calls <= 1 else 0)
             if gen_ms > 0:
                 usage["generation_ms"] = gen_ms
             notice_text = "；".join(notices) if notices else None
