@@ -7,11 +7,10 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { ChevronDown, Clock, LoaderCircle } from 'lucide-react'
+import { Clock, LoaderCircle } from 'lucide-react'
 import { CloseIconButton, Plus, RotateCw, SendHorizontal, X } from './ActionIcons'
 import { ScheduleClockFace, scheduleClockButtonClass } from './ScheduleClockFace'
 import { api } from '@/api/client'
-import { Z_LAYERS } from '@/config/zLayers'
 import { AttachmentImage, isImageAttachment } from './AttachmentImage'
 import type { PasteAttachment, UploadResult } from '@/api/types'
 import { canReferenceLocalFiles, selectAttachmentPaths, clipboardAttachmentPaths, referenceAttachments } from '@/utils/desktop'
@@ -39,15 +38,10 @@ interface Props {
   activeSubmit?: {
     label: string
     title?: string
-    description?: string
     icon?: 'send' | 'queue'
     disabled?: boolean
     onSubmit: () => void
     secondary?: {
-      label: string
-      description?: string
-      icon?: 'send' | 'queue'
-      shortcutHint?: string
       disabled?: boolean
       onSubmit: () => void
     }
@@ -116,8 +110,6 @@ export function ImagePasteInput({
   // any Enter that lands within ~80ms of it.
   const lastCompEndRef = useRef(0)
   const [dragOver, setDragOver] = useState(false)
-  const [activeMenuOpen, setActiveMenuOpen] = useState(false)
-  const activeMenuRef = useRef<HTMLDivElement>(null)
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
   const pendingUploadsRef = useRef<PendingUpload[]>([])
   const nextUploadId = useRef(0)
@@ -374,39 +366,15 @@ export function ImagePasteInput({
   const submit = () => {
     if (!canDispatchInput()) return
     if (stopActive) {
-      if (activeSubmit && !activeSubmit.disabled) {
-        setActiveMenuOpen(false)
-        activeSubmit.onSubmit()
-      }
+      if (activeSubmit && !activeSubmit.disabled) activeSubmit.onSubmit()
       return
     }
     if (!submitDisabled) onSubmit()
   }
   const submitSecondary = () => {
     if (!stopActive || !activeSubmit?.secondary || activeSubmit.secondary.disabled || !canDispatchInput()) return
-    setActiveMenuOpen(false)
     activeSubmit.secondary.onSubmit()
   }
-
-  useEffect(() => {
-    if (!stopActive || !activeSubmit?.secondary || disabled) setActiveMenuOpen(false)
-  }, [stopActive, activeSubmit?.secondary, disabled])
-
-  useEffect(() => {
-    if (!activeMenuOpen) return
-    const onPointerDown = (event: PointerEvent) => {
-      if (!activeMenuRef.current?.contains(event.target as Node)) setActiveMenuOpen(false)
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setActiveMenuOpen(false)
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown)
-    }
-  }, [activeMenuOpen])
 
   return (
     <div
@@ -714,84 +682,7 @@ export function ImagePasteInput({
         {submitAccessory}
         {stopActive && activeSubmit && (() => {
           const PrimaryActiveIcon = (activeSubmit.icon ?? 'send') === 'queue' ? Clock : SendHorizontal
-          const SecondaryActiveIcon = (activeSubmit.secondary?.icon ?? 'queue') === 'send' ? SendHorizontal : Clock
-          return activeSubmit.secondary ? (
-            <div ref={activeMenuRef} className="relative mb-0.5 inline-flex shrink-0 items-stretch">
-              <div className="inline-flex h-10 items-stretch overflow-hidden rounded-xl">
-                <button
-                  type="button"
-                  onClick={submit}
-                  disabled={disabled || activeSubmit.disabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)}
-                  className="ga-solid-primary inline-flex h-full w-9 items-center justify-center rounded-l-xl rounded-r-none"
-                  aria-label={activeSubmit.label}
-                  title={attachmentHint ?? activeSubmit.title ?? activeSubmit.label}
-                >
-                  <PrimaryActiveIcon className="h-4 w-4" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveMenuOpen(v => !v)}
-                  disabled={disabled || attachmentsBlocked}
-                  aria-label="选择发送或排队方式"
-                  aria-haspopup="menu"
-                  aria-expanded={activeMenuOpen}
-                  title="选择排队或插话方式"
-                  className="ga-solid-primary inline-flex h-full w-[18px] items-center justify-center rounded-l-none rounded-r-xl border-l border-white/25"
-                >
-                  <ChevronDown className={clsx('h-3 w-3 transition-transform', activeMenuOpen && 'rotate-180')} aria-hidden="true" />
-                </button>
-              </div>
-              {activeMenuOpen && (
-                <div
-                  role="menu"
-                  aria-label="运行中发送方式"
-                  style={{ zIndex: Z_LAYERS.contextMenu }}
-                  className="ga-paper-popover absolute bottom-full right-0 mb-2 w-60 rounded-xl p-1.5 text-left"
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={activeSubmit.disabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)}
-                    onClick={submit}
-                    className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-accent-soft/70 disabled:opacity-45"
-                  >
-                    <PrimaryActiveIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center justify-between gap-2 text-xs font-semibold text-ink">
-                        <span>{activeSubmit.label}（默认）</span>
-                        <kbd className="font-mono text-[10px] font-normal text-ink-faint">Enter</kbd>
-                      </span>
-                      <span className="mt-0.5 block text-[11px] leading-snug text-ink-muted">
-                        {activeSubmit.description ?? '立即介入当前运行中的任务'}
-                      </span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={activeSubmit.secondary.disabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)}
-                    onClick={submitSecondary}
-                    className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-bg-card/85 disabled:opacity-45"
-                  >
-                    <SecondaryActiveIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden="true" />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center justify-between gap-2 text-xs font-semibold text-ink">
-                        <span>{activeSubmit.secondary.label}</span>
-                        {activeSubmit.secondary.shortcutHint && (
-                          <kbd className="font-mono text-[10px] font-normal text-ink-faint">{activeSubmit.secondary.shortcutHint}</kbd>
-                        )}
-                      </span>
-                      {activeSubmit.secondary.description && (
-                        <span className="mt-0.5 block text-[11px] leading-snug text-ink-muted">
-                          {activeSubmit.secondary.description}
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
+          return (
             <button
               type="button"
               onClick={submit}

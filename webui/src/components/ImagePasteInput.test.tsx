@@ -280,15 +280,10 @@ describe('ImagePasteInput attachment presentation', () => {
           stopActive
           activeSubmit={{
             label: '加入排队',
-            title: '加入待发队列',
-            description: '不打断当前推理，本轮成功后按顺序自动发送',
+            title: '加入待发队列（Enter 加入排队 · Ctrl+Enter 插话纠偏）',
             icon: 'queue',
             onSubmit: onQueue,
             secondary: {
-              label: '插话纠偏',
-              description: '立即介入当前运行中的任务',
-              icon: 'send',
-              shortcutHint: 'Ctrl+Enter',
               onSubmit: onSteer,
             },
           }}
@@ -299,27 +294,27 @@ describe('ImagePasteInput attachment presentation', () => {
     const primaryBtn = container.querySelector<HTMLButtonElement>('button[aria-label="加入排队"]')
     expect(primaryBtn).not.toBeNull()
     expect(primaryBtn?.querySelector('svg')?.getAttribute('class')).toContain('lucide-clock')
+    expect(container.querySelector('button[aria-label="选择发送或排队方式"]')).toBeNull()
+    expect(container.querySelector('[role="menu"][aria-label="运行中发送方式"]')).toBeNull()
 
     const textarea = container.querySelector('textarea')!
     act(() => {
-      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      primaryBtn?.click()
     })
     expect(onQueue).toHaveBeenCalledTimes(1)
+    expect(onSteer).not.toHaveBeenCalled()
+
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(onQueue).toHaveBeenCalledTimes(2)
     expect(onSteer).not.toHaveBeenCalled()
 
     act(() => {
       textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
     })
     expect(onSteer).toHaveBeenCalledTimes(1)
-    expect(onQueue).toHaveBeenCalledTimes(1)
-
-    const splitToggle = container.querySelector<HTMLButtonElement>('button[aria-label="选择发送或排队方式"]')!
-    act(() => { splitToggle.click() })
-    const menu = container.querySelector<HTMLElement>('[role="menu"][aria-label="运行中发送方式"]')!
-    expect(menu.textContent).toContain('加入排队（默认）')
-    expect(menu.textContent).toContain('不打断当前推理，本轮成功后按顺序自动发送')
-    expect(menu.textContent).toContain('插话纠偏')
-    expect(menu.textContent).toContain('Ctrl+Enter')
+    expect(onQueue).toHaveBeenCalledTimes(2)
   })
 
   it('suppresses inner focus outline on textarea and shifts subtle focus border to ChatComposerFrame', () => {

@@ -1900,8 +1900,8 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
       expect(host.querySelector('button[aria-label="加入排队"]')).not.toBeNull()
     })
 
-    // 1. Default Enter & primary click enqueue into QueueDock above composer without calling /steer
-    expect(host.querySelector('button[aria-label="选择发送或排队方式"]')).not.toBeNull()
+    // 1. Default Enter & primary click enqueue into QueueDock above composer without split chevron or calling /steer
+    expect(host.querySelector('button[aria-label="选择发送或排队方式"]')).toBeNull()
     const textarea = host.querySelector('textarea')!
     expect(textarea.placeholder).toContain('Enter 加入排队')
     expect(textarea.placeholder).toContain('Ctrl+Enter 插话纠偏')
@@ -2011,7 +2011,7 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
       expect(host.querySelector('[data-anti-queued-dock]')).toBeNull()
     })
 
-    // Ctrl+Enter & Split menu -> "插话纠偏" send /steer
+    // Ctrl+Enter -> immediate /steer without split menu
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '先跑单测')
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
@@ -2024,30 +2024,14 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
       expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/runs/r-active-1/steer` && (c.body as { prompt?: string })?.prompt === '先跑单测')).toBe(true)
     })
 
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '菜单插话')
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="选择发送或排队方式"]')!.click() })
-    await vi.waitFor(async () => {
-      await flush()
-      expect(host.querySelector('[role="menu"][aria-label="运行中发送方式"]')).not.toBeNull()
-    })
-    const steerMenuItem = [...host.querySelectorAll<HTMLButtonElement>('[role="menu"][aria-label="运行中发送方式"] [role="menuitem"]')]
-      .find(b => b.textContent?.includes('插话纠偏'))!
-    await act(async () => { steerMenuItem.click() })
-    await vi.waitFor(async () => {
-      await flush()
-      expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/runs/r-active-1/steer` && (c.body as { prompt?: string })?.prompt === '菜单插话')).toBe(true)
-    })
-
-    // 2. When supports_steering is false, split dropdown hides; paused dock offers "继续发送" -> /queue/dispatch.
+    // 2. When supports_steering is false, Ctrl+Enter hint disappears; primary queue button remains and paused dock offers "继续发送" -> /queue/dispatch.
     supportsSteering = false
     await act(async () => { await cache.invalidateQueries({ queryKey: ['anti-daemon-status'] }) })
     await vi.waitFor(async () => {
       await flush()
       expect(host.querySelector('button[aria-label="加入排队"]')).not.toBeNull()
       expect(host.querySelector('button[aria-label="选择发送或排队方式"]')).toBeNull()
+      expect(textarea.placeholder).not.toContain('Ctrl+Enter 插话纠偏')
     })
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '排队补充总结')

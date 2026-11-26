@@ -1679,16 +1679,11 @@ function Conversation({ session, headerActions, profileId, profilesData, support
             title: canNativeSteer
               ? '加入待发队列（Enter 加入排队 · Ctrl+Enter 插话纠偏）'
               : '加入排队，本轮结束后自动发送',
-            description: '不打断当前推理，本轮成功后按顺序自动发送',
             icon: 'queue',
             disabled: enqueue.isPending || send.isPending || !history.isSuccess,
             onSubmit: queueCurrentInput,
             ...(canNativeSteer ? {
               secondary: {
-                label: '插话纠偏',
-                description: '立即介入当前运行中的任务',
-                icon: 'send',
-                shortcutHint: 'Ctrl+Enter',
                 disabled: steer.isPending || send.isPending || !history.isSuccess,
                 onSubmit: steerCurrentInput,
               },
