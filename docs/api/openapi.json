@@ -8960,6 +8960,134 @@
         ],
         "title": "AntiModelList"
       },
+      "AntiModelPricingOverride": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "input": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input"
+          },
+          "cache_read": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Read"
+          },
+          "cache_write": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Write"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "long_context_threshold": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long Context Threshold"
+          },
+          "long_context_input": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long Context Input"
+          },
+          "long_context_cache_read": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long Context Cache Read"
+          },
+          "long_context_cache_write": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long Context Cache Write"
+          },
+          "long_context_output": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long Context Output"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "AntiModelPricingOverride"
+      },
       "AntiModelsConfigPatch": {
         "properties": {
           "auto_sync": {
@@ -9086,6 +9214,20 @@
               }
             ],
             "title": "Hidden Models"
+          },
+          "pricing_overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/AntiModelPricingOverride"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Overrides"
           }
         },
         "type": "object",
@@ -9184,6 +9326,13 @@
             },
             "type": "array",
             "title": "Hidden Models"
+          },
+          "pricing_overrides": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AntiModelPricingOverride"
+            },
+            "type": "object",
+            "title": "Pricing Overrides"
           }
         },
         "type": "object",
@@ -9816,6 +9965,70 @@
         ],
         "title": "AntiRunCreate"
       },
+      "AntiRunModelUsage": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "default": "model"
+          },
+          "calls": {
+            "type": "integer",
+            "title": "Calls",
+            "default": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens",
+            "default": 0
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "title": "Cache Read Tokens",
+            "default": 0
+          },
+          "cache_write_tokens": {
+            "type": "integer",
+            "title": "Cache Write Tokens",
+            "default": 0
+          },
+          "thinking_tokens": {
+            "type": "integer",
+            "title": "Thinking Tokens",
+            "default": 0
+          },
+          "estimated_cost_usd": {
+            "type": "number",
+            "title": "Estimated Cost Usd",
+            "default": 0.0
+          },
+          "pricing_source": {
+            "type": "string",
+            "title": "Pricing Source",
+            "default": "catalog"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "model",
+          "display_name"
+        ],
+        "title": "AntiRunModelUsage"
+      },
       "AntiRunResp": {
         "properties": {
           "id": {
@@ -10074,6 +10287,31 @@
               }
             ],
             "title": "Generation Ms"
+          },
+          "estimated_cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Cost Usd"
+          },
+          "model_breakdown": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AntiRunModelUsage"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Breakdown"
           }
         },
         "type": "object",
@@ -10483,6 +10721,71 @@
         ],
         "title": "AntiStepUpdate"
       },
+      "AntiUsageModelBreakdown": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "runs": {
+            "type": "integer",
+            "title": "Runs",
+            "default": 0
+          },
+          "calls": {
+            "type": "integer",
+            "title": "Calls",
+            "default": 0
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Roles"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens",
+            "default": 0
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "title": "Cache Read Tokens",
+            "default": 0
+          },
+          "cache_write_tokens": {
+            "type": "integer",
+            "title": "Cache Write Tokens",
+            "default": 0
+          },
+          "thinking_tokens": {
+            "type": "integer",
+            "title": "Thinking Tokens",
+            "default": 0
+          },
+          "estimated_cost_usd": {
+            "type": "number",
+            "title": "Estimated Cost Usd",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "model",
+          "display_name"
+        ],
+        "title": "AntiUsageModelBreakdown"
+      },
       "AntiUsageStats": {
         "properties": {
           "window_hours": {
@@ -10533,6 +10836,13 @@
             "type": "number",
             "title": "Estimated Cost Usd",
             "default": 0.0
+          },
+          "by_model": {
+            "items": {
+              "$ref": "#/components/schemas/AntiUsageModelBreakdown"
+            },
+            "type": "array",
+            "title": "By Model"
           }
         },
         "type": "object",

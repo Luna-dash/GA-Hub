@@ -3559,6 +3559,31 @@ export interface components {
             /** Default Effort */
             default_effort?: string | null;
         };
+        /** AntiModelPricingOverride */
+        AntiModelPricingOverride: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Input */
+            input?: number | null;
+            /** Cache Read */
+            cache_read?: number | null;
+            /** Cache Write */
+            cache_write?: number | null;
+            /** Output */
+            output?: number | null;
+            /** Long Context Threshold */
+            long_context_threshold?: number | null;
+            /** Long Context Input */
+            long_context_input?: number | null;
+            /** Long Context Cache Read */
+            long_context_cache_read?: number | null;
+            /** Long Context Cache Write */
+            long_context_cache_write?: number | null;
+            /** Long Context Output */
+            long_context_output?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** AntiModelsConfigPatch */
         AntiModelsConfigPatch: {
             /** Auto Sync */
@@ -3581,6 +3606,10 @@ export interface components {
             orchestrator_presets?: components["schemas"]["AntiOrchestratorPreset"][] | null;
             /** Hidden Models */
             hidden_models?: string[] | null;
+            /** Pricing Overrides */
+            pricing_overrides?: {
+                [key: string]: components["schemas"]["AntiModelPricingOverride"];
+            } | null;
         };
         /** AntiModelsConfigResp */
         AntiModelsConfigResp: {
@@ -3624,6 +3653,10 @@ export interface components {
             orchestrator_presets?: components["schemas"]["AntiOrchestratorPreset"][];
             /** Hidden Models */
             hidden_models?: string[];
+            /** Pricing Overrides */
+            pricing_overrides?: {
+                [key: string]: components["schemas"]["AntiModelPricingOverride"];
+            };
         };
         /** AntiOrchestratorPreset */
         AntiOrchestratorPreset: {
@@ -3810,6 +3843,60 @@ export interface components {
             /** Orchestrator Executor */
             orchestrator_executor?: string | null;
         };
+        /** AntiRunModelUsage */
+        AntiRunModelUsage: {
+            /** Model */
+            model: string;
+            /** Display Name */
+            display_name: string;
+            /**
+             * Role
+             * @default model
+             */
+            role: string;
+            /**
+             * Calls
+             * @default 0
+             */
+            calls: number;
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
+            /**
+             * Output Tokens
+             * @default 0
+             */
+            output_tokens: number;
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
+            /**
+             * Cache Write Tokens
+             * @default 0
+             */
+            cache_write_tokens: number;
+            /**
+             * Thinking Tokens
+             * @default 0
+             */
+            thinking_tokens: number;
+            /**
+             * Estimated Cost Usd
+             * @default 0
+             */
+            estimated_cost_usd: number;
+            /**
+             * Pricing Source
+             * @default catalog
+             */
+            pricing_source: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** AntiRunResp */
         AntiRunResp: {
             /** Id */
@@ -3902,6 +3989,10 @@ export interface components {
             model_calls?: number | null;
             /** Generation Ms */
             generation_ms?: number | null;
+            /** Estimated Cost Usd */
+            estimated_cost_usd?: number | null;
+            /** Model Breakdown */
+            model_breakdown?: components["schemas"]["AntiRunModelUsage"][] | null;
         };
         /** AntiSessionCompactReq */
         AntiSessionCompactReq: {
@@ -4007,6 +4098,55 @@ export interface components {
             type: "step.update";
             step: components["schemas"]["AntiStep"];
         };
+        /** AntiUsageModelBreakdown */
+        AntiUsageModelBreakdown: {
+            /** Model */
+            model: string;
+            /** Display Name */
+            display_name: string;
+            /**
+             * Runs
+             * @default 0
+             */
+            runs: number;
+            /**
+             * Calls
+             * @default 0
+             */
+            calls: number;
+            /** Roles */
+            roles?: string[];
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
+            /**
+             * Output Tokens
+             * @default 0
+             */
+            output_tokens: number;
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
+            /**
+             * Cache Write Tokens
+             * @default 0
+             */
+            cache_write_tokens: number;
+            /**
+             * Thinking Tokens
+             * @default 0
+             */
+            thinking_tokens: number;
+            /**
+             * Estimated Cost Usd
+             * @default 0
+             */
+            estimated_cost_usd: number;
+        };
         /** AntiUsageStats */
         AntiUsageStats: {
             /** Window Hours */
@@ -4056,6 +4196,8 @@ export interface components {
              * @default 0
              */
             estimated_cost_usd: number;
+            /** By Model */
+            by_model?: components["schemas"]["AntiUsageModelBreakdown"][];
         };
         /** AntiWorkerItem */
         AntiWorkerItem: {

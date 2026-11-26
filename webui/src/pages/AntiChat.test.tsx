@@ -3417,3 +3417,94 @@ it('keeps cached quota rows and layout stable while pending or failing, then syn
 })
 
 
+
+
+it('renders per-model cost breakdown in AntiAccountUsageButton stats footer', async () => {
+  const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
+  vi.stubGlobal('fetch', vi.fn((path: string) => {
+    if (path === '/api/anti/account-usage') {
+      return Promise.resolve(reply({
+        state: 'authenticated',
+        rows: [{ model: 'Gemini', limit: 'Five Hour Limit Remaining', remaining_pct: 90, resets_at: null }],
+      }))
+    }
+    if (path === '/api/anti/quota') return Promise.resolve(reply([]))
+    if (path.startsWith('/api/anti/stats')) {
+      return Promise.resolve(reply({
+        window_hours: 0,
+        total_runs: 1,
+        success_runs: 1,
+        failed_runs: 0,
+        rate_limited_runs: 0,
+        total_tokens: 155_000,
+        cache_hit_ratio: 0.5,
+        estimated_cost_usd: 0.0042,
+        by_model: [
+          {
+            model: 'gemini-4-neon',
+            display_name: 'Gemini 4 Neon',
+            runs: 1,
+            calls: 1,
+            roles: ['planner'],
+            input_tokens: 50_000,
+            output_tokens: 2_000,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            thinking_tokens: 0,
+            estimated_cost_usd: 0.003,
+          },
+          {
+            model: 'claude-sonnet-5-5',
+            display_name: 'Claude Sonnet 5.5',
+            runs: 1,
+            calls: 2,
+            roles: ['executor'],
+            input_tokens: 100_000,
+            output_tokens: 3_000,
+            cache_read_tokens: 77_500,
+            cache_write_tokens: 0,
+            thinking_tokens: 0,
+            estimated_cost_usd: 0.0012,
+          },
+        ],
+      }))
+    }
+    return Promise.resolve(reply({}))
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const dialog = () => document.body.querySelector<HTMLElement>('[role=dialog][aria-label="反重力剩余额度"]')
+  const flush = () => act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+
+  try {
+    await act(async () => root.render(
+      <QueryClientProvider client={cache}>
+        <AntiAccountUsageButton running profileName="系统默认" onChecked={() => {}} />
+      </QueryClientProvider>,
+    ))
+    const btn = host.querySelector<HTMLButtonElement>('button[aria-label="检测反重力额度"]')!
+    await act(async () => { btn.click() })
+    await flush()
+    await flush()
+
+    const byModelEl = dialog()?.querySelector('[data-anti-usage-by-model]')
+    expect(byModelEl).not.toBeNull()
+    expect(byModelEl!.textContent).toContain('分模型明细')
+    expect(byModelEl!.textContent).toContain('按官方 API 价估算')
+    expect(byModelEl!.textContent).toContain('Gemini 4 Neon(规划)')
+    expect(byModelEl!.textContent).toContain('Claude Sonnet 5.5(执行)')
+    expect(byModelEl!.textContent).toContain('~$0.003')
+    expect(byModelEl!.textContent).toContain('~$0.0012')
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})

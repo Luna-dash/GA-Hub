@@ -2320,6 +2320,16 @@ def _read_steps_readonly(db_path: Path, fn: Any) -> Any:
         conn.close()
 
 
+def _nonneg_int(val: Any) -> int:
+    if val is None or isinstance(val, bool):
+        return 0
+    try:
+        num = int(val)
+    except (TypeError, ValueError):
+        return 0
+    return num if num > 0 else 0
+
+
 class PromptOutcomeWatcher:
     """Ports T3 Code's `watchAntigravityPromptOutcome` against `<app_data_dir>/conversations/<sid>.db`."""
 
@@ -2330,6 +2340,7 @@ class PromptOutcomeWatcher:
         self._identity: tuple[int, int] | None = None
         self._start_index: int = -1
         self._turn_start_index: int = -1
+        self._turn_transcript_offset: int = 0
 
     def prepare(self, *, reset_turn: bool = True) -> None:
         self._untrusted = False
@@ -2337,9 +2348,18 @@ class PromptOutcomeWatcher:
         self._start_index = -1
         if reset_turn:
             self._turn_start_index = -1
+            self._turn_transcript_offset = 0
         if not _NATIVE_ID_RE.fullmatch(self.session_id):
             self._untrusted = True
             return
+        if reset_turn:
+            t_resolved = _resolve_managed_path(
+                self.app_data_dir,
+                ("brain", self.session_id, ".system_generated", "logs", "transcript.jsonl"),
+                "file",
+            )
+            if t_resolved is not None:
+                self._turn_transcript_offset = int(t_resolved[1].st_size)
         if _resolve_managed_path(self.app_data_dir, ("conversations",), "directory") is None:
             return
         seg = ("conversations", f"{self.session_id}.db")
@@ -2453,6 +2473,66 @@ class PromptOutcomeWatcher:
     def model_call_count(self) -> int:
         """Count planner/model generation steps recorded in local `steps` during this turn."""
         return self.turn_model_metrics()[0]
+
+    def turn_step_usages(self) -> list[dict[str, Any]]:
+        """Read incremental PLANNER_RESPONSE and CHECKPOINT usage steps from transcript.jsonl for this turn."""
+        if self._untrusted or not _NATIVE_ID_RE.fullmatch(self.session_id):
+            return []
+        seg = ("brain", self.session_id, ".system_generated", "logs", "transcript.jsonl")
+        resolved = _resolve_managed_path(self.app_data_dir, seg, "file")
+        if resolved is None:
+            return []
+        path, st = resolved
+        start_offset = self._turn_transcript_offset if 0 <= self._turn_transcript_offset <= st.st_size else 0
+        try:
+            with path.open("rb") as fh:
+                if start_offset > 0:
+                    fh.seek(start_offset)
+                raw_bytes = fh.read()
+        except OSError:
+            return []
+
+        entries: dict[int, dict[str, Any]] = {}
+        anonymous: list[dict[str, Any]] = []
+        for raw_line in raw_bytes.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line.decode("utf-8", errors="replace"))
+            except ValueError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            kind = str(obj.get("type") or "").strip().upper()
+            if kind not in {"PLANNER_RESPONSE", "CHECKPOINT"}:
+                continue
+            in_tok = _nonneg_int(obj.get("input_tokens"))
+            cr_tok = _nonneg_int(obj.get("cache_read_tokens"))
+            cw_tok = _nonneg_int(obj.get("cache_write_tokens"))
+            out_tok = _nonneg_int(obj.get("output_tokens"))
+            think_tok = _nonneg_int(obj.get("thinking_tokens"))
+            if in_tok + cr_tok + cw_tok + out_tok + think_tok <= 0:
+                continue
+            step_idx = obj.get("step_index")
+            item = {
+                "kind": kind,
+                "step_index": step_idx if isinstance(step_idx, int) and not isinstance(step_idx, bool) else None,
+                "model": str(obj.get("model") or "").strip(),
+                "input_tokens": in_tok,
+                "cache_read_tokens": cr_tok,
+                "cache_write_tokens": cw_tok,
+                "output_tokens": out_tok,
+                "thinking_tokens": think_tok,
+            }
+            if item["step_index"] is not None:
+                entries[item["step_index"]] = item
+            else:
+                anonymous.append(item)
+
+        ordered = [entries[idx] for idx in sorted(entries)]
+        ordered.extend(anonymous)
+        return ordered
 
 
 def _read_inbox_messages(app_data_dir: Path, conversation_id: str) -> list[dict[str, Any]] | None:

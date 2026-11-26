@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   currentHourStartMs,
   formatCompactTokens,
+  formatEstimatedUsd,
   formatQuotaPct,
   formatRunUsage,
   geminiQuotaSummary,
@@ -165,5 +166,60 @@ describe('quotaLimitDisplayLabel and sortQuotaRows', () => {
       'Claude & GPT (shared)|Five Hour Limit Remaining|40',
       'Claude & GPT (shared)|Weekly Limit Remaining|70',
     ])
+  })
+})
+
+
+describe('estimated USD formatting & per-model breakdown', () => {
+  it('formats sub-penny and standard USD amounts accurately', () => {
+    expect(formatEstimatedUsd(0)).toBe('$0.00')
+    expect(formatEstimatedUsd(0.00004)).toBe('<$0.0001')
+    expect(formatEstimatedUsd(0.0024)).toBe('$0.0024')
+    expect(formatEstimatedUsd(0.12)).toBe('$0.12')
+    expect(formatEstimatedUsd(1.5)).toBe('$1.50')
+  })
+
+  it('includes cost estimate and per-model breakdown in formatRunUsage tooltip', () => {
+    const res = formatRunUsage({
+      input_tokens: 150_000,
+      output_tokens: 5_000,
+      cache_read_tokens: 100_000,
+      cache_write_tokens: 0,
+      thinking_tokens: 0,
+      model_calls: 3,
+      estimated_cost_usd: 0.0042,
+      model_breakdown: [
+        {
+          model: 'gemini-4-neon',
+          display_name: 'Gemini 4 Neon',
+          role: 'planner',
+          calls: 1,
+          input_tokens: 50_000,
+          output_tokens: 2_000,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+          thinking_tokens: 0,
+          estimated_cost_usd: 0.003,
+          pricing_source: 'catalog',
+        },
+        {
+          model: 'gemini-4-hydrogen',
+          display_name: 'Gemini 4 Hydrogen',
+          role: 'executor',
+          calls: 2,
+          input_tokens: 100_000,
+          output_tokens: 3_000,
+          cache_read_tokens: 100_000,
+          cache_write_tokens: 0,
+          thinking_tokens: 0,
+          estimated_cost_usd: 0.0012,
+          pricing_source: 'catalog',
+        },
+      ],
+    })
+    expect(res?.text).toContain('~$0.0042')
+    expect(res?.title).toContain('按官方公开 API 价估算 ~$0.0042')
+    expect(res?.title).toContain('Gemini 4 Neon(规划) ×1 ~$0.003')
+    expect(res?.title).toContain('Gemini 4 Hydrogen(执行) ×2 ~$0.0012')
   })
 })

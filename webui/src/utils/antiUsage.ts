@@ -5,6 +5,25 @@ export interface FormattedRunUsage {
   title: string
 }
 
+const MODEL_ROLE_LABELS: Record<string, string> = {
+  planner: '规划',
+  executor: '执行',
+  compaction: '压缩',
+  model: '主模型',
+}
+
+export function modelRoleLabel(role?: string | null): string {
+  const key = (role || '').trim().toLowerCase()
+  return MODEL_ROLE_LABELS[key] || (key || '主模型')
+}
+
+export function formatEstimatedUsd(usd?: number | null): string {
+  if (usd == null || !Number.isFinite(usd) || usd <= 0) return '$0.00'
+  if (usd < 0.0001) return '<$0.0001'
+  if (usd < 0.01) return `$${usd.toFixed(4).replace(/0+$/, '')}`
+  return `$${usd.toFixed(2)}`
+}
+
 function trimDecimal(value: number, digits: number): string {
   return value.toFixed(digits).replace(/\.?0+$/, '')
 }
@@ -184,6 +203,11 @@ export function formatRunUsage(usage?: AntiRunUsage | null): FormattedRunUsage |
   const effectiveOut = Math.max(totalOut, thinking)
   const tokPerSec = generationMs >= 150 && effectiveOut > 0 ? effectiveOut / (generationMs / 1000) : null
 
+  const estimatedCost = typeof usage.estimated_cost_usd === 'number' && usage.estimated_cost_usd > 0
+    ? usage.estimated_cost_usd
+    : null
+  const breakdown = Array.isArray(usage.model_breakdown) ? usage.model_breakdown : []
+
   const parts = [
     `${formatCompactTokens(totalIn)} in`,
     `${formatCompactTokens(totalOut)} out`,
@@ -192,12 +216,28 @@ export function formatRunUsage(usage?: AntiRunUsage | null): FormattedRunUsage |
   if (totalIn > 0 && cached > 0) parts.push(`缓存 ${hitPct}%`)
   if (modelCalls > 0) parts.push(`${modelCalls} 次调用`)
   if (tokPerSec !== null) parts.push(`${tokPerSec >= 100 ? Math.round(tokPerSec) : tokPerSec.toFixed(1)} tok/s`)
+  if (estimatedCost !== null) parts.push(`~${formatEstimatedUsd(estimatedCost)}`)
 
   const inBreakdown = [
     `新输入 ${freshIn.toLocaleString('en-US')}`,
     cached > 0 ? `缓存命中 ${cached.toLocaleString('en-US')}` : null,
     cacheWrite > 0 ? `缓存写入 ${cacheWrite.toLocaleString('en-US')}` : null,
   ].filter(Boolean).join(' + ')
+
+  const splitSummary = (() => {
+    if (breakdown.length === 0) return null
+    if (breakdown.length === 1 && (breakdown[0].role === 'model' || !breakdown[0].role)) {
+      return `计价模型 ${breakdown[0].display_name || breakdown[0].model}`
+    }
+    const items = breakdown.map((entry) => {
+      const name = entry.display_name || entry.model
+      const roleTag = entry.role && entry.role !== 'model' ? `(${modelRoleLabel(entry.role)})` : ''
+      const callsTag = (entry.calls ?? 0) > 0 ? ` ×${entry.calls}` : ''
+      const usdTag = (entry.estimated_cost_usd ?? 0) > 0 ? ` ~${formatEstimatedUsd(entry.estimated_cost_usd)}` : ''
+      return `${name}${roleTag}${callsTag}${usdTag}`
+    })
+    return `分模型 ${items.join(' / ')}`
+  })()
 
   const titleParts = [
     `总输入 ${totalIn.toLocaleString('en-US')}${cached > 0 || cacheWrite > 0 ? `（${inBreakdown}）` : ''}`,
@@ -206,6 +246,8 @@ export function formatRunUsage(usage?: AntiRunUsage | null): FormattedRunUsage |
     totalIn > 0 && cached > 0 ? `缓存命中率 ${((cached / totalIn) * 100).toFixed(1)}%` : null,
     modelCalls > 0 ? `模型调用 ${modelCalls} 次` : null,
     tokPerSec !== null ? `生成速度 ${tokPerSec.toFixed(1)} tok/s（有效输出耗时 ${(generationMs / 1000).toFixed(1)}s）` : null,
+    estimatedCost !== null ? `按官方公开 API 价估算 ~${formatEstimatedUsd(estimatedCost)}（仅作估算参考）` : null,
+    splitSummary,
   ].filter(Boolean)
 
   return {

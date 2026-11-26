@@ -115,6 +115,21 @@ class AntiOrchestratorPreset(BaseModel):
     executor: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None
 
 
+class AntiModelPricingOverride(BaseModel):
+    model_config = {"extra": "allow"}
+
+    display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)] | None = None
+    input: float | None = Field(default=None, ge=0.0)
+    cache_read: float | None = Field(default=None, ge=0.0)
+    cache_write: float | None = Field(default=None, ge=0.0)
+    output: float | None = Field(default=None, ge=0.0)
+    long_context_threshold: int | None = Field(default=None, ge=0)
+    long_context_input: float | None = Field(default=None, ge=0.0)
+    long_context_cache_read: float | None = Field(default=None, ge=0.0)
+    long_context_cache_write: float | None = Field(default=None, ge=0.0)
+    long_context_output: float | None = Field(default=None, ge=0.0)
+
+
 class AntiModelsConfigResp(BaseModel):
     config_path: str
     auto_sync: bool = True
@@ -131,6 +146,7 @@ class AntiModelsConfigResp(BaseModel):
         default_factory=lambda: [AntiOrchestratorPreset(**p) for p in agy_models.DEFAULT_ORCHESTRATOR_PRESETS]
     )
     hidden_models: list[str] = Field(default_factory=list)
+    pricing_overrides: dict[str, AntiModelPricingOverride] = Field(default_factory=dict)
 
 
 class AntiModelsConfigPatch(BaseModel):
@@ -143,6 +159,7 @@ class AntiModelsConfigPatch(BaseModel):
     quota_rules: list[AntiQuotaRule] | None = None
     orchestrator_presets: list[AntiOrchestratorPreset] | None = None
     hidden_models: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]] | None = None
+    pricing_overrides: dict[str, AntiModelPricingOverride] | None = None
 
 
 class AgyOrchestratorSettings(BaseModel):
@@ -211,6 +228,22 @@ class AntiApprovalPrompt(BaseModel):
     question: AntiApprovalQuestion | None = None
 
 
+class AntiRunModelUsage(BaseModel):
+    model_config = {"extra": "allow"}
+
+    model: str
+    display_name: str
+    role: str = "model"
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    thinking_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    pricing_source: str = "catalog"
+
+
 class AntiRunUsage(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
@@ -219,6 +252,8 @@ class AntiRunUsage(BaseModel):
     thinking_tokens: int = 0
     model_calls: int | None = None
     generation_ms: int | None = None
+    estimated_cost_usd: float | None = None
+    model_breakdown: list[AntiRunModelUsage] | None = None
 
 
 class AntiRunResp(BaseModel):
@@ -499,6 +534,20 @@ class AgyCodeLoginSubmit(BaseModel):
     code: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=16384)]
 
 
+class AntiUsageModelBreakdown(BaseModel):
+    model: str
+    display_name: str
+    runs: int = 0
+    calls: int = 0
+    roles: list[str] = Field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    thinking_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+
+
 class AntiUsageStats(BaseModel):
     window_hours: int
     total_runs: int = 0
@@ -510,6 +559,7 @@ class AntiUsageStats(BaseModel):
     tokens_per_sec: float = 0.0
     cache_hit_ratio: float = 0.0
     estimated_cost_usd: float = 0.0
+    by_model: list[AntiUsageModelBreakdown] = Field(default_factory=list)
 
 
 class AntiQuotaPool(BaseModel):
@@ -843,6 +893,11 @@ def update_models_config(body: AntiModelsConfigPatch, request: Request):
         quota_rules=[r.model_dump() for r in body.quota_rules] if body.quota_rules is not None else None,
         orchestrator_presets=[p.model_dump() for p in body.orchestrator_presets] if body.orchestrator_presets is not None else None,
         hidden_models=body.hidden_models,
+        pricing_overrides=(
+            {k: v.model_dump(exclude_none=True) for k, v in body.pricing_overrides.items()}
+            if body.pricing_overrides is not None
+            else None
+        ),
     )
     return agy_models.public_config_view()
 

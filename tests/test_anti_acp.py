@@ -896,3 +896,85 @@ def test_prompt_outcome_watcher_turn_model_metrics_protobuf_durations(tmp_path):
 
 
 
+
+
+
+def test_prompt_outcome_watcher_turn_step_usages_incremental_and_fail_closed(tmp_path):
+    import json
+
+    from server.services import agy_protocol
+
+    app_data = tmp_path / "app"
+    logs_dir = app_data / "brain" / "sess_split" / ".system_generated" / "logs"
+    logs_dir.mkdir(parents=True)
+    transcript = logs_dir / "transcript.jsonl"
+
+    # Pre-existing turn-0 entries before prepare()
+    transcript.write_text(
+        "\n".join([
+            json.dumps({
+                "step_index": 0,
+                "type": "PLANNER_RESPONSE",
+                "model": "gemini-4-neon",
+                "input_tokens": 999,
+                "cache_read_tokens": 0,
+                "output_tokens": 99,
+            }),
+        ])
+        + "\n",
+        encoding="utf-8",
+    )
+
+    watcher = agy_protocol.PromptOutcomeWatcher(app_data, "sess_split")
+    watcher.prepare()
+
+    # Append turn-1 entries (including updated duplicate step_index and a CHECKPOINT without model)
+    with transcript.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "status": "RUNNING",
+            "model": "gemini-pro-orchestrator-neon",
+            "input_tokens": 1000,
+            "cache_read_tokens": 0,
+            "output_tokens": 50,
+        }) + "\n")
+        fh.write(json.dumps({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "model": "gemini-pro-orchestrator-neon",
+            "input_tokens": 1000,
+            "cache_read_tokens": 500,
+            "output_tokens": 120,
+        }) + "\n")
+        fh.write(json.dumps({
+            "step_index": 2,
+            "type": "CHECKPOINT",
+            "status": "DONE",
+            "input_tokens": 0,
+            "cache_read_tokens": 1500,
+            "output_tokens": 30,
+        }) + "\n")
+        fh.write(json.dumps({
+            "step_index": 3,
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "model": "gemini-flash-worker-agy",
+            "input_tokens": 800,
+            "cache_read_tokens": 200,
+            "output_tokens": 90,
+        }) + "\n")
+
+    steps = watcher.turn_step_usages()
+    assert [s["step_index"] for s in steps] == [1, 2, 3]
+    assert steps[0]["model"] == "gemini-pro-orchestrator-neon"
+    assert steps[0]["output_tokens"] == 120
+    assert steps[1]["kind"] == "CHECKPOINT"
+    assert steps[1]["model"] == ""
+    assert steps[2]["model"] == "gemini-flash-worker-agy"
+
+    # Next turn prepare() advances byte offset so turn-1 entries are not double-counted.
+    watcher.prepare()
+    assert watcher.turn_step_usages() == []
+    assert agy_protocol.PromptOutcomeWatcher(app_data, "../escape").turn_step_usages() == []

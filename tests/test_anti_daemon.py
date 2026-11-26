@@ -1258,7 +1258,10 @@ def test_steer_turn_carries_prompt_across_end_turn_and_rejects_legacy_agy(tmp_pa
     assert res["status"] == "success"
     assert res["progress_messages"] == ["阶段输出A"]
     assert res["answer"] == "最终补充完成"
-    assert res["usage"] == {"input_tokens": 100, "output_tokens": 30}
+    assert res["usage"]["input_tokens"] == 100
+    assert res["usage"]["output_tokens"] == 30
+    assert res["usage"]["estimated_cost_usd"] == pytest.approx(0.000375)
+    assert len(res["usage"]["model_breakdown"]) == 1
     assert any(e.get("step", {}).get("kind") == "user_steer" and e.get("step", {}).get("detail") == "请补充单测" for e in events)
     mgr.shutdown()
 
@@ -1430,7 +1433,10 @@ def test_post_settle_continuation_and_terminal_stream_wait(tmp_path, monkeypatch
     res = box["result"]
     assert res["status"] == "success"
     assert res["answer"] == "后台任务已完成"
-    assert res["usage"] == {"input_tokens": 88, "output_tokens": 19}
+    assert res["usage"]["input_tokens"] == 88
+    assert res["usage"]["output_tokens"] == 19
+    assert res["usage"]["estimated_cost_usd"] == pytest.approx(0.000275)
+    assert len(res["usage"]["model_breakdown"]) == 1
     assert any(e.get("step", {}).get("output") == "build ok\n" for e in events)
     mgr.shutdown()
 
@@ -2453,7 +2459,11 @@ def test_runtime_prompt_usage_replaces_stale_usage_update_and_normalizes_steer(t
 
     res = box["result"]
     # Prompt 1 normalized to 500 input / 400 cached / 20 out; Prompt 2 = 200 input / 30 out; stale 999/888 replaced!
-    assert res["usage"] == {"input_tokens": 700, "output_tokens": 50, "cache_read_tokens": 400}
+    assert res["usage"]["input_tokens"] == 700
+    assert res["usage"]["output_tokens"] == 50
+    assert res["usage"]["cache_read_tokens"] == 400
+    assert res["usage"]["estimated_cost_usd"] == pytest.approx(0.000855)
+    assert len(res["usage"]["model_breakdown"]) == 1
     mgr.shutdown()
 
 
@@ -3325,3 +3335,82 @@ def test_usage_probe_stable_order_dedup_and_preserves_cache_on_empty(tmp_path, m
 
 
 
+
+
+def test_ledger_split_models_quota_pools_and_legacy_backfill(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
+
+    ledger = agy_usage.AgyLedger(tmp_path / "split_ledger.sqlite3")
+    # Simulate a legacy pre-upgrade row in usage_ledger without usage_ledger_models
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with ledger._connect() as db, db:
+        db.execute(
+            "INSERT INTO usage_ledger (run_id, profile_id, model, model_group, status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, model_calls, generation_ms, estimated_cost_usd, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("run-legacy", "default", "gemini-3-pro-high", "gemini-3", "success", 1200, 100, 600, 0, 0, 1, 500, 0.0025, now_iso),
+        )
+
+    # Record a cross-family orchestrator split run (Gemini planner + Claude executor)
+    ledger.record_run(
+        "run-orch-split",
+        "gemini-pro-orchestrator-neon",
+        "success",
+        profile_id="default",
+        input_tokens=600_000,
+        output_tokens=30_000,
+        cache_read_tokens=200_000,
+        cache_write_tokens=50_000,
+        model_calls=3,
+        generation_ms=1200,
+        model_breakdown=[
+            {
+                "model": "gemini-4-neon",
+                "display_name": "Gemini 4 Neon",
+                "role": "planner",
+                "calls": 1,
+                "input_tokens": 200_000,
+                "output_tokens": 10_000,
+                "cache_read_tokens": 100_000,
+                "cache_write_tokens": 0,
+                "thinking_tokens": 0,
+                "estimated_cost_usd": 0.465,
+                "pricing_source": "catalog",
+            },
+            {
+                "model": "claude-sonnet-5-5",
+                "display_name": "Claude Sonnet 5.5",
+                "role": "executor",
+                "calls": 2,
+                "input_tokens": 400_000,
+                "output_tokens": 20_000,
+                "cache_read_tokens": 100_000,
+                "cache_write_tokens": 50_000,
+                "thinking_tokens": 0,
+                "estimated_cost_usd": 0.835,
+                "pricing_source": "catalog",
+            },
+        ],
+    )
+
+    stats = ledger.stats(window_hours=24, profile_id="default")
+    assert stats["total_runs"] == 2
+    assert stats["estimated_cost_usd"] == pytest.approx(1.3025)
+    by_model = {item["model"]: item for item in stats["by_model"]}
+    assert set(by_model) == {"claude-sonnet-5-5", "gemini-4-neon", "gemini-3.1-pro"}
+    assert by_model["claude-sonnet-5-5"]["roles"] == ["executor"]
+    assert by_model["claude-sonnet-5-5"]["calls"] == 2
+    assert by_model["gemini-4-neon"]["roles"] == ["planner"]
+    assert by_model["gemini-3.1-pro"]["estimated_cost_usd"] == pytest.approx(0.0025)
+
+    pools = {p["model_group"]: p for p in ledger.quota_pools("default")}
+    assert pools["gemini-4"]["estimated_cost_7d_usd"] == pytest.approx(0.465)
+    assert pools["claude-3p"]["estimated_cost_7d_usd"] == pytest.approx(0.835)
+    assert pools["gemini-3"]["estimated_cost_7d_usd"] == pytest.approx(0.0025)
+
+    ledger.delete_profile("default")
+    after = ledger.stats(window_hours=24, profile_id="default")
+    assert after["total_runs"] == 0
+    assert after["by_model"] == []

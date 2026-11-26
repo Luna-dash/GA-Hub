@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from .. import _paths
 from ..event_topics import ANTI_RUNTIME
-from . import agy_models, agy_profile
+from . import agy_models, agy_pricing, agy_profile
 from .agy_profile import AgyProfileError as AntiError
 from .agy_protocol import PERMISSION_MODES, default_permission_mode
 from .agy_runtime import AgyRuntimeManager, runtime as default_runtime
@@ -655,6 +655,8 @@ class AntiSessions:
 
         result: dict[str, Any] = {}
         registered = False
+        eff_planner = orchestrator_planner
+        eff_executor = orchestrator_executor
         try:
             if agy_models.is_orchestrator_model(model) and (
                 orchestrator_planner is not None or orchestrator_executor is not None
@@ -684,15 +686,24 @@ class AntiSessions:
                 "allowed_roots": allowed_roots,
                 "on_event": on_event,
             }
-            if fallback_handoff_context is not None:
+            if agy_models.is_orchestrator_model(model) and eff_planner is None and eff_executor is None:
                 try:
-                    params = inspect.signature(worker.run_turn).parameters
-                    if "fallback_handoff_context" in params or any(
-                        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-                    ):
-                        turn_kwargs["fallback_handoff_context"] = fallback_handoff_context
-                except (ValueError, TypeError):
+                    orch_cfg = agy_profile.get_orchestrator_settings(profile_id)
+                    eff_planner = orch_cfg.get("planner")
+                    eff_executor = orch_cfg.get("executor")
+                except Exception:
                     pass
+            try:
+                params = inspect.signature(worker.run_turn).parameters
+                accepts_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+                if fallback_handoff_context is not None and ("fallback_handoff_context" in params or accepts_var_kw):
+                    turn_kwargs["fallback_handoff_context"] = fallback_handoff_context
+                if eff_planner is not None and ("orchestrator_planner" in params or accepts_var_kw):
+                    turn_kwargs["orchestrator_planner"] = eff_planner
+                if eff_executor is not None and ("orchestrator_executor" in params or accepts_var_kw):
+                    turn_kwargs["orchestrator_executor"] = eff_executor
+            except (ValueError, TypeError):
+                pass
             result = worker.run_turn(**turn_kwargs)
         except AntiError as exc:
             result = {"status": "cli_error", "error": str(exc), "usage": {}}
@@ -720,7 +731,17 @@ class AntiSessions:
         conv_id = result.get("conversation_id")
         thread_broken = bool(result.get("thread_broken"))
         reset_seconds = result.get("reset_seconds")
-        usage = result.get("usage") or {}
+        effective_model = result.get("effective_model") or model
+        usage = dict(result.get("usage") or {})
+        if usage and ("estimated_cost_usd" not in usage or "model_breakdown" not in usage):
+            cost_info = agy_pricing.calculate_run_cost(
+                model=effective_model,
+                usage=usage,
+                orchestrator_planner=eff_planner,
+                orchestrator_executor=eff_executor,
+            )
+            usage["estimated_cost_usd"] = cost_info["estimated_cost_usd"]
+            usage["model_breakdown"] = cost_info["model_breakdown"]
         usage_json = json.dumps(usage, ensure_ascii=False) if usage else None
         progress_messages = [
             str(m).strip()
@@ -728,7 +749,6 @@ class AntiSessions:
             if isinstance(m, str) and m.strip()
         ]
         progress_messages_json = json.dumps(progress_messages, ensure_ascii=False) if progress_messages else None
-        effective_model = result.get("effective_model") or model
         fallback_notice = result.get("fallback_notice")
         error_detail = None
         if not result.get("auth_transient") and isinstance(error, str) and ("login" in error.lower() or "auth" in error.lower()):
@@ -808,6 +828,10 @@ class AntiSessions:
             model_calls=int(usage.get("model_calls") or 0),
             generation_ms=int(usage.get("generation_ms") or 0),
             cooldown_seconds=cooldown,
+            estimated_cost_usd=usage.get("estimated_cost_usd"),
+            model_breakdown=usage.get("model_breakdown"),
+            orchestrator_planner=eff_planner,
+            orchestrator_executor=eff_executor,
         )
         if updated:
             self._handle_queue_after_run(

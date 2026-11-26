@@ -24,7 +24,7 @@ from uuid import uuid4
 
 from .. import _paths
 from ..process_utils import hidden_process_kwargs
-from . import agy_models, agy_profile, agy_usage, child_job
+from . import agy_models, agy_pricing, agy_profile, agy_usage, child_job
 from .agy_profile import AgyProfileError, CodeLoginFlow
 from .agy_protocol import (
     AgyModelSelectionError,
@@ -1124,6 +1124,8 @@ class AgySessionWorker:
         on_event: Callable[[dict[str, Any]], None],
         allow_auto_fallback: bool | None = None,
         fallback_handoff_context: str | None = None,
+        orchestrator_planner: str | None = None,
+        orchestrator_executor: str | None = None,
     ) -> dict[str, Any]:
         """Execute a complete conversational/editing turn inside the persistent ACP session."""
         if self._abort_event.is_set() or self._closed:
@@ -1492,6 +1494,22 @@ class AgySessionWorker:
             gen_ms = db_gen_ms if db_gen_ms > 0 else (turn.normalizer.generation_ms if model_calls <= 1 else 0)
             if gen_ms > 0:
                 usage["generation_ms"] = gen_ms
+            eff_planner = orchestrator_planner if orchestrator_planner is not None else (
+                self.loaded_orchestrator[0] if self.loaded_orchestrator else None
+            )
+            eff_executor = orchestrator_executor if orchestrator_executor is not None else (
+                self.loaded_orchestrator[1] if self.loaded_orchestrator else None
+            )
+            step_usages = outcome_watcher.turn_step_usages()
+            cost_info = agy_pricing.calculate_run_cost(
+                model=effective_model,
+                usage=usage,
+                step_usages=step_usages,
+                orchestrator_planner=eff_planner,
+                orchestrator_executor=eff_executor,
+            )
+            usage["estimated_cost_usd"] = cost_info["estimated_cost_usd"]
+            usage["model_breakdown"] = cost_info["model_breakdown"]
             notice_text = "；".join(notices) if notices else None
             if turn.cancelled:
                 return {

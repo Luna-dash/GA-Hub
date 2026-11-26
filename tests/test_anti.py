@@ -216,15 +216,17 @@ def test_unified_acp_round_trip_mode_switch_and_resume(tmp_path, monkeypatch):
         assert done2["status"] == "success"
         assert done2["progress_messages"] == ["阶段一：检查文件", "阶段二：应用修改"]
         assert client.get(runs).json()[-1]["progress_messages"] == ["阶段一：检查文件", "阶段二：应用修改"]
-        assert done2["usage"] == {
-            "input_tokens": 120,
-            "output_tokens": 30,
-            "cache_read_tokens": 60,
-            "cache_write_tokens": 0,
-            "thinking_tokens": 0,
-            "model_calls": None,
-            "generation_ms": None,
-        }
+        usage2 = done2["usage"]
+        assert usage2["input_tokens"] == 120
+        assert usage2["output_tokens"] == 30
+        assert usage2["cache_read_tokens"] == 60
+        assert usage2["cache_write_tokens"] == 0
+        assert usage2["thinking_tokens"] == 0
+        assert usage2["model_calls"] is None
+        assert usage2["generation_ms"] is None
+        assert usage2["estimated_cost_usd"] > 0
+        assert isinstance(usage2["model_breakdown"], list)
+        assert len(usage2["model_breakdown"]) == 1
         assert runtime.calls[-1]["mode"] == "accept-edits"
         assert runtime.calls[-1]["permission_mode"] == "auto-accept-edits"
         assert runtime.calls[-1]["conversation"] == "conv-default"

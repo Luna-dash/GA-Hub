@@ -265,3 +265,10 @@ class CommonDependencyTests(unittest.TestCase):
 
         with patch('importlib.import_module', side_effect=import_without_cells):
             self.assertEqual(sidecar.run_selftest(), 1)
+
+
+    def test_pricing_catalog_is_bundled_with_sidecar(self) -> None:
+        build_sidecar = _load("build_sidecar_pricing_test", "desktop/build_sidecar.py")
+        args = build_sidecar._add_data_args({})
+        expected = f"{ROOT / 'server' / 'services' / 'agy_pricing_catalog.json'};server/services"
+        self.assertIn(expected, args)

@@ -108,6 +108,65 @@ def _parse_iso(raw: str | None) -> datetime | None:
         return None
 
 
+def _normalize_pricing_overrides(raw: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    float_keys = (
+        "input",
+        "cache_read",
+        "cache_write",
+        "output",
+        "long_context_input",
+        "long_context_cache_read",
+        "long_context_cache_write",
+        "long_context_output",
+    )
+    for k, v in raw.items():
+        ks = str(k or "").strip().lower()
+        if not ks or not isinstance(v, dict):
+            continue
+        item: dict[str, Any] = {}
+        disp = str(v.get("display_name") or "").strip()
+        if disp:
+            item["display_name"] = disp
+        for fk in float_keys:
+            val = v.get(fk)
+            if val is None or isinstance(val, bool):
+                continue
+            try:
+                num = float(val)
+            except (TypeError, ValueError):
+                continue
+            if num >= 0.0 and num == num and num != float("inf"):
+                item[fk] = num
+        lct = v.get("long_context_threshold")
+        if lct is not None and not isinstance(lct, bool):
+            try:
+                lct_int = int(lct)
+                if lct_int >= 0:
+                    item["long_context_threshold"] = lct_int
+            except (TypeError, ValueError):
+                pass
+        if isinstance(v.get("long_context"), dict):
+            lc_norm: dict[str, float] = {}
+            for sub_k in ("input", "cache_read", "cache_write", "output"):
+                sub_v = v["long_context"].get(sub_k)
+                if sub_v is None or isinstance(sub_v, bool):
+                    continue
+                try:
+                    num = float(sub_v)
+                    if num >= 0.0 and num == num and num != float("inf"):
+                        lc_norm[sub_k] = num
+                except (TypeError, ValueError):
+                    pass
+            if lc_norm:
+                item["long_context"] = lc_norm
+        if item:
+            out[ks] = item
+    return out
+
+
 def _default_payload() -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -126,6 +185,7 @@ def _default_payload() -> dict[str, Any]:
         "quota_rules": deepcopy(_DEFAULT_QUOTA_RULES),
         "orchestrator_presets": deepcopy(DEFAULT_ORCHESTRATOR_PRESETS),
         "hidden_models": [],
+        "pricing_overrides": {},
         "profiles": {},
     }
 
@@ -257,6 +317,7 @@ def _normalize_payload(raw: Any) -> dict[str, Any]:
 
     base["orchestrator_presets"] = _normalize_orchestrator_presets(raw.get("orchestrator_presets"))
     base["hidden_models"] = _normalize_hidden_models(raw.get("hidden_models"))
+    base["pricing_overrides"] = _normalize_pricing_overrides(raw.get("pricing_overrides"))
 
     profiles_raw = raw.get("profiles")
     if isinstance(profiles_raw, dict):
@@ -347,6 +408,7 @@ def patch_user_config(
     quota_rules: list[dict[str, str]] | None = None,
     orchestrator_presets: list[dict[str, Any]] | None = None,
     hidden_models: list[str] | None = None,
+    pricing_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     def mutate(cfg: dict[str, Any]) -> None:
         if auto_sync is not None:
@@ -371,6 +433,8 @@ def patch_user_config(
             cfg["orchestrator_presets"] = _normalize_orchestrator_presets(orchestrator_presets)
         if hidden_models is not None:
             cfg["hidden_models"] = _normalize_hidden_models(hidden_models)
+        if pricing_overrides is not None:
+            cfg["pricing_overrides"] = _normalize_pricing_overrides(pricing_overrides)
 
     return update_models_config(mutate)
 
@@ -555,4 +619,5 @@ def public_config_view(*, now: datetime | None = None) -> dict[str, Any]:
         "quota_rules": [dict(r) for r in (cfg.get("quota_rules") or [])],
         "orchestrator_presets": [dict(p) for p in (cfg.get("orchestrator_presets") or DEFAULT_ORCHESTRATOR_PRESETS)],
         "hidden_models": list(cfg.get("hidden_models") or []),
+        "pricing_overrides": deepcopy(cfg.get("pricing_overrides") or {}),
     }

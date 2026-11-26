@@ -62,6 +62,10 @@ def _add_data_args(staged: dict[str, Path], sentinel: Path | None = None) -> lis
     if not worker.is_file():
         raise RuntimeError("Build message presentation with node assets/remote_access/build-remote.cjs")
     args.extend(["--add-data", f"{worker};server/services"])
+    pricing_catalog = ROOT / "server" / "services" / "agy_pricing_catalog.json"
+    if not pricing_catalog.is_file():
+        raise RuntimeError(f"Missing pricing catalog: {pricing_catalog}")
+    args.extend(["--add-data", f"{pricing_catalog};server/services"])
     return args
 
 

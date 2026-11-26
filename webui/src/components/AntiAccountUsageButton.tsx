@@ -15,6 +15,8 @@ import {
 import {
   formatCompactTokens,
   formatQuotaPct,
+  formatEstimatedUsd,
+  modelRoleLabel,
   quotaLimitDisplayLabel,
   sortQuotaRows,
 } from '@/utils/antiUsage'
@@ -486,8 +488,45 @@ export function AntiAccountUsageButton({
                         ? ` · ${stats.data.tokens_per_sec! >= 100 ? Math.round(stats.data.tokens_per_sec!) : stats.data.tokens_per_sec!.toFixed(1)} tok/s`
                         : ''}
                       {' · '}缓存 {Math.min(100, Math.round(stats.data.cache_hit_ratio * 100))}%
-                      {stats.data.estimated_cost_usd > 0 ? ` · ~$${stats.data.estimated_cost_usd.toFixed(2)}` : ''}
+                      {stats.data.estimated_cost_usd > 0 ? ` · ~${formatEstimatedUsd(stats.data.estimated_cost_usd)}` : ''}
                     </span>
+                  </div>
+                )}
+                {stats.data && (stats.data.by_model?.length ?? 0) > 0 && (
+                  <div
+                    data-anti-usage-by-model
+                    className="mt-1.5 border-t border-border/50 pt-1.5 space-y-1 text-[10px]"
+                  >
+                    <div className="flex items-center justify-between text-ink-muted/80">
+                      <span>分模型明细</span>
+                      <span title="按官方公开 API 定价估算，实际计费以账号订阅额度为准">
+                        按官方 API 价估算
+                      </span>
+                    </div>
+                    {stats.data.by_model!.map((item) => {
+                      const roles = (item.roles ?? []).filter((r) => r && r !== 'model' && r !== 'legacy')
+                      const totalTok = item.input_tokens + Math.max(item.output_tokens, item.thinking_tokens)
+                      return (
+                        <div
+                          key={item.model}
+                          className="flex items-center justify-between gap-2 tabular-nums text-ink-secondary"
+                        >
+                          <span className="truncate">
+                            {item.display_name || item.model}
+                            {roles.length > 0 ? (
+                              <span className="ml-1 text-ink-muted">
+                                ({roles.map((r) => modelRoleLabel(r)).join('/')})
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="shrink-0 text-ink-muted">
+                            {item.calls > 0 ? `${item.calls}次 · ` : ''}
+                            {formatCompactTokens(totalTok)} tok
+                            {item.estimated_cost_usd > 0 ? ` · ~${formatEstimatedUsd(item.estimated_cost_usd)}` : ''}
+                          </span>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>

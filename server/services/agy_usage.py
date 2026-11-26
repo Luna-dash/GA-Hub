@@ -29,7 +29,7 @@ import requests
 
 from .. import _paths
 from ..process_utils import hidden_process_kwargs
-from . import agy_profile, child_job
+from . import agy_pricing, agy_profile, child_job
 
 log = logging.getLogger(__name__)
 
@@ -78,9 +78,6 @@ _QUOTA_GROUPS: dict[str, dict[str, Any]] = {
         "window_5h_hard_tokens": 2_500_000,
         "window_7d_soft_tokens": 12_000_000,
         "window_7d_hard_tokens": 20_000_000,
-        "input_rate": 1.25,
-        "cached_rate": 0.3125,
-        "output_rate": 5.0,
     },
     "gemini-3": {
         "display_name": "Gemini 3",
@@ -88,9 +85,6 @@ _QUOTA_GROUPS: dict[str, dict[str, Any]] = {
         "window_5h_hard_tokens": 3_500_000,
         "window_7d_soft_tokens": 15_000_000,
         "window_7d_hard_tokens": 25_000_000,
-        "input_rate": 0.5,
-        "cached_rate": 0.125,
-        "output_rate": 2.0,
     },
     "claude-3p": {
         "display_name": "Claude & GPT (shared)",
@@ -98,9 +92,6 @@ _QUOTA_GROUPS: dict[str, dict[str, Any]] = {
         "window_5h_hard_tokens": 1_500_000,
         "window_7d_soft_tokens": 6_000_000,
         "window_7d_hard_tokens": 10_000_000,
-        "input_rate": 3.0,
-        "cached_rate": 0.3,
-        "output_rate": 15.0,
     },
 }
 
@@ -1008,8 +999,29 @@ class AgyLedger:
                 model_calls INTEGER NOT NULL DEFAULT 0,
                 generation_ms INTEGER NOT NULL DEFAULT 0,
                 estimated_cost_usd REAL NOT NULL DEFAULT 0,
+                model_breakdown_json TEXT,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS usage_ledger_models (
+                run_id TEXT NOT NULL,
+                profile_id TEXT NOT NULL DEFAULT 'default',
+                model TEXT NOT NULL,
+                display_name TEXT NOT NULL DEFAULT '',
+                model_group TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'model',
+                calls INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                thinking_tokens INTEGER NOT NULL DEFAULT 0,
+                estimated_cost_usd REAL NOT NULL DEFAULT 0,
+                pricing_source TEXT NOT NULL DEFAULT 'catalog',
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (run_id, model, role)
+            );
+            CREATE INDEX IF NOT EXISTS idx_usage_ledger_models_profile_created
+                ON usage_ledger_models(profile_id, created_at);
             CREATE TABLE IF NOT EXISTS quota_state (
                 profile_id TEXT NOT NULL DEFAULT 'default',
                 model_group TEXT NOT NULL,
@@ -1033,6 +1045,9 @@ class AgyLedger:
         if "generation_ms" not in ledger_cols:
             with conn:
                 conn.execute("ALTER TABLE usage_ledger ADD COLUMN generation_ms INTEGER NOT NULL DEFAULT 0")
+        if "model_breakdown_json" not in ledger_cols:
+            with conn:
+                conn.execute("ALTER TABLE usage_ledger ADD COLUMN model_breakdown_json TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_usage_ledger_profile_created ON usage_ledger(profile_id, created_at)"
         )
@@ -1094,30 +1109,101 @@ class AgyLedger:
         model_calls: int = 0,
         generation_ms: int = 0,
         cooldown_seconds: int = 0,
+        estimated_cost_usd: float | None = None,
+        model_breakdown: list[dict[str, Any]] | None = None,
+        orchestrator_planner: str | None = None,
+        orchestrator_executor: str | None = None,
     ) -> None:
         pid = profile_id or agy_profile.DEFAULT
         group = _model_group(model)
-        cfg = _QUOTA_GROUPS.get(group, _QUOTA_GROUPS["gemini-4"])
         total_in, fresh_in, cached, cache_write = normalize_ledger_input(
             input_tokens, cache_read_tokens, cache_write_tokens
         )
         # Antigravity 1.5+ output_tokens already includes thinking_tokens (T3 Code reasoningTokens subset).
-        total_out = max(max(0, int(output_tokens or 0)), max(0, int(thinking_tokens or 0)))
-        cost = round(
-            ((fresh_in + cache_write) / 1_000_000) * cfg["input_rate"]
-            + (cached / 1_000_000) * cfg["cached_rate"]
-            + (total_out / 1_000_000) * cfg["output_rate"],
-            6,
-        )
+        out_raw = max(0, int(output_tokens or 0))
+        think_raw = max(0, int(thinking_tokens or 0))
+        calls_norm = max(0, int(model_calls or 0))
         now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+
+        breakdown_items: list[dict[str, Any]] = []
+        if isinstance(model_breakdown, list) and model_breakdown:
+            merged_buckets: dict[tuple[str, str], dict[str, Any]] = {}
+            for raw_item in model_breakdown:
+                if not isinstance(raw_item, dict):
+                    continue
+                item_model = agy_pricing.canonicalize_model_id(str(raw_item.get("model") or model)) or str(model)
+                item_role = str(raw_item.get("role") or "model").strip().lower() or "model"
+                item_display = str(raw_item.get("display_name") or "").strip() or agy_pricing.model_display_name(item_model)
+                key = (item_model, item_role)
+                bucket = merged_buckets.get(key)
+                if bucket is None:
+                    bucket = {
+                        "model": item_model,
+                        "display_name": item_display,
+                        "role": item_role,
+                        "calls": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cache_read_tokens": 0,
+                        "cache_write_tokens": 0,
+                        "thinking_tokens": 0,
+                        "estimated_cost_usd": 0.0,
+                        "pricing_source": str(raw_item.get("pricing_source") or "catalog"),
+                    }
+                    merged_buckets[key] = bucket
+                bucket["calls"] += max(0, int(raw_item.get("calls") or 0))
+                bucket["input_tokens"] += max(0, int(raw_item.get("input_tokens") or 0))
+                bucket["output_tokens"] += max(0, int(raw_item.get("output_tokens") or 0))
+                bucket["cache_read_tokens"] += max(0, int(raw_item.get("cache_read_tokens") or 0))
+                bucket["cache_write_tokens"] += max(0, int(raw_item.get("cache_write_tokens") or 0))
+                bucket["thinking_tokens"] += max(0, int(raw_item.get("thinking_tokens") or 0))
+                bucket["estimated_cost_usd"] += max(0.0, float(raw_item.get("estimated_cost_usd") or 0.0))
+            for bucket in merged_buckets.values():
+                bucket["estimated_cost_usd"] = round(float(bucket["estimated_cost_usd"]), 6)
+                breakdown_items.append(bucket)
+            breakdown_items.sort(key=lambda b: (-float(b["estimated_cost_usd"]), b["model"], b["role"]))
+
+        if breakdown_items:
+            cost = (
+                round(max(0.0, float(estimated_cost_usd)), 6)
+                if estimated_cost_usd is not None
+                else round(sum(float(item["estimated_cost_usd"]) for item in breakdown_items), 6)
+            )
+        else:
+            calc = agy_pricing.calculate_run_cost(
+                model=model,
+                usage={
+                    "input_tokens": total_in,
+                    "output_tokens": out_raw,
+                    "cache_read_tokens": cached,
+                    "cache_write_tokens": cache_write,
+                    "thinking_tokens": think_raw,
+                    "model_calls": calls_norm,
+                },
+                orchestrator_planner=orchestrator_planner,
+                orchestrator_executor=orchestrator_executor,
+                run_date=now,
+            )
+            breakdown_items = list(calc["model_breakdown"])
+            if estimated_cost_usd is not None:
+                cost = round(max(0.0, float(estimated_cost_usd)), 6)
+                if len(breakdown_items) == 1:
+                    breakdown_items[0]["estimated_cost_usd"] = cost
+            else:
+                cost = float(calc["estimated_cost_usd"])
+
+        breakdown_json = json.dumps(breakdown_items, ensure_ascii=False) if breakdown_items else None
         with self._connect() as db, db:
             db.execute(
                 """
                 INSERT INTO usage_ledger
-                (run_id, profile_id, model, model_group, status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, model_calls, generation_ms, estimated_cost_usd, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                (run_id, profile_id, model, model_group, status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, model_calls, generation_ms, estimated_cost_usd, model_breakdown_json, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(run_id) DO UPDATE SET
                     profile_id=excluded.profile_id,
+                    model=excluded.model,
+                    model_group=excluded.model_group,
                     status=excluded.status,
                     input_tokens=excluded.input_tokens,
                     output_tokens=excluded.output_tokens,
@@ -1126,7 +1212,8 @@ class AgyLedger:
                     thinking_tokens=excluded.thinking_tokens,
                     model_calls=excluded.model_calls,
                     generation_ms=excluded.generation_ms,
-                    estimated_cost_usd=excluded.estimated_cost_usd
+                    estimated_cost_usd=excluded.estimated_cost_usd,
+                    model_breakdown_json=excluded.model_breakdown_json
                 """,
                 (
                     run_id,
@@ -1135,16 +1222,43 @@ class AgyLedger:
                     group,
                     status,
                     total_in,
-                    max(0, output_tokens),
+                    out_raw,
                     cached,
                     cache_write,
-                    max(0, thinking_tokens),
-                    max(0, int(model_calls)),
+                    think_raw,
+                    calls_norm,
                     max(0, int(generation_ms)),
                     cost,
-                    now.isoformat(),
+                    breakdown_json,
+                    now_iso,
                 ),
             )
+            db.execute("DELETE FROM usage_ledger_models WHERE run_id=?", (run_id,))
+            for item in breakdown_items:
+                db.execute(
+                    """
+                    INSERT INTO usage_ledger_models
+                    (run_id, profile_id, model, display_name, model_group, role, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, estimated_cost_usd, pricing_source, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        run_id,
+                        pid,
+                        item["model"],
+                        item["display_name"],
+                        _model_group(item["model"]),
+                        item["role"],
+                        item["calls"],
+                        item["input_tokens"],
+                        item["output_tokens"],
+                        item["cache_read_tokens"],
+                        item["cache_write_tokens"],
+                        item["thinking_tokens"],
+                        item["estimated_cost_usd"],
+                        item["pricing_source"],
+                        now_iso,
+                    ),
+                )
             if cooldown_seconds > 0:
                 until = (now + timedelta(seconds=cooldown_seconds)).isoformat()
                 db.execute(
@@ -1201,22 +1315,32 @@ class AgyLedger:
                 row["model_group"]: dict(row)
                 for row in db.execute("SELECT * FROM quota_state WHERE profile_id=?", (pid,))
             }
-            totals_5h = {
-                row["model_group"]: row["tok"] or 0
-                for row in db.execute(
-                    "SELECT model_group, SUM(input_tokens + MAX(output_tokens, thinking_tokens)) AS tok "
-                    "FROM usage_ledger WHERE profile_id=? AND created_at>=? GROUP BY model_group",
-                    (pid, cutoff_5h),
-                )
-            }
-            totals_7d = {
-                row["model_group"]: (row["tok"] or 0, float(row["cost"] or 0.0))
-                for row in db.execute(
-                    "SELECT model_group, SUM(input_tokens + MAX(output_tokens, thinking_tokens)) AS tok, SUM(estimated_cost_usd) AS cost "
-                    "FROM usage_ledger WHERE profile_id=? AND created_at>=? GROUP BY model_group",
-                    (pid, cutoff_7d),
-                )
-            }
+            totals_5h: dict[str, int] = {}
+            for query in (
+                "SELECT model_group, SUM(input_tokens + MAX(output_tokens, thinking_tokens)) AS tok "
+                "FROM usage_ledger_models WHERE profile_id=? AND created_at>=? GROUP BY model_group",
+                "SELECT model_group, SUM(input_tokens + MAX(output_tokens, thinking_tokens)) AS tok "
+                "FROM usage_ledger u WHERE profile_id=? AND created_at>=? "
+                "AND NOT EXISTS (SELECT 1 FROM usage_ledger_models m WHERE m.run_id = u.run_id) "
+                "GROUP BY model_group",
+            ):
+                for row in db.execute(query, (pid, cutoff_5h)):
+                    mg = str(row["model_group"])
+                    totals_5h[mg] = totals_5h.get(mg, 0) + int(row["tok"] or 0)
+
+            totals_7d: dict[str, tuple[int, float]] = {}
+            for query in (
+                "SELECT model_group, SUM(input_tokens + MAX(output_tokens, thinking_tokens)) AS tok, SUM(estimated_cost_usd) AS cost "
+                "FROM usage_ledger_models WHERE profile_id=? AND created_at>=? GROUP BY model_group",
+                "SELECT model_group, SUM(input_tokens + MAX(output_tokens, thinking_tokens)) AS tok, SUM(estimated_cost_usd) AS cost "
+                "FROM usage_ledger u WHERE profile_id=? AND created_at>=? "
+                "AND NOT EXISTS (SELECT 1 FROM usage_ledger_models m WHERE m.run_id = u.run_id) "
+                "GROUP BY model_group",
+            ):
+                for row in db.execute(query, (pid, cutoff_7d)):
+                    mg = str(row["model_group"])
+                    prev_tok, prev_cost = totals_7d.get(mg, (0, 0.0))
+                    totals_7d[mg] = (prev_tok + int(row["tok"] or 0), prev_cost + float(row["cost"] or 0.0))
         out: list[dict[str, Any]] = []
         for gname, cfg in _QUOTA_GROUPS.items():
             tok_5h = int(totals_5h.get(gname, 0))
@@ -1242,7 +1366,7 @@ class AgyLedger:
                 "window_5h_pct": pct_5h,
                 "window_7d_pct": pct_7d,
                 "calibrated_remaining_pct": st.get("calibrated_remaining_pct"),
-                "estimated_cost_7d_usd": round(cost_7d, 4),
+                "estimated_cost_7d_usd": round(cost_7d, 6),
             })
         return out
 
@@ -1316,6 +1440,7 @@ class AgyLedger:
         with self._connect() as db, db:
             db.execute("DELETE FROM quota_state WHERE profile_id=?", (profile_id,))
             db.execute("DELETE FROM usage_ledger WHERE profile_id=?", (profile_id,))
+            db.execute("DELETE FROM usage_ledger_models WHERE profile_id=?", (profile_id,))
 
     def stats(
         self,
@@ -1340,6 +1465,15 @@ class AgyLedger:
         with self._connect() as db:
             rows = db.execute(
                 f"SELECT status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, model_calls, generation_ms, estimated_cost_usd FROM usage_ledger {where}",
+                tuple(params),
+            ).fetchall()
+            m_rows = db.execute(
+                f"SELECT run_id, model, display_name, role, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, estimated_cost_usd FROM usage_ledger_models {where}",
+                tuple(params),
+            ).fetchall()
+            legacy_rows = db.execute(
+                f"SELECT run_id, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, model_calls, estimated_cost_usd "
+                f"FROM usage_ledger {where} AND NOT EXISTS (SELECT 1 FROM usage_ledger_models m WHERE m.run_id = usage_ledger.run_id)",
                 tuple(params),
             ).fetchall()
         total = len(rows)
@@ -1375,6 +1509,113 @@ class AgyLedger:
             if gen_ms_total >= 150 and gen_out_tokens > 0
             else 0.0
         )
+
+        role_order = {"planner": 0, "executor": 1, "compaction": 2, "model": 3}
+        model_acc: dict[str, dict[str, Any]] = {}
+
+        def _acc_entry(
+            *,
+            m_key: str,
+            disp: str,
+            run_id: str,
+            role: str,
+            c: int,
+            in_t: int,
+            out_t: int,
+            cr_t: int,
+            cw_t: int,
+            th_t: int,
+            usd: float,
+        ) -> None:
+            bucket = model_acc.get(m_key)
+            if bucket is None:
+                bucket = {
+                    "model": m_key,
+                    "display_name": disp or agy_pricing.model_display_name(m_key),
+                    "_run_ids": set(),
+                    "_roles": set(),
+                    "calls": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "cache_write_tokens": 0,
+                    "thinking_tokens": 0,
+                    "estimated_cost_usd": 0.0,
+                }
+                model_acc[m_key] = bucket
+            if run_id:
+                bucket["_run_ids"].add(run_id)
+            if role:
+                bucket["_roles"].add(role)
+            bucket["calls"] += max(0, c)
+            bucket["input_tokens"] += max(0, in_t)
+            bucket["output_tokens"] += max(0, out_t)
+            bucket["cache_read_tokens"] += max(0, cr_t)
+            bucket["cache_write_tokens"] += max(0, cw_t)
+            bucket["thinking_tokens"] += max(0, th_t)
+            bucket["estimated_cost_usd"] += max(0.0, usd)
+
+        for mr in m_rows:
+            m_key = str(mr["model"] or "").strip() or "unknown"
+            _acc_entry(
+                m_key=m_key,
+                disp=str(mr["display_name"] or "").strip(),
+                run_id=str(mr["run_id"] or ""),
+                role=str(mr["role"] or "model").strip().lower() or "model",
+                c=int(mr["calls"] or 0),
+                in_t=int(mr["input_tokens"] or 0),
+                out_t=int(mr["output_tokens"] or 0),
+                cr_t=int(mr["cache_read_tokens"] or 0),
+                cw_t=int(mr["cache_write_tokens"] or 0),
+                th_t=int(mr["thinking_tokens"] or 0),
+                usd=float(mr["estimated_cost_usd"] or 0.0),
+            )
+
+        for lr in legacy_rows:
+            raw_m = str(lr["model"] or "").strip()
+            m_key = agy_pricing.canonicalize_model_id(raw_m) or raw_m or "unknown"
+            row_in, _, row_cr, row_cw = normalize_ledger_input(
+                int(lr["input_tokens"]),
+                int(lr["cache_read_tokens"]),
+                int(lr["cache_write_tokens"]),
+            )
+            _acc_entry(
+                m_key=m_key,
+                disp=agy_pricing.model_display_name(m_key),
+                run_id=str(lr["run_id"] or ""),
+                role="model",
+                c=int(lr["model_calls"] or 0),
+                in_t=row_in,
+                out_t=int(lr["output_tokens"] or 0),
+                cr_t=row_cr,
+                cw_t=row_cw,
+                th_t=int(lr["thinking_tokens"] or 0),
+                usd=float(lr["estimated_cost_usd"] or 0.0),
+            )
+
+        by_model: list[dict[str, Any]] = []
+        for b in model_acc.values():
+            by_model.append({
+                "model": b["model"],
+                "display_name": b["display_name"],
+                "runs": len(b["_run_ids"]),
+                "calls": b["calls"],
+                "roles": sorted(b["_roles"], key=lambda r: (role_order.get(r, 99), r)),
+                "input_tokens": b["input_tokens"],
+                "output_tokens": b["output_tokens"],
+                "cache_read_tokens": b["cache_read_tokens"],
+                "cache_write_tokens": b["cache_write_tokens"],
+                "thinking_tokens": b["thinking_tokens"],
+                "estimated_cost_usd": round(b["estimated_cost_usd"], 6),
+            })
+        by_model.sort(
+            key=lambda x: (
+                -float(x["estimated_cost_usd"]),
+                -(int(x["input_tokens"]) + max(int(x["output_tokens"]), int(x["thinking_tokens"]))),
+                str(x["model"]),
+            )
+        )
+
         return {
             "window_hours": 0 if today else window_hours,
             "total_runs": total,
@@ -1385,5 +1626,6 @@ class AgyLedger:
             "model_calls": calls,
             "tokens_per_sec": tok_per_sec,
             "cache_hit_ratio": ratio,
-            "estimated_cost_usd": round(cost, 4),
+            "estimated_cost_usd": round(cost, 6),
+            "by_model": by_model,
         }
