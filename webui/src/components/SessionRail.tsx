@@ -379,36 +379,29 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
         )}
       >
         {(onCreate || onImportFromHistory) && (
-          // 单一组件三段式：左窄条「＋」与中部「新会话」触发同一动作，右侧图
-          // 标区是历史导入。整体底色比页面大背景深一档（bg-soft），导入区回到
-          // 大背景色（bg），作为「次要入口」的视觉层级。
+          // 主按钮「新会话」集成加号图标为一体，历史导入拆分为独立次要方按钮。
+          // 语义 CSS 变量自动适配全套主题预设。
           <div
             data-testid="create-session-row"
-            className="mb-3 flex w-full items-stretch overflow-hidden rounded-xl border border-line/70 bg-bg-soft shadow-sm"
+            className="mb-3 flex w-full items-center gap-1.5"
           >
             {onCreate && (
-              <Fragment>
-                <button
-                  type="button"
-                  onClick={createEmptySession}
-                  disabled={creating}
-                  aria-label="新建空会话"
-                  title="新建空会话"
-                  className="flex w-8 flex-none items-center justify-center border-r border-line/50 text-accent transition hover:bg-black/5 active:scale-[0.98] disabled:opacity-50"
+              <button
+                type="button"
+                onClick={createEmptySession}
+                disabled={creating}
+                aria-label="新建会话"
+                data-testid="create-session-empty"
+                className="group/new inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-[10px] border border-accent/35 bg-accent-soft/80 px-3 text-[13px] font-semibold tracking-wide text-accent shadow-[inset_0_1px_0_var(--c-inset-highlight),0_1px_2px_rgb(var(--c-accent-rgb)/0.10)] transition-all hover:border-accent hover:bg-accent hover:text-[var(--c-accent-fg)] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_2px_6px_rgb(var(--c-accent-rgb)/0.22)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span
+                  aria-hidden="true"
+                  className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-accent text-[var(--c-accent-fg)] shadow-[0_1px_2px_rgba(0,0,0,0.12)] transition-colors group-hover/new:bg-[color-mix(in_srgb,var(--c-accent-fg)_18%,transparent)] group-hover/new:text-[var(--c-accent-fg)]"
                 >
-                  <Plus className="h-4 w-4" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  onClick={createEmptySession}
-                  disabled={creating}
-                  aria-label="新建会话"
-                  data-testid="create-session-empty"
-                  className="min-w-0 flex-1 px-2 py-2.5 text-center text-sm font-semibold text-accent transition hover:bg-black/5 active:scale-[0.99] disabled:opacity-50"
-                >
-                  {creating ? '创建中…' : '新会话'}
-                </button>
-              </Fragment>
+                  <Plus className="h-3.5 w-3.5" strokeWidth={2.4} />
+                </span>
+                <span className="truncate">{creating ? '创建中…' : '新会话'}</span>
+              </button>
             )}
             {onImportFromHistory && (
               <button
@@ -417,9 +410,9 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                 aria-label="历史导入"
                 title="从历史导入…"
                 data-testid="create-session-import"
-                className="flex w-9 flex-none items-center justify-center border-l border-line/50 bg-bg text-ink-muted transition hover:text-ink active:scale-[0.98]"
+                className="inline-flex h-9 w-9 flex-none items-center justify-center rounded-[10px] border border-line/80 bg-bg-card/90 text-ink-muted shadow-[inset_0_1px_0_var(--c-inset-highlight),0_1px_2px_rgba(45,34,22,0.05)] transition-all hover:border-accent/55 hover:bg-bg-card hover:text-ink active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
               >
-                <Download className="h-4 w-4" aria-hidden="true" />
+                <Download className="h-4 w-4" strokeWidth={1.9} aria-hidden="true" />
               </button>
             )}
           </div>

@@ -230,13 +230,14 @@ describe('SessionRail', () => {
       />,
     ))
 
-    // 三段式创建组件：左「＋」窄条与中部「新会话」触发同一动作
-    const create = host.querySelector('[aria-label="新建会话"]') as HTMLButtonElement
-    expect(create).not.toBeNull()
-    expect(create.textContent).toContain('新会话')
-    expect(host.querySelector('[aria-label="新建空会话"]')).not.toBeNull()
-
+    // 一体化「新会话」主按钮：内置加号图标与文本统一触发新建会话
     const empty = host.querySelector('[data-testid="create-session-empty"]') as HTMLButtonElement
+    expect(empty).not.toBeNull()
+    expect(empty.getAttribute('aria-label')).toBe('新建会话')
+    expect(empty.textContent).toContain('新会话')
+    expect(empty.querySelector('svg')).not.toBeNull()
+    expect(host.querySelector('[aria-label="新建空会话"]')).toBeNull()
+
     await act(async () => { empty.click() })
     expect(onCreate).toHaveBeenCalledOnce()
 
