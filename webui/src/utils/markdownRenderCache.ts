@@ -20,11 +20,12 @@ let cachedCharacters = 0
 export function renderMarkdownTree(
   namespace: string,
   source: string,
-  options: Readonly<Options>,
+  options: Readonly<Options> | (() => Readonly<Options>),
   cacheable = true,
 ): ReactElement {
+  const resolveOptions = () => (typeof options === 'function' ? options() : options)
   if (!cacheable || source.length > MAX_SINGLE_ENTRY_CHARACTERS) {
-    return Markdown(options)
+    return Markdown(resolveOptions())
   }
 
   const key = `${namespace}\u0000${source}`
@@ -36,7 +37,7 @@ export function renderMarkdownTree(
     return cached.tree
   }
 
-  const tree = Markdown(options)
+  const tree = Markdown(resolveOptions())
   const entry = { tree, characters: source.length }
   cache.set(key, entry)
   cachedCharacters += entry.characters

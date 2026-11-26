@@ -458,4 +458,24 @@ describe('assistant transcript projection', () => {
     expect(stripAssistantTranscriptTags('**LLM Running (Turn 3) ...**\n<summary>完成</summary>\n正文'))
       .toBe('正文')
   })
+
+  it('parses 100 KB transcripts containing angle brackets, fences, and tool blocks cleanly', () => {
+    const filler = 'Comparing <alpha> < 100 with D:\\repo\\file.ts and `inline code`.\n'.repeat(1600)
+    const doc = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>大文本扫描</summary>',
+      filler,
+      '🛠️ Tool: `code_run`  📥 args:',
+      '````json',
+      '{"cmd": "echo ok"}',
+      '````',
+      '```ts',
+      'const ok = a < b',
+      '```',
+      '最终回答。',
+    ].join('\n')
+    const transcript = parseAssistantTranscript(doc)
+    expect(transcript.turns).toHaveLength(1)
+    expect(transcript.finalBody).toContain('最终回答。')
+  })
 })

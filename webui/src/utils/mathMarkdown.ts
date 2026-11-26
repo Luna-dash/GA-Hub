@@ -74,7 +74,7 @@ const CURRENCY_FRAGMENT_RE = /^\d+(?:[.,]\d+)?(?:\s*[)%\],.;:!?]|$)/
  * Skips Markdown code, link destinations/titles, existing math blocks, and `\$`.
  */
 export function normalizeMathDelimiters(src: string): string {
-  if (!src || !/[\\$]/.test(src)) return src
+  if (!src || !/\$|\\[([]/.test(src)) return src
 
   const { literals, tables } = getMarkdownRanges(src)
   let literalIndex = 0

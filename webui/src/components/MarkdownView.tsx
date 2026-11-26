@@ -302,25 +302,22 @@ export const MarkdownView = memo(function MarkdownView({
           : 'chat'
         : 'chat'
 
-  // Normalize TeX only in chat mode; plain keeps $ and backslashes literal.
-  const text = useMemo(() => {
-    const raw = children || ''
-    return resolved === 'chat' ? normalizeMathDelimiters(raw) : raw
-  }, [children, resolved])
-
+  const raw = children || ''
   const remarkPlugins = resolved === 'chat' ? MD_REMARK_CHAT : MD_REMARK_PLAIN
   const rehypePlugins = resolved === 'chat' ? MD_REHYPE_CHAT : MD_REHYPE_PLAIN
   const components = resolved === 'chat' ? MD_COMPONENTS_CHAT : MD_COMPONENTS_PLAIN
-  // react-markdown's synchronous Markdown() function does not use hooks. Keep
-  // its finished React tree in a bounded LRU so virtual rows can remount
-  // without repeating remark/rehype parsing.
-  const rendered = useMemo(() => renderMarkdownTree(resolved, text, {
-    children: text,
-    remarkPlugins,
-    rehypePlugins,
-    components,
-    urlTransform: markdownUrlTransform,
-  }, cache), [cache, components, rehypePlugins, remarkPlugins, resolved, text])
+  // Normalize TeX lazily inside the cache miss factory so cache hits skip
+  // remark/rehype math-delimiter parsing completely.
+  const rendered = useMemo(() => renderMarkdownTree(resolved, raw, () => {
+    const normalized = resolved === 'chat' ? normalizeMathDelimiters(raw) : raw
+    return {
+      children: normalized,
+      remarkPlugins,
+      rehypePlugins,
+      components,
+      urlTransform: markdownUrlTransform,
+    }
+  }, cache), [cache, components, raw, rehypePlugins, remarkPlugins, resolved])
 
   return (
     <div

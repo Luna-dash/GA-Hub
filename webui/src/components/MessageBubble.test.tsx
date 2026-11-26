@@ -910,4 +910,23 @@ describe('MessageBubble render isolation', () => {
     ))
     expect(host.querySelector('[data-final-conclusion-divider]')).toBeNull()
   })
+
+  it('ticks streaming duration in an isolated leaf without re-rendering Markdown', () => {
+    vi.useFakeTimers()
+    const base = 1_700_000_000_000
+    vi.setSystemTime(base)
+    try {
+      act(() => root.render(
+        <MessageBubble role="assistant" content="正在流式输出" streaming startedAt={base} />,
+      ))
+      expect(markdownRender).toHaveBeenCalledTimes(1)
+      expect(host.textContent).toContain('已运行 0:00')
+
+      act(() => { vi.advanceTimersByTime(5_000) })
+      expect(host.textContent).toContain('已运行 0:05')
+      expect(markdownRender).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

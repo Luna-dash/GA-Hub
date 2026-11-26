@@ -152,10 +152,36 @@ function formatDuration(milliseconds: number): string {
     : `${minutes}:${String(rest).padStart(2, '0')}`
 }
 
+const MessageDuration = memo(function MessageDuration({
+  streaming,
+  startedAt,
+  finishedAt,
+  timestamp,
+}: {
+  streaming?: boolean
+  startedAt: number
+  finishedAt?: number | null
+  timestamp?: number | null
+}) {
+  const [clock, setClock] = useState(Date.now)
+
+  useEffect(() => {
+    if (!streaming) return
+    setClock(Date.now())
+    const timer = window.setInterval(() => setClock(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [streaming, startedAt])
+
+  return (
+    <>
+      {`${streaming ? '已运行' : '用时'} ${formatDuration(Math.max(0, (streaming ? clock : (finishedAt ?? timestamp ?? clock)) - startedAt))}`}
+    </>
+  )
+})
+
 export const MessageBubble = memo(function MessageBubble({ role, content, turnSegments, streaming, stopped, recoveryNotice, recoveryOffset, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact, askUserDraftKey, askUserInteractive = true }: Props) {
   const { project } = useContext(FileLinkContext)
   const [fontScale, setFontScale] = useState(getChatFontScale)
-  const [clock, setClock] = useState(Date.now)
   const [longFinalExpanded, setLongFinalExpanded] = useState(false)
 
   useEffect(() => {
@@ -168,13 +194,6 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
       window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, syncHydrated)
     }
   }, [])
-
-  useEffect(() => {
-    if (!streaming || !startedAt) return
-    setClock(Date.now())
-    const timer = window.setInterval(() => setClock(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [streaming, startedAt])
 
   // fontSize 缩放普通文本；--chat-scale 供 CSS 里 rem 字号规则（标题/表格/
   // 代码块/折叠头）做 calc 同步缩放，见 index.css 的 prose-chat 区块注释。
@@ -248,9 +267,20 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
 
   const recoveryActive = Boolean(role === 'assistant' && recoveryNotice && !compact)
   const boundary = Math.max(0, Math.min(content.length, recoveryOffset ?? content.length))
-  const beforeRecovery = recoveryActive ? foldTurns(content.slice(0, boundary)) : []
-  const segs = useHistoryProjection ? [] : recoveryActive
-    ? [...beforeRecovery, ...foldTurns(content.slice(boundary))] : foldTurns(content, turnSegments)
+  const { beforeRecovery, segs } = useMemo(() => {
+    if (useHistoryProjection) {
+      return { beforeRecovery: [] as ReturnType<typeof foldTurns>, segs: [] as ReturnType<typeof foldTurns> }
+    }
+    if (!recoveryActive) {
+      return { beforeRecovery: [] as ReturnType<typeof foldTurns>, segs: foldTurns(content, turnSegments) }
+    }
+    const prefix = foldTurns(content.slice(0, boundary))
+    return { beforeRecovery: prefix, segs: [...prefix, ...foldTurns(content.slice(boundary))] }
+  }, [useHistoryProjection, recoveryActive, content, boundary, turnSegments])
+  const recoveryBeforeTurn = useMemo(
+    () => (recoveryActive ? messagePresentation(content.slice(0, boundary), true).turns.length : undefined),
+    [recoveryActive, content, boundary],
+  )
   const recoveryIndex = beforeRecovery.length
   const recoveryStatus = recoveryActive ? (
     <div role="status" data-recovery-notice className="my-2 flex items-center gap-2 text-xs leading-5 text-status-warning-muted">
@@ -271,7 +301,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
   const body = (
     <div className={clsx("min-w-0 max-w-full", !hasHeader && "flex-1")} style={messageFontStyle}>
       {runningTask && runningTranscript ? (
-        <RunningTranscript transcript={runningTranscript} recoveryTitle={recoveryNotice && /max_tokens|上限|续接|截断/i.test(recoveryNotice) ? '输出达到上限 · 自动续接' : recoveryNotice && /重试|retry/i.test(recoveryNotice) ? '自动重试' : '自动重连'} recoveryStatus={recoveryStatus} recoveryBeforeTurn={recoveryActive ? messagePresentation(content.slice(0, boundary), true).turns.length : undefined} askUserDraftKey={askUserDraftKey} askUserInteractive={askUserInteractive} />
+        <RunningTranscript transcript={runningTranscript} recoveryTitle={recoveryNotice && /max_tokens|上限|续接|截断/i.test(recoveryNotice) ? '输出达到上限 · 自动续接' : recoveryNotice && /重试|retry/i.test(recoveryNotice) ? '自动重试' : '自动重连'} recoveryStatus={recoveryStatus} recoveryBeforeTurn={recoveryBeforeTurn} askUserDraftKey={askUserDraftKey} askUserInteractive={askUserInteractive} />
       ) : useHistoryProjection && historyTranscript ? (
         <HistoryTranscriptReply
           transcript={historyTranscript}
@@ -358,7 +388,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
           <span className={clsx("shrink-0 whitespace-nowrap px-0.5 text-[10px] leading-4 tabular-nums", isSystem ? "text-status-warning-muted" : "text-ink-faint")}>
             {timeLabel}
             {timeLabel && startedAt && ' · '}
-            {startedAt && `${streaming ? '已运行' : '用时'} ${formatDuration(Math.max(0, (streaming ? clock : (finishedAt ?? timestamp ?? clock)) - startedAt))}`}
+            {startedAt && <MessageDuration streaming={streaming} startedAt={startedAt} finishedAt={finishedAt} timestamp={timestamp} />}
           </span>
         )}
       </div>

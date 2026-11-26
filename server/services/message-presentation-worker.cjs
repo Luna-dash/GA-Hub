@@ -7,10 +7,34 @@ function validTurnSegments(value, content) {
 }
 
 // webui/src/utils/transcriptProtocol.ts
-var TOOL = /^🛠️?\s*Tool\s*[:：]\s*`([\w.-]+)`(?:[ \t]*📥[ \t]*args:)?/i;
-var COMPACT = /^🛠️?\s*([\w.-]+)\s*\(/;
-var TURN = /^(?:\*\*)?LLM Running \(Turn (\d+)\) \.\.\.(?:\*\*)?/i;
-var EDGE = /^[ \t]*(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)/;
+var TOOL_Y = /🛠️?\s*Tool\s*[:：]\s*`([\w.-]+)`(?:[ \t]*📥[ \t]*args:)?/iy;
+var COMPACT_Y = /🛠️?\s*([\w.-]+)\s*\(/y;
+var TURN_Y = /(?:\*\*)?LLM Running \(Turn (\d+)\) \.\.\.(?:\*\*)?/iy;
+var META_Y = /<(summary|thinking|think|analysis)>/iy;
+var EDGE_Y = /[ \t]*(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)/y;
+var WS_Y = /\s*/y;
+var ARGS_PREFIX_Y = /(?:📥\s*args:|`{1,})/y;
+var PENDING_TAIL_RE = /^(?:🛠️?\s*(?:T(?:o(?:o(?:l(?::\s*(?:`[\w.]*)?)?)?)?)?)?|<(?:s(?:u(?:m(?:m(?:a(?:r(?:y)?)?)?)?)?)?)?)$/i;
+var BACKTICK_TAIL_RE = /^`{1,3}$/;
+var PENDING_OPEN_TAGS = ["<thinking>", "<think>", "<analysis>"];
+function isWsCode(ch) {
+  return ch === 32 || ch === 9 || ch === 10 || ch === 13 || ch === 11 || ch === 12 || ch === 160;
+}
+function skipWs(source, pos) {
+  while (pos < source.length && isWsCode(source.charCodeAt(pos))) pos++;
+  return pos;
+}
+function skipInlineSpaces(source, pos) {
+  while (pos < source.length) {
+    const ch = source.charCodeAt(pos);
+    if (ch !== 32 && ch !== 9) break;
+    pos++;
+  }
+  return pos;
+}
+function isWordOrToolCode(ch) {
+  return ch === 55357 || ch === 95 || ch === 46 || ch === 45 || ch >= 48 && ch <= 57 || ch >= 65 && ch <= 90 || ch >= 97 && ch <= 122;
+}
 function balancedCall(source, start) {
   let depth = 1, quoted = false, escaped = false;
   for (let i = start; i < source.length; i++) {
@@ -34,17 +58,22 @@ function balancedCall(source, start) {
   return null;
 }
 function fence(source, start, tool) {
-  const open = EDGE.exec(source.slice(start));
+  EDGE_Y.lastIndex = start;
+  const open = EDGE_Y.exec(source);
   const size = open[1].length, char = open[1][0];
+  const closeRe = new RegExp(`^[ \\t]*${char === "`" ? "`" : "~"}{${size},}[ \\t]*$`);
+  const gluedRe = tool && char === "`" ? new RegExp(`(?<!\`)\`{${size}}[ \\t]*$`) : null;
   let pos = start + open[0].length;
   while (pos < source.length) {
     const newline = source.indexOf("\n", pos);
     const end = newline < 0 ? source.length : newline + 1;
-    const line = source.slice(pos, end).replace(/\r?\n$/, "");
-    const close = new RegExp(`^[ \\t]*${char === "`" ? "`" : "~"}{${size},}[ \\t]*$`).exec(line);
-    if (close) return { end, complete: true, repair: null };
-    if (tool && char === "`") {
-      const glued = new RegExp(`(?<!\`)\`{${size}}[ \\t]*$`).exec(line);
+    let lineEnd = end;
+    if (lineEnd > pos && source[lineEnd - 1] === "\n") lineEnd--;
+    if (lineEnd > pos && source[lineEnd - 1] === "\r") lineEnd--;
+    const line = source.slice(pos, lineEnd);
+    if (closeRe.test(line)) return { end, complete: true, repair: null };
+    if (gluedRe) {
+      const glued = gluedRe.exec(line);
       if (glued && glued.index > 0) return { end, complete: true, repair: pos + glued.index };
     }
     pos = end;
@@ -53,6 +82,7 @@ function fence(source, start, tool) {
 }
 function scanTranscript(source) {
   const nodes = [];
+  const len = source.length;
   let pos = 0, textStart = 0;
   const push = (kind, start, end, extra = {}) => {
     nodes.push({ kind, start, end, raw: source.slice(start, end), complete: true, ...extra });
@@ -60,45 +90,74 @@ function scanTranscript(source) {
   const flush = () => {
     if (pos > textStart) push("text", textStart, pos);
   };
-  while (pos < source.length) {
-    const rest = source.slice(pos);
-    const lineStart = pos === 0 || source[pos - 1] === "\n";
-    const turn = TURN.exec(rest);
-    if (turn) {
-      flush();
-      push("turn", pos, pos + turn[0].length, { turn: Number(turn[1]) });
-      pos += turn[0].length;
-      textStart = pos;
-      continue;
+  while (pos < len) {
+    const ch = source.charCodeAt(pos);
+    const lineStart = pos === 0 || source.charCodeAt(pos - 1) === 10;
+    if (ch === 42 || ch === 76 || ch === 108) {
+      TURN_Y.lastIndex = pos;
+      const turn = TURN_Y.exec(source);
+      if (turn) {
+        flush();
+        push("turn", pos, pos + turn[0].length, { turn: Number(turn[1]) });
+        pos += turn[0].length;
+        textStart = pos;
+        continue;
+      }
     }
-    const meta = /^<(summary|thinking|think|analysis)>/i.exec(rest);
-    if (meta) {
-      const close = new RegExp(`</${meta[1]}>`, "i").exec(rest.slice(meta[0].length));
-      const end = close ? pos + meta[0].length + close.index + close[0].length : source.length;
-      flush();
-      push(meta[1].toLowerCase() === "summary" ? "summary" : "thinking", pos, end, { complete: !!close });
-      pos = end;
-      textStart = pos;
-      continue;
+    if (ch === 60) {
+      META_Y.lastIndex = pos;
+      const meta = META_Y.exec(source);
+      if (meta) {
+        const closeRe = new RegExp(`</${meta[1]}>`, "ig");
+        closeRe.lastIndex = pos + meta[0].length;
+        const close = closeRe.exec(source);
+        const end = close ? close.index + close[0].length : len;
+        flush();
+        push(meta[1].toLowerCase() === "summary" ? "summary" : "thinking", pos, end, { complete: !!close });
+        pos = end;
+        textStart = pos;
+        continue;
+      }
     }
-    let header = TOOL.exec(rest);
-    if (header) {
-      const suffix = rest.slice(header[0].length).trimStart();
-      const argsPending = suffix.length > 0 && "\u{1F4E5} args:".startsWith(suffix);
-      if (argsPending) header[0] = rest;
-      else if (!/^(?:📥\s*args:|`{1,}|$)/.test(suffix)) header = null;
+    const ws = isWsCode(ch);
+    let header = null;
+    if (ch === 55357 || ch === 84 || ch === 116 || ws) {
+      const probe = ws ? skipWs(source, pos) : pos;
+      const probeCh = probe < len ? source.charCodeAt(probe) : 0;
+      if (probeCh === 55357 || probeCh === 84 || probeCh === 116) {
+        TOOL_Y.lastIndex = pos;
+        header = TOOL_Y.exec(source);
+        if (header) {
+          const afterHeader = pos + header[0].length;
+          WS_Y.lastIndex = afterHeader;
+          const suffixStart = afterHeader + WS_Y.exec(source)[0].length;
+          const remLen = len - suffixStart;
+          if (remLen > 0 && remLen <= 8 && "\u{1F4E5} args:".startsWith(source.slice(suffixStart))) {
+            header[0] = source.slice(pos);
+          } else if (remLen > 0) {
+            ARGS_PREFIX_Y.lastIndex = suffixStart;
+            if (!ARGS_PREFIX_Y.test(source)) header = null;
+          }
+        }
+      }
     }
     const adjacentTool = nodes.at(-1)?.kind === "tool" && nodes.at(-1)?.end === pos;
-    const compact = header || !lineStart && !adjacentTool ? null : COMPACT.exec(rest);
+    let compact = null;
+    if (!header && (lineStart || adjacentTool) && (ws || isWordOrToolCode(ch))) {
+      COMPACT_Y.lastIndex = pos;
+      compact = COMPACT_Y.exec(source);
+    }
     if (header || compact) {
       flush();
       const start = pos, name = header?.[1] || compact[1];
       const headerEnd = header ? pos + header[0].length : balancedCall(source, pos + compact[0].length);
-      let end = headerEnd ?? source.length, complete = headerEnd !== null;
+      let end = headerEnd ?? len, complete = headerEnd !== null;
       const opaque = [], repairs = [];
       while (complete) {
-        const white = /^\s*/.exec(source.slice(end))[0].length;
-        const next = end + white, edge = EDGE.exec(source.slice(next));
+        WS_Y.lastIndex = end;
+        const next = end + WS_Y.exec(source)[0].length;
+        EDGE_Y.lastIndex = next;
+        const edge = EDGE_Y.exec(source);
         if (edge && edge[1][0] === "`" && edge[1].length >= 4) {
           const block = fence(source, next, true);
           opaque.push({ start: next, end: block.end });
@@ -107,9 +166,9 @@ function scanTranscript(source) {
           complete = block.complete;
           continue;
         }
-        if (next < source.length && /^`{1,3}$/.test(source.slice(next))) {
-          opaque.push({ start: next, end: source.length });
-          end = source.length;
+        if (next < len && len - next <= 3 && BACKTICK_TAIL_RE.test(source.slice(next))) {
+          opaque.push({ start: next, end: len });
+          end = len;
           complete = false;
         }
         break;
@@ -119,27 +178,39 @@ function scanTranscript(source) {
       textStart = pos;
       continue;
     }
-    if (lineStart && EDGE.test(rest)) {
-      flush();
-      const block = fence(source, pos, false);
-      push("code", pos, block.end, { complete: block.complete });
-      pos = block.end;
-      textStart = pos;
-      continue;
+    if (lineStart && (ch === 96 || ch === 126 || ch === 32 || ch === 9)) {
+      const fenceCheck = ch === 32 || ch === 9 ? skipInlineSpaces(source, pos) : pos;
+      const fenceCh = fenceCheck < len ? source.charCodeAt(fenceCheck) : 0;
+      if (fenceCh === 96 || fenceCh === 126) {
+        EDGE_Y.lastIndex = pos;
+        if (EDGE_Y.test(source)) {
+          flush();
+          const block = fence(source, pos, false);
+          push("code", pos, block.end, { complete: block.complete });
+          pos = block.end;
+          textStart = pos;
+          continue;
+        }
+      }
     }
-    if (rest.startsWith("<") && ["<thinking>", "<think>", "<analysis>"].some((tag) => tag.startsWith(rest.toLowerCase()))) {
-      flush();
-      push("pending", pos, source.length, { complete: false });
-      pos = source.length;
-      textStart = pos;
-      break;
+    if (ch === 60 && len - pos <= 10) {
+      const tailLower = source.slice(pos).toLowerCase();
+      if (PENDING_OPEN_TAGS.some((tag) => tag.startsWith(tailLower))) {
+        flush();
+        push("pending", pos, len, { complete: false });
+        pos = len;
+        textStart = pos;
+        break;
+      }
     }
-    if (/^(?:🛠️?\s*(?:T(?:o(?:o(?:l(?::\s*(?:`[\w.]*)?)?)?)?)?)?|<(?:s(?:u(?:m(?:m(?:a(?:r(?:y)?)?)?)?)?)?)?)$/i.test(rest)) {
-      flush();
-      push("pending", pos, source.length, { complete: false });
-      pos = source.length;
-      textStart = pos;
-      break;
+    if (len - pos <= 256 && (ch === 60 || ch === 55357 || ch === 84 || ch === 116 || ws)) {
+      if (PENDING_TAIL_RE.test(source.slice(pos))) {
+        flush();
+        push("pending", pos, len, { complete: false });
+        pos = len;
+        textStart = pos;
+        break;
+      }
     }
     pos++;
   }

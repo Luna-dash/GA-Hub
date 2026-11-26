@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   clearMarkdownRenderCache,
   markdownRenderCacheStats,
@@ -32,5 +32,14 @@ describe('Markdown render cache', () => {
     renderMarkdownTree('chat', large, { children: large })
 
     expect(markdownRenderCacheStats()).toEqual({ entries: 0, characters: 0 })
+  })
+
+  it('skips invoking the options factory when a cache entry already exists', () => {
+    const factory = vi.fn(() => ({ children: '**normalized**' }))
+    const first = renderMarkdownTree('chat', '**raw**', factory)
+    const second = renderMarkdownTree('chat', '**raw**', factory)
+
+    expect(second).toBe(first)
+    expect(factory).toHaveBeenCalledTimes(1)
   })
 })
