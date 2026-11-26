@@ -628,6 +628,11 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await flush()
 
     const stopBtn = host.querySelector('button[aria-label="停止 Agy 运行时"]') as HTMLButtonElement
+    expect(stopBtn.closest('[data-anti-runtime-controls]')).not.toBeNull()
+    expect(stopBtn.textContent?.trim()).toBe('')
+    expect(stopBtn.querySelector('svg')).not.toBeNull()
+    expect(stopBtn.className).toContain('text-status-danger')
+    expect(stopBtn.className).toContain('bg-status-danger-soft')
     await act(async () => { stopBtn.click() })
     await flush()
     expect(host.textContent).toContain('启用 Agy')
@@ -814,6 +819,8 @@ it('shows external gateway lock and login_required / unavailable banners clearly
     expect(host.textContent).toContain('当前 Agy 账号尚未登录或凭据已过期')
     const stopBtn = host.querySelector<HTMLButtonElement>('button[aria-label="停止 Agy 运行时"]')!
     const restartBtn = host.querySelector<HTMLButtonElement>('button[aria-label="重置 Agy 运行时"]')!
+    expect(stopBtn.textContent?.trim()).toBe('')
+    expect(restartBtn.textContent?.trim()).toBe('')
     expect(stopBtn.disabled).toBe(true)
     expect(restartBtn.disabled).toBe(true)
 

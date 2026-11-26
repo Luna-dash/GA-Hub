@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { LoaderCircle, RotateCw, ShieldCheck, ShieldMinus, ShieldX, Square } from 'lucide-react'
+import { LoaderCircle, Power, RotateCw, ShieldCheck, ShieldMinus, ShieldX } from 'lucide-react'
 import clsx from 'clsx'
 import { antiApi, HttpError } from '@/api/client'
 import { toast } from '@/stores/toastStore'
@@ -158,37 +158,42 @@ export function AntiDaemonControl({
         <AuthIcon className={clsx('h-3.5 w-3.5', auth === 'checking' && 'animate-spin motion-safe:animate-spin')} strokeWidth={1.85} aria-hidden="true" />
       </span>
       {canControl && <>
-        <button
-          type="button"
-          disabled={!managed}
-          className={clsx(
-            'ga-badge border-line bg-bg-card text-ink-muted transition-colors',
-            managed ? 'cursor-pointer hover:border-accent/50 hover:text-ink' : 'cursor-not-allowed opacity-45',
-          )}
-          aria-label="重置 Agy 运行时"
-          title={managed ? '重置 Agy 运行时' : externalDisabledReason}
-          onClick={() => { if (managed) restart.mutate(false) }}
-        >
-          <RotateCw className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden="true" />
-        </button>
-        {running && <button
-          type="button"
-          disabled={!managed}
-          className={clsx(
-            'ga-badge border-line bg-bg-card text-ink-muted transition-colors',
-            managed ? 'cursor-pointer hover:border-status-danger hover:text-status-danger' : 'cursor-not-allowed opacity-45',
-          )}
-          aria-label="停止 Agy 运行时"
-          title={managed ? '停止 Agy 运行时' : externalDisabledReason}
-          onClick={() => { if (managed) stop.mutate(false) }}
-        >
-          <Square className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden="true" />
-        </button>}
+        <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-line/65" />
+        <div data-anti-runtime-controls className="inline-flex items-center gap-1.5">
+          <button
+            type="button"
+            disabled={!managed}
+            className={clsx(
+              'inline-flex h-7 w-7 items-center justify-center rounded-lg border border-line/80 bg-bg-card/90 text-ink-muted shadow-[inset_0_1px_0_rgba(255,250,232,0.72),0_1px_2px_rgba(45,34,22,0.06)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40',
+              managed ? 'cursor-pointer hover:border-accent/60 hover:bg-bg-soft/90 hover:text-ink active:scale-[0.96]' : 'cursor-not-allowed opacity-45',
+            )}
+            aria-label="重置 Agy 运行时"
+            title={managed ? '重置 Agy 运行时' : externalDisabledReason}
+            onClick={() => { if (managed) restart.mutate(false) }}
+          >
+            <RotateCw className="h-[14px] w-[14px]" strokeWidth={1.9} aria-hidden="true" />
+          </button>
+          {running && <button
+            type="button"
+            disabled={!managed}
+            className={clsx(
+              'inline-flex h-7 w-7 items-center justify-center rounded-lg border shadow-[inset_0_1px_0_rgba(255,250,232,0.78),0_1px_2px_rgba(158,51,40,0.08)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/45',
+              managed
+                ? 'cursor-pointer border-status-danger/35 bg-status-danger-soft text-status-danger hover:border-status-danger hover:bg-status-danger hover:text-white active:scale-[0.96] active:bg-status-danger-strong'
+                : 'cursor-not-allowed border-status-danger-line/70 bg-status-danger-soft/50 text-status-danger/55 opacity-45',
+            )}
+            aria-label="停止 Agy 运行时"
+            title={managed ? '停止 Agy 运行时' : externalDisabledReason}
+            onClick={() => { if (managed) stop.mutate(false) }}
+          >
+            <Power className="h-[15px] w-[15px]" strokeWidth={2.1} aria-hidden="true" />
+          </button>}
+        </div>
       </>}
       {forceConflict && managed && !busy && (
         <div
           data-anti-daemon-force-confirm
-          className="inline-flex items-center gap-1 rounded-lg border border-status-danger-line bg-status-danger-soft px-1.5 py-0.5 text-[11px]"
+          className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-status-danger-line bg-status-danger-soft px-2 text-[11px]"
         >
           <button
             type="button"
