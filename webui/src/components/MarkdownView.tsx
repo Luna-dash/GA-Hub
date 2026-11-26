@@ -26,6 +26,7 @@ import { memo, ReactNode, useContext, useMemo, useState } from 'react'
 import { useCopy } from '@/utils/clipboard'
 import { looksLikeToolTrace } from '@/utils/toolTrace'
 import { renderMarkdownTree } from '@/utils/markdownRenderCache'
+import { getRuntimeConfig } from '@/runtime/runtimeConfig'
 import { normalizeMathDelimiters } from '@/utils/mathMarkdown'
 import { CopyIcon } from './ActionIcons'
 // Light paper-ish theme; token colors further tuned under .prose-chat in CSS
@@ -33,6 +34,47 @@ import 'highlight.js/styles/github.css'
 
 /** chat = full prose; plain = tool-safe; auto = plain when looksLikeToolTrace. */
 export type MarkdownMode = 'chat' | 'plain' | 'auto'
+
+const RASTER_DATA_IMAGE_RE = /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[a-z0-9+/]+=*$/i
+
+function isAllowedApiImagePath(url: URL): boolean {
+  if (url.pathname.startsWith('/api/files/') && url.pathname.length > '/api/files/'.length) {
+    return true
+  }
+  return url.pathname === '/api/files-by-path' && url.search.length > 1
+}
+
+/** Allow only Hub file endpoints, blob URLs, and raster base64 images in Markdown. */
+export function isAllowedMarkdownImageSrc(src: unknown): src is string {
+  if (typeof src !== 'string') return false
+  const trimmed = src.trim()
+  if (!trimmed) return false
+  if (trimmed.startsWith('blob:')) return true
+  if (RASTER_DATA_IMAGE_RE.test(trimmed)) return true
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
+    try {
+      return isAllowedApiImagePath(new URL(trimmed, 'http://localhost'))
+    } catch {
+      return false
+    }
+  }
+  const apiOrigin = getRuntimeConfig().apiOrigin
+  if (!apiOrigin) return false
+  try {
+    const parsed = new URL(trimmed)
+    const allowed = new URL(apiOrigin)
+    return parsed.origin === allowed.origin && isAllowedApiImagePath(parsed)
+  } catch {
+    return false
+  }
+}
+
+function markdownUrlTransform(url: string, key?: string, node?: { tagName?: string }): string {
+  if (node?.tagName === 'img' && key === 'src' && isAllowedMarkdownImageSrc(url)) {
+    return url.trim()
+  }
+  return citationUrlTransform(url, key, node)
+}
 
 function extractTransferPathFromImageSrc(src: string): string | null {
   try {
@@ -115,7 +157,14 @@ const BASE_MD_COMPONENTS = {
   ),
   a: ({ href, children }: any) => <CitationLink href={href}>{children}</CitationLink>,
   img: ({ src, alt, title }: any) => {
-    if (typeof src !== 'string' || !src.trim()) return null
+    if (!isAllowedMarkdownImageSrc(src)) {
+      const label = (typeof alt === 'string' && alt.trim()) || (typeof title === 'string' && title.trim()) || '外链图片已拦截'
+      return (
+        <span className="inline-block rounded border border-line px-1.5 py-0.5 text-xs text-ink-muted">
+          [{label}]
+        </span>
+      )
+    }
     return (
       <MarkdownTransferImage
         src={src.trim()}
@@ -190,7 +239,10 @@ function renderKatexHtml(tex: string, displayMode: boolean): string | null {
       displayMode,
       throwOnError: false,
       strict: 'ignore',
-      errorColor: '#9A3412',
+      maxSize: 10,
+      maxExpand: 1000,
+      trust: false,
+      errorColor: 'rgb(var(--c-status-danger-rgb))',
     })
   } catch {
     return null
@@ -267,7 +319,7 @@ export const MarkdownView = memo(function MarkdownView({
     remarkPlugins,
     rehypePlugins,
     components,
-    urlTransform: citationUrlTransform,
+    urlTransform: markdownUrlTransform,
   }, cache), [cache, components, rehypePlugins, remarkPlugins, resolved, text])
 
   return (

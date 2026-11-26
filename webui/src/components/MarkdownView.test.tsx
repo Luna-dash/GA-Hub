@@ -431,6 +431,55 @@ describe('MarkdownView responsive wrapping', () => {
     expect(cells[1].textContent).toBe('绝对值')
   })
 
+  it('only preserves local file citations on anchors and filters unapproved markdown images', () => {
+    const win = window as typeof window & { __GA_HUB_RUNTIME__?: { apiOrigin?: string } }
+    win.__GA_HUB_RUNTIME__ = { apiOrigin: 'http://127.0.0.1:43123' }
+    try {
+      const md = [
+        '[源码](C:/repo/src/app.ts#L12)',
+        '![local](C:/Users/admin/secret.png)',
+        '![tracker](https://evil.example/pixel.png)',
+        '![svg](data:image/svg+xml;base64,PHN2Zz4=)',
+        '![other-port](http://127.0.0.1:9999/api/files/secret.png)',
+        '![rel](/api/files/ok.png)',
+        '![bypath](/api/files-by-path?path=ok.png)',
+        '![origin](http://127.0.0.1:43123/api/files/from-origin.png)',
+        '![png](data:image/png;base64,iVBORw0KGgo=)',
+      ].join('\n\n')
+      act(() => root.render(<MarkdownView mode="chat">{md}</MarkdownView>))
+
+      const localLink = host.querySelector<HTMLButtonElement>('button.path-link')
+      expect(localLink?.getAttribute('title')).toBe('C:/repo/src/app.ts#L12')
+      expect(localLink?.textContent).toBe('源码')
+
+      const renderedImgs = Array.from(host.querySelectorAll('img')).map((img) => img.getAttribute('src'))
+      expect(renderedImgs).toEqual([
+        '/api/files/ok.png',
+        '/api/files-by-path?path=ok.png',
+        'http://127.0.0.1:43123/api/files/from-origin.png',
+        'data:image/png;base64,iVBORw0KGgo=',
+      ])
+      expect(host.textContent).toContain('[local]')
+      expect(host.textContent).toContain('[tracker]')
+      expect(host.textContent).toContain('[svg]')
+      expect(host.textContent).toContain('[other-port]')
+    } finally {
+      delete win.__GA_HUB_RUNTIME__
+    }
+  })
+
+  it('clamps KaTeX rule sizing and disables trust mode', () => {
+    const md = '$\\rule{999em}{999em}$ and $\\href{javascript:alert(1)}{click}$'
+    act(() => root.render(<MarkdownView mode="chat">{md}</MarkdownView>))
+
+    expect(host.querySelector('a[href^="javascript:"]')).toBeNull()
+    expect(host.querySelector('a')).toBeNull()
+    const ruleStyle = host.querySelector('.katex-html .katex-rule')?.getAttribute('style') ?? ''
+    expect(ruleStyle).toContain('10em')
+    expect(ruleStyle).not.toContain('999em')
+    expect(host.innerHTML).toContain('var(--c-status-danger-rgb)')
+  })
+
   it('offers transfer-box saving on local artifact images only inside conclusions', async () => {
     const md = '![产物预览](/api/files-by-path?path=D%3A%2Ftemp%2Fchart.png)'
     act(() => root.render(
