@@ -48,7 +48,7 @@ beforeEach(() => {
   vi.mocked(api.setupStatus).mockResolvedValue({ configured: true, ga_root: 'D:/GA', admin_data: 'D:/data' } as any)
   vi.mocked(api.chatRetryConfig).mockResolvedValue({ enabled: true, max_attempts: 2 } as any)
   vi.mocked(updateApi.status).mockResolvedValue({ plan: { state: 'idle' }, supported: true, sources: ['trusted-local-archive'], data_epoch: 1 })
-  vi.mocked(novaApi.status).mockResolvedValue({ device: 'device-test', paired: false, running: false })
+  vi.mocked(novaApi.status).mockResolvedValue({ device: 'device-test', paired: false, running: false, connected: false, paused: false })
   vi.mocked(fontApi.settings).mockResolvedValue({
     active_pack: 'system',
     bold_style: 'restrained',

@@ -9,7 +9,7 @@ vi.mock('@/api/client', () => ({ novaApi: { status: vi.fn(), action: vi.fn() } }
 
 let host: HTMLDivElement
 let root: Root
-const status = { device: 'd'.repeat(24), paired: false, running: false }
+const status = { device: 'd'.repeat(24), paired: false, running: false, connected: false, paused: false }
 const button = (label: string) => Array.from(host.querySelectorAll('button')).find(b => b.textContent === label) ?? (() => { throw new Error(host.innerHTML) })()
 async function input(selector: string, value: string) {
   const el = host.querySelector<HTMLInputElement>(selector)!
