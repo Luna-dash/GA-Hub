@@ -17,6 +17,7 @@ import re
 import sqlite3
 import stat
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1571,20 +1572,31 @@ def build_prompt_blocks(
         blocks.append({"type": "text", "text": prompt_text})
 
     # Staged files already referenced in prompt_text stay available via workspace/add-dir,
-    # while explicit images/audio/small text attachments are embedded natively when supported.
+    # while explicit images/audio/PDFs/small text attachments are embedded natively when supported.
     total_bytes = 0
     seen_paths: set[str] = set()
-    for att in attachments:
-        if att.get("is_path_only") or att.get("source_tag") == "pasted-text":
-            continue
-        raw_path = str(att.get("path") or "").strip()
-        if not raw_path or raw_path in seen_paths:
-            continue
-        p = Path(raw_path)
+
+    def _mark_seen(p: Path, raw: str = "") -> None:
+        if raw:
+            seen_paths.add(raw)
+        seen_paths.add(str(p))
+        with suppress(OSError):
+            seen_paths.add(str(p.resolve()))
+
+    def _is_seen(p: Path, raw: str = "") -> bool:
+        if raw and raw in seen_paths:
+            return True
+        if str(p) in seen_paths:
+            return True
+        try:
+            return str(p.resolve()) in seen_paths
+        except OSError:
+            return False
+
+    def _append_file_block(p: Path, name: str, *, allow_text: bool) -> None:
+        nonlocal total_bytes
         if not p.is_file():
-            continue
-        seen_paths.add(raw_path)
-        name = str(att.get("name") or p.name)
+            return
         mime, _ = mimetypes.guess_type(name)
         mime = (mime or "").lower()
         ext = p.suffix.lower()
@@ -1612,7 +1624,7 @@ def build_prompt_blocks(
                 "mimeType": "application/pdf",
                 "size": size,
             })
-        elif caps.get("embeddedContext") is True and is_txt and size <= _MAX_TEXT_ATTACHMENT_BYTES and total_bytes + size <= _MAX_TOTAL_ATTACHMENT_BYTES:
+        elif allow_text and caps.get("embeddedContext") is True and is_txt and size <= _MAX_TEXT_ATTACHMENT_BYTES and total_bytes + size <= _MAX_TOTAL_ATTACHMENT_BYTES:
             try:
                 raw_bytes = p.read_bytes()
                 if raw_bytes.startswith((b"\xff\xfe", b"\xfe\xff")):
@@ -1631,6 +1643,26 @@ def build_prompt_blocks(
                     })
             except (OSError, UnicodeDecodeError):
                 pass
+
+    for att in attachments:
+        raw_path = str(att.get("path") or "").strip()
+        if not raw_path:
+            continue
+        p = Path(raw_path)
+        if att.get("is_path_only") or att.get("source_tag") == "pasted-text":
+            _mark_seen(p, raw_path)
+            continue
+        if _is_seen(p, raw_path):
+            continue
+        _mark_seen(p, raw_path)
+        _append_file_block(p, str(att.get("name") or p.name), allow_text=True)
+
+    for staged in staged_paths:
+        p = Path(staged)
+        if _is_seen(p):
+            continue
+        _mark_seen(p)
+        _append_file_block(p, p.name, allow_text=False)
 
     if not blocks:
         if staged_paths:

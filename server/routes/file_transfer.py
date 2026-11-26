@@ -35,6 +35,10 @@ class SaveReplyDocument(TransferSource):
     text: str = Field(min_length=1, max_length=1_000_000)
 
 
+class ClearTransferDocumentsResp(BaseModel):
+    deleted: int
+
+
 @router.post("/reply", status_code=204, response_class=Response)
 def save_reply(body: SaveReplyDocument) -> Response:
     try:
@@ -64,3 +68,12 @@ def list_files() -> list[TransferredFile]:
 def clear_files() -> Response:
     FileTransfer().clear()
     return Response(status_code=204)
+
+
+@router.delete("/documents", response_model=ClearTransferDocumentsResp)
+def clear_documents() -> ClearTransferDocumentsResp:
+    try:
+        deleted = FileTransfer().clear_documents()
+    except (OSError, DatabaseError, RuntimeError) as exc:
+        raise HTTPException(500, "无法清空暂存文档") from exc
+    return ClearTransferDocumentsResp(deleted=deleted)

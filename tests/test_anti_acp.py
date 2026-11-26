@@ -719,6 +719,26 @@ def test_prompt_blocks_utf16_and_pasted_text_skip(tmp_path):
     assert blocks[1]["resource"]["text"] == "你好 Antigravity"
 
 
+def test_build_prompt_blocks_embeds_staged_images_and_pdfs(tmp_path):
+    from server.services import agy_protocol as proto
+
+    png = tmp_path / "chart.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\nchart")
+    pdf = tmp_path / "report.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nreport")
+
+    blocks = proto.build_prompt_blocks(
+        "inspect outputs",
+        [png, pdf],
+        [],
+        {"image": True, "embeddedContext": True},
+    )
+    assert [b["type"] for b in blocks] == ["text", "image", "resource_link"]
+    assert blocks[1]["mimeType"] == "image/png"
+    assert blocks[2]["mimeType"] == "application/pdf"
+    assert blocks[2]["name"] == "report.pdf"
+
+
 def test_normalizer_generation_ms_and_watcher_model_call_count(tmp_path):
     import sqlite3
 

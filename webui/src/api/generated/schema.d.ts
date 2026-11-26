@@ -3046,6 +3046,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/file-transfer/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Clear Documents */
+        delete: operations["clear_documents_api_file_transfer_documents_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/nova": {
         parameters: {
             query?: never;
@@ -4321,6 +4338,11 @@ export interface components {
              * @default 600
              */
             scheduled_backoff_max_seconds: number;
+        };
+        /** ClearTransferDocumentsResp */
+        ClearTransferDocumentsResp: {
+            /** Deleted */
+            deleted: number;
         };
         /**
          * ConductorActivityEvent
@@ -12497,6 +12519,26 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    clear_documents_api_file_transfer_documents_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClearTransferDocumentsResp"];
+                };
             };
         };
     };

@@ -13,6 +13,7 @@ from .. import _paths
 
 _UNSAFE_NAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 _LEADING_MD_DECOR = re.compile(r'^[#>*`\-+.\d\s]+')
+_TRAILING_TITLE_PUNCT = ".-_ ，。：；、！？?!,;:"
 
 
 def _safe_segment(raw: str | None, *, fallback: str, max_len: int) -> str:
@@ -26,14 +27,14 @@ def _safe_segment(raw: str | None, *, fallback: str, max_len: int) -> str:
     cleaned = re.sub(r"-{2,}", "-", cleaned).strip(".- ")
     if not cleaned or cleaned in {".", ".."}:
         return fallback
-    return cleaned[:max_len].rstrip(".- ") or fallback
+    return cleaned[:max_len].rstrip(_TRAILING_TITLE_PUNCT) or fallback
 
 
 def _reply_title_segment(text: str) -> str:
     for line in text.splitlines():
         stripped = _LEADING_MD_DECOR.sub("", line).strip()
         if stripped:
-            return _safe_segment(stripped, fallback="回复", max_len=24)
+            return _safe_segment(stripped, fallback="回复", max_len=12)
     return "回复"
 
 
@@ -73,10 +74,9 @@ class FileTransfer:
         directory.mkdir(parents=True, exist_ok=True)
         if directory.resolve().parent != self.db.parent.resolve():
             raise OSError("Reply document directory must not redirect")
-        project_part = _safe_segment(project, fallback="未绑定项目", max_len=32)
         title_part = _reply_title_segment(text)
-        stamp = datetime.now().strftime("%m%d-%H%M%S")
-        base_stem = f"{project_part}-{title_part}-{stamp}"
+        stamp = datetime.now().strftime("%m%d-%H%M")
+        base_stem = f"{title_part}-{stamp}"
         resolved_dir = directory.resolve()
         for seq in range(1, 100):
             suffix = "" if seq == 1 else f"-{seq}"
@@ -116,3 +116,38 @@ class FileTransfer:
     def clear(self) -> None:
         with closing(self.connect()) as db, db:
             db.execute("DELETE FROM manual_files")
+
+    def clear_documents(self) -> int:
+        directory = self.db.parent / "transfer_documents"
+        if not directory.exists():
+            return 0
+        if directory.is_symlink() or directory.resolve().parent != self.db.parent.resolve():
+            raise OSError("Reply document directory must not redirect")
+        resolved_dir = directory.resolve()
+        norm_dir = os.path.normcase(str(resolved_dir))
+        deleted = 0
+        for entry in list(directory.iterdir()):
+            if entry.is_symlink():
+                continue
+            try:
+                resolved_entry = entry.resolve()
+            except OSError:
+                continue
+            if resolved_entry.parent != resolved_dir or not entry.is_file():
+                continue
+            entry.unlink()
+            deleted += 1
+        with closing(self.connect()) as db, db:
+            rows = db.execute("SELECT id, path_key FROM manual_files").fetchall()
+            remove_ids: list[int] = []
+            for row in rows:
+                norm_path = os.path.normcase(str(row["path_key"]))
+                try:
+                    if os.path.commonpath([norm_dir, norm_path]) == norm_dir:
+                        remove_ids.append(int(row["id"]))
+                except ValueError:
+                    continue
+            if remove_ids:
+                marks = ",".join("?" for _ in remove_ids)
+                db.execute(f"DELETE FROM manual_files WHERE id IN ({marks})", remove_ids)
+        return deleted

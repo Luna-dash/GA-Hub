@@ -7632,6 +7632,27 @@
         }
       }
     },
+    "/api/file-transfer/documents": {
+      "delete": {
+        "tags": [
+          "file-transfer"
+        ],
+        "summary": "Clear Documents",
+        "operationId": "clear_documents_api_file_transfer_documents_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearTransferDocumentsResp"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/nova": {
       "get": {
         "summary": "Page",
@@ -11212,6 +11233,19 @@
         },
         "type": "object",
         "title": "ChatRetryConfigReq"
+      },
+      "ClearTransferDocumentsResp": {
+        "properties": {
+          "deleted": {
+            "type": "integer",
+            "title": "Deleted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deleted"
+        ],
+        "title": "ClearTransferDocumentsResp"
       },
       "ConductorActivityEvent": {
         "properties": {

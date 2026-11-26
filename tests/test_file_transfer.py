@@ -56,10 +56,49 @@ def test_reply_document_requires_explicit_save_and_remains_after_clear(tmp_path,
         assert len(list(directory.iterdir())) == 2
         for row in rows:
             assert row["available"] and row["session_id"] == "reply-session" and row["project"] == "demo"
-            assert row["name"].startswith("demo-结论-")
+            assert row["name"].startswith("结论-")
+            assert not row["name"].startswith("demo-")
+            assert len(row["name"].removesuffix(".md")) <= 26
             document = directory / row["name"]
             assert document.suffix == ".md" and str(document.resolve()) == row["path"]
             assert document.read_bytes() == text.encode("utf8")
         assert client.delete(endpoint).status_code == 204
         assert client.get(endpoint).json() == []
         assert len(list(directory.iterdir())) == 2
+
+
+def test_clear_documents_deletes_staged_files_and_keeps_external_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path)
+    app = FastAPI()
+    app.include_router(routes.router)
+    endpoint = "/api/file-transfer"
+    image = tmp_path / "preview.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    report = tmp_path / "report.pdf"
+    report.write_bytes(b"%PDF-1.4\n")
+    archive = tmp_path / "bundle.zip"
+    archive.write_bytes(b"PK\x03\x04")
+    with TestClient(app) as client:
+        assert client.delete(endpoint + "/documents").json() == {"deleted": 0}
+        for artifact in (image, report, archive):
+            assert client.post(endpoint, json={"path": str(artifact), "engine": "anti", "session_id": "s1", "project": "demo"}).status_code == 204
+        assert client.post(endpoint + "/reply", json={"text": "# 方案\n\n细节说明", "engine": "chat", "session_id": "s1", "project": "demo"}).status_code == 204
+        rows = client.get(endpoint).json()
+        names = [row["name"] for row in rows]
+        assert any(name.startswith("方案-") and name.endswith(".md") for name in names)
+        assert {"preview.png", "report.pdf", "bundle.zip"}.issubset(set(names))
+
+        resp = client.delete(endpoint + "/documents")
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": 1}
+        assert list((tmp_path / "transfer_documents").iterdir()) == []
+        remaining_names = [row["name"] for row in client.get(endpoint).json()]
+        assert sorted(remaining_names) == ["bundle.zip", "preview.png", "report.pdf"]
+        assert image.is_file() and report.is_file() and archive.is_file()
+
+        # Works cleanly even when indexed list was already cleared first.
+        assert client.post(endpoint + "/reply", json={"text": "待清理结论", "engine": "anti", "session_id": "s1"}).status_code == 204
+        assert client.delete(endpoint).status_code == 204
+        assert len(list((tmp_path / "transfer_documents").iterdir())) == 1
+        assert client.delete(endpoint + "/documents").json() == {"deleted": 1}
+        assert list((tmp_path / "transfer_documents").iterdir()) == []

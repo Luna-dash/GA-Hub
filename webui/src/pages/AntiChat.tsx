@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom'
 import { useInRouterContext, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import type { TransferredFile } from '@/components/FileTransferBox'
+import { guessTransferMime, type TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
 import { Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, X } from 'lucide-react'
@@ -256,15 +256,12 @@ function queuedItemToAttachments(item: AntiQueuedPromptItem): PasteAttachment[] 
   })
   const refList: PasteAttachment[] = (item.references ?? []).map((ref) => {
     const name = ref.path.split(/[/\\]/).pop() || ref.path
-    const ext = name.split('.').pop()?.toLowerCase() ?? ''
-    const mime = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)
-      ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : 'application/octet-stream'
     return {
       file_id: `${TRANSFER_PREFIX}${ref.id}`,
       name,
       path: ref.path,
       url: '',
-      mime,
+      mime: guessTransferMime(name),
       size: 0,
       source: 'local_ref',
     }
@@ -1296,19 +1293,17 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     <div className="relative flex min-h-0 flex-1 flex-col">
       <ChatUtilityDock fileTransfer={{
         canInsert: !current && !pending && !send.isPending && transferCount < 8,
+        source: { engine: 'anti', sessionId: sid, ...(project ? { project } : {}) },
         onInsert: (file: TransferredFile) => {
           const currentDraft = useDraftStore.getState().attachments[draftKey] ?? []
           if (currentDraft.some(item => item.path === file.path)) return
-          const extension = file.name.split('.').pop()?.toLowerCase()
-          const mime = extension && ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(extension)
-            ? `image/${extension === 'jpg' ? 'jpeg' : extension}` : 'application/octet-stream'
           useDraftStore.getState().setAttachments(draftKey, [...currentDraft, {
             file_id: `${TRANSFER_PREFIX}${file.id}`,
             url: '',
             path: file.path,
             name: file.name,
             size: file.size,
-            mime,
+            mime: guessTransferMime(file.name),
             source: 'local_ref',
           }])
         },
@@ -1420,84 +1415,84 @@ function Conversation({ session, headerActions, profileId, profilesData, support
                         </p>
                       )}
                       <div style={messageFontStyle}>
-                        <AntiTaskProgress
-                          active={isRunActive}
-                          loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
-                          streamUrl={isRunActive ? resolveApiUrl(`/api/anti/sessions/${sid}/runs/${run.id}/events/stream`) : undefined}
-                          runKey={`${sid}/${run.id}`}
-                          onEventsChanged={handleEventsChanged}
-                          onApprovalRequested={() => { void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] }) }}
-                          onStreamEnded={() => {
-                            void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] })
-                            void cache.invalidateQueries({ queryKey: key })
-                            void cache.invalidateQueries({ queryKey: queueKey })
-                            void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
-                          }}
-                        >
-                          {(partial, liveProgressMessages) => {
-                            const persistedProgress = displayRun.progress_messages ?? []
-                            const liveTrailing = isRunActive && partial.trim() ? partial : ''
-                            const progressMessages = isRunActive
-                              ? (liveTrailing ? [...liveProgressMessages, liveTrailing] : liveProgressMessages)
-                              : (persistedProgress.length > 0 ? persistedProgress : liveProgressMessages)
-                            const finalAnswer = isRunActive ? '' : (displayRun.answer ?? partial)
-                            const hasProgress = progressMessages.length > 0
-                            const isSuccess = displayRun.status === 'success'
-                            const showFinal = !isRunActive && Boolean(finalAnswer.trim())
-                            const liveOutputActive = isRunActive && Boolean(liveTrailing) && !approval
-                            return <>
-                              {hasProgress && (
-                                <section
-                                  data-anti-progress-outputs
-                                  aria-label="过程阶段输出"
-                                  className={clsx(
-                                    showFinal ? 'mb-3' : 'mb-1',
-                                    'rounded-lg border border-line/65 bg-bg-soft/65 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,250,232,0.45)]',
-                                  )}
-                                >
-                                  <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-medium text-ink-faint">
-                                    <span className="inline-flex items-center gap-1.5">
-                                      <span>过程输出</span>
-                                      {liveOutputActive && (
-                                        <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft/75 px-1.5 py-0.5 text-[10px] font-medium leading-none text-accent">
-                                          <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-                                          实时输出
-                                        </span>
-                                      )}
-                                    </span>
-                                    <span className="tabular-nums">{progressMessages.length} 条</span>
-                                  </div>
-                                  <ul className="list-disc space-y-1.5 pl-4 text-ink-muted marker:text-accent/65">
-                                    {progressMessages.map((msg, idx) => {
-                                      const isLiveItem = isRunActive && Boolean(liveTrailing) && idx === progressMessages.length - 1
-                                      return (
-                                        <li
-                                          key={idx}
-                                          data-anti-progress-live={isLiveItem ? 'true' : undefined}
-                                          className={clsx(
-                                            'anti-progress-item min-w-0',
-                                            isLiveItem && 'anti-progress-item-live',
-                                            isLiveItem && !approval && 'cursor-blink',
-                                          )}
-                                        >
-                                          <MessageContent format="markdown" content={msg} cache={!isLiveItem} />
-                                        </li>
-                                      )
-                                    })}
-                                  </ul>
-                                </section>
-                              )}
-                              {showFinal && (
-                                <FileTransferConclusion.Provider value={isSuccess ? { engine: 'anti', project } : null}>
+                        <FileTransferConclusion.Provider value={!isRunActive && displayRun.status === 'success' ? { engine: 'anti', sessionId: sid, project } : null}>
+                          <AntiTaskProgress
+                            active={isRunActive}
+                            loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
+                            streamUrl={isRunActive ? resolveApiUrl(`/api/anti/sessions/${sid}/runs/${run.id}/events/stream`) : undefined}
+                            runKey={`${sid}/${run.id}`}
+                            onEventsChanged={handleEventsChanged}
+                            onApprovalRequested={() => { void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] }) }}
+                            onStreamEnded={() => {
+                              void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] })
+                              void cache.invalidateQueries({ queryKey: key })
+                              void cache.invalidateQueries({ queryKey: queueKey })
+                              void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+                            }}
+                          >
+                            {(partial, liveProgressMessages) => {
+                              const persistedProgress = displayRun.progress_messages ?? []
+                              const liveTrailing = isRunActive && partial.trim() ? partial : ''
+                              const progressMessages = isRunActive
+                                ? (liveTrailing ? [...liveProgressMessages, liveTrailing] : liveProgressMessages)
+                                : (persistedProgress.length > 0 ? persistedProgress : liveProgressMessages)
+                              const finalAnswer = isRunActive ? '' : (displayRun.answer ?? partial)
+                              const hasProgress = progressMessages.length > 0
+                              const isSuccess = displayRun.status === 'success'
+                              const showFinal = !isRunActive && Boolean(finalAnswer.trim())
+                              const liveOutputActive = isRunActive && Boolean(liveTrailing) && !approval
+                              return <>
+                                {hasProgress && (
+                                  <section
+                                    data-anti-progress-outputs
+                                    aria-label="过程阶段输出"
+                                    className={clsx(
+                                      showFinal ? 'mb-3' : 'mb-1',
+                                      'rounded-lg border border-line/65 bg-bg-soft/65 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,250,232,0.45)]',
+                                    )}
+                                  >
+                                    <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-medium text-ink-faint">
+                                      <span className="inline-flex items-center gap-1.5">
+                                        <span>过程输出</span>
+                                        {liveOutputActive && (
+                                          <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft/75 px-1.5 py-0.5 text-[10px] font-medium leading-none text-accent">
+                                            <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+                                            实时输出
+                                          </span>
+                                        )}
+                                      </span>
+                                      <span className="tabular-nums">{progressMessages.length} 条</span>
+                                    </div>
+                                    <ul className="list-disc space-y-1.5 pl-4 text-ink-muted marker:text-accent/65">
+                                      {progressMessages.map((msg, idx) => {
+                                        const isLiveItem = isRunActive && Boolean(liveTrailing) && idx === progressMessages.length - 1
+                                        return (
+                                          <li
+                                            key={idx}
+                                            data-anti-progress-live={isLiveItem ? 'true' : undefined}
+                                            className={clsx(
+                                              'anti-progress-item min-w-0',
+                                              isLiveItem && 'anti-progress-item-live',
+                                              isLiveItem && !approval && 'cursor-blink',
+                                            )}
+                                          >
+                                            <MessageContent format="markdown" content={msg} cache={!isLiveItem} />
+                                          </li>
+                                        )
+                                      })}
+                                    </ul>
+                                  </section>
+                                )}
+                                {showFinal && (
                                   <div data-anti-final-answer className="pt-0.5">
                                     {isSuccess && <FinalConclusionDivider />}
                                     <MessageContent format="markdown" content={finalAnswer} cache />
                                   </div>
-                                </FileTransferConclusion.Provider>
-                              )}
-                            </>
-                          }}
-                        </AntiTaskProgress>
+                                )}
+                              </>
+                            }}
+                          </AntiTaskProgress>
+                        </FileTransferConclusion.Provider>
                       </div>
                       {isRunActive && approval && (
                         <div

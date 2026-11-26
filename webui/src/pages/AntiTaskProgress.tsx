@@ -5,6 +5,7 @@ import { ChevronRight } from 'lucide-react'
 import clsx from 'clsx'
 import { CollapseToLatestButton } from '@/components/CollapseToLatestButton'
 import { useConversationCollapse } from '@/components/ConversationCollapse'
+import { PathLink } from '@/components/FileCitation'
 
 type Step = components['schemas']['AntiStep'] & { image_path?: string | null }
 export type AntiEvent =
@@ -319,7 +320,7 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
                   data-step-image-path
                   className="mt-0.5 font-mono text-[11px] text-ink-muted"
                 >
-                  图片路径：{step.image_path}
+                  图片路径：<PathLink path={step.image_path} display={step.image_path} />
                 </div>
               )}
               {descriptionParagraphs.length > 0 && (
