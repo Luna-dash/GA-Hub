@@ -971,4 +971,58 @@ def test_broken_thread_clears_conversation_and_injects_handoff(tmp_path, monkeyp
         assert calls[2]["fallback_handoff_context"] and "step 1" in calls[2]["fallback_handoff_context"]
 
 
+def test_submit_run_aligns_orchestrator_roles_before_get_worker(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path / "data")
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+    db = tmp_path / "anti_orch_align.sqlite"
+
+    order: list[tuple[str, object]] = []
+
+    class AlignRuntime(FakeRuntime):
+        def ensure_orchestrator_roles(self, db_key, profile_id, session_id, *, planner, executor):
+            order.append(("ensure", (profile_id, session_id, planner, executor)))
+
+        def get_worker(self, db_key, profile_id, session_id, workspace_path):
+            order.append(("get_worker", session_id))
+            return super().get_worker(db_key, profile_id, session_id, workspace_path)
+
+    runtime = AlignRuntime()
+    monkeypatch.setattr(FakeWorker, "run_turn", lambda self, **kw: {
+        "status": "success",
+        "conversation_id": "conv-orch",
+        "answer": "ok",
+        "progress_messages": [],
+        "effective_model": kw["model"],
+        "usage": {},
+    })
+    monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(db, runtime))
+    monkeypatch.setattr(anti.daemon, "submission", lambda profile_id=None: nullcontext(profile_id or "default"))
+
+    app = FastAPI()
+    app.include_router(anti.router)
+    with TestClient(app) as client:
+        sid = client.post("/api/anti/sessions", json={"project": "project"}).json()["id"]
+        run = client.post(
+            f"/api/anti/sessions/{sid}/runs",
+            json={
+                "operation": "op-orch-align",
+                "prompt": "Plan and implement",
+                "model": "gemini-pro-orchestrator-neon",
+                "effort": "high",
+                "orchestrator_planner": "gemini-4-neon-xhigh",
+                "orchestrator_executor": "claude-sonnet-5-5-high",
+            },
+        ).json()
+        done = _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{run['id']}")
+        assert done["status"] == "success"
+        assert order == [
+            ("ensure", ("default", sid, "gemini-4-neon-xhigh", "claude-sonnet-5-5-high")),
+            ("get_worker", sid),
+        ]
+
+
 

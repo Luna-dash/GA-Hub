@@ -26,6 +26,21 @@ DEFAULT_MODEL_ID = "gemini-4-hydrogen-high"
 DEFAULT_EFFORT_LEVEL = "high"
 DEFAULT_SCHEDULE_HOURS: tuple[int, ...] = (0, 6, 12, 18)
 
+DEFAULT_ORCHESTRATOR_PRESETS: list[dict[str, str | None]] = [
+    {
+        "id": "preset-1",
+        "name": "Neon",
+        "planner": "gemini-4-neon-high",
+        "executor": "gemini-4-hydrogen-high",
+    },
+    {
+        "id": "preset-2",
+        "name": "Carbon",
+        "planner": "gemini-4-carbon-high",
+        "executor": "gemini-4-hydrogen-high",
+    },
+]
+
 _DEFAULT_QUOTA_RULES: list[dict[str, str]] = [
     {"pattern": r"(?:claude|gpt|^3p-)", "group": "claude-3p"},
     {"pattern": r"gemini-3", "group": "gemini-3"},
@@ -109,8 +124,61 @@ def _default_payload() -> dict[str, Any]:
         },
         "aliases": {},
         "quota_rules": deepcopy(_DEFAULT_QUOTA_RULES),
+        "orchestrator_presets": deepcopy(DEFAULT_ORCHESTRATOR_PRESETS),
+        "hidden_models": [],
         "profiles": {},
     }
+
+
+def _normalize_orchestrator_presets(raw: Any) -> list[dict[str, str | None]]:
+    """Normalize presets into exactly 2 fixed slots (`preset-1`, `preset-2`)."""
+    entries = raw if isinstance(raw, list) else []
+    by_id: dict[str, dict[str, Any]] = {}
+    positional: list[dict[str, Any]] = []
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        positional.append(item)
+        pid = str(item.get("id") or "").strip()
+        if pid in {"preset-1", "preset-2"} and pid not in by_id:
+            by_id[pid] = item
+
+    out: list[dict[str, str | None]] = []
+    for idx, default_preset in enumerate(DEFAULT_ORCHESTRATOR_PRESETS):
+        slot_id = str(default_preset["id"])
+        src = by_id.get(slot_id)
+        if src is None and idx < len(positional):
+            src = positional[idx]
+        name_raw = str((src or {}).get("name") or "").strip()
+        name = (name_raw[:32] if name_raw else str(default_preset["name"]))
+        if src is not None and "planner" in src:
+            p_raw = src.get("planner")
+            planner = str(p_raw).strip()[:128] if isinstance(p_raw, str) and p_raw.strip() else None
+        else:
+            planner = default_preset["planner"]
+        if src is not None and "executor" in src:
+            e_raw = src.get("executor")
+            executor = str(e_raw).strip()[:128] if isinstance(e_raw, str) and e_raw.strip() else None
+        else:
+            executor = default_preset["executor"]
+        out.append({
+            "id": slot_id,
+            "name": name,
+            "planner": planner,
+            "executor": executor,
+        })
+    return out
+
+
+def _normalize_hidden_models(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    cleaned = [
+        str(item).strip()[:128]
+        for item in raw
+        if isinstance(item, str) and item.strip()
+    ]
+    return list(dict.fromkeys(cleaned))
 
 
 def _normalize_item(raw: Any) -> dict[str, Any] | None:
@@ -186,6 +254,9 @@ def _normalize_payload(raw: Any) -> dict[str, Any]:
             cleaned_rules.append({"pattern": pattern, "group": group})
         if cleaned_rules:
             base["quota_rules"] = cleaned_rules
+
+    base["orchestrator_presets"] = _normalize_orchestrator_presets(raw.get("orchestrator_presets"))
+    base["hidden_models"] = _normalize_hidden_models(raw.get("hidden_models"))
 
     profiles_raw = raw.get("profiles")
     if isinstance(profiles_raw, dict):
@@ -274,6 +345,8 @@ def patch_user_config(
     allow_auto_fallback: bool | None = None,
     aliases: dict[str, str] | None = None,
     quota_rules: list[dict[str, str]] | None = None,
+    orchestrator_presets: list[dict[str, Any]] | None = None,
+    hidden_models: list[str] | None = None,
 ) -> dict[str, Any]:
     def mutate(cfg: dict[str, Any]) -> None:
         if auto_sync is not None:
@@ -294,6 +367,10 @@ def patch_user_config(
             }
         if quota_rules is not None:
             cfg["quota_rules"] = quota_rules
+        if orchestrator_presets is not None:
+            cfg["orchestrator_presets"] = _normalize_orchestrator_presets(orchestrator_presets)
+        if hidden_models is not None:
+            cfg["hidden_models"] = _normalize_hidden_models(hidden_models)
 
     return update_models_config(mutate)
 
@@ -476,4 +553,6 @@ def public_config_view(*, now: datetime | None = None) -> dict[str, Any]:
         "allow_auto_fallback": bool(cfg["defaults"].get("allow_auto_fallback", True)),
         "aliases": dict(cfg.get("aliases") or {}),
         "quota_rules": [dict(r) for r in (cfg.get("quota_rules") or [])],
+        "orchestrator_presets": [dict(p) for p in (cfg.get("orchestrator_presets") or DEFAULT_ORCHESTRATOR_PRESETS)],
+        "hidden_models": list(cfg.get("hidden_models") or []),
     }

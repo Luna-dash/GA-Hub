@@ -660,7 +660,9 @@ export type AntiWorkerList = ApiComponents['schemas']['AntiWorkerList']
 export type AgyProfile = ApiComponents['schemas']['AgyProfile']
 export type AgyProfileUsageSnapshot = ApiComponents['schemas']['AgyProfileUsageSnapshot']
 export type AgyProfiles = ApiComponents['schemas']['AgyProfiles']
+export type AgyUsageRefreshAllResult = ApiComponents['schemas']['AgyUsageRefreshAllResult']
 export type AgyOrchestratorSettings = ApiComponents['schemas']['AgyOrchestratorSettings']
+export type AntiOrchestratorPreset = ApiComponents['schemas']['AntiOrchestratorPreset']
 export type AgyCodeLoginState = ApiComponents['schemas']['AgyCodeLoginState']
 export type AntiAttachmentRef = ApiComponents['schemas']['AttachmentRef']
 export type AntiMode = 'plan' | 'accept-edits'
@@ -674,6 +676,8 @@ export type AntiSubmission = {
   permission_mode?: AntiPermissionMode
   references?: { id: number; path: string }[]
   attachments?: AntiAttachmentRef[]
+  orchestrator_planner?: string | null
+  orchestrator_executor?: string | null
 }
 export type AntiSteerSubmission = {
   prompt: string
@@ -743,6 +747,16 @@ export const antiApi = {
       {
         headers: { 'X-GA-Hub-Action': 'check-anti-usage' },
         timeoutMs: 25_000,
+      },
+    ),
+  refreshAllAccountUsage: (onlyStale = false) =>
+    antiHttp<AgyUsageRefreshAllResult>(
+      'POST',
+      onlyStale ? '/api/anti/account-usage/refresh-all?only_stale=true' : '/api/anti/account-usage/refresh-all',
+      undefined,
+      {
+        headers: { 'X-GA-Hub-Action': 'check-anti-usage' },
+        timeoutMs: 60_000,
       },
     ),
   quota: (signal?: AbortSignal, profileId?: string) =>

@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
 import clsx from 'clsx'
-import type { AgyOrchestratorSettings, AntiModels } from '@/api/client'
+import type { AntiModels, AntiOrchestratorPreset } from '@/api/client'
 import { Z_LAYERS } from '@/config/zLayers'
 
 export const DEFAULT_FAMILY = 'gemini-4-hydrogen'
@@ -16,13 +16,42 @@ export const EFFORT_OPTIONS = [
   { key: 'max', name: 'max' },
 ] as const
 
-const EFFORT_SHORT_LABELS: Record<string, string> = {
+export const EFFORT_SHORT_LABELS: Record<string, string> = {
   low: 'Low',
   medium: 'Med',
   high: 'High',
   xhigh: 'XHigh',
   max: 'Max',
 }
+
+export const OFFICIAL_ORCH_PLANNER_FAMILIES = [
+  'gemini-4-neon',
+  'gemini-4-carbon',
+  'gemini-4-argon',
+  'claude-opus-5-5',
+] as const
+
+export const OFFICIAL_ORCH_EXECUTOR_FAMILIES = [
+  'gemini-4-hydrogen',
+  'claude-sonnet-5-5',
+] as const
+
+export const ORCH_PRESET_KEY_PREFIX = 'orch-preset:'
+
+export const DEFAULT_ORCHESTRATOR_PRESETS: readonly [AntiOrchestratorPreset, AntiOrchestratorPreset] = [
+  {
+    id: 'preset-1',
+    name: 'Neon',
+    planner: 'gemini-4-neon-high',
+    executor: 'gemini-4-hydrogen-high',
+  },
+  {
+    id: 'preset-2',
+    name: 'Carbon',
+    planner: 'gemini-4-carbon-high',
+    executor: 'gemini-4-hydrogen-high',
+  },
+]
 
 export interface AgyModelFamily {
   key: string
@@ -32,6 +61,9 @@ export interface AgyModelFamily {
   efforts?: string[]
   defaultEffort?: string
   isOrchestrator?: boolean
+  subtitle?: string
+  tooltip?: string
+  preset?: AntiOrchestratorPreset
 }
 
 export function modelFamilies(items: AntiModels['items']) {
@@ -64,26 +96,205 @@ export function modelFamilies(items: AntiModels['items']) {
   return [...families.values()]
 }
 
-export function buildOrchestratorRoleChoices(items: AntiModels['items']) {
-  const options: Array<{ id: string; label: string }> = []
-  const seen = new Set<string>()
-  const push = (id: string, label: string) => {
-    if (!id || seen.has(id)) return
-    seen.add(id)
-    options.push({ id, label })
-  }
-  for (const item of items) {
-    if (item.is_orchestrator || /orchestrator/i.test(item.id)) continue
-    if (item.efforts?.length && !/-(low|medium|high|xhigh|max)$/i.test(item.id)) {
-      for (const lvl of item.efforts) {
-        const titleLevel = EFFORT_SHORT_LABELS[lvl] ?? lvl
-        push(`${item.id}-${lvl}`, `${item.display_name} (${titleLevel})`)
-      }
-    } else {
-      push(item.id, item.display_name || item.id)
+export function normalizeOrchestratorPresets(
+  raw?: ReadonlyArray<AntiOrchestratorPreset> | null,
+): [AntiOrchestratorPreset, AntiOrchestratorPreset] {
+  const entries = Array.isArray(raw) ? raw : []
+  const byId = new Map<string, AntiOrchestratorPreset>()
+  for (const entry of entries) {
+    if (entry && (entry.id === 'preset-1' || entry.id === 'preset-2') && !byId.has(entry.id)) {
+      byId.set(entry.id, entry)
     }
   }
-  return options
+  return DEFAULT_ORCHESTRATOR_PRESETS.map((fallback, idx) => {
+    const src = byId.get(fallback.id) ?? (entries[idx] && typeof entries[idx] === 'object' ? entries[idx] : undefined)
+    const trimmedName = typeof src?.name === 'string' ? src.name.trim() : ''
+    const hasPlanner = Boolean(src && Object.prototype.hasOwnProperty.call(src, 'planner'))
+    const hasExecutor = Boolean(src && Object.prototype.hasOwnProperty.call(src, 'executor'))
+    const planner = hasPlanner
+      ? (typeof src?.planner === 'string' && src.planner.trim() ? src.planner.trim() : null)
+      : fallback.planner
+    const executor = hasExecutor
+      ? (typeof src?.executor === 'string' && src.executor.trim() ? src.executor.trim() : null)
+      : fallback.executor
+    return {
+      id: fallback.id,
+      name: (trimmedName || fallback.name).slice(0, 32),
+      planner,
+      executor,
+    }
+  }) as [AntiOrchestratorPreset, AntiOrchestratorPreset]
+}
+
+export function splitModelVariantId(modelId?: string | null): { familyKey: string; effort: string } {
+  const clean = (modelId || '').trim()
+  const match = clean.match(/^(.+)-(low|medium|high|xhigh|max)$/i)
+  if (match) {
+    return { familyKey: match[1], effort: match[2].toLowerCase() }
+  }
+  return { familyKey: clean, effort: DEFAULT_EFFORT }
+}
+
+export function getFamilyEffortOptions(family?: AgyModelFamily) {
+  if (!family || family.isOrchestrator) return []
+  if (family.efforts?.length) {
+    return EFFORT_OPTIONS.filter(option => family.efforts!.includes(option.key))
+  }
+  const variantOptions = EFFORT_OPTIONS.filter(option => Boolean(family.variants[option.key]))
+  if (variantOptions.length > 0) return variantOptions
+  return family.plain ? [...EFFORT_OPTIONS] : []
+}
+
+export function resolveEffortForFamily(family: AgyModelFamily | undefined, preferred: string): string {
+  const options = getFamilyEffortOptions(family)
+  if (options.length === 0) return family?.defaultEffort ?? DEFAULT_EFFORT
+  return (
+    options.find(opt => opt.key === preferred)?.key
+    ?? options.find(opt => opt.key === (family?.defaultEffort ?? DEFAULT_EFFORT))?.key
+    ?? options.find(opt => opt.key === DEFAULT_EFFORT)?.key
+    ?? options[0]?.key
+    ?? DEFAULT_EFFORT
+  )
+}
+
+export function composeModelVariantId(familyKey: string, effort: string, family?: AgyModelFamily): string {
+  const cleanFamily = familyKey.trim()
+  if (!cleanFamily) return DEFAULT_MODEL.id
+  const cleanEffort = effort.trim().toLowerCase() || DEFAULT_EFFORT
+  if (family?.variants[cleanEffort]) return family.variants[cleanEffort]!
+  const hasVariants = Boolean(family && (Object.keys(family.variants).length > 0 || (family.efforts?.length ?? 0) > 0))
+  if (family?.plain && !hasVariants) return family.plain
+  return `${cleanFamily}-${cleanEffort}`
+}
+
+export function getOfficialOrchestratorRoleFamilies(
+  items: AntiModels['items'],
+  role: 'planner' | 'executor',
+): AgyModelFamily[] {
+  const allowlist: ReadonlyArray<string> = role === 'planner'
+    ? OFFICIAL_ORCH_PLANNER_FAMILIES
+    : OFFICIAL_ORCH_EXECUTOR_FAMILIES
+  const byKey = new Map(
+    modelFamilies(items)
+      .filter(f => !f.isOrchestrator)
+      .map(f => [f.key, f]),
+  )
+  const out: AgyModelFamily[] = []
+  for (const key of allowlist) {
+    const fam = byKey.get(key)
+    if (fam) out.push(fam)
+  }
+  return out
+}
+
+export function resolveUpstreamOrchestratorModelId(
+  items: AntiModels['items'],
+  plannerId?: string | null,
+): string {
+  const upstreamOrchIds = items
+    .filter(item => Boolean(item.is_orchestrator) || /orchestrator/i.test(item.id))
+    .map(item => item.id)
+  const { familyKey } = splitModelVariantId(plannerId)
+  const preferredOrder = familyKey === 'gemini-4-carbon'
+    ? ['gemini-pro-orchestrator', 'gemini-pro-orchestrator-neon', 'gemini-pro-orchestrator-argon']
+    : familyKey === 'gemini-4-argon'
+      ? ['gemini-pro-orchestrator-argon', 'gemini-pro-orchestrator-neon', 'gemini-pro-orchestrator']
+      : ['gemini-pro-orchestrator-neon', 'gemini-pro-orchestrator', 'gemini-pro-orchestrator-argon']
+  for (const candidate of preferredOrder) {
+    if (upstreamOrchIds.includes(candidate)) return candidate
+  }
+  return upstreamOrchIds[0] ?? preferredOrder[0]
+}
+
+export function formatOrchestratorPresetLabel(name: string): string {
+  const clean = name.trim()
+  return `Orch · ${clean || '默认'}`
+}
+
+function compactFamilyName(name: string): string {
+  return name
+    .replace(/^Gemini\s+\d+(?:\.\d+)?\s+/i, '')
+    .replace(/^Claude\s+/i, '')
+    .trim() || name
+}
+
+export function formatFullRoleLabel(
+  modelId: string | null | undefined,
+  allFamilies: ReadonlyArray<AgyModelFamily>,
+): string {
+  if (!modelId) return '默认 (High)'
+  const { familyKey, effort } = splitModelVariantId(modelId)
+  const fam = allFamilies.find(f => f.key === familyKey)
+  const label = fam?.name ?? familyKey
+  const effortLabel = EFFORT_SHORT_LABELS[effort] ?? effort
+  return `${label} (${effortLabel})`
+}
+
+export function formatCompactRoleLabel(
+  modelId: string | null | undefined,
+  allFamilies: ReadonlyArray<AgyModelFamily>,
+): string {
+  if (!modelId) return '默认 High'
+  const { familyKey, effort } = splitModelVariantId(modelId)
+  const fam = allFamilies.find(f => f.key === familyKey)
+  const baseName = compactFamilyName(fam?.name ?? familyKey)
+  const effortLabel = EFFORT_SHORT_LABELS[effort] ?? effort
+  return `${baseName} ${effortLabel}`
+}
+
+export function buildSelectorFamilies(
+  items: AntiModels['items'],
+  presets?: ReadonlyArray<AntiOrchestratorPreset> | null,
+  hiddenModels?: ReadonlyArray<string> | null,
+): AgyModelFamily[] {
+  const allFamilies = modelFamilies(items)
+  const normalFamilies = allFamilies.filter(f => !f.isOrchestrator)
+  const hiddenSet = new Set((hiddenModels ?? []).map(s => s.trim()).filter(Boolean))
+  const visibleNormal = normalFamilies.filter(f => !hiddenSet.has(f.key))
+  const hasUpstreamOrch = items.some(item => Boolean(item.is_orchestrator) || /orchestrator/i.test(item.id))
+
+  const orchFamilies: AgyModelFamily[] = hasUpstreamOrch
+    ? normalizeOrchestratorPresets(presets).map(preset => {
+      const plannerCompact = formatCompactRoleLabel(preset.planner, normalFamilies)
+      const executorCompact = formatCompactRoleLabel(preset.executor, normalFamilies)
+      const plannerFull = formatFullRoleLabel(preset.planner, normalFamilies)
+      const executorFull = formatFullRoleLabel(preset.executor, normalFamilies)
+      return {
+        key: `${ORCH_PRESET_KEY_PREFIX}${preset.id}`,
+        name: formatOrchestratorPresetLabel(preset.name),
+        subtitle: `${plannerCompact} → ${executorCompact}`,
+        tooltip: `规划：${plannerFull} · 执行：${executorFull}`,
+        variants: {},
+        efforts: [],
+        isOrchestrator: true,
+        preset,
+      }
+    })
+    : []
+
+  const combined = [...visibleNormal, ...orchFamilies]
+  return combined.length > 0 ? combined : normalFamilies
+}
+
+export function normalizeSelectedFamilyKey(
+  rawKey: string | undefined,
+  visibleFamilies: ReadonlyArray<AgyModelFamily>,
+  presets: ReadonlyArray<AntiOrchestratorPreset> = DEFAULT_ORCHESTRATOR_PRESETS,
+): string | undefined {
+  if (visibleFamilies.length === 0) return undefined
+  if (rawKey && visibleFamilies.some(f => f.key === rawKey)) return rawKey
+  if (rawKey && /orchestrator/i.test(rawKey)) {
+    const lower = rawKey.toLowerCase()
+    const targetHint = lower.includes('argon')
+      ? 'argon'
+      : rawKey === 'gemini-pro-orchestrator' || lower.includes('carbon')
+        ? 'carbon'
+        : 'neon'
+    const matchedPreset = presets.find(p => (p.planner || '').toLowerCase().includes(targetHint)) ?? presets[0]
+    const candidateKey = `${ORCH_PRESET_KEY_PREFIX}${matchedPreset?.id ?? 'preset-1'}`
+    if (visibleFamilies.some(f => f.key === candidateKey)) return candidateKey
+  }
+  return visibleFamilies[0]?.key
 }
 
 export function AntiModelSelector({
@@ -92,7 +303,6 @@ export function AntiModelSelector({
   effort,
   effortOptions,
   isOrchestrator,
-  orchestratorSummary,
   disabled,
   title,
   onSelectFamily,
@@ -104,7 +314,6 @@ export function AntiModelSelector({
   effort: string
   effortOptions: ReadonlyArray<{ key: string; name: string }>
   isOrchestrator: boolean
-  orchestratorSummary?: AgyOrchestratorSettings
   disabled?: boolean
   title?: string
   onSelectFamily: (key: string) => void
@@ -128,14 +337,14 @@ export function AntiModelSelector({
       const above = rect.top - 12
       const upwards = below < 220 && above > below
       const available = Math.max(96, upwards ? above : below)
-      const width = Math.min(340, Math.max(rect.width, 260), window.innerWidth - 16)
+      const width = Math.min(340, Math.max(rect.width, 268), window.innerWidth - 16)
       const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
       setPosition({
         position: 'fixed',
         width,
         left,
         ...(upwards ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }),
-        maxHeight: Math.min(360, available),
+        maxHeight: Math.min(380, available),
         zIndex: Z_LAYERS.contextMenu,
       })
     }
@@ -180,11 +389,14 @@ export function AntiModelSelector({
 
   const effortText = EFFORT_SHORT_LABELS[effort] ?? effort
   const hasEffort = !isOrchestrator && effortOptions.length > 0
-  const hasCustomOrch = Boolean(orchestratorSummary?.planner || orchestratorSummary?.executor)
   const triggerTitle = title
     ?? (selected
-      ? (hasEffort ? `${selected.name} · 思考强度 ${effortText}` : selected.name)
+      ? (selected.tooltip
+        ? `${selected.name} · ${selected.tooltip}`
+        : (hasEffort ? `${selected.name} · 思考强度 ${effortText}` : selected.name))
       : '模型')
+
+  const firstOrchIndex = families.findIndex(f => Boolean(f.isOrchestrator))
 
   return (
     <>
@@ -227,35 +439,50 @@ export function AntiModelSelector({
           onMouseDown={event => event.preventDefault()}
         >
           <div role="listbox" aria-label="模型" className="min-h-0 flex-1 overflow-y-auto p-1">
-            {families.map(item => {
+            {families.map((item, idx) => {
               const isSelected = item.key === selected?.key
+              const showSeparator = firstOrchIndex > 0 && idx === firstOrchIndex
               return (
-                <button
-                  key={item.key}
-                  type="button"
-                  role="option"
-                  aria-selected={isSelected}
-                  title={item.name}
-                  onClick={() => {
-                    onSelectFamily(item.key)
-                    setOpen(false)
-                    triggerRef.current?.focus()
-                  }}
-                  className={clsx(
-                    'flex min-h-[32px] w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-sm text-ink transition-colors hover:bg-accent-soft/60',
-                    isSelected && 'bg-accent-soft/75 font-medium',
-                  )}
-                >
-                  <span className="model-select-label min-w-0 flex-1 truncate whitespace-nowrap">
-                    {item.name}
-                  </span>
-                  {item.isOrchestrator && (
-                    <span className="shrink-0 rounded bg-bg-soft px-1.5 py-0.5 text-[10px] font-medium text-ink-muted">
-                      Orch
-                    </span>
-                  )}
-                  {isSelected && <Check size={14} aria-hidden="true" className="shrink-0 text-accent" />}
-                </button>
+                <div key={item.key}>
+                  {showSeparator && <div role="separator" className="my-1 border-t border-line/50" />}
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    title={item.tooltip ?? item.name}
+                    onClick={() => {
+                      onSelectFamily(item.key)
+                      setOpen(false)
+                      triggerRef.current?.focus()
+                    }}
+                    className={clsx(
+                      'flex w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-sm text-ink transition-colors hover:bg-accent-soft/60',
+                      item.subtitle ? 'min-h-[40px]' : 'min-h-[32px]',
+                      isSelected && 'bg-accent-soft/75 font-medium',
+                    )}
+                  >
+                    {item.subtitle ? (
+                      <div className="min-w-0 flex-1">
+                        <div className="model-select-label truncate whitespace-nowrap">
+                          {item.name}
+                        </div>
+                        <div className="mt-0.5 truncate text-[11px] font-normal leading-tight text-ink-muted">
+                          {item.subtitle}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="model-select-label min-w-0 flex-1 truncate whitespace-nowrap">
+                        {item.name}
+                      </span>
+                    )}
+                    {item.isOrchestrator && (
+                      <span className="shrink-0 rounded bg-bg-soft px-1.5 py-0.5 text-[10px] font-medium text-ink-muted">
+                        Orch
+                      </span>
+                    )}
+                    {isSelected && <Check size={14} aria-hidden="true" className="shrink-0 text-accent" />}
+                  </button>
+                </div>
               )
             })}
           </div>
@@ -292,23 +519,19 @@ export function AntiModelSelector({
               </div>
             </div>
           )}
-          {isOrchestrator && onOpenOrchestratorSettings && (
-            <div className="shrink-0 border-t border-line/60 bg-bg-soft/50 px-2.5 py-2 text-[11px]">
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-ink-muted">
-                  {hasCustomOrch ? 'Planner / Executor 已自定义' : 'Planner / Executor：默认 High'}
-                </span>
-                <button
-                  type="button"
-                  className="ga-btn-link shrink-0 px-1 py-0 text-[11px]"
-                  onClick={() => {
-                    setOpen(false)
-                    onOpenOrchestratorSettings()
-                  }}
-                >
-                  去设置 →
-                </button>
-              </div>
+          {onOpenOrchestratorSettings && (
+            <div className="shrink-0 border-t border-line/60 bg-bg-soft/50 px-2.5 py-1.5 text-center text-[11px]">
+              <button
+                type="button"
+                data-anti-open-model-settings
+                className="ga-btn-link px-1 py-0.5 text-[11px]"
+                onClick={() => {
+                  setOpen(false)
+                  onOpenOrchestratorSettings()
+                }}
+              >
+                模型筛选与 Orch 预设 →
+              </button>
             </div>
           )}
         </div>,

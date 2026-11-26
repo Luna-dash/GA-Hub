@@ -103,6 +103,13 @@ class AntiQuotaRule(BaseModel):
     group: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 
 
+class AntiOrchestratorPreset(BaseModel):
+    id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=32)]
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=32)]
+    planner: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None
+    executor: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None
+
+
 class AntiModelsConfigResp(BaseModel):
     config_path: str
     auto_sync: bool = True
@@ -115,6 +122,10 @@ class AntiModelsConfigResp(BaseModel):
     allow_auto_fallback: bool = True
     aliases: dict[str, str] = Field(default_factory=dict)
     quota_rules: list[AntiQuotaRule] = Field(default_factory=list)
+    orchestrator_presets: list[AntiOrchestratorPreset] = Field(
+        default_factory=lambda: [AntiOrchestratorPreset(**p) for p in agy_models.DEFAULT_ORCHESTRATOR_PRESETS]
+    )
+    hidden_models: list[str] = Field(default_factory=list)
 
 
 class AntiModelsConfigPatch(BaseModel):
@@ -125,6 +136,8 @@ class AntiModelsConfigPatch(BaseModel):
     allow_auto_fallback: bool | None = None
     aliases: dict[str, str] | None = None
     quota_rules: list[AntiQuotaRule] | None = None
+    orchestrator_presets: list[AntiOrchestratorPreset] | None = None
+    hidden_models: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]] | None = None
 
 
 class AgyOrchestratorSettings(BaseModel):
@@ -246,6 +259,8 @@ class AntiRunCreate(BaseModel):
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=256)
     mode: Literal["plan", "accept-edits"] = "plan"
     permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] | None = None
+    orchestrator_planner: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None
+    orchestrator_executor: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None
 
     @model_validator(mode="after")
     def _require_input(self) -> "AntiRunCreate":
@@ -390,6 +405,15 @@ class AgyProfile(BaseModel):
 
 
 class AgyProfiles(BaseModel):
+    active: str
+    profiles: list[AgyProfile]
+    login_profile: str | None = None
+
+
+class AgyUsageRefreshAllResult(BaseModel):
+    refreshed: int = 0
+    skipped: int = 0
+    failed: int = 0
     active: str
     profiles: list[AgyProfile]
     login_profile: str | None = None
@@ -640,6 +664,29 @@ def check_account_usage(request: Request, profile_id: str | None = Query(default
         raise HTTPException(502, "返回了无法识别的额度报告。") from exc
 
 
+@router.post(
+    "/account-usage/refresh-all",
+    response_model=AgyUsageRefreshAllResult,
+    response_model_exclude_none=True,
+)
+def refresh_all_account_usage(
+    request: Request,
+    only_stale: bool = Query(default=False),
+):
+    _require_action(request, "check-anti-usage", "Missing Anti usage action")
+    try:
+        summary = daemon.refresh_all_profiles_usage(only_stale=only_stale)
+        snapshot = agy_profiles()
+        return {
+            "refreshed": int(summary.get("refreshed", 0)),
+            "skipped": int(summary.get("skipped", 0)),
+            "failed": int(summary.get("failed", 0)),
+            **snapshot,
+        }
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
 @router.get("/quota", response_model=list[AntiQuotaPool])
 def gateway_quota(profile_id: str | None = Query(default=None)):
     try:
@@ -725,6 +772,8 @@ def update_models_config(body: AntiModelsConfigPatch, request: Request):
         allow_auto_fallback=body.allow_auto_fallback,
         aliases=body.aliases,
         quota_rules=[r.model_dump() for r in body.quota_rules] if body.quota_rules is not None else None,
+        orchestrator_presets=[p.model_dump() for p in body.orchestrator_presets] if body.orchestrator_presets is not None else None,
+        hidden_models=body.hidden_models,
     )
     return agy_models.public_config_view()
 
@@ -789,6 +838,14 @@ def compact_session(sid: str, body: AntiSessionCompactReq | None = None):
 
 @router.post("/sessions/{sid}/runs", response_model=AntiRunResp)
 def submit_run(sid: str, body: AntiRunCreate):
+    extra_orch = {
+        k: v
+        for k, v in (
+            ("orchestrator_planner", body.orchestrator_planner),
+            ("orchestrator_executor", body.orchestrator_executor),
+        )
+        if v is not None
+    }
     try:
         with daemon.submission() as profile_id:
             return _call(
@@ -803,6 +860,7 @@ def submit_run(sid: str, body: AntiRunCreate):
                 [att.model_dump() for att in body.attachments],
                 body.mode,
                 body.permission_mode,
+                **extra_orch,
             )
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc

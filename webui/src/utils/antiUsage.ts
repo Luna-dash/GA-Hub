@@ -54,6 +54,76 @@ export function fiveHourRemainingPct(
   return null
 }
 
+export interface QuotaWindowReading {
+  remaining_pct: number
+  resets_at?: string | null
+  model: string
+  limit: string
+}
+
+export interface GeminiQuotaSummary {
+  fiveHour: QuotaWindowReading | null
+  weekly: QuotaWindowReading | null
+}
+
+export function formatQuotaPct(pct: number): string {
+  const clamped = Math.max(0, Math.min(100, pct))
+  return `${Number.isInteger(clamped) ? String(clamped) : clamped.toFixed(1).replace(/\.0$/, '')}%`
+}
+
+function pickLowestQuotaRow<
+  T extends { model?: string | null; limit?: string | null; remaining_pct: number; resets_at?: string | null },
+>(rows: ReadonlyArray<T>): QuotaWindowReading | null {
+  if (!rows.length) return null
+  const best = rows.reduce((min, row) => (row.remaining_pct < min.remaining_pct ? row : min), rows[0])
+  return {
+    remaining_pct: Math.max(0, Math.min(100, best.remaining_pct)),
+    resets_at: best.resets_at ?? null,
+    model: best.model ?? '',
+    limit: best.limit ?? '',
+  }
+}
+
+export function geminiQuotaSummary(
+  usage?: {
+    rows?: ReadonlyArray<{ model?: string | null; limit?: string | null; remaining_pct?: number | null; resets_at?: string | null }>
+  } | null,
+): GeminiQuotaSummary {
+  const rows = usage?.rows
+  if (!rows?.length) return { fiveHour: null, weekly: null }
+  const valid = rows.filter(
+    (row): row is { model?: string | null; limit?: string | null; remaining_pct: number; resets_at?: string | null } =>
+      typeof row.remaining_pct === 'number' && Number.isFinite(row.remaining_pct),
+  )
+  if (!valid.length) return { fiveHour: null, weekly: null }
+  const geminiRows = valid.filter(row => /gemini/i.test(row.model ?? ''))
+  const pool = geminiRows.length ? geminiRows : valid
+  const fiveHourRows = pool.filter(row => quotaWindowShortLabel(row.limit) === '5h')
+  const nonWeeklyRows = pool.filter(row => quotaWindowShortLabel(row.limit) !== '周')
+  const weeklyRows = pool.filter(row => quotaWindowShortLabel(row.limit) === '周')
+  return {
+    fiveHour: pickLowestQuotaRow(fiveHourRows.length ? fiveHourRows : nonWeeklyRows),
+    weekly: pickLowestQuotaRow(weeklyRows),
+  }
+}
+
+export function currentHourStartMs(nowMs = Date.now()): number {
+  const d = new Date(nowMs)
+  d.setMinutes(0, 0, 0)
+  return d.getTime()
+}
+
+export function nextTopOfHourMs(nowMs = Date.now()): number {
+  return currentHourStartMs(nowMs) + 3_600_000
+}
+
+export function isUsageStaleForHour(checkedAt?: string | null, nowMs = Date.now()): boolean {
+  if (!checkedAt) return true
+  const parsed = Date.parse(checkedAt)
+  if (!Number.isFinite(parsed)) return true
+  return parsed < currentHourStartMs(nowMs)
+}
+
 export function formatRunUsage(usage?: AntiRunUsage | null): FormattedRunUsage | null {
   if (!usage) return null
   const rawIn = Math.max(0, Math.round(usage.input_tokens ?? 0))

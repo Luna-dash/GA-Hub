@@ -153,6 +153,9 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     await act(async () => accountButton()!.click())
     const dialog = document.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')
     expect(dialog?.parentElement?.parentElement).toBe(document.body)
+    const workSettingsBtn = dialog?.querySelector<HTMLButtonElement>('button[aria-label="账号设置：工作"]')
+    expect(workSettingsBtn).toBeTruthy()
+    await act(async () => workSettingsBtn!.click())
     const switchButton = dialog?.querySelector<HTMLButtonElement>('button[aria-label="切换到工作"]')
     expect(switchButton).toBeDefined()
     await act(async () => switchButton!.click())
@@ -161,13 +164,8 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     rejectSwitch = false
     await act(async () => switchButton!.click())
     await wait(() => expect(accountButton()?.getAttribute('aria-label')).toBe('Agy 账号：工作'))
-    const edit = dialog?.querySelector<HTMLButtonElement>('button[aria-label="修改备注：工作"]')
-    expect(edit).toBeTruthy()
-    const editRow = edit!.closest('li')!
-    await act(async () => edit!.click())
     const nameField = dialog?.querySelector<HTMLInputElement>('#agy-edit-name')
     expect(nameField?.value).toBe('工作')
-    expect(editRow.querySelector('#agy-edit-name')).toBe(nameField)
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(nameField, '  主力  ')
       nameField!.dispatchEvent(new Event('input', { bubbles: true }))
@@ -176,6 +174,7 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     expect(save.disabled).toBe(false)
     await act(async () => save.click())
     await wait(() => expect(accountButton()?.getAttribute('aria-label')).toBe('Agy 账号：主力'))
+    await act(async () => dialog?.querySelector<HTMLButtonElement>('button[aria-label="返回账号列表"]')!.click())
     expect(dialog?.querySelector('#agy-edit-name')).toBeNull()
   } finally {
     await act(async () => root.unmount())
@@ -243,7 +242,7 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
   async function choose(label: string, name: string) {
     await act(async () => control(label).click())
     const item = document.querySelector<HTMLElement>(`[role="option"][title="${name}"]`)
-    expect(item?.querySelector(':scope > .model-select-label')?.textContent).toContain(name)
+    expect(item?.querySelector('.model-select-label')?.textContent).toContain(name)
     await act(async () => item!.click())
   }
   try {
@@ -473,6 +472,10 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
       return reply({ state: 'ready', agy_available: true, auth_state: 'authenticated' })
     }
     if (path === '/api/anti/account-usage') return reply(profilesList[0].usage)
+    if (path.startsWith('/api/anti/account-usage/refresh-all')) {
+      return reply({ refreshed: 0, skipped: profilesList.length, failed: 0, active: 'default', profiles: profilesList })
+    }
+    if (path === '/api/anti/workers') return reply({ items: [] })
     if (path === '/api/anti/profiles') {
       return reply({ active: 'default', profiles: profilesList })
     }
@@ -566,13 +569,17 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
 
     await act(async () => { usageBtn.click() })
 
-    // Profile modal: defaults to 账号管理 tab, captures login, inspects logs, clears credentials, & deletes inactive profile
+    // Profile modal: layered account list + unified settings (logs & capture) + per-account settings (logout & delete)
     const accountsBtn = [...host.querySelectorAll('button')].find(b => b.getAttribute('aria-label')?.startsWith('Agy 账号：')) as HTMLButtonElement
     await act(async () => { accountsBtn.click() })
     await flush()
-    expect(document.body.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('账号管理')
-    expect(document.body.textContent).toContain('已验证登录')
-    expect(document.body.textContent).toContain('5h 剩余 80%')
+    expect(document.body.querySelector('[role="tab"]')).toBeNull()
+    expect(document.body.textContent).toContain('80%')
+    expect(document.body.textContent).toContain('65%')
+
+    const settingsBtn = document.body.querySelector<HTMLButtonElement>('button[aria-label="账号管理设置"]')!
+    await act(async () => { settingsBtn.click() })
+    await flush()
 
     const logsBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === 'ACP 日志') as HTMLButtonElement
     await act(async () => { logsBtn.click() })
@@ -590,11 +597,23 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await flush()
     expect(profilesList.some(p => p.name === '克隆号')).toBe(true)
 
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：克隆号"]')!.click()
+    })
+    await flush()
     const logoutBtn = document.body.querySelector('button[aria-label="清除凭据：克隆号"]') as HTMLButtonElement
     await act(async () => { logoutBtn.click() })
     await flush()
     expect(profilesList.find(p => p.id === 'cloned')?.has_credentials).toBe(false)
 
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="返回账号列表"]')!.click()
+    })
+    await flush()
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：工作"]')!.click()
+    })
+    await flush()
     const delBtn = document.body.querySelector('button[aria-label="删除账号：工作"]') as HTMLButtonElement
     await act(async () => { delBtn.click() })
     const confirmDel = document.body.querySelector('button[aria-label="确认删除：工作"]') as HTMLButtonElement
@@ -776,6 +795,7 @@ it('shows external gateway lock and login_required / unavailable banners clearly
     if (path === '/api/anti/status') return reply(statusPayload)
     if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
     if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path === '/api/anti/workers') return reply({ items: [] })
     if (path === '/api/anti/sessions') return reply([])
     throw new Error(`Unexpected request: ${path}`)
   }))
@@ -798,6 +818,10 @@ it('shows external gateway lock and login_required / unavailable banners clearly
 
     const loginBtn = [...host.querySelectorAll('button')].find(b => b.textContent === '去登录账号') as HTMLButtonElement
     await act(async () => { loginBtn.click() })
+    await flush()
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号管理设置"]')!.click()
+    })
     await flush()
     expect(document.body.textContent).toContain('外部运行中')
     const closeBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '关闭') as HTMLButtonElement
@@ -982,6 +1006,9 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
         rows: [],
         detail: '本地登录凭据已过期，请先发起一次对话或重新登录以续期。',
       })
+    }
+    if (path.startsWith('/api/anti/account-usage/refresh-all')) {
+      return reply({ refreshed: 0, skipped: 1, failed: 0, active: 'default', profiles: [{ id: 'default', name: '系统默认', has_credentials: true, auth_state: 'authenticated' }] })
     }
     if (path === `/api/anti/sessions/${session.id}/runs` && !init?.body) return reply([...runs])
     if (path === `/api/anti/sessions/${session.id}/runs` && init?.body) {
@@ -1193,6 +1220,10 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     // 5. In-app Google code login flow in AntiAgyProfiles
     const accBtn = [...host.querySelectorAll('button')].find(b => b.getAttribute('aria-label')?.startsWith('Agy 账号：')) as HTMLButtonElement
     await act(async () => { accBtn.click() })
+    await flush()
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：系统默认"]')!.click()
+    })
     await flush()
     const codeLoginBtn = document.body.querySelector<HTMLButtonElement>('button[aria-label="授权码登录：系统默认"]')!
     await act(async () => { codeLoginBtn.click() })
@@ -1889,6 +1920,10 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
       await flush()
       expect(document.body.querySelector('[data-anti-modal-force-bar]')).not.toBeNull()
     })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号管理设置"]')!.click()
+    })
+    await flush()
     const workersToggle = [...document.body.querySelectorAll('button')].find(b => b.textContent?.includes('活跃进程')) as HTMLButtonElement
     await act(async () => { workersToggle.click() })
     await vi.waitFor(async () => {
@@ -2103,8 +2138,15 @@ it('converges UI to single-account mode with account pill, backup quota refresh,
     expect(accountPill.textContent).toContain('12%')
     expect(accountPill.textContent).not.toContain('5%')
 
-    // Backup account quota refresh works non-disruptively inside modal
+    // Backup account quota refresh works from per-account settings inside modal
     await act(async () => { accountPill.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(document.body.querySelector('button[aria-label="账号设置：备用账号"]')).not.toBeNull()
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：备用账号"]')!.click()
+    })
     await vi.waitFor(async () => {
       await flush()
       expect(document.body.querySelector('button[aria-label="刷新额度：备用账号"]')).not.toBeNull()
@@ -2175,7 +2217,7 @@ it('converges UI to single-account mode with account pill, backup quota refresh,
   }
 })
 
-it('supports Orchestrator quick icon button, profile-consolidated model sync and role settings, and fallback notices', async () => {
+it('supports 2-preset Orchestrator config, model visibility filter, and backend role alignment on run submit', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const session = {
     id: 's-orch-ui',
@@ -2189,6 +2231,8 @@ it('supports Orchestrator quick icon button, profile-consolidated model sync and
   const initialModels = [
     { id: 'gemini-4-hydrogen', display_name: 'Gemini 4 Hydrogen', efforts: ['low', 'medium', 'high', 'xhigh'], is_default: true },
     { id: 'gemini-4-neon', display_name: 'Gemini 4 Neon', efforts: ['low', 'medium', 'high', 'xhigh'] },
+    { id: 'gemini-4-carbon', display_name: 'Gemini 4 Carbon', efforts: ['low', 'medium', 'high'] },
+    { id: 'gpt-oss-120b-medium', display_name: 'GPT-OSS 120B (Medium)' },
     { id: 'gemini-pro-orchestrator-neon', display_name: 'Orchestrator (Neon)', is_orchestrator: true },
   ]
   const syncedModels = [
@@ -2200,6 +2244,32 @@ it('supports Orchestrator quick icon button, profile-consolidated model sync and
     profile_id: 'default',
     planner: null,
     executor: null,
+  }
+  let modelsConfigState: {
+    config_path: string
+    auto_sync: boolean
+    schedule_hours: number[]
+    default_model: string
+    default_effort: string
+    allow_auto_fallback: boolean
+    aliases: Record<string, string>
+    quota_rules: Array<{ pattern: string; group: string }>
+    orchestrator_presets: Array<{ id: string; name: string; planner: string | null; executor: string | null }>
+    hidden_models: string[]
+  } = {
+    config_path: 'agy_models.json',
+    auto_sync: true,
+    schedule_hours: [0, 6, 12, 18],
+    default_model: 'gemini-4-hydrogen-high',
+    default_effort: 'high',
+    allow_auto_fallback: true,
+    aliases: {},
+    quota_rules: [],
+    orchestrator_presets: [
+      { id: 'preset-1', name: 'Neon', planner: 'gemini-4-neon-high', executor: 'gemini-4-hydrogen-high' },
+      { id: 'preset-2', name: 'Carbon', planner: 'gemini-4-carbon-high', executor: 'gemini-4-hydrogen-high' },
+    ],
+    hidden_models: [],
   }
   const called: Array<{ method: string; path: string; body?: unknown }> = []
 
@@ -2222,6 +2292,14 @@ it('supports Orchestrator quick icon button, profile-consolidated model sync and
       modelsPayload = syncedModels
       return reply({ items: syncedModels, synced_at: '2026-11-25T09:30:00+08:00' })
     }
+    if (path === '/api/anti/models/config' && method === 'GET') return reply(modelsConfigState)
+    if (path === '/api/anti/models/config' && method === 'PATCH') {
+      modelsConfigState = {
+        ...modelsConfigState,
+        ...(body as Record<string, unknown>),
+      }
+      return reply(modelsConfigState)
+    }
     if (path === '/api/anti/commands') return reply({ items: [] })
     if (path === '/api/anti/profiles/default/orchestrator' && method === 'GET') return reply(orchestratorState)
     if (path === '/api/anti/profiles/default/orchestrator' && method === 'PATCH') {
@@ -2229,6 +2307,18 @@ it('supports Orchestrator quick icon button, profile-consolidated model sync and
       return reply(orchestratorState)
     }
     if (path === '/api/anti/sessions') return reply([session])
+    if (path === `/api/anti/sessions/${session.id}/runs` && method === 'POST') {
+      return reply({
+        id: 'r-orch-submit',
+        operation: (body as { operation: string }).operation,
+        prompt: (body as { prompt: string }).prompt,
+        status: 'running',
+        model: (body as { model: string }).model,
+        effort: (body as { effort: string }).effort,
+        mode: 'plan',
+        permission_mode: 'approval-required',
+      })
+    }
     if (path === `/api/anti/sessions/${session.id}/runs`) {
       return reply([
         {
@@ -2263,50 +2353,39 @@ it('supports Orchestrator quick icon button, profile-consolidated model sync and
       expect(host.querySelector('[data-anti-fallback-notice]')?.textContent).toContain('old-hybrid')
     })
 
-    // 1. Header is clean: no standalone sync button, no standalone effort select, no Orch icon until selected, no circle mark
+    // 1. Header is clean: no standalone sync button, no standalone effort select, no standalone Orch trigger button
     expect(host.querySelector('button[aria-label="同步上游模型"]')).toBeNull()
     expect(host.querySelector('button[aria-label="思考等级"]')).toBeNull()
     expect(host.querySelector('button[aria-label="Orchestrator 角色设置"]')).toBeNull()
     const modelBtn = host.querySelector<HTMLButtonElement>('button[aria-label="模型"]')!
-    expect(modelBtn.querySelector('svg[data-channel]')).toBeNull()
     expect(modelBtn.querySelector('[data-anti-effort-badge]')?.textContent).toBe('High')
 
-    // 2. Select Orchestrator (Neon) -> hides effort badge and shows Plan B pure-icon Orch trigger in header
+    // 2. Open model selector and click Orch · Neon -> closes immediately, hides effort badge, aligns backend
     await act(async () => { modelBtn.click() })
     const orchOption = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
-      el => el.textContent?.includes('Orchestrator (Neon)'),
+      el => el.textContent?.includes('Orch · Neon'),
     )!
     await act(async () => { orchOption.click() })
     await vi.waitFor(async () => {
       await flush()
+      expect(modelBtn.getAttribute('aria-expanded')).toBe('false')
       expect(modelBtn.querySelector('[data-anti-effort-badge]')).toBeNull()
-      const orchTrigger = host.querySelector<HTMLButtonElement>('button[aria-label="Orchestrator 角色设置"]')
-      expect(orchTrigger).not.toBeNull()
-      expect(orchTrigger?.textContent?.trim()).toBe('')
+      expect(modelBtn.textContent).toContain('Orch · Neon')
+      expect(called.some(c => c.method === 'PATCH' && c.path === '/api/anti/profiles/default/orchestrator')).toBe(true)
     })
 
-    // 3. Click Plan B Orch icon -> opens Account Management modal directly on the 模型与 Orchestrator tab
-    const orchTrigger = host.querySelector<HTMLButtonElement>('button[aria-label="Orchestrator 角色设置"]')!
-    await act(async () => { orchTrigger.click() })
+    // 3. Re-open dropdown and click "模型筛选与 Orch 预设" -> opens standalone Orchestrator modal
+    await act(async () => { modelBtn.click() })
+    const openSettingsBtn = document.body.querySelector<HTMLButtonElement>('[data-anti-open-model-settings]')!
+    await act(async () => { openSettingsBtn.click() })
     await vi.waitFor(async () => {
       await flush()
-      expect(document.body.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('模型与 Orchestrator')
-      expect(document.body.querySelector('[data-anti-models-orch-section]')).not.toBeNull()
+      expect(document.body.querySelector('[aria-labelledby="agy-orchestrator-title"]')).not.toBeNull()
+      expect(document.body.querySelector('[data-anti-orchestrator-section]')).not.toBeNull()
+      expect(document.body.querySelector('[data-anti-model-visibility-section]')).not.toBeNull()
     })
 
-    // Switching back to 账号管理 tab hides models section; clicking 模型与 Orchestrator restores it
-    const accountsTab = [...document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(b => b.textContent?.includes('账号管理'))!
-    const modelsTab = [...document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(b => b.textContent?.includes('模型与 Orchestrator'))!
-    await act(async () => { accountsTab.click() })
-    await flush()
-    expect(document.body.querySelector('[data-anti-models-orch-section]')).toBeNull()
-    await act(async () => { modelsTab.click() })
-    await vi.waitFor(async () => {
-      await flush()
-      expect(document.body.querySelector('[data-anti-models-orch-section]')).not.toBeNull()
-    })
-
-    // Sync upstream models inside Account Management modal
+    // Sync upstream models inside modal
     const syncBtn = document.body.querySelector<HTMLButtonElement>('[data-anti-models-orch-section] button[aria-label="同步上游模型"]')!
     await act(async () => { syncBtn.click() })
     await vi.waitFor(async () => {
@@ -2314,16 +2393,35 @@ it('supports Orchestrator quick icon button, profile-consolidated model sync and
       expect(called.some(c => c.method === 'POST' && c.path === '/api/anti/models/sync')).toBe(true)
     })
 
-    // Save Planner / Executor inside Account Management modal
-    const plannerSelect = document.body.querySelector<HTMLSelectElement>('select[aria-label="Orchestrator Planner 模型"]')!
-    const executorSelect = document.body.querySelector<HTMLSelectElement>('select[aria-label="Orchestrator Executor 模型"]')!
+    // 4. Planner candidates strictly align with official roles (no GPT-OSS 120B); Carbon omits XHigh effort
+    const planner1Select = document.body.querySelector<HTMLSelectElement>('select[aria-label="预设 1 Planner 模型"]')!
+    const planner1Options = [...planner1Select.options].map(o => o.value)
+    expect(planner1Options).not.toContain('gpt-oss-120b')
+    expect(planner1Options).toContain('gemini-4-neon')
+    expect(planner1Options).toContain('gemini-4-carbon')
+
+    const preset2EffortGroup = document.body.querySelector<HTMLElement>('[role="radiogroup"][aria-label="预设 2 Planner 思考等级"]')!
+    expect(preset2EffortGroup.textContent).not.toContain('XHigh')
+
+    // Customize Preset 1 name + planner xhigh + executor medium + hide GPT-OSS 120B, then click 保存设置
+    const preset1NameInput = document.body.querySelector<HTMLInputElement>('input[aria-label="预设 1 名称"]')!
+    const preset1PlannerXHigh = document.body.querySelector<HTMLButtonElement>(
+      '[role="radiogroup"][aria-label="预设 1 Planner 思考等级"] button[aria-label="xhigh"]',
+    )!
+    const preset1ExecMedium = document.body.querySelector<HTMLButtonElement>(
+      '[role="radiogroup"][aria-label="预设 1 Executor 思考等级"] button[aria-label="medium"]',
+    )!
+    const hideGptCheckbox = document.body.querySelector<HTMLInputElement>('input[aria-label="显示模型 GPT-OSS 120B"]')!
     await act(async () => {
-      plannerSelect.value = 'gemini-4-neon-xhigh'
-      plannerSelect.dispatchEvent(new Event('change', { bubbles: true }))
-      executorSelect.value = 'gemini-4-hydrogen-high'
-      executorSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(preset1NameInput, '主力架构')
+      preset1NameInput.dispatchEvent(new Event('input', { bubbles: true }))
+      preset1NameInput.dispatchEvent(new Event('change', { bubbles: true }))
+      preset1PlannerXHigh.click()
+      preset1ExecMedium.click()
+      hideGptCheckbox.click()
     })
-    const saveBtn = [...document.body.querySelectorAll<HTMLButtonElement>('[data-anti-orchestrator-section] button')].find(
+
+    const saveBtn = [...document.body.querySelectorAll<HTMLButtonElement>('[aria-labelledby="agy-orchestrator-title"] button')].find(
       b => b.textContent?.trim() === '保存设置',
     )!
     await act(async () => { saveBtn.click() })
@@ -2331,9 +2429,53 @@ it('supports Orchestrator quick icon button, profile-consolidated model sync and
       await flush()
       expect(called.some(
         c => c.method === 'PATCH'
-          && c.path === '/api/anti/profiles/default/orchestrator'
-          && JSON.stringify(c.body) === JSON.stringify({ planner: 'gemini-4-neon-xhigh', executor: 'gemini-4-hydrogen-high' }),
+          && c.path === '/api/anti/models/config'
+          && JSON.stringify((c.body as { hidden_models?: string[] })?.hidden_models) === JSON.stringify(['gpt-oss-120b']),
       )).toBe(true)
+      expect(modelBtn.textContent).toContain('Orch · 主力架构')
+    })
+
+    // Close modal, confirm dropdown hides GPT-OSS 120B and shows renamed preset, then submit a run with role alignment fields
+    const closeOrchBtn = [...document.body.querySelectorAll<HTMLButtonElement>('[aria-labelledby="agy-orchestrator-title"] button')].find(
+      b => b.textContent?.trim() === '关闭',
+    )!
+    await act(async () => { closeOrchBtn.click() })
+    await flush()
+
+    await act(async () => { modelBtn.click() })
+    const dropdownText = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].map(el => el.textContent).join(' | ')
+    expect(dropdownText).not.toContain('GPT-OSS 120B')
+    expect(dropdownText).toContain('Orch · 主力架构')
+    await act(async () => { modelBtn.click() })
+
+    const textarea = host.querySelector<HTMLTextAreaElement>('textarea')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Run aligned preset')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    await vi.waitFor(async () => {
+      await flush()
+      const submitCall = called.find(c => c.method === 'POST' && c.path === `/api/anti/sessions/${session.id}/runs`)
+      expect(submitCall).toBeDefined()
+      expect(submitCall?.body).toMatchObject({
+        model: 'gemini-pro-orchestrator-neon',
+        orchestrator_planner: 'gemini-4-neon-xhigh',
+        orchestrator_executor: 'gemini-4-hydrogen-medium',
+      })
+    })
+
+    // Account management modal stays strictly account-focused (no model settings tab or subtitle)
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-anti-account-pill]')!.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      const accDialog = document.body.querySelector('[aria-labelledby="agy-accounts-title"]')
+      expect(accDialog).not.toBeNull()
+      expect(accDialog?.querySelector('[data-anti-models-orch-section]')).toBeNull()
+      expect(accDialog?.querySelector('[role="tab"]')).toBeNull()
+      expect(accDialog?.textContent).not.toContain('所有会话共用上下文与配置')
     })
   } finally {
     await act(async () => root.unmount())
@@ -2494,6 +2636,138 @@ it('auto-refreshes usage after 10 minutes of visible dwell, pauses when hidden, 
     vi.useRealTimers()
     vi.unstubAllGlobals()
     delete (document as unknown as Record<string, unknown>).visibilityState
+  }
+})
+
+it('renders layered account cards with Gemini 5h/weekly bars, single card settings entry, expandable details, and hourly refresh', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const freshAt = new Date(Date.now() - 60_000).toISOString()
+  const staleAt = new Date(Date.now() - 2 * 3_600_000).toISOString()
+  const refreshCalls: string[] = []
+  let profilesPayload = {
+    active: 'default',
+    profiles: [
+      {
+        id: 'default',
+        name: '系统默认',
+        has_credentials: true,
+        auth_state: 'authenticated',
+        usage: {
+          checked_at: staleAt,
+          min_remaining_pct: 40,
+          rows: [
+            { model: 'Gemini', limit: 'Five Hour Limit Remaining', remaining_pct: 82, resets_at: '2026-11-26T12:00:00Z' },
+            { model: 'Gemini', limit: 'Weekly Limit Remaining', remaining_pct: 64.5, resets_at: '2026-12-01T00:00:00Z' },
+            { model: 'Claude & GPT (shared)', limit: 'Five Hour Limit Remaining', remaining_pct: 40, resets_at: '2026-11-26T12:00:00Z' },
+            { model: 'Claude & GPT (shared)', limit: 'Weekly Limit Remaining', remaining_pct: 100, resets_at: null },
+          ],
+        },
+      },
+      {
+        id: 'backup',
+        name: '备用账号',
+        has_credentials: true,
+        auth_state: 'authenticated',
+        usage: {
+          checked_at: freshAt,
+          min_remaining_pct: 18,
+          rows: [
+            { model: 'Gemini', limit: 'Five Hour Limit Remaining', remaining_pct: 18, resets_at: '2026-11-26T12:00:00Z' },
+            { model: 'Gemini', limit: 'Weekly Limit Remaining', remaining_pct: 55, resets_at: '2026-12-01T00:00:00Z' },
+          ],
+        },
+      },
+    ],
+  }
+
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    const reply = (data: unknown, status = 200) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => JSON.parse(JSON.stringify(data)),
+    })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply(profilesPayload)
+    if (path === '/api/projects') return reply({ items: [] })
+    if (path.startsWith('/api/file-transfer')) return reply([])
+    if (path === '/api/anti/sessions') return reply([])
+    if (path === '/api/anti/workers') return reply({ items: [] })
+    if (path.startsWith('/api/anti/account-usage/refresh-all') && init?.method === 'POST') {
+      refreshCalls.push(path)
+      profilesPayload = {
+        ...profilesPayload,
+        profiles: profilesPayload.profiles.map(p => (
+          p.id === 'default'
+            ? { ...p, usage: { ...p.usage, checked_at: new Date().toISOString() } }
+            : p
+        )),
+      }
+      return reply({ refreshed: 1, skipped: 1, failed: 0, ...profilesPayload })
+    }
+    return reply({})
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-account-pill]')).not.toBeNull()
+    })
+
+    // Open Account Management modal -> stale default triggers hourly catch-up once
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-anti-account-pill]')!.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(document.body.querySelector('[data-account-card="default"]')).not.toBeNull()
+      expect(refreshCalls).toEqual(['/api/anti/account-usage/refresh-all?only_stale=true'])
+    })
+
+    const dialog = document.body.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')!
+    expect(dialog.querySelector('h2')?.textContent).toBe('账号管理')
+    expect(dialog.querySelector('[role="tab"]')).toBeNull()
+    expect(dialog.textContent).not.toContain('所有会话共用上下文与配置')
+
+    // Layer 1 shows Gemini 5h & weekly progress bars + numbers cleanly, with ONLY one settings button per card
+    const defaultCard = dialog.querySelector('[data-account-card="default"]')!
+    expect(defaultCard.querySelector('[aria-label="系统默认 Gemini 5h 额度"]')?.getAttribute('aria-valuenow')).toBe('82')
+    expect(defaultCard.querySelector('[aria-label="系统默认 Gemini 周 额度"]')?.getAttribute('aria-valuenow')).toBe('64.5')
+    expect(defaultCard.textContent).toContain('82%')
+    expect(defaultCard.textContent).toContain('64.5%')
+    // Layer 2 detailed Claude & GPT rows are hidden until card is expanded
+    expect(defaultCard.querySelector('[data-account-quota-details="default"]')).toBeNull()
+    expect(defaultCard.textContent).not.toContain('Claude & GPT')
+    // Strictly one expand button + one settings button on the card
+    expect(defaultCard.querySelectorAll('button')).toHaveLength(2)
+    expect(defaultCard.querySelector('button[aria-label="账号设置：系统默认"]')).not.toBeNull()
+
+    // Click card summary to expand Layer 2 detailed progress bars
+    const expandBtn = defaultCard.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!
+    await act(async () => { expandBtn.click() })
+    await flush()
+    const details = defaultCard.querySelector('[data-account-quota-details="default"]')
+    expect(details).not.toBeNull()
+    expect(details?.textContent).toContain('Claude & GPT (shared)')
+    expect(details?.textContent).toContain('40%')
+    expect(details?.querySelectorAll('[role="progressbar"]')).toHaveLength(4)
+
+    // Manual "刷新全部额度" forces a non-stale-filtered refresh-all call
+    const refreshAllBtn = dialog.querySelector<HTMLButtonElement>('button[aria-label="刷新全部额度"]')!
+    await act(async () => { refreshAllBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(refreshCalls).toContain('/api/anti/account-usage/refresh-all')
+    })
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
   }
 })
 

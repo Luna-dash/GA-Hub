@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { formatCompactTokens, formatRunUsage } from './antiUsage'
+import {
+  currentHourStartMs,
+  formatCompactTokens,
+  formatQuotaPct,
+  formatRunUsage,
+  geminiQuotaSummary,
+  isUsageStaleForHour,
+  nextTopOfHourMs,
+} from './antiUsage'
 
 describe('formatCompactTokens', () => {
   it('formats integers, k, M, and B boundaries cleanly', () => {
@@ -70,5 +78,46 @@ describe('formatRunUsage', () => {
     })
     expect(withSpeed?.text).toBe('1k in · 400 out · 150 think · 缓存 50% · 4 次调用 · 80.0 tok/s')
     expect(withSpeed?.title).toContain('模型调用 4 次 · 生成速度 80.0 tok/s（有效输出耗时 5.0s）')
+  })
+})
+
+describe('geminiQuotaSummary and hourly slot helpers', () => {
+  it('picks lowest Gemini 5h and weekly windows and ignores shared 3p rows when Gemini rows exist', () => {
+    const summary = geminiQuotaSummary({
+      rows: [
+        { model: 'Gemini Argon', limit: 'Five Hour Limit Remaining', remaining_pct: 95, resets_at: '2026-11-26T05:00:00Z' },
+        { model: 'Gemini', limit: 'Five Hour Limit Remaining', remaining_pct: 72.5, resets_at: '2026-11-26T04:00:00Z' },
+        { model: 'Gemini', limit: 'Weekly Limit Remaining', remaining_pct: 20.9, resets_at: '2026-12-01T04:00:00Z' },
+        { model: 'Claude & GPT (shared)', limit: 'Five Hour Limit Remaining', remaining_pct: 10 },
+        { model: 'Claude & GPT (shared)', limit: 'Weekly Limit Remaining', remaining_pct: 5 },
+      ],
+    })
+    expect(summary.fiveHour?.remaining_pct).toBe(72.5)
+    expect(summary.weekly?.remaining_pct).toBe(20.9)
+    expect(formatQuotaPct(72.5)).toBe('72.5%')
+    expect(formatQuotaPct(100)).toBe('100%')
+
+    // Falls back to non-weekly Reported Quota when no explicit 5h row exists
+    const singleRow = geminiQuotaSummary({
+      rows: [
+        { model: 'Gemini', limit: 'Reported Quota', remaining_pct: 42 },
+        { model: 'Gemini', limit: 'Weekly Limit Remaining', remaining_pct: 60 },
+      ],
+    })
+    expect(singleRow.fiveHour?.remaining_pct).toBe(42)
+    expect(singleRow.weekly?.remaining_pct).toBe(60)
+    expect(geminiQuotaSummary(null)).toEqual({ fiveHour: null, weekly: null })
+  })
+
+  it('detects hour boundaries and usage staleness', () => {
+    const now = new Date(2026, 10, 26, 10, 23, 45, 500).getTime()
+    const hourStart = currentHourStartMs(now)
+    expect(hourStart).toBe(new Date(2026, 10, 26, 10, 0, 0, 0).getTime())
+    expect(nextTopOfHourMs(now)).toBe(new Date(2026, 10, 26, 11, 0, 0, 0).getTime())
+
+    expect(isUsageStaleForHour(null, now)).toBe(true)
+    expect(isUsageStaleForHour('not-a-date', now)).toBe(true)
+    expect(isUsageStaleForHour(new Date(hourStart - 1_000).toISOString(), now)).toBe(true)
+    expect(isUsageStaleForHour(new Date(hourStart + 60_000).toISOString(), now)).toBe(false)
   })
 })

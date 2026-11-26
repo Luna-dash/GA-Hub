@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import type { TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
-import { Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, SlidersHorizontal, X } from 'lucide-react'
+import { Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, X } from 'lucide-react'
 import { RotateCw, Square } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, TranscriptUtilityRail, chatTranscriptClass } from '@/components/ChatLayout'
 import { ConversationCollapseControl, ConversationCollapseProvider } from '@/components/ConversationCollapse'
@@ -17,14 +17,18 @@ import { DEFAULT_ANTI_COMMANDS, filterAntiSlashCommands } from '@/components/ant
 import { AntiDaemonControl, useAntiDaemonStatus } from '@/components/AntiDaemonControl'
 import { AntiAgyProfiles, useAgyProfiles } from '@/components/AntiAgyProfiles'
 import { AntiAccountUsageButton } from '@/components/AntiAccountUsageButton'
+import { AntiOrchestratorModal } from '@/components/AntiOrchestratorModal'
 import { AntiApprovalDock } from '@/components/AntiApprovalDock'
 import {
   AntiModelSelector,
+  buildSelectorFamilies,
   DEFAULT_EFFORT,
   DEFAULT_FAMILY,
   DEFAULT_MODEL,
   EFFORT_OPTIONS,
-  modelFamilies,
+  normalizeOrchestratorPresets,
+  normalizeSelectedFamilyKey,
+  resolveUpstreamOrchestratorModelId,
 } from '@/components/AntiModelSelector'
 import { AntiIcon } from '@/components/AntiMark'
 import { MessageContent } from '@/components/MessageContent'
@@ -240,10 +244,11 @@ export default function AntiChat() {
   const [sid, setSid] = usePageState('antiChat.currentSession', '')
   const [creating, setCreating] = useState(false)
   const [profilesOpen, setProfilesOpen] = useState(false)
-  const [profilesSection, setProfilesSection] = useState<'default' | 'orchestrator'>('default')
+  const [profilesInitialView, setProfilesInitialView] = useState<'list' | 'settings'>('list')
+  const [orchestratorOpen, setOrchestratorOpen] = useState(false)
   const [headerActions, setHeaderActions] = useState<HTMLDivElement | null>(null)
-  const openProfilesModal = useCallback((section: 'default' | 'orchestrator' = 'default') => {
-    setProfilesSection(section)
+  const openProfilesModal = useCallback((view: 'list' | 'settings' = 'list') => {
+    setProfilesInitialView(view)
     setProfilesOpen(true)
   }, [])
   const daemon = useAntiDaemonStatus()
@@ -304,10 +309,15 @@ export default function AntiChat() {
         daemon={daemon}
         open={profilesOpen}
         onOpenChange={next => {
-          if (!next) setProfilesSection('default')
+          if (!next) setProfilesInitialView('list')
           setProfilesOpen(next)
         }}
-        focusSection={profilesSection}
+        initialView={profilesInitialView}
+      />
+      <AntiOrchestratorModal
+        open={orchestratorOpen}
+        onClose={() => setOrchestratorOpen(false)}
+        profileId={profiles.data?.active || 'default'}
       />
       <AntiAccountUsageButton
         key={profiles.data?.active ?? 'default'}
@@ -345,7 +355,7 @@ export default function AntiChat() {
                   重置运行时
                 </button>
               )}
-              <button type="button" className="ga-btn shrink-0" onClick={() => setProfilesOpen(true)}>
+              <button type="button" className="ga-btn shrink-0" onClick={() => openProfilesModal('settings')}>
                 诊断 / 账号设置
               </button>
             </div>
@@ -354,7 +364,7 @@ export default function AntiChat() {
         {daemon.running && daemon.status.data?.agy_available === false && (
           <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-status-danger-line bg-status-danger-soft px-4 py-2 text-xs text-status-danger">
             <span>未找到官方 agy CLI。请安装 agy 并确保位于 PATH（或 ~/.gemini/bin）后重试。</span>
-            <button type="button" className="ga-btn shrink-0" onClick={() => setProfilesOpen(true)}>
+            <button type="button" className="ga-btn shrink-0" onClick={() => openProfilesModal('settings')}>
               查看运行详情
             </button>
           </div>
@@ -362,7 +372,7 @@ export default function AntiChat() {
         {daemon.running && daemon.status.data?.agy_available && daemon.status.data?.auth_state === 'login_required' && (
           <div role="status" className="flex flex-wrap items-center justify-between gap-2 border-b border-status-warning-line bg-status-warning-soft px-4 py-2 text-xs text-status-warning">
             <span>当前 Agy 账号尚未登录或凭据已过期，请先完成官方登录后再发起对话。</span>
-            <button type="button" className="ga-btn shrink-0" onClick={() => setProfilesOpen(true)}>
+            <button type="button" className="ga-btn shrink-0" onClick={() => openProfilesModal('list')}>
               去登录账号
             </button>
           </div>
@@ -372,8 +382,8 @@ export default function AntiChat() {
           profileId={profiles.data?.active}
           profilesData={profiles.data}
           supportsSteering={daemon.status.data?.supports_steering}
-          onOpenProfiles={() => openProfilesModal('default')}
-          onOpenOrchestratorSettings={() => openProfilesModal('orchestrator')} /> :
+          onOpenProfiles={() => openProfilesModal('list')}
+          onOpenOrchestratorSettings={() => setOrchestratorOpen(true)} /> :
           <div className="relative flex flex-1">
             <ChatUtilityDock fileTransfer={{ canInsert: false, onInsert: () => { } }} />
             <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
@@ -505,9 +515,21 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     refetchOnWindowFocus: true,
     retry: false,
   })
-  const families = modelFamilies(models.data?.items ?? [DEFAULT_MODEL])
-  const family = families.find(item => item.key === familyKey) ?? families[0]
+  const modelsConfig = useQuery({
+    queryKey: ['anti-models-config'],
+    enabled: Boolean(effectiveProfileId),
+    queryFn: ({ signal }) => antiApi.modelsConfig(signal),
+    staleTime: 60_000,
+    retry: false,
+  })
+  const allUpstreamItems = models.data?.items ?? [DEFAULT_MODEL]
+  const normalizedPresets = normalizeOrchestratorPresets(modelsConfig.data?.orchestrator_presets)
+  const hiddenModels = Array.isArray(modelsConfig.data?.hidden_models) ? modelsConfig.data.hidden_models : []
+  const families = buildSelectorFamilies(allUpstreamItems, normalizedPresets, hiddenModels)
+  const resolvedFamilyKey = normalizeSelectedFamilyKey(familyKey, families, normalizedPresets)
+  const family = families.find(item => item.key === resolvedFamilyKey) ?? families[0]
   const isOrchestratorSelected = Boolean(family?.isOrchestrator)
+  const selectedOrchPreset = family?.preset
   const effortOptions = isOrchestratorSelected
     ? []
     : family?.efforts?.length
@@ -519,14 +541,20 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       ?? effortOptions.find(option => option.key === (family?.defaultEffort ?? DEFAULT_EFFORT))?.key
       ?? effortOptions[0]?.key ?? DEFAULT_EFFORT)
   const model = isOrchestratorSelected
-    ? (family?.plain ?? family?.key ?? DEFAULT_MODEL.id)
+    ? resolveUpstreamOrchestratorModelId(allUpstreamItems, selectedOrchPreset?.planner)
     : (family?.variants[effort] ?? family?.plain ?? DEFAULT_MODEL.id)
-  const orchestratorSettings = useQuery({
-    queryKey: ['anti-orchestrator', effectiveProfileId],
-    enabled: Boolean(effectiveProfileId && isOrchestratorSelected),
-    queryFn: ({ signal }) => antiApi.profileOrchestrator(effectiveProfileId, signal),
-    retry: false,
-  })
+  const handleSelectFamily = useCallback((nextKey: string) => {
+    setFamilyKey(nextKey)
+    const nextFamily = families.find(item => item.key === nextKey)
+    if (nextFamily?.preset && effectiveProfileId) {
+      void antiApi.updateProfileOrchestrator(effectiveProfileId, {
+        planner: nextFamily.preset.planner ?? null,
+        executor: nextFamily.preset.executor ?? null,
+      }).then(updated => {
+        cache.setQueryData(['anti-orchestrator', effectiveProfileId], updated)
+      }).catch(() => undefined)
+    }
+  }, [cache, effectiveProfileId, families, setFamilyKey])
   const key = ['anti-runs', sid]
   const history = useQuery({
     queryKey: key, queryFn: ({ signal }) => antiApi.runs(sid, signal),
@@ -942,9 +970,13 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       effort,
       mode,
       permission_mode: effectivePermission,
+      ...(isOrchestratorSelected && selectedOrchPreset ? {
+        orchestrator_planner: selectedOrchPreset.planner ?? null,
+        orchestrator_executor: selectedOrchPreset.executor ?? null,
+      } : {}),
       operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     }
-  }, [effort, mode, model, permissionMode])
+  }, [effort, isOrchestratorSelected, mode, model, permissionMode, selectedOrchPreset])
   const switchAndRetry = useMutation({
     mutationFn: async (targetProfileId: string) => {
       const updatedProfiles = await antiApi.switchProfile(targetProfileId)
@@ -1050,7 +1082,6 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       send.mutate(body)
     }
   }, [activeRunId, createSubmission, pending, queuedPrompt, runs, send])
-  const hasCustomOrchRoles = Boolean(orchestratorSettings.data?.planner || orchestratorSettings.data?.executor)
   return <>
     {headerActions && createPortal(<>
       <AntiModelSelector
@@ -1059,36 +1090,12 @@ function Conversation({ session, headerActions, profileId, profilesData, support
         effort={effort}
         effortOptions={effortOptions}
         isOrchestrator={isOrchestratorSelected}
-        orchestratorSummary={orchestratorSettings.data}
         disabled={Boolean(current || pending) || models.isPending}
         title={models.error ? '模型列表加载失败' : undefined}
-        onSelectFamily={setFamilyKey}
+        onSelectFamily={handleSelectFamily}
         onSelectEffort={setEffort}
         onOpenOrchestratorSettings={onOpenOrchestratorSettings}
       />
-      {isOrchestratorSelected && (
-        <button
-          type="button"
-          data-anti-orchestrator-trigger
-          disabled={Boolean(current || pending)}
-          aria-label="Orchestrator 角色设置"
-          title={[
-            `设置 Orchestrator（Planner + Executor）角色（全局生效）`,
-            orchestratorSettings.data?.planner ? `Planner: ${orchestratorSettings.data.planner}` : 'Planner: 默认 (High)',
-            orchestratorSettings.data?.executor ? `Executor: ${orchestratorSettings.data.executor}` : 'Executor: 默认 (High)',
-          ].join(' · ')}
-          onClick={onOpenOrchestratorSettings}
-          className={clsx(
-            'ga-btn-icon relative h-[35px] w-[35px] shrink-0 rounded-[9px]',
-            hasCustomOrchRoles && 'border-accent/55 text-accent',
-          )}
-        >
-          <SlidersHorizontal size={15} aria-hidden="true" />
-          {hasCustomOrchRoles && (
-            <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-accent" aria-hidden="true" />
-          )}
-        </button>
-      )}
       {models.error && <button type="button" className="ga-btn-icon h-[35px] w-[35px] rounded-[9px]" title="重试加载模型" aria-label="重试加载模型" onClick={() => void models.refetch()}><RotateCw size={16} aria-hidden="true" /></button>}
     </>, headerActions)}
     <ConversationCollapseProvider key={sid} onAfterCollapse={collapseToLatest}>

@@ -17,6 +17,7 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Literal, get_args
 from uuid import uuid4
@@ -316,6 +317,7 @@ class AgySessionWorker:
         self._dirty = False
         self.resumed_fallback = False
         self._resume_fallback_reason: str | None = None
+        self.loaded_orchestrator: tuple[str | None, str | None] | None = None
         self._abort_event = threading.Event()
         self._exit_pending: threading.Event | None = None
         self._reader_thread: threading.Thread | None = None
@@ -623,6 +625,11 @@ class AgySessionWorker:
             self._profile_lock_held = True
             try:
                 agy_profile.prepare_workspace(self.profile_id)
+                try:
+                    orch = agy_profile.get_orchestrator_settings(self.profile_id)
+                    self.loaded_orchestrator = (orch.get("planner"), orch.get("executor"))
+                except AgyProfileError:
+                    self.loaded_orchestrator = (None, None)
                 self.temp_dir = agy_profile.make_runtime_temp_dir(agy_profile.WORKSPACE_LOCK_ID)
                 self.add_dirs = tuple(dict.fromkeys(add_dirs))
                 cmd = agy_profile.acp_spawn_command(
@@ -1776,6 +1783,30 @@ class AgySessionWorker:
         }
 
 
+def latest_hourly_quota_slot(now: datetime | None = None) -> datetime:
+    """Return the local top-of-hour boundary (`HH:00:00`) at or before `now`."""
+    return agy_models._local_now(now).replace(minute=0, second=0, microsecond=0)
+
+
+def next_hourly_quota_slot(now: datetime | None = None) -> datetime:
+    """Return the next local top-of-hour boundary strictly after `now`."""
+    return latest_hourly_quota_slot(now) + timedelta(hours=1)
+
+
+def is_profile_usage_stale_for_hour(
+    usage: dict[str, Any] | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Return True if cached usage is missing or predates the current local hour slot."""
+    if not isinstance(usage, dict):
+        return True
+    checked_at = agy_models._parse_iso(usage.get("checked_at"))
+    if checked_at is None:
+        return True
+    return checked_at < latest_hourly_quota_slot(now)
+
+
 class AgyRuntimeManager:
     """Process-wide manager for standalone Agy ACP workers, models, and logins."""
 
@@ -1813,6 +1844,8 @@ class AgyRuntimeManager:
         self._shutdown_event = threading.Event()
         self._reaper_thread: threading.Thread | None = None
         self._model_sync_thread: threading.Thread | None = None
+        self._quota_sync_thread: threading.Thread | None = None
+        self._quota_refresh_lock = threading.Lock()
 
     def _probe_version_once(self, executable: str) -> str | None:
         with self._lock:
@@ -2090,9 +2123,48 @@ class AgyRuntimeManager:
                 return
             self._sync_models_if_due()
 
+    def _sync_quota_if_due(self) -> None:
+        with self._lock:
+            if self._stopped_manually:
+                return
+        if agy_profile.agy_executable_or_none() is None:
+            return
+        try:
+            self.refresh_all_profiles_usage(only_stale=True)
+        except Exception:
+            log.debug("Scheduled Agy hourly quota refresh failed", exc_info=True)
+
+    def _quota_sync_loop(self) -> None:
+        while not self._shutdown_event.is_set():
+            now = agy_models._local_now()
+            target = next_hourly_quota_slot(now)
+            wait_sec = max(1.0, (target - now).total_seconds())
+            while wait_sec > 0 and not self._shutdown_event.is_set():
+                step = min(60.0, wait_sec)
+                if self._shutdown_event.wait(step):
+                    return
+                now = agy_models._local_now()
+                wait_sec = (target - now).total_seconds()
+            if self._shutdown_event.is_set():
+                return
+            self._sync_quota_if_due()
+
+    def _ensure_quota_sync_locked(self) -> None:
+        if self._idle_ttl <= 0 or self._shutdown_event.is_set():
+            return
+        if self._quota_sync_thread is not None and self._quota_sync_thread.is_alive():
+            return
+        self._quota_sync_thread = threading.Thread(
+            target=self._quota_sync_loop,
+            name="agy-quota-sync",
+            daemon=True,
+        )
+        self._quota_sync_thread.start()
+
     def _ensure_model_sync_locked(self) -> None:
         if self._idle_ttl <= 0 or self._shutdown_event.is_set():
             return
+        self._ensure_quota_sync_locked()
         if self._model_sync_thread is not None and self._model_sync_thread.is_alive():
             return
         self._model_sync_thread = threading.Thread(
@@ -2101,6 +2173,49 @@ class AgyRuntimeManager:
             daemon=True,
         )
         self._model_sync_thread.start()
+
+    def refresh_all_profiles_usage(
+        self,
+        *,
+        only_stale: bool = False,
+        now: datetime | None = None,
+    ) -> dict[str, int]:
+        """Probe quota usage across credentialed profiles, optionally skipping those fresh for this hour."""
+        with self._quota_refresh_lock:
+            with self._lock:
+                stopped = self._stopped_manually
+                login_pid = self._login_profile
+                switching = self._switching_profile
+            if switching or (only_stale and stopped):
+                return {"refreshed": 0, "skipped": 0, "failed": 0}
+            _, profiles = agy_profile.snapshot_details()
+            refreshed = 0
+            skipped = 0
+            failed = 0
+            for item in profiles:
+                pid = str(item.get("id") or "")
+                if not pid or not item.get("has_credentials") or pid == login_pid:
+                    skipped += 1
+                    continue
+                if only_stale and not is_profile_usage_stale_for_hour(item.get("usage"), now=now):
+                    skipped += 1
+                    continue
+                try:
+                    report = agy_usage.probe_account_usage(pid)
+                except Exception:
+                    log.debug("Quota probe failed for profile %s", pid, exc_info=True)
+                    failed += 1
+                    continue
+                state = str(report.get("state") or "unverified") if isinstance(report, dict) else "unverified"
+                rows = report.get("rows") if isinstance(report, dict) and isinstance(report.get("rows"), list) else []
+                if rows:
+                    agy_profile.record_usage(pid, state, rows)
+                    refreshed += 1
+                else:
+                    if state == "login_required":
+                        agy_profile.record_auth_state(pid, "login_required")
+                    failed += 1
+            return {"refreshed": refreshed, "skipped": skipped, "failed": failed}
 
     def shutdown(self) -> None:
         with self._lifecycle_lock:
@@ -2119,6 +2234,8 @@ class AgyRuntimeManager:
             self._reaper_thread = None
             sync_thread = self._model_sync_thread
             self._model_sync_thread = None
+            quota_thread = self._quota_sync_thread
+            self._quota_sync_thread = None
         try:
             try:
                 self._close_detached(workers)
@@ -2136,6 +2253,8 @@ class AgyRuntimeManager:
                     reaper.join(timeout=1.0)
                 if sync_thread is not None and sync_thread.is_alive() and threading.current_thread() is not sync_thread:
                     sync_thread.join(timeout=1.0)
+                if quota_thread is not None and quota_thread.is_alive() and threading.current_thread() is not quota_thread:
+                    quota_thread.join(timeout=1.0)
         finally:
             with self._lock:
                 self._stopped_manually = True
@@ -2695,6 +2814,36 @@ class AgyRuntimeManager:
             workers = self._detach_workers_locked(idle_keys)
         self._close_detached(workers)
         return saved
+
+    def ensure_orchestrator_roles(
+        self,
+        db_key: str,
+        profile_id: str,
+        session_id: str,
+        *,
+        planner: str | None,
+        executor: str | None,
+    ) -> None:
+        clean_planner = planner.strip() if isinstance(planner, str) and planner.strip() else None
+        clean_executor = executor.strip() if isinstance(executor, str) and executor.strip() else None
+        target = (clean_planner, clean_executor)
+        current = agy_profile.get_orchestrator_settings(profile_id)
+        current_roles = (current.get("planner"), current.get("executor"))
+        changed = current_roles != target
+        if changed:
+            agy_profile.set_orchestrator_settings(profile_id, planner=clean_planner, executor=clean_executor)
+        with self._lock:
+            registered = set(self._active_turns.values())
+            stale_keys = [
+                k for k, w in self._workers.items()
+                if w not in registered
+                and w.active_turn is None
+                and getattr(w, "proc", None) is not None
+                and getattr(w, "loaded_orchestrator", None) != target
+                and (changed or (k[0] == db_key and k[1] == profile_id and k[2] == session_id))
+            ]
+            workers = self._detach_workers_locked(stale_keys)
+        self._close_detached(workers)
 
     def clear_profile_credentials(self, profile_id: str) -> dict[str, Any]:
         with self._profile_change(profile_id):

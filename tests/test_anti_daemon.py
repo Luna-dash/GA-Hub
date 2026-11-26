@@ -1854,6 +1854,95 @@ def test_models_sync_cloudcode_merge_and_orchestrator_settings_endpoints(tmp_pat
     cleared_json = json.loads(ws_settings.read_text(encoding="utf-8"))
     assert "orchestrator" not in cleared_json and cleared_json["colorScheme"] == "tokyo night"
 
+    # Models config also persists fixed-2 orchestrator presets & hidden model filters
+    preset_patch = client.patch(
+        "/api/anti/models/config",
+        json={
+            "orchestrator_presets": [
+                {"id": "preset-1", "name": "  架构主力  ", "planner": "gemini-4-neon-xhigh", "executor": "gemini-4-hydrogen-medium"},
+                {"id": "preset-2", "name": "", "planner": "gemini-4-carbon-high", "executor": "claude-sonnet-5-5-high"},
+            ],
+            "hidden_models": ["gpt-oss-120b", "gemini-3.8-flash", "gpt-oss-120b"],
+        },
+        headers={"X-GA-Hub-Action": "manage-anti-gateway"},
+    )
+    assert preset_patch.status_code == 422  # empty preset name rejected cleanly
+
+    preset_patch_ok = client.patch(
+        "/api/anti/models/config",
+        json={
+            "orchestrator_presets": [
+                {"id": "preset-1", "name": "架构主力", "planner": "gemini-4-neon-xhigh", "executor": "gemini-4-hydrogen-medium"},
+                {"id": "preset-2", "name": "稳健备份", "planner": "gemini-4-carbon-high", "executor": "claude-sonnet-5-5-high"},
+                {"id": "preset-extra", "name": "忽略第三套", "planner": "gemini-4-argon-high", "executor": "gemini-4-hydrogen-high"},
+            ],
+            "hidden_models": ["gpt-oss-120b", "gemini-3.8-flash", "gpt-oss-120b"],
+        },
+        headers={"X-GA-Hub-Action": "manage-anti-gateway"},
+    )
+    assert preset_patch_ok.status_code == 200
+    preset_data = preset_patch_ok.json()
+    assert len(preset_data["orchestrator_presets"]) == 2
+    assert preset_data["orchestrator_presets"][0] == {
+        "id": "preset-1",
+        "name": "架构主力",
+        "planner": "gemini-4-neon-xhigh",
+        "executor": "gemini-4-hydrogen-medium",
+    }
+    assert preset_data["hidden_models"] == ["gpt-oss-120b", "gemini-3.8-flash"]
+
+
+def test_ensure_orchestrator_roles_recycles_mismatched_idle_workers_only(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    agy_profile.prepare_workspace("default")
+    ws_settings = agy_profile.workspace_app_data_dir() / "settings.json"
+    ws_settings.write_text(json.dumps({"orchestrator": {"planner": "gemini-4-carbon-high", "executor": "gemini-4-hydrogen-high"}}), encoding="utf-8")
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    try:
+        closed_workers: list[str] = []
+
+        class StubWorker:
+            def __init__(self, label: str, loaded: tuple[str | None, str | None], *, active_turn=None, has_proc=True):
+                self.label = label
+                self.loaded_orchestrator = loaded
+                self.active_turn = active_turn
+                self.proc = object() if has_proc else None
+
+            def exit_pending(self) -> bool:
+                return False
+
+            def close(self, *, force: bool = True) -> None:
+                closed_workers.append(self.label)
+
+        w_idle_mismatch = StubWorker("idle-mismatch", ("gemini-4-carbon-high", "gemini-4-hydrogen-high"))
+        w_idle_same = StubWorker("idle-same", ("gemini-4-neon-xhigh", "gemini-4-hydrogen-medium"))
+        w_active_mismatch = StubWorker("active-mismatch", ("gemini-4-carbon-high", "gemini-4-hydrogen-high"), active_turn=object())
+
+        with mgr._lock:
+            mgr._workers[("db1", "default", "s-target")] = w_idle_mismatch  # type: ignore[assignment]
+            mgr._workers[("db1", "default", "s-same")] = w_idle_same  # type: ignore[assignment]
+            mgr._workers[("db1", "default", "s-busy")] = w_active_mismatch  # type: ignore[assignment]
+            mgr._active_turns[("db1", "r-busy")] = w_active_mismatch  # type: ignore[assignment]
+
+        mgr.ensure_orchestrator_roles(
+            "db1",
+            "default",
+            "s-target",
+            planner="gemini-4-neon-xhigh",
+            executor="gemini-4-hydrogen-medium",
+        )
+
+        assert closed_workers == ["idle-mismatch"]
+        saved = json.loads(ws_settings.read_text(encoding="utf-8"))
+        assert saved["orchestrator"] == {"planner": "gemini-4-neon-xhigh", "executor": "gemini-4-hydrogen-medium"}
+        assert ("db1", "default", "s-same") in mgr._workers
+        assert ("db1", "default", "s-busy") in mgr._workers
+    finally:
+        mgr.shutdown()
+
 
 def test_usage_probe_t3_code_endpoints_proxy_and_untouched_reset_suppression(tmp_path, monkeypatch):
     import json
@@ -2955,6 +3044,100 @@ def test_worker_run_turn_prefers_db_generation_ms_over_partial_stream(tmp_path, 
     assert res_untimed_single["status"] == "success"
     assert res_untimed_single["usage"]["model_calls"] == 1
     assert res_untimed_single["usage"]["generation_ms"] == 800
+
+
+def test_hourly_quota_scheduler_helpers_and_refresh_all_route(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    agy_profile.ensure_workspace_ready()
+    work = agy_profile.add("工作账号")
+    no_cred = agy_profile.add("未登录账号")
+
+    # Seed local credentials on default and work, leaving no_cred without creds.
+    for pid in (agy_profile.DEFAULT, work.id):
+        gemini_dir = agy_profile.profile_vault_gemini_dir(pid) / "antigravity-cli"
+        gemini_dir.mkdir(parents=True, exist_ok=True)
+        (gemini_dir / "antigravity-oauth-token").write_text(
+            '{"token":{"access_token":"tok","refresh_token":"rtok"}}',
+            encoding="utf-8",
+        )
+
+    now = datetime(2026, 11, 26, 10, 15, 0).astimezone()
+    assert agy_runtime.latest_hourly_quota_slot(now) == datetime(2026, 11, 26, 10, 0, 0).astimezone()
+    assert agy_runtime.next_hourly_quota_slot(now) == datetime(2026, 11, 26, 11, 0, 0).astimezone()
+
+    fresh_ts = datetime(2026, 11, 26, 10, 5, 0).astimezone().astimezone(timezone.utc).isoformat()
+    stale_ts = (datetime(2026, 11, 26, 9, 55, 0).astimezone()).astimezone(timezone.utc).isoformat()
+    assert agy_runtime.is_profile_usage_stale_for_hour({"checked_at": fresh_ts}, now=now) is False
+    assert agy_runtime.is_profile_usage_stale_for_hour({"checked_at": stale_ts}, now=now) is True
+    assert agy_runtime.is_profile_usage_stale_for_hour(None, now=now) is True
+
+    # Seed pre-existing cached usage on default and override checked_at to previous hour.
+    cached_default_rows = [
+        {"model": "Gemini", "limit": "Five Hour Limit Remaining", "remaining_pct": 88.0, "resets_at": None},
+        {"model": "Gemini", "limit": "Weekly Limit Remaining", "remaining_pct": 66.0, "resets_at": None},
+    ]
+    agy_profile.record_usage(agy_profile.DEFAULT, "authenticated", cached_default_rows)
+
+    fresh_work_rows = [
+        {"model": "Gemini", "limit": "Five Hour Limit Remaining", "remaining_pct": 72.0, "resets_at": "2026-11-26T15:00:00Z"},
+        {"model": "Gemini", "limit": "Weekly Limit Remaining", "remaining_pct": 54.0, "resets_at": "2026-12-01T00:00:00Z"},
+    ]
+    agy_profile.record_usage(work.id, "authenticated", fresh_work_rows)
+
+    # Make default stale (checked last hour) while keeping work fresh in current hour.
+    import json as _json
+    meta_file = tmp_path / "agy-profiles" / "profiles.json"
+    raw_doc = _json.loads(meta_file.read_text(encoding="utf-8"))
+    raw_doc["meta"][agy_profile.DEFAULT]["usage"]["checked_at"] = stale_ts
+    raw_doc["meta"][work.id]["usage"]["checked_at"] = fresh_ts
+    meta_file.write_text(_json.dumps(raw_doc), encoding="utf-8")
+
+    runtime = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    monkeypatch.setattr(anti, "daemon", runtime)
+    app = FastAPI()
+    app.include_router(anti.router)
+    client = TestClient(app)
+
+    probed: list[str] = []
+
+    def fake_probe(pid: str):
+        probed.append(pid)
+        if pid == agy_profile.DEFAULT:
+            return {
+                "state": "authenticated",
+                "rows": [
+                    {"model": "Gemini", "limit": "Five Hour Limit Remaining", "remaining_pct": 91.0, "resets_at": None},
+                    {"model": "Gemini", "limit": "Weekly Limit Remaining", "remaining_pct": 65.0, "resets_at": None},
+                ],
+            }
+        # Simulate transient failure on work when forced full refresh runs later.
+        return {"state": "unverified", "rows": [], "detail": "network timeout"}
+
+    monkeypatch.setattr(agy_usage, "probe_account_usage", fake_probe)
+
+    # Action header required
+    assert client.post("/api/anti/account-usage/refresh-all").status_code == 403
+
+    # Hourly stale catch-up: only default is stale; work (fresh) and no_cred (no creds) are skipped.
+    summary_stale = runtime.refresh_all_profiles_usage(only_stale=True, now=now)
+    assert summary_stale == {"refreshed": 1, "skipped": 2, "failed": 0}
+    assert probed == [agy_profile.DEFAULT]
+
+    # Full manual refresh via HTTP route: probes both default and work; transient failure on work preserves cached rows.
+    probed.clear()
+    resp = client.post("/api/anti/account-usage/refresh-all", headers={"X-GA-Hub-Action": "check-anti-usage"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["refreshed"] == 1
+    assert body["skipped"] == 1  # no_cred
+    assert body["failed"] == 1   # work transient unverified
+    by_id = {p["id"]: p for p in body["profiles"]}
+    assert by_id[agy_profile.DEFAULT]["usage"]["rows"][0]["remaining_pct"] == 91.0
+    assert by_id[work.id]["usage"]["rows"] == fresh_work_rows
+    assert "usage" not in by_id[no_cred.id]
+
 
 
 

@@ -557,6 +557,8 @@ class AntiSessions:
         staging_dirs: list[Path],
         attachments: list[dict],
         fallback_handoff_context: str | None = None,
+        orchestrator_planner: str | None = None,
+        orchestrator_executor: str | None = None,
     ) -> None:
         key = (self._db_key, rid)
         add_dirs = tuple(str(d) for d in staging_dirs)
@@ -595,6 +597,17 @@ class AntiSessions:
         result: dict[str, Any] = {}
         registered = False
         try:
+            if agy_models.is_orchestrator_model(model) and (
+                orchestrator_planner is not None or orchestrator_executor is not None
+            ):
+                if hasattr(self.runtime, "ensure_orchestrator_roles"):
+                    self.runtime.ensure_orchestrator_roles(
+                        str(self._db_key),
+                        profile_id,
+                        sid,
+                        planner=orchestrator_planner,
+                        executor=orchestrator_executor,
+                    )
             worker = self.runtime.get_worker(str(self._db_key), profile_id, sid, workspace)
             self.runtime.register_turn(self._db_key, rid, worker)
             registered = True
@@ -721,6 +734,8 @@ class AntiSessions:
         attachments: list[dict] | None = None,
         mode: str = "plan",
         permission_mode: str | None = None,
+        orchestrator_planner: str | None = None,
+        orchestrator_executor: str | None = None,
     ) -> dict:
         if mode not in {"plan", "accept-edits"}:
             raise AntiError(422, "不支持的 Anti 运行模式")
@@ -843,6 +858,8 @@ class AntiSessions:
                     "staging_dirs": staging_dirs,
                     "attachments": staged_attachments,
                     "fallback_handoff_context": handoff_summary,
+                    "orchestrator_planner": orchestrator_planner,
+                    "orchestrator_executor": orchestrator_executor,
                 },
                 daemon=True,
             ).start()

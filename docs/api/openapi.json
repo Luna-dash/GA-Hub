@@ -5913,6 +5913,49 @@
         }
       }
     },
+    "/api/anti/account-usage/refresh-all": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Refresh All Account Usage",
+        "operationId": "refresh_all_account_usage_api_anti_account_usage_refresh_all_post",
+        "parameters": [
+          {
+            "name": "only_stale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Only Stale"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyUsageRefreshAllResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/anti/quota": {
       "get": {
         "tags": [
@@ -7750,6 +7793,53 @@
         ],
         "title": "AgyProfiles"
       },
+      "AgyUsageRefreshAllResult": {
+        "properties": {
+          "refreshed": {
+            "type": "integer",
+            "title": "Refreshed",
+            "default": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped",
+            "default": 0
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "default": 0
+          },
+          "active": {
+            "type": "string",
+            "title": "Active"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/AgyProfile"
+            },
+            "type": "array",
+            "title": "Profiles"
+          },
+          "login_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Login Profile"
+          }
+        },
+        "type": "object",
+        "required": [
+          "active",
+          "profiles"
+        ],
+        "title": "AgyUsageRefreshAllResult"
+      },
       "AntiAccountQuotaRow": {
         "properties": {
           "model": {
@@ -8486,6 +8576,36 @@
               }
             ],
             "title": "Quota Rules"
+          },
+          "orchestrator_presets": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AntiOrchestratorPreset"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orchestrator Presets"
+          },
+          "hidden_models": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "minLength": 1
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hidden Models"
           }
         },
         "type": "object",
@@ -8570,6 +8690,20 @@
             },
             "type": "array",
             "title": "Quota Rules"
+          },
+          "orchestrator_presets": {
+            "items": {
+              "$ref": "#/components/schemas/AntiOrchestratorPreset"
+            },
+            "type": "array",
+            "title": "Orchestrator Presets"
+          },
+          "hidden_models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hidden Models"
           }
         },
         "type": "object",
@@ -8577,6 +8711,52 @@
           "config_path"
         ],
         "title": "AntiModelsConfigResp"
+      },
+      "AntiOrchestratorPreset": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "planner": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planner"
+          },
+          "executor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "AntiOrchestratorPreset"
       },
       "AntiQuestionOption": {
         "properties": {
@@ -8823,6 +9003,30 @@
               }
             ],
             "title": "Permission Mode"
+          },
+          "orchestrator_planner": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orchestrator Planner"
+          },
+          "orchestrator_executor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orchestrator Executor"
           }
         },
         "type": "object",
