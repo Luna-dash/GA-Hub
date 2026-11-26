@@ -67,6 +67,7 @@ export default function GoalHive() {
   const logRef = useRef<HTMLDivElement | null>(null)
   const targetRef = useRef<HTMLTextAreaElement | null>(null)
   const conditionRef = useRef<HTMLTextAreaElement | null>(null)
+  const stickToBottomRef = useRef(true)
   const subagentSettingsButtonRef = useRef<HTMLButtonElement | null>(null)
   const subagentSettingsDialogRef = useRef<HTMLDivElement | null>(null)
 
@@ -124,9 +125,18 @@ export default function GoalHive() {
     }
   }, [setConn, setMessages])
 
+  const handleLogScroll = () => {
+    const el = logRef.current
+    if (!el) return
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64
+  }
+
   useEffect(() => {
-    logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' })
-  }, [msgs])
+    if (!stickToBottomRef.current) return
+    const el = logRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: streaming ? 'auto' : 'smooth' })
+  }, [msgs, streaming])
 
   useLayoutEffect(() => {
     for (const el of [targetRef.current, conditionRef.current]) {
@@ -144,6 +154,7 @@ export default function GoalHive() {
     const parts = [target.trim(), condition.trim()].filter(Boolean)
     const text = parts.join('\n')
 
+    stickToBottomRef.current = true
     const sent = wsRef.current.send({
       type: 'submit',
       text,
@@ -179,8 +190,8 @@ export default function GoalHive() {
       title="Goal Hive"
       titleExtra={
         <StatusIconBadge
-          kind={streaming ? 'running' : conn === 'connecting' ? 'connecting' : 'idle'}
-          label={streaming ? '运行中' : conn === 'connecting' ? '连接中' : '未运行'}
+          kind={streaming ? 'running' : conn === 'connecting' ? 'connecting' : conn === 'closed' ? 'offline' : 'idle'}
+          label={streaming ? '运行中' : conn === 'connecting' ? '连接中' : conn === 'closed' ? '连接已断开' : '未运行'}
         />
       }
       actions={
@@ -286,8 +297,25 @@ export default function GoalHive() {
             </div>
 
             <div className="shrink-0 bg-bg-soft/45 px-4 py-3 flex items-center justify-between gap-3 border-t border-line/40">
-              <p className="min-w-0 text-xs text-ink-muted truncate" title={streaming ? '当前任务输出中，完成后可启动下一项。' : '输出保留在本页面日志区，不混入普通聊天。'}>
-                {streaming ? '任务输出中，完成后可继续发起' : '独立工作台输出，不混入普通聊天'}
+              <p
+                className="min-w-0 text-xs text-ink-muted truncate"
+                title={
+                  streaming
+                    ? '当前任务输出中，完成后可启动下一项。'
+                    : conn === 'connecting'
+                      ? '正在连接实时通道，完成后即可启动。'
+                      : conn === 'closed'
+                        ? '实时通道已断开，正在等待重连。'
+                        : '输出保留在本页面日志区，不混入普通聊天。'
+                }
+              >
+                {streaming
+                  ? '任务输出中，完成后可继续发起'
+                  : conn === 'connecting'
+                    ? '正在连接实时通道…'
+                    : conn === 'closed'
+                      ? '实时通道已断开，正在等待重连…'
+                      : '独立工作台输出，不混入普通聊天'}
               </p>
               <button
                 type="submit"
@@ -312,7 +340,7 @@ export default function GoalHive() {
               <span>清空历史</span>
             </button>
           </div>
-          <div ref={logRef} className="flex-1 min-h-0 overflow-auto p-5 space-y-4">
+          <div ref={logRef} onScroll={handleLogScroll} className="flex-1 min-h-0 overflow-auto p-5 space-y-4">
             {msgs.length === 0 ? (
               <div className="h-full min-h-64 grid place-items-center text-sm text-ink-faint">尚无 Goal / Hive 输出。</div>
             ) : (

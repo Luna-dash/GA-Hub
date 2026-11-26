@@ -207,6 +207,7 @@ export default function Conversations() {
   const detailScrollPositionsRef = useRef<Record<string, number>>(
     readPageState('conversations.detailScroll', {}),
   )
+  const detailReadyForRef = useRef<string | null>(null)
   const detailListRef = useRef<VirtualMessageListHandle>(null)
   const [detailStuckBottom, setDetailStuckBottom] = useState(false)
   const [detailActiveTurn, setDetailActiveTurn] = useState(0)
@@ -288,6 +289,8 @@ export default function Conversations() {
     }
     updateDetailActiveTurn(currentTurn)
   }, [navTargets, updateDetailActiveTurn])
+  const syncDetailNavRef = useRef(syncDetailNav)
+  syncDetailNavRef.current = syncDetailNav
 
   const detailTailIndex = useMemo(() => {
     if (!detail) return -1
@@ -337,25 +340,48 @@ export default function Conversations() {
   }, [jumpToDetailTurn])
 
   useEffect(() => {
-    // A deep-link change reuses the same page component. Restore the saved
-    // reader position for the target conversation (or its header when none)
-    // after the detail pane lays out, instead of an arbitrary old offset.
-    if (!active) return
+    // A deep-link change reuses the same page component. Wait until the target
+    // detail payload is loaded before restoring its offset so spinner mounts
+    // cannot overwrite the saved scroll position.
+    if (!active || !detail || (detail.id && detail.id !== active)) {
+      detailReadyForRef.current = null
+      return
+    }
     const saved = detailScrollPositionsRef.current[active] ?? 0
     const frame = requestAnimationFrame(() => {
       if (detailScrollRef.current) detailScrollRef.current.scrollTop = saved
-      syncDetailNav()
+      detailReadyForRef.current = active
+      syncDetailNavRef.current()
     })
     return () => cancelAnimationFrame(frame)
-  }, [active, viewMode, detail, syncDetailNav])
+  }, [active, viewMode, detail])
 
   useEffect(() => {
     const el = detailScrollRef.current
     if (!el || !active) return
-    const capture = () => {
+    let persistTimer: number | null = null
+    const persistPosition = (immediate: boolean) => {
+      if (detailReadyForRef.current !== active) return
       detailScrollPositionsRef.current[active] = el.scrollTop
-      writePageState('conversations.detailScroll', trimDetailScrollPositions(detailScrollPositionsRef.current))
-      syncDetailNav()
+      if (immediate) {
+        if (persistTimer !== null) {
+          window.clearTimeout(persistTimer)
+          persistTimer = null
+        }
+        writePageState('conversations.detailScroll', trimDetailScrollPositions(detailScrollPositionsRef.current))
+        return
+      }
+      if (persistTimer !== null) window.clearTimeout(persistTimer)
+      persistTimer = window.setTimeout(() => {
+        persistTimer = null
+        if (detailReadyForRef.current === active) {
+          writePageState('conversations.detailScroll', trimDetailScrollPositions(detailScrollPositionsRef.current))
+        }
+      }, 120)
+    }
+    const capture = () => {
+      persistPosition(false)
+      syncDetailNavRef.current()
     }
     const clearNavLock = () => {
       detailNavTargetRef.current = null
@@ -365,11 +391,11 @@ export default function Conversations() {
     const onScrollEnd = () => {
       const now = performance.now()
       if (now < detailJumpingBottomUntilRef.current || now < detailNavLockUntilRef.current) {
-        syncDetailNav()
+        syncDetailNavRef.current()
         return
       }
       clearNavLock()
-      syncDetailNav()
+      syncDetailNavRef.current()
     }
     el.addEventListener('scroll', capture, { passive: true })
     el.addEventListener('scrollend', onScrollEnd, { passive: true })
@@ -382,9 +408,10 @@ export default function Conversations() {
       el.removeEventListener('wheel', clearNavLock)
       el.removeEventListener('touchstart', clearNavLock)
       el.removeEventListener('pointerdown', clearNavLock)
-      capture()
+      if (persistTimer !== null) window.clearTimeout(persistTimer)
+      persistPosition(true)
     }
-  }, [active, syncDetailNav])
+  }, [active])
 
   const handleExport = async (id: string, fmt: 'md' | 'json') => {
     try {
@@ -649,7 +676,7 @@ export default function Conversations() {
         </ConversationIndexRail>
 
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <div ref={detailScrollRef} onScroll={syncDetailNav} className="min-h-0 flex-1 overflow-y-auto pr-12 [overflow-anchor:none]">
+        <div ref={detailScrollRef} className="min-h-0 flex-1 overflow-y-auto pr-12 [overflow-anchor:none]">
           {!active && (
             <div className="flex h-full items-center justify-center p-2">
               <div className="ga-paper-card max-w-sm px-8 py-9 text-center">

@@ -116,4 +116,26 @@ describe('VersionedMemoryEditor', () => {
     expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe('remote')
     expect(button(host, '已保存').disabled).toBe(true)
   })
+
+  it('does not misreport a self-initiated save as external modification when typing continues', async () => {
+    const onSave = vi.fn().mockResolvedValue({ ok: true, size: 7, mtime_ns: '11', sha256: 'hash-11' })
+    const render = (snapshot: MemorySnapshot) => root.render(
+      <VersionedMemoryEditor label="memory/test.md" snapshot={snapshot} onSave={onSave} onReload={vi.fn()} />,
+    )
+    act(() => render(original))
+    act(() => changeTextarea(host.querySelector('textarea')!, 'draft-1'))
+    await act(async () => button(host, '保存').click())
+
+    // User continues editing before query invalidation brings back the saved snapshot.
+    act(() => changeTextarea(host.querySelector('textarea')!, 'draft-2'))
+    act(() => render({ content: 'draft-1', mtime_ns: '11', sha256: 'hash-11' }))
+
+    expect(host.textContent).not.toContain('磁盘版本已变化')
+    expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe('draft-2')
+
+    // A genuinely newer external snapshot still surfaces the warning while preserving draft-2.
+    act(() => render(remote))
+    expect(host.textContent).toContain('磁盘版本已变化')
+    expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe('draft-2')
+  })
 })

@@ -202,8 +202,8 @@ export default function Autonomous() {
                       <td className="px-3 py-1.5 whitespace-nowrap">
                         {r.report_paths?.length
                           ? <div className="flex flex-wrap gap-1.5">
-                              {r.report_paths.map((p) => p.split('/').pop()).map((n) => (
-                                <button key={n} type="button" onClick={() => setActiveReport(n!)} className="ga-btn-link">
+                              {r.report_paths.map((p) => p.split(/[/\\]/).pop()).filter((n): n is string => Boolean(n)).map((n) => (
+                                <button key={n} type="button" onClick={() => setActiveReport(n)} className="ga-btn-link">
                                   <FileText className="h-3 w-3 shrink-0" aria-hidden="true" />
                                   <span>{n}</span>
                                 </button>

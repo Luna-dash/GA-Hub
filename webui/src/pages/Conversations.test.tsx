@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Conversations from './Conversations'
-import { resetPageState } from '@/utils/pageState'
+import { readPageState, resetPageState, writePageState } from '@/utils/pageState'
 
 const apiMock = vi.hoisted(() => ({
   conversations: vi.fn(),
@@ -517,5 +517,29 @@ describe('conversation route selection', () => {
 
     expect(host.textContent).not.toContain('对话次数待统计')
     expect(host.textContent).not.toContain('0 turns')
+  })
+
+  it('preserves saved scroll offset while detail is loading instead of clobbering it to 0', async () => {
+    writePageState('conversations.detailScroll', { 'thread-scroll': 420 })
+    let resolveDetail!: (value: unknown) => void
+    apiMock.conversation.mockImplementationOnce(() => new Promise((resolve) => { resolveDetail = resolve }))
+
+    await renderAt('/conversations/thread-scroll')
+    expect(readPageState<Record<string, number>>('conversations.detailScroll', {})['thread-scroll']).toBe(420)
+
+    act(() => {
+      resolveDetail({
+        id: 'thread-scroll',
+        title: 'Scroll preserved',
+        messages: [
+          { role: 'user', content: '问题' },
+          { role: 'assistant', content: '回答' },
+        ],
+      })
+    })
+    await waitFor(() => expect(host.textContent).toContain('问题'))
+    const pane = host.querySelector<HTMLDivElement>('div.overflow-y-auto')!
+    await waitFor(() => expect(pane.scrollTop).toBe(420))
+    expect(readPageState<Record<string, number>>('conversations.detailScroll', {})['thread-scroll']).toBe(420)
   })
 })

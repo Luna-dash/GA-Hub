@@ -28,6 +28,7 @@ export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSav
   const dirty = value !== baseline.content
   const snapshotVersion = `${snapshot.mtime_ns ?? ''}:${snapshot.sha256 ?? ''}`
   const observedVersion = useRef(snapshotVersion)
+  const ignoredSavedVersion = useRef<string | null>(null)
 
   useEffect(() => {
     onDirtyChange?.(dirty)
@@ -35,8 +36,23 @@ export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSav
   }, [dirty, onDirtyChange])
 
   useEffect(() => {
+    if (!dirty) return
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [dirty])
+
+  useEffect(() => {
     if (snapshotVersion === observedVersion.current) return
     observedVersion.current = snapshotVersion
+    if (ignoredSavedVersion.current === snapshotVersion) {
+      ignoredSavedVersion.current = null
+      return
+    }
+    ignoredSavedVersion.current = null
     if (dirty) {
       setRemoteChanged(true)
       return
@@ -55,6 +71,8 @@ export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSav
         expected_mtime_ns: baseline.mtime_ns,
         expected_sha256: baseline.sha256,
       })
+      const savedVersion = `${result.mtime_ns ?? ''}:${result.sha256 ?? ''}`
+      ignoredSavedVersion.current = savedVersion === observedVersion.current ? null : savedVersion
       setBaseline({ content: value, mtime_ns: result.mtime_ns, sha256: result.sha256 })
       setRemoteChanged(false)
       onSaved?.()
@@ -71,6 +89,8 @@ export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSav
     setReloading(true)
     try {
       const latest = await onReload()
+      const reloadedVersion = `${latest.mtime_ns ?? ''}:${latest.sha256 ?? ''}`
+      ignoredSavedVersion.current = reloadedVersion === observedVersion.current ? null : reloadedVersion
       setBaseline(latest)
       setValue(latest.content)
       setRemoteChanged(false)

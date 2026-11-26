@@ -26,6 +26,7 @@ export function RawView({ data, onWrite, onDirtyChange }: {
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const lineNumbersRef = useRef<HTMLPreElement>(null)
   const observedRaw = useRef(data.raw)
+  const ignoredSavedRaw = useRef<string | null>(null)
   const syncLineNumbers = useCallback(() => {
     if (editorRef.current && lineNumbersRef.current) {
       // Transform instead of scrolling the gutter: a horizontal scrollbar can
@@ -41,8 +42,23 @@ export function RawView({ data, onWrite, onDirtyChange }: {
   }, [dirty, onDirtyChange])
 
   useEffect(() => {
+    if (!dirty) return
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [dirty])
+
+  useEffect(() => {
     if (data.raw === observedRaw.current) return
     observedRaw.current = data.raw
+    if (ignoredSavedRaw.current !== null && data.raw === ignoredSavedRaw.current) {
+      ignoredSavedRaw.current = null
+      return
+    }
+    ignoredSavedRaw.current = null
     if (text !== baseline) {
       if (data.raw === text) {
         setBaseline(data.raw)
@@ -67,6 +83,7 @@ export function RawView({ data, onWrite, onDirtyChange }: {
     setErr(null); setSaving(true)
     try {
       const r = await api.putMyKeyRaw(text)
+      ignoredSavedRaw.current = text === observedRaw.current ? null : text
       setBaseline(text)
       setRemoteChanged(false)
       onWrite(r)
@@ -87,7 +104,7 @@ export function RawView({ data, onWrite, onDirtyChange }: {
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => setShowBackups(true)}
             className="ga-btn-sm"><History className="h-3.5 w-3.5" aria-hidden="true" /><span>备份历史</span></button>
-          <button type="button" onClick={() => { setText(data.raw); setBaseline(data.raw); setRemoteChanged(false) }} disabled={!dirty && !remoteChanged}
+          <button type="button" onClick={() => { ignoredSavedRaw.current = null; setText(data.raw); setBaseline(data.raw); setRemoteChanged(false) }} disabled={!dirty && !remoteChanged}
             className="ga-btn-sm"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /><span>还原</span></button>
           <button type="button" onClick={save} disabled={!dirty || saving}
             className="ga-btn-sm-primary">
@@ -102,7 +119,7 @@ export function RawView({ data, onWrite, onDirtyChange }: {
           <span>外部 mykey.py 已更新，未保存草稿已保留。</span>
           <button
             type="button"
-            onClick={() => { setText(data.raw); setBaseline(data.raw); setRemoteChanged(false) }}
+            onClick={() => { ignoredSavedRaw.current = null; setText(data.raw); setBaseline(data.raw); setRemoteChanged(false) }}
             className="ga-btn-warning-sm"
           >
             <RotateCcw className="h-3 w-3" aria-hidden="true" />

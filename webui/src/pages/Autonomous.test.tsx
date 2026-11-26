@@ -146,4 +146,25 @@ describe('Autonomous schedule dialog & report drawer', () => {
     expect(host.querySelectorAll('tbody tr')).toHaveLength(2)
     expect(pager?.textContent).toContain('第 2 / 2 页')
   })
+
+  it('extracts filenames from both Windows backslash and POSIX report paths', async () => {
+    apiMock.runs.mockResolvedValue({
+      runs: [{
+        id: 'run-win',
+        schedule_id: 'sch-1',
+        fired_at: 1_700_000_000,
+        prompt_preview: '跨平台路径测试',
+        report_paths: ['C:\\Users\\demo\\reports\\win-report.md', '/tmp/reports/unix-report.md'],
+      }],
+    })
+    apiMock.report.mockResolvedValue({ content: '# Windows 报告' })
+
+    await renderPage()
+    const winBtn = button('win-report.md')
+    expect(winBtn).toBeDefined()
+    expect(button('unix-report.md')).toBeDefined()
+
+    await act(async () => { winBtn.click(); await new Promise((r) => setTimeout(r, 20)) })
+    expect(apiMock.report).toHaveBeenCalledWith('win-report.md')
+  })
 })

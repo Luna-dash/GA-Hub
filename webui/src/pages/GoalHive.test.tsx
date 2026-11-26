@@ -230,4 +230,40 @@ describe('Goal Hive compact subagent settings', () => {
     expect(confirmSpy).toHaveBeenCalledTimes(2)
     expect(mocks.socketSend).toHaveBeenCalledWith({ type: 'reset' })
   })
+
+  it('surfaces disconnected WebSocket state explicitly and pauses auto-scroll when scrolled up', () => {
+    renderPage()
+    act(() => { useGoalHiveStore.getState().setConn('closed') })
+
+    expect(host.querySelector('[data-testid="page-header"] [aria-label="连接已断开"]')).not.toBeNull()
+    expect(host.textContent).toContain('实时通道已断开，正在等待重连…')
+    const textarea = host.querySelector('textarea')!
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '目标')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(button('启动 Goal').disabled).toBe(true)
+
+    act(() => { useGoalHiveStore.getState().setConn('open') })
+    const logEl = host.querySelector<HTMLDivElement>('div.overflow-auto')!
+    const scrollToSpy = vi.mocked(logEl.scrollTo)
+    scrollToSpy.mockClear()
+
+    Object.defineProperty(logEl, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(logEl, 'clientHeight', { configurable: true, value: 300 })
+    Object.defineProperty(logEl, 'scrollTop', { configurable: true, writable: true, value: 100 })
+    act(() => { logEl.dispatchEvent(new Event('scroll')) })
+
+    act(() => {
+      useGoalHiveStore.getState().setMessages([{ id: 'm1', role: 'assistant', content: 'streaming chunk', ts: 1, streaming: true }])
+    })
+    expect(scrollToSpy).not.toHaveBeenCalled()
+
+    logEl.scrollTop = 680
+    act(() => { logEl.dispatchEvent(new Event('scroll')) })
+    act(() => {
+      useGoalHiveStore.getState().setMessages([{ id: 'm1', role: 'assistant', content: 'streaming chunk 2', ts: 1, streaming: true }])
+    })
+    expect(scrollToSpy).toHaveBeenCalled()
+  })
 })

@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RawView } from './MyKeyRawView'
+import { api } from '@/api/client'
 import type { MyKeyData } from '@/api/types'
 
 vi.mock('@/api/client', () => ({ api: { putMyKeyRaw: vi.fn() } }))
@@ -71,5 +72,24 @@ describe('RawView line-number scrolling', () => {
     act(() => adoptBtn.click())
     expect(editor.value).toBe('external = 2')
     expect(host.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('does not falsely flag a self-initiated save as external update during follow-up edits', async () => {
+    vi.mocked(api.putMyKeyRaw).mockResolvedValueOnce({} as never)
+    const editor = host.querySelector('textarea')!
+    const setEditor = (val: string) => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(editor, val)
+      editor.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+
+    act(() => setEditor('saved = 1'))
+    const saveBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.includes('保存并应用'))!
+    await act(async () => saveBtn.click())
+
+    act(() => setEditor('saved = 2'))
+    act(() => root.render(<RawView data={{ ...data, raw: 'saved = 1' }} onWrite={onWrite} />))
+
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    expect(editor.value).toBe('saved = 2')
   })
 })
