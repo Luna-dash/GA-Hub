@@ -2808,4 +2808,120 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
   }
 })
 
+it('previews cached quota popover on hover without network refresh, keeps open onto panel, and pins on click', async () => {
+  vi.useFakeTimers()
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  let usageCalls = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
+    if (path === '/api/anti/account-usage') {
+      usageCalls += 1
+      return reply({
+        state: 'authenticated',
+        rows: [
+          { model: 'Gemini', limit: 'Five Hour Limit Remaining', remaining_pct: 77, resets_at: '2026-11-26T12:00:00Z' },
+        ],
+      })
+    }
+    if (path === '/api/anti/quota') return reply([])
+    if (path === '/api/anti/stats?today=true') {
+      return reply({
+        window_hours: 24, total_runs: 1, success_runs: 1, failed_runs: 0,
+        rate_limited_runs: 0, total_tokens: 100, cache_hit_ratio: 0.5, estimated_cost_usd: 0.01,
+      })
+    }
+    return reply({})
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const dialog = () => document.body.querySelector<HTMLElement>('[role=dialog][aria-label="反重力剩余额度"]')
+
+  try {
+    await act(async () => root.render(
+      <QueryClientProvider client={cache}>
+        <AntiAccountUsageButton
+          running
+          profileName="系统默认"
+          autoRefreshKey="default"
+          cachedUsage={{
+            checked_at: new Date(Date.now() - 3_600_000).toISOString(),
+            min_remaining_pct: 64.5,
+            rows: [
+              { model: 'Gemini', limit: 'Five Hour Limit Remaining', remaining_pct: 82, resets_at: '2026-11-26T12:00:00Z' },
+              { model: 'Gemini', limit: 'Weekly Limit Remaining', remaining_pct: 64.5, resets_at: '2026-12-01T00:00:00Z' },
+            ],
+          }}
+          onChecked={() => {}}
+        />
+      </QueryClientProvider>,
+    ))
+
+    const btn = host.querySelector<HTMLButtonElement>('button[aria-label="检测反重力额度"]')!
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(usageCalls).toBe(0)
+    expect(dialog()?.textContent).toContain('缓存 ·')
+    expect(dialog()?.textContent).toContain('82%')
+    expect(dialog()?.textContent).toContain('64.5%')
+
+    // Moving pointer from trigger button onto the portal popover wrapper preserves hover preview
+    const panelWrapper = dialog()!.parentElement!
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: panelWrapper }))
+      panelWrapper.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: btn }))
+      await vi.advanceTimersByTimeAsync(200)
+    })
+    expect(dialog()).not.toBeNull()
+    expect(usageCalls).toBe(0)
+
+    // Leaving panel dismisses after short grace delay
+    await act(async () => {
+      panelWrapper.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+      await vi.advanceTimersByTimeAsync(200)
+    })
+    expect(dialog()).toBeNull()
+    expect(usageCalls).toBe(0)
+
+    // Hover then click trigger button -> pins panel and triggers live refresh
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(dialog()).not.toBeNull()
+    expect(usageCalls).toBe(0)
+    await act(async () => {
+      btn.click()
+      await vi.advanceTimersByTimeAsync(0)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(usageCalls).toBe(1)
+    expect(dialog()?.textContent).toContain('77%')
+
+    // Leaving pinned popover keeps it open until explicitly dismissed by clicking button again
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+      await vi.advanceTimersByTimeAsync(200)
+    })
+    expect(dialog()).not.toBeNull()
+
+    await act(async () => {
+      btn.click()
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(dialog()).toBeNull()
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})
+
 

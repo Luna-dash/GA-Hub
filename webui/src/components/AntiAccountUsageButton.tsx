@@ -14,6 +14,7 @@ import {
 export const AUTO_USAGE_REFRESH_INTERVAL_MS = 10 * 60 * 1000
 const DWELL_TICK_MAX_MS = 60 * 1000
 const DWELL_CLAMP_SLACK_MS = 5 * 1000
+const HOVER_CLOSE_DELAY_MS = 150
 
 interface UsageDwellState {
   elapsedMs: number
@@ -89,7 +90,14 @@ export function AntiAccountUsageButton({
   cachedUsage?: AgyProfileUsageSnapshot | null
   onChecked: () => void
 }) {
-  const usage = useMutation({ mutationFn: () => checkUsage(profileId), onSettled: onChecked })
+  const [liveCheckedAtMs, setLiveCheckedAtMs] = useState(0)
+  const usage = useMutation({
+    mutationFn: () => checkUsage(profileId),
+    onSuccess: data => {
+      if (data.rows.length > 0) setLiveCheckedAtMs(Date.now())
+    },
+    onSettled: onChecked,
+  })
   const dwellKey = autoRefreshKey ?? profileId ?? '__active__'
   const usageMutateRef = useRef(usage.mutate)
   usageMutateRef.current = usage.mutate
@@ -183,7 +191,30 @@ export function AntiAccountUsageButton({
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [running, dwellKey, autoTimerEpoch])
-  const [open, setOpen] = useState(false)
+  const [pinned, setPinned] = useState(false)
+  const [hovered, setHovered] = useState(false)
+  const open = pinned || hovered
+  const hoveredRef = useRef(hovered)
+  hoveredRef.current = hovered
+  const hoverCloseTimerRef = useRef<number | null>(null)
+  const cancelHoverClose = useCallback(() => {
+    if (hoverCloseTimerRef.current !== null) {
+      window.clearTimeout(hoverCloseTimerRef.current)
+      hoverCloseTimerRef.current = null
+    }
+  }, [])
+  const handlePointerEnter = useCallback(() => {
+    cancelHoverClose()
+    setHovered(true)
+  }, [cancelHoverClose])
+  const handlePointerLeave = useCallback(() => {
+    cancelHoverClose()
+    hoverCloseTimerRef.current = window.setTimeout(() => {
+      hoverCloseTimerRef.current = null
+      setHovered(false)
+    }, HOVER_CLOSE_DELAY_MS)
+  }, [cancelHoverClose])
+  useEffect(() => cancelHoverClose, [cancelHoverClose])
   const pools = useQuery({
     queryKey: ['anti-quota', profileId ?? '__active__'],
     queryFn: ({ signal }) => antiApi.quota(signal, profileId),
@@ -221,15 +252,23 @@ export function AntiAccountUsageButton({
     }
     const outside = (event: PointerEvent) => {
       if (event.target instanceof Node && !button.current?.contains(event.target) && !panel.current?.contains(event.target)) {
-        setOpen(false)
+        cancelHoverClose()
+        setPinned(false)
+        setHovered(false)
       }
     }
     const escape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
-      if (!button.current?.contains(document.activeElement) && !panel.current?.contains(document.activeElement)) return
+      const focusInside = Boolean(
+        button.current?.contains(document.activeElement)
+        || panel.current?.contains(document.activeElement),
+      )
+      if (!hoveredRef.current && !focusInside) return
       event.preventDefault()
-      setOpen(false)
-      button.current?.focus()
+      cancelHoverClose()
+      setPinned(false)
+      setHovered(false)
+      if (focusInside) button.current?.focus()
     }
     update()
     window.addEventListener('resize', update)
@@ -242,14 +281,16 @@ export function AntiAccountUsageButton({
       document.removeEventListener('pointerdown', outside)
       document.removeEventListener('keydown', escape)
     }
-  }, [open])
+  }, [open, cancelHoverClose])
   useLayoutEffect(() => {
-    if (open && position && !panel.current?.contains(document.activeElement) && document.activeElement === button.current) {
+    if (pinned && position && !panel.current?.contains(document.activeElement) && document.activeElement === button.current) {
       panel.current?.querySelector<HTMLElement>('[role=dialog]')?.focus()
     }
-  }, [open, !!position])
-  const liveRows = running ? usage.data?.rows : undefined
-  const fallbackRows = !running || (!usage.data && !usage.isError) ? cachedUsage?.rows : undefined
+  }, [pinned, !!position])
+  const cachedMs = Number.isFinite(cachedCheckedAtMs) ? cachedCheckedAtMs : 0
+  const hasFreshLive = Boolean(running && usage.data?.rows?.length && cachedMs <= liveCheckedAtMs + 1_000)
+  const liveRows = hasFreshLive ? usage.data?.rows : undefined
+  const fallbackRows = (!running || !liveRows) ? cachedUsage?.rows : undefined
   const rows = liveRows ?? fallbackRows
   const coolingPools = (pools.data ?? []).filter(
     p => p.status === 'cooling_down' || (p.cooldown_remaining_seconds ?? 0) > 0,
@@ -275,15 +316,33 @@ export function AntiAccountUsageButton({
         className={clsx('ga-btn-icon',
           rows?.length ? 'text-ink' : 'text-ink-muted',
           running && !usage.isPending ? '' : 'cursor-default opacity-65')}
+        onMouseEnter={handlePointerEnter}
+        onMouseLeave={handlePointerLeave}
         onClick={() => {
-          if (!open && running && !usage.isPending) triggerUsageRefresh()
-          setOpen(!open)
+          cancelHoverClose()
+          if (pinned) {
+            setPinned(false)
+            setHovered(false)
+          } else {
+            setPinned(true)
+            if (running && !usage.isPending) triggerUsageRefresh()
+            if (running && hovered) {
+              void pools.refetch()
+              void stats.refetch()
+            }
+          }
         }}
       >
         <Icon size={16} aria-hidden="true" className={clsx(usage.isPending && 'motion-safe:animate-spin')} />
       </button>
       {open && position && createPortal(
-        <div ref={panel} className="fixed z-[60] w-[min(20rem,calc(100vw-16px))] pt-2" style={{ top: position.top, left: position.left }}>
+        <div
+          ref={panel}
+          className="fixed z-[60] w-[min(20rem,calc(100vw-16px))] pt-2"
+          style={{ top: position.top, left: position.left }}
+          onMouseEnter={handlePointerEnter}
+          onMouseLeave={handlePointerLeave}
+        >
           <div id={popoverId} tabIndex={-1} role="dialog" aria-label="反重力剩余额度" className="ga-paper-popover overflow-y-auto overscroll-contain rounded-xl p-3 text-xs text-ink" style={{ maxHeight: position.maxHeight }}>
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-1.5">
@@ -308,6 +367,8 @@ export function AntiAccountUsageButton({
                     title="重新检测官方额度"
                     disabled={usage.isPending}
                     onClick={() => {
+                      cancelHoverClose()
+                      setPinned(true)
                       if (!usage.isPending) triggerUsageRefresh()
                       void pools.refetch()
                       void stats.refetch()
@@ -337,6 +398,9 @@ export function AntiAccountUsageButton({
             ) : <p className="mt-1 text-ink-muted">{message}</p>}
             {running && usage.isError && rows && rows.length > 0 && (
               <p className="mt-1 text-[11px] text-status-danger">{usage.error.message}</p>
+            )}
+            {running && !usage.isError && usage.data && !usage.data.rows.length && usage.data.detail && rows && rows.length > 0 && (
+              <p className="mt-1 text-[11px] text-status-danger">{usage.data.detail}</p>
             )}
             {!running && rows?.length && (
               <p className="mt-1 text-[11px] text-ink-muted">Agy 运行时已停止；启用后点击图标即可刷新实时额度。</p>
