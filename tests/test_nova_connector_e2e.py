@@ -437,3 +437,107 @@ class SettingsAccountE2E(unittest.IsolatedAsyncioTestCase):
                 await server.close()
                 nova.store.db.close()
                 nova.snapshots.db.close()
+
+    async def test_control_events_and_token_rotation_e2e(self):
+        event_subscribers = set()
+
+        async def ws_events(r):
+            ws = web.WebSocketResponse()
+            await ws.prepare(r)
+            event_subscribers.add(ws)
+            try:
+                async for _ in ws:
+                    pass
+            finally:
+                event_subscribers.discard(ws)
+            return ws
+
+        app = web.Application()
+        app.router.add_get('/api/health', lambda r: web.json_response({'status': 'healthy'}))
+        app.router.add_get('/api/sessions', lambda r: web.json_response({'items': []}))
+        app.router.add_get('/ws/events', ws_events)
+        backend = TestServer(app)
+        await backend.start_server()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            nova = cloud.Nova(Path(tmp) / 'ctrl.db')
+            client = TestClient(TestServer(nova.app()))
+            await client.start_server()
+            task = None
+            try:
+                r = await client.post(
+                    '/register',
+                    data={'name': 'ctrluser', 'password': secrets.token_urlsafe(24), 'invite': nova.store.invite()},
+                    headers={'Origin': nova.public},
+                    allow_redirects=False,
+                )
+                self.assertEqual(r.status, 303)
+                auth = {'Origin': nova.public, 'Cookie': cloud.COOKIE + '=' + r.cookies[cloud.COOKIE].value}
+                pair = await (await client.post('/v1/agent/pair/start', json={'name': 'CtrlPC'})).json()
+                await client.post('/v1/pair/approve', json={'code': pair['code']}, headers=auth)
+                token = secrets.token_urlsafe(32)
+                device = 'f' * 24
+                await client.post('/v1/agent/pair/finish', json={**pair, 'token': token, 'device_id': device})
+
+                rotated_tokens = []
+                task = asyncio.create_task(connector.connect_once(
+                    str(client.make_url('')).rstrip('/'),
+                    device,
+                    token,
+                    str(backend.make_url('')).rstrip('/'),
+                    on_token_rotated=rotated_tokens.append,
+                ))
+                for _ in range(100):
+                    if device in nova.devices and nova.devices[device].ready and event_subscribers:
+                        break
+                    await asyncio.sleep(0.05)
+                self.assertTrue(event_subscribers)
+
+                # Subscribe to cloud /d/<id>/api/events WS
+                ev_ws = await client.ws_connect('/d/' + device + '/api/events', headers=auth)
+                status_ev = await ev_ws.receive_json(timeout=3)
+                self.assertEqual(status_ev['event'], 'device.status')
+
+                # Publish local EventBus events (both allowlisted and blocked)
+                local_sub = next(iter(event_subscribers))
+                await local_sub.send_json({'topic': 'conductor:log', 'payload': {'secret': 'hide-me'}})
+                await local_sub.send_json({
+                    'topic': 'session:runtime',
+                    'payload': {'session_id': 's-ctrl', 'status': 'idle', 'completed_run_id': 'r-done', 'cwd': 'C:/nope'},
+                })
+                await local_sub.send_json({
+                    'topic': 'anti:runtime',
+                    'payload': {'session_id': 'a-ctrl', 'status': 'running', 'run_id': 'ar-1'},
+                })
+                got1 = await ev_ws.receive_json(timeout=5)
+                got2 = await ev_ws.receive_json(timeout=5)
+                self.assertEqual(got1, {'event': 'session.runtime', 'data': {'session_id': 's-ctrl', 'status': 'idle', 'completed_run_id': 'r-done'}})
+                self.assertEqual(got2, {'event': 'agy.runtime', 'data': {'session_id': 'a-ctrl', 'status': 'running', 'run_id': 'ar-1'}})
+                await ev_ws.close()
+
+                # Rotate device token live while connected
+                rot_resp = await client.post('/v1/devices/' + device + '/rotate-token', json={}, headers=auth)
+                self.assertEqual(rot_resp.status, 200, await rot_resp.text())
+                self.assertEqual(len(rotated_tokens), 1)
+                new_token = rotated_tokens[0]
+
+                # Shut down old connector and verify new_token authenticates
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                task = asyncio.create_task(connector.connect_once(
+                    str(client.make_url('')).rstrip('/'),
+                    device,
+                    new_token,
+                    str(backend.make_url('')).rstrip('/'),
+                ))
+                for _ in range(100):
+                    if device in nova.devices and nova.devices[device].ready:
+                        break
+                    await asyncio.sleep(0.05)
+                self.assertTrue(nova.devices[device].ready)
+            finally:
+                if task:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                await client.close()
+                await backend.close()

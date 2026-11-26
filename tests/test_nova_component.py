@@ -633,3 +633,56 @@ class ConnectorHardeningTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await cloud_srv.close()
             await backend.close()
+
+    def test_sanitize_control_event_allowlist(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'assets' / 'nova'))
+        import connector
+
+        valid = connector._sanitize_control_event({
+            'topic': 'session:runtime',
+            'payload': {
+                'session_id': 's1',
+                'status': 'idle',
+                'completed_run_id': 'run-1',
+                'outcome': 'completed',
+                'prompt': 'secret prompt',
+                'path': 'D:/secret',
+            },
+        })
+        self.assertEqual(valid, ('session.runtime', {
+            'session_id': 's1',
+            'status': 'idle',
+            'completed_run_id': 'run-1',
+            'outcome': 'completed',
+        }))
+        self.assertIsNone(connector._sanitize_control_event({'topic': 'conductor:log', 'payload': {'session_id': 's1'}}))
+        self.assertIsNone(connector._sanitize_control_event({'topic': 'session:runtime', 'payload': {'status': 'idle'}}))
+        self.assertIsNone(connector._sanitize_control_event({'topic': 'session:runtime', 'payload': {'session_id': 's\n1'}}))
+
+    async def test_draining_signal_resets_backoff_without_escalation(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'assets' / 'nova'))
+        import connector
+
+        sleeps = []
+        calls = {'n': 0}
+
+        async def fake_sleep(seconds):
+            sleeps.append(seconds)
+
+        async def fake_connect_once(*args, **kwargs):
+            calls['n'] += 1
+            if calls['n'] <= 2:
+                return 0.25
+            raise connector.ConnectorAuthError('done')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            (state / 'device.json').write_text(json.dumps({'server': 'https://nova.invalid', 'device': 'd' * 24, 'name': 'Test'}))
+            cred = {'CredentialBlob': 'test-token-value-long-enough-12345'.encode('utf-16-le')}
+            with patch.object(connector.win32cred, 'CredRead', return_value=cred), \
+                 patch.object(connector, 'connect_once', side_effect=fake_connect_once), \
+                 patch.object(connector.asyncio, 'sleep', side_effect=fake_sleep):
+                with self.assertRaises(connector.ConnectorAuthError):
+                    await connector.run('http://127.0.0.1:9', state_dir=state)
+        self.assertEqual(calls['n'], 3)
+        self.assertTrue(all(0.2 <= s <= 0.8 for s in sleeps), sleeps)

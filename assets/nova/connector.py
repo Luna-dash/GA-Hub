@@ -28,7 +28,7 @@ STATE = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'GAHubNova'
 CRED_PREFIX = 'GAHub.Nova.'
 ARTIFACT_ROOTS = None  # Set by the desktop host; standalone keeps legacy roots.
 
-CONNECTOR_VERSION = '2.0.0'
+CONNECTOR_VERSION = '2.1.0'
 PROTOCOL_VERSION = 2
 FRAME_MAGIC = b'NV'
 FRAME_REQ_CHUNK = 1
@@ -42,6 +42,9 @@ CAPABILITIES = (
     'image_previews',
     'agy_stream',
     'agy_acp_v2',
+    'control_events',
+    'token_rotate',
+    'graceful_drain',
 )
 
 
@@ -404,13 +407,49 @@ def identity():
     return value
 
 
+def save_credential(server, device, token):
+    win32cred.CredWrite({'Type': 1, 'TargetName': credential_target(server), 'UserName': device, 'CredentialBlob': token, 'Persist': 2}, 0)
+
+
 def save_pair(server, device, name, token):
     STATE.mkdir(parents=True, exist_ok=True)
-    win32cred.CredWrite({'Type': 1, 'TargetName': credential_target(server), 'UserName': device, 'CredentialBlob': token, 'Persist': 2}, 0)
+    save_credential(server, device, token)
     path = STATE / 'device.json'
     staged = path.with_suffix('.new')
     staged.write_text(json.dumps({'server': server, 'device': device, 'name': name}, ensure_ascii=False, indent=2), encoding='utf-8')
     staged.replace(path)
+
+
+def _sanitize_control_event(msg):
+    """Allowlist Hub EventBus frames into minimal safe cloud control-plane events."""
+    if not isinstance(msg, dict):
+        return None
+    topic = msg.get('topic')
+    payload = msg.get('payload')
+    if not isinstance(topic, str) or not isinstance(payload, dict):
+        return None
+    if topic == 'session:runtime':
+        event_name = 'session.runtime'
+    elif topic == 'anti:runtime':
+        event_name = 'agy.runtime'
+    elif topic in ('agent:title', 'session:changed'):
+        event_name = 'session.changed'
+    else:
+        return None
+    clean = {}
+    for key, limit in (
+        ('session_id', 128),
+        ('status', 32),
+        ('run_id', 128),
+        ('completed_run_id', 128),
+        ('outcome', 32),
+    ):
+        val = payload.get(key)
+        if isinstance(val, str) and 1 <= len(val) <= limit and not any(ord(c) < 32 for c in val):
+            clean[key] = val
+    if event_name in ('session.runtime', 'agy.runtime') and 'session_id' not in clean:
+        return None
+    return event_name, clean
 
 
 async def pair(server, name, confirm=False):
@@ -494,6 +533,7 @@ async def connect_once(
     on_connection=None,
     local_runtime=None,
     on_heartbeat=None,
+    on_token_rotated=None,
 ):
     owns_runtime = local_runtime is None
     runtime = LocalGatewayRuntime(backend) if owns_runtime else local_runtime
@@ -510,6 +550,7 @@ async def connect_once(
     health_supported = True
     ping_sent_at = None
     last_ready = False
+    drain_delay = None
 
     async def probe_ready():
         nonlocal health_supported
@@ -769,7 +810,53 @@ async def connect_once(
                     await ws.send_json({'kind': 'ping', 'ready': ready})
                     await asyncio.sleep(5)
 
+            async def event_bridge(ws):
+                backoff = 3.0
+                bucket_tokens = 20.0
+                bucket_ts = time.monotonic()
+                while not ws.closed:
+                    try:
+                        base = await local.backend()
+                        ws_base = base.replace('http://', 'ws://', 1).replace('https://', 'wss://', 1)
+                        url = ws_base + '/ws/events?prefix=session:&prefix=anti:&prefix=agent:title'
+                        async with local_http.ws_connect(url, headers={'Origin': base}, heartbeat=25) as local_ws:
+                            backoff = 3.0
+                            async for evt_msg in local_ws:
+                                if ws.closed:
+                                    return
+                                if evt_msg.type != WSMsgType.TEXT:
+                                    continue
+                                with contextlib.suppress(ValueError, TypeError):
+                                    parsed = _sanitize_control_event(json.loads(evt_msg.data))
+                                    if parsed is None:
+                                        continue
+                                    evt_name, evt_data = parsed
+                                    is_terminal = (
+                                        evt_data.get('status') in ('idle', 'error')
+                                        or bool(evt_data.get('completed_run_id'))
+                                    )
+                                    now_ts = time.monotonic()
+                                    bucket_tokens = min(20.0, bucket_tokens + (now_ts - bucket_ts) * 20.0)
+                                    bucket_ts = now_ts
+                                    if not is_terminal:
+                                        if bucket_tokens < 1.0:
+                                            continue
+                                        bucket_tokens -= 1.0
+                                    await ws.send_json({'kind': 'device_event', 'event': evt_name, 'data': evt_data})
+                    except asyncio.CancelledError:
+                        raise
+                    except aiohttp.WSServerHandshakeError as exc:
+                        if exc.status in (403, 404, 405):
+                            await asyncio.sleep(60)
+                        else:
+                            await asyncio.sleep(backoff)
+                            backoff = min(15.0, backoff * 2)
+                    except (aiohttp.ClientError, OSError, asyncio.TimeoutError, ValueError):
+                        await asyncio.sleep(backoff)
+                        backoff = min(15.0, backoff * 2)
+
             pulse = None
+            bridge = None
             try:
                 async with cloud_http.ws_connect(
                     server + '/v1/agent/connect',
@@ -819,11 +906,36 @@ async def connect_once(
                                     'ready': initial_ready,
                                     'capabilities': list(CAPABILITIES),
                                 })
+                                if bridge is None:
+                                    bridge = asyncio.create_task(event_bridge(ws))
                         elif kind == 'pong':
                             if ping_sent_at is not None and on_heartbeat is not None:
                                 rtt_ms = max(0, int((time.monotonic() - ping_sent_at) * 1000))
                                 on_heartbeat(ready=last_ready, rtt_ms=rtt_ms)
                                 ping_sent_at = None
+                        elif kind == 'draining':
+                            try:
+                                ms = int(data.get('reconnect_after_ms', 1500))
+                            except (TypeError, ValueError):
+                                ms = 1500
+                            drain_delay = max(0.2, min(30.0, ms / 1000.0))
+                        elif kind == 'token_rotate':
+                            rot_id = data.get('id')
+                            new_token = data.get('token')
+                            if (
+                                not isinstance(rot_id, str)
+                                or not isinstance(new_token, str)
+                                or not re.fullmatch(r'[A-Za-z0-9_-]{43,128}', new_token)
+                            ):
+                                await ws.send_json({'kind': 'token_rotate_ack', 'id': rot_id, 'ok': False, 'error': 'Invalid rotation payload'})
+                            elif on_token_rotated is None:
+                                await ws.send_json({'kind': 'token_rotate_ack', 'id': rot_id, 'ok': False, 'error': 'Token rotation unsupported'})
+                            else:
+                                try:
+                                    await asyncio.to_thread(on_token_rotated, new_token)
+                                    await ws.send_json({'kind': 'token_rotate_ack', 'id': rot_id, 'ok': True})
+                                except Exception as exc:
+                                    await ws.send_json({'kind': 'token_rotate_ack', 'id': rot_id, 'ok': False, 'error': type(exc).__name__})
                         elif kind == 'window_ack':
                             state = out_credits.get(data.get('id'))
                             if state is not None:
@@ -863,13 +975,14 @@ async def connect_once(
             finally:
                 if on_connection is not None:
                     on_connection(False)
-                active = list(http_tasks.values()) + list(ws_tasks.values()) + ([pulse] if pulse else [])
+                active = list(http_tasks.values()) + list(ws_tasks.values()) + [t for t in (pulse, bridge) if t is not None]
                 for task in active:
                     task.cancel()
                 await asyncio.gather(*active, return_exceptions=True)
     finally:
         if owns_runtime:
             await runtime.close()
+    return drain_delay
 
 
 async def run(backend=None, *, on_connection=None, on_heartbeat=None, state_dir=None):
@@ -881,9 +994,16 @@ async def run(backend=None, *, on_connection=None, on_heartbeat=None, state_dir=
         server = config['server']
         blob = win32cred.CredRead(credential_target(server), 1)['CredentialBlob']
         token = blob.decode('utf-16-le')
+
+        def handle_token_rotated(new_token: str):
+            nonlocal token
+            save_credential(server, config['device'], new_token)
+            token = new_token
+
         delay = 2
         while True:
             connected_at = None
+            drain_delay = None
 
             def handle_conn(state: bool):
                 nonlocal connected_at
@@ -893,7 +1013,7 @@ async def run(backend=None, *, on_connection=None, on_heartbeat=None, state_dir=
                     on_connection(state)
 
             try:
-                await connect_once(
+                drain_delay = await connect_once(
                     server,
                     config['device'],
                     token,
@@ -901,17 +1021,23 @@ async def run(backend=None, *, on_connection=None, on_heartbeat=None, state_dir=
                     on_connection=handle_conn,
                     local_runtime=runtime,
                     on_heartbeat=on_heartbeat,
+                    on_token_rotated=handle_token_rotated,
                 )
             except aiohttp.WSServerHandshakeError as e:
                 if e.status in (401, 403):
                     raise ConnectorAuthError('设备已撤销或凭证无效，请重新配对。') from e
                 print('连接暂不可用：' + type(e).__name__, flush=True)
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, ConnectorAuthError, ConnectorConflictError):
                 raise
             except (aiohttp.ClientError, OSError, asyncio.TimeoutError) as e:
                 print('连接中断：' + type(e).__name__, flush=True)
             except Exception as e:
                 print('连接异常，稍后重试：' + type(e).__name__, flush=True)
+
+            if drain_delay is not None:
+                delay = 2
+                await asyncio.sleep(random.uniform(drain_delay, drain_delay + 0.5))
+                continue
 
             if connected_at is not None and time.monotonic() - connected_at >= 10.0:
                 delay = 2
