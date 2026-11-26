@@ -34,6 +34,9 @@ CHAT_REWOUND = "chat:rewound"
 # ── session runtime status ──────────────────────────────────────
 SESSION_RUNTIME = "session:runtime"
 
+# ── anti (agy) runtime status ───────────────────────────────────
+ANTI_RUNTIME = "anti:runtime"
+
 # ── feishu channel ──────────────────────────────────────────────
 FEISHU_STARTED = "feishu:started"
 FEISHU_STOPPED = "feishu:stopped"

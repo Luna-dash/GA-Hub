@@ -1,7 +1,25 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { HubSession, ProjectItem, SessionRuntime } from '@/api/types'
-import { sessionActivity, sessionPreview, sessionRecencyMs, sessionStatusLabel } from '@/utils/sessionUi'
+import {
+  groupBestAttentionState,
+  isProtectedRailState,
+  resolveGroupPreviewLimit,
+  resolveSessionRailState,
+  sessionActivity,
+  sessionPreview,
+  sessionRecencyMs,
+  sessionStatusLabel,
+  sortRailGroups,
+  sortRailSessions,
+  type SessionRailDisplayState,
+} from '@/utils/sessionUi'
+import {
+  markSessionRead,
+  syncRuntimeSnapshot,
+  useSessionUnreadSnapshot,
+  type SessionScope,
+} from '@/stores/sessionUnreadStore'
 import { usePageState } from '@/utils/pageState'
 import { RAIL_TITLE_SCALE_EVENT, railTitlePercent, getRailTitleScale } from '@/utils/railAppearance'
 import { storageKeys } from '@/config/storageKeys'
@@ -69,15 +87,9 @@ const activityRail = {
 }
 
 const LEGACY_RECENT_KEY = storageKeys.sessionRailLegacyRecentActivity
-const TERMINAL_KEY = storageKeys.sessionRailTerminalState
-const SEEN_COMPLETED_KEY = storageKeys.sessionRailSeenCompletedRuns
 const GROUP_COLLAPSE_KEY = storageKeys.sessionRailGroupCollapse
 const GROUP_SHOW_ALL_KEY = storageKeys.sessionRailGroupShowAll
-/** 组内默认态预览条数（v3 三态中的 D；标题行展开按钮也使用此阈值）。 */
-const GROUP_PREVIEW_LIMIT = 3
 const PINNED_GROUPS_KEY = storageKeys.sessionRailGroupPinned
-type TerminalState = 'completed' | 'error'
-type TerminalMap = Record<string, TerminalState>
 type SessionGroup = { key: string; name: string; projectPath: string | null; sessions: HubSession[] }
 
 function readJson<T>(key: string, fallback: T): T {
@@ -94,9 +106,8 @@ function sessionTitle(session: HubSession) {
 }
 
 function SessionRailComponent({ projects: projectItems, sessions, runtimes, currentId, onSelect, onCreate, onImportFromHistory, onRename, onDelete, creating, storageScope, deleteDetail }: SessionRailProps) {
+  const scope: SessionScope = storageScope === 'anti' ? 'anti' : 'chat'
   const [collapsed, setCollapsed] = usePageState(storageScope === 'anti' ? 'antiChat.sessionRailCollapsed' : 'liveChat.sessionRailCollapsed', false)
-  const terminal_key = storageScope ? `${TERMINAL_KEY}.${storageScope}` : TERMINAL_KEY
-  const seen_completed_key = storageScope ? `${SEEN_COMPLETED_KEY}.${storageScope}` : SEEN_COMPLETED_KEY
   const group_collapse_key = storageScope ? `${GROUP_COLLAPSE_KEY}.${storageScope}` : GROUP_COLLAPSE_KEY
   const group_show_all_key = storageScope ? `${GROUP_SHOW_ALL_KEY}.${storageScope}` : GROUP_SHOW_ALL_KEY
   const pinned_groups_key = storageScope ? `${PINNED_GROUPS_KEY}.${storageScope}` : PINNED_GROUPS_KEY
@@ -106,12 +117,8 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const deleteConfirmRef = useRef<HTMLDivElement>(null)
-  const [terminalState, setTerminalState] = useState<TerminalMap>(() => readJson<TerminalMap>(terminal_key, {}))
-  const [seenCompletedRuns, setSeenCompletedRuns] = useState<Record<string, string>>(
-    () => readJson<Record<string, string>>(seen_completed_key, {}),
-  )
-  const previousActivity = useRef<Record<string, ReturnType<typeof sessionActivity>>>({})
-  // 置顶的分组键按置顶先后排列，持久化到本设备；未置顶组仍按最近活动排序。
+  const { unread, seen } = useSessionUnreadSnapshot(scope)
+  // 置顶的分组键按置顶先后排列，持久化到本设备；未置顶组仍按关注度与最近活动排序。
   const [pinnedGroups, setPinnedGroups] = useState<string[]>(() => {
     const stored = readJson<string[]>(pinned_groups_key, [])
     return Array.isArray(stored) ? stored.filter((key) => typeof key === 'string') : []
@@ -124,60 +131,19 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
   }, [storageScope])
 
   useEffect(() => {
-    const nextTerminal = { ...terminalState }
-    const nextPrevious = { ...previousActivity.current }
-    let terminalChanged = false
+    syncRuntimeSnapshot(scope, runtimes)
+  }, [runtimes, scope])
 
-    sessions.forEach((session) => {
-      const activity = sessionActivity(runtimes[session.id])
-      const previous = nextPrevious[session.id]
-      if (activity === 'active') {
-        if (nextTerminal[session.id]) {
-          delete nextTerminal[session.id]
-          terminalChanged = true
-        }
-      } else if (activity === 'error' && previous === 'active' && nextTerminal[session.id] !== 'error') {
-        nextTerminal[session.id] = 'error'
-        terminalChanged = true
-      } else if (
-        activity === 'idle'
-        && runtimes[session.id]?.completed_run_id
-        && seenCompletedRuns[session.id] !== runtimes[session.id].completed_run_id
-        && nextTerminal[session.id] !== 'completed'
-      ) {
-        nextTerminal[session.id] = 'completed'
-        terminalChanged = true
-      } else if (activity === 'idle' && previous === 'active' && nextTerminal[session.id] !== 'completed') {
-        nextTerminal[session.id] = 'completed'
-        terminalChanged = true
-      }
-      nextPrevious[session.id] = activity
-    })
+  const displayState = useCallback((session: HubSession): SessionRailDisplayState => (
+    resolveSessionRailState(runtimes[session.id], unread[session.id], seen[session.id])
+  ), [runtimes, seen, unread])
 
-    previousActivity.current = nextPrevious
-    if (terminalChanged) {
-      setTerminalState(nextTerminal)
-      localStorage.setItem(terminal_key, JSON.stringify(nextTerminal))
-    }
-  }, [runtimes, sessions, seenCompletedRuns, terminalState])
+  const orderedSessions = useMemo(
+    () => sortRailSessions(sessions, displayState),
+    [displayState, sessions],
+  )
 
-  const orderedSessions = useMemo(() => {
-    // Single stable key: latest activity first. Deliberately NOT state-grouped
-    // (the old unstarted/active/other bands made a session jump between bands
-    // whenever a run started or stopped), so stopping a run never moves a row.
-    // Ties keep the incoming order (Array#sort is stable) — that order is the
-    // sidecar's own recency sort, so there is no second client-side opinion.
-    return [...sessions].sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))
-  }, [sessions])
-
-  const displayState = (session: HubSession): 'active' | 'completed' | 'idle' | 'error' => {
-    const activity = sessionActivity(runtimes[session.id])
-    if (activity === 'active') return 'active'
-    return terminalState[session.id] || activity
-  }
-
-  // 项目抽屉：自由会话一组，其余按 project_name 分组；组间按最近活动排序，
-  // 与会话行共用同一把稳定钥匙（活动时间），不因运行状态切换而跳变。
+  // 项目抽屉：自由会话一组，其余按 project_name 分组；组间按置顶、未读/运行优先与最近活动排序。
   const sessionGroups = useMemo<SessionGroup[]>(() => {
     const free: HubSession[] = []
     const projects = new Map<string, HubSession[]>()
@@ -191,34 +157,23 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
       if (bucket) bucket.push(session)
       else projects.set(name, [session])
     })
-    const groupActivity = (list: HubSession[]) => list.reduce(
-      (latest, session) => Math.max(latest, sessionRecencyMs(session)),
-      0,
-    )
     const groups: SessionGroup[] = [
       { key: 'free', name: '自由会话', projectPath: null, sessions: free },
-      ...Array.from(projects.entries()).map(([name, sessions]) => ({
+      ...Array.from(projects.entries()).map(([name, groupSessions]) => ({
         key: `project:${name}`,
         name: projectItems?.find(project => project.name === name)?.display_name || name.replace(/-[a-f0-9]{8}$/i, '') || name,
-        projectPath: sessions[0]?.project_path || null,
-        sessions,
+        projectPath: groupSessions[0]?.project_path || null,
+        sessions: groupSessions,
       })),
     ].filter((group) => group.sessions.length > 0)
-    // 置顶组稳定排在最前（按置顶先后），其余组仍按最近活动排序。
-    // 注意不能对未置顶组用 Infinity 下标相减：Infinity - Infinity = NaN 会让
-    // sort 行为不可预期，必须显式分支比较。
-    groups.sort((a, b) => {
-      const aIndex = pinnedGroups.indexOf(a.key)
-      const bIndex = pinnedGroups.indexOf(b.key)
-      const aPinned = aIndex !== -1
-      const bPinned = bIndex !== -1
-      if (aPinned !== bPinned) return aPinned ? -1 : 1
-      if (aPinned && bPinned) return aIndex - bIndex
-      return groupActivity(b.sessions) - groupActivity(a.sessions)
-    })
-    return groups
-  }, [orderedSessions, pinnedGroups, projectItems])
-  const hasProjectGroups = sessionGroups.some((group) => group.key !== 'free')
+    return sortRailGroups(groups, pinnedGroups, displayState)
+  }, [displayState, orderedSessions, pinnedGroups, projectItems])
+  const projectGroupCount = useMemo(
+    () => sessionGroups.filter((group) => group.key !== 'free').length,
+    [sessionGroups],
+  )
+  const hasProjectGroups = projectGroupCount > 0
+  const previewLimit = resolveGroupPreviewLimit(projectGroupCount)
 
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(
     () => readJson<Record<string, boolean>>(group_collapse_key, {}),
@@ -294,43 +249,21 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
 
   const attentionSessions = useMemo(() => (
     orderedSessions
-      .filter((session) => {
-        const activity = displayState(session)
-        return activity === 'active' || activity === 'completed' || activity === 'error'
-      })
+      .filter((session) => isProtectedRailState(displayState(session)))
       .slice(0, 3)
       .reverse()
-  ), [orderedSessions, runtimes, terminalState])
+  ), [displayState, orderedSessions])
 
   const acknowledgeSession = useCallback((sessionId: string) => {
-    const completedRunId = runtimes[sessionId]?.completed_run_id
-    if (completedRunId && seenCompletedRuns[sessionId] !== completedRunId) {
-      const storedSeen = readJson<Record<string, string>>(seen_completed_key, {})
-      const nextSeen = { ...storedSeen, ...seenCompletedRuns, [sessionId]: completedRunId }
-      try { localStorage.setItem(seen_completed_key, JSON.stringify(nextSeen)) } catch { /* 私有模式等 */ }
-      setSeenCompletedRuns(nextSeen)
-    }
+    const runtime = runtimes[sessionId]
+    const runId = runtime?.completed_run_id
+      ?? (runtime?.status === 'error' ? (runtime.run_id ?? 'error') : undefined)
+    markSessionRead(scope, sessionId, runId)
+  }, [runtimes, scope])
 
-    if (terminalState[sessionId]) {
-      const storedTerminal = readJson<TerminalMap>(terminal_key, {})
-      const nextStored = { ...storedTerminal, ...terminalState }
-      delete nextStored[sessionId]
-      try { localStorage.setItem(terminal_key, JSON.stringify(nextStored)) } catch { /* 私有模式等 */ }
-      setTerminalState((current) => {
-        if (!current[sessionId]) return current
-        const next = { ...current }
-        delete next[sessionId]
-        return next
-      })
-    }
-  }, [runtimes, seenCompletedRuns, seen_completed_key, terminalState, terminal_key])
-
-  const currentNeedsAcknowledge = Boolean(
-    currentId && (
-      terminalState[currentId]
-      || (runtimes[currentId]?.completed_run_id && seenCompletedRuns[currentId] !== runtimes[currentId]?.completed_run_id)
-    ),
-  )
+  const currentSession = currentId ? sessions.find((item) => item.id === currentId) : undefined
+  const currentDisplayState = currentSession ? displayState(currentSession) : 'idle'
+  const currentNeedsAcknowledge = currentDisplayState === 'completed' || currentDisplayState === 'error'
 
   useEffect(() => {
     if (!currentId || !currentNeedsAcknowledge) return
@@ -500,16 +433,23 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
         <div className="flex gap-2 md:flex-col md:gap-3">
           {sessionGroups.map((group) => {
             const groupClosed = collapsedGroups[group.key] === true
-            const sessions = group.sessions
-            if (sessions.length === 0) return null
-            // v3 三态可见集：C（上面的 groupClosed）→ 0 条；D → 最近 3 条（当前
-            // 会话不在其中时顶入第 3 位，保证可见）；E → 全量，经标题行图标进入。
+            const groupSessions = group.sessions
+            if (groupSessions.length === 0) return null
+            // v3 三态可见集：C（上面的 groupClosed）→ 0 条；D → 最近 previewLimit 条
+            // （豁免已完成未读、异常未读、运行中，当前会话也保证可见）；E → 全量，经标题行图标进入。
             // 纯自由区（rail 里没有任何项目分组可被遮挡）不参与收折：恒全量、无链接。
-            const groupExpandable = hasProjectGroups && sessions.length > GROUP_PREVIEW_LIMIT
+            const previewSessions = hasProjectGroups
+              ? sessionPreview(
+                  groupSessions,
+                  currentId,
+                  previewLimit,
+                  (session) => isProtectedRailState(displayState(session)),
+                )
+              : groupSessions
+            const groupExpandable = hasProjectGroups && previewSessions.length < groupSessions.length
             const groupShowAll = groupExpandable && !groupClosed && showAllGroups[group.key] === true
-            const visibleSessions = !hasProjectGroups || groupShowAll
-              ? sessions
-              : sessionPreview(sessions, currentId, GROUP_PREVIEW_LIMIT)
+            const visibleSessions = groupShowAll ? groupSessions : previewSessions
+            const collapsedAttention = groupClosed ? groupBestAttentionState(groupSessions, displayState) : null
             const cards = (
               <div className={clsx('flex gap-1 md:flex-col md:gap-0.5', hasProjectGroups && !groupClosed && 'md:pl-1')}>
                 {visibleSessions.map((session) => {
@@ -627,6 +567,14 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                       aria-hidden="true"
                       className={clsx('h-3 w-3 flex-none transition-transform duration-200', groupClosed && '-rotate-90')}
                     />
+                    {collapsedAttention && (
+                      <span
+                        data-group-attention={collapsedAttention}
+                        aria-label={activityLabel[collapsedAttention]}
+                        title={`组内有${activityLabel[collapsedAttention]}会话`}
+                        className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[collapsedAttention])}
+                      />
+                    )}
                     <span className="min-w-0 flex-1 truncate">{group.name}</span>
                   </button>
                   <button
@@ -648,16 +596,16 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                       type="button"
                       onClick={() => toggleGroupShowAll(group.key)}
                       data-testid={`group-show-all-${group.key}`}
-                      aria-label={groupShowAll ? '收起（仅显示最近3个）' : `展开全部 ${sessions.length} 个会话`}
+                      aria-label={groupShowAll ? `收起（仅显示最近${previewLimit}个）` : `展开全部 ${groupSessions.length} 个会话`}
                       aria-pressed={groupShowAll}
-                      title={groupShowAll ? '仅显示最近3个会话' : '展开全部会话'}
+                      title={groupShowAll ? `仅显示最近${previewLimit}个会话` : '展开全部会话'}
                       className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-faint opacity-0 transition hover:bg-accent/10 hover:text-accent focus-visible:opacity-100 focus-visible:outline-accent group-hover/project-header:opacity-100 group-focus-within/project-header:opacity-100 [@media(hover:none)]:opacity-100"
                     >
                       <CollapseChevronsIcon direction={groupShowAll ? 'expand' : 'collapse'} className="h-3.5 w-3.5" />
                     </button>
                   )}
                   {!groupExpandable && <span aria-hidden="true" className="h-6 w-6 flex-none" />}
-                  <span data-project-session-count aria-label={`${sessions.length} 个会话`} className="flex h-6 w-6 flex-none items-center justify-center text-[10px] font-normal tabular-nums text-ink-faint">{sessions.length}</span>
+                  <span data-project-session-count aria-label={`${groupSessions.length} 个会话`} className="flex h-6 w-6 flex-none items-center justify-center text-[10px] font-normal tabular-nums text-ink-faint">{groupSessions.length}</span>
                 </div>
                 {!groupClosed && (
                   <div className="md:pt-1">

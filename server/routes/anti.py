@@ -175,10 +175,14 @@ class AntiSessionResp(BaseModel):
     workspace: str
     updated_at: str | None = None
     active_run_id: str | None = None
+    completed_run_id: str | None = None
+    last_outcome: Literal["completed", "cancelled", "failed"] | None = None
+    last_error: str | None = None
     has_conversation: bool | None = None
     acp_connected: bool | None = None
     profile_id: str | None = None
     grants: list[str] = Field(default_factory=list)
+    queued_count: int | None = None
     engine: Literal["anti"] = "anti"
 
 
@@ -291,6 +295,59 @@ class AntiRunSteer(BaseModel):
         if not (self.prompt.strip() or self.references or self.attachments):
             raise ValueError("请输入内容或添加附件")
         return self
+
+
+class AntiQueuedPromptItem(BaseModel):
+    id: str
+    session_id: str
+    position: int
+    prompt: str
+    model: str | None = None
+    effort: str | None = None
+    references: list[AntiFileReference] = Field(default_factory=list)
+    attachments: list[AttachmentRef] = Field(default_factory=list)
+    mode: Literal["plan", "accept-edits"] = "plan"
+    permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] = "approval-required"
+    orchestrator_planner: str | None = None
+    orchestrator_executor: str | None = None
+    created_at: str
+
+
+class AntiQueueStateResp(BaseModel):
+    items: list[AntiQueuedPromptItem] = Field(default_factory=list)
+    paused: bool = False
+    pause_reason: str | None = None
+
+
+class AntiQueueEnqueueReq(BaseModel):
+    prompt: Annotated[str, StringConstraints(max_length=24000)] = ""
+    model: Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$")] | None = None
+    effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
+    references: list[AntiFileReference] = Field(default_factory=list, max_length=8)
+    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=256)
+    mode: Literal["plan", "accept-edits"] = "plan"
+    permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] | None = None
+    orchestrator_planner: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None
+    orchestrator_executor: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None
+
+    @model_validator(mode="after")
+    def _require_input(self) -> "AntiQueueEnqueueReq":
+        if not (self.prompt.strip() or self.references or self.attachments):
+            raise ValueError("请输入内容或添加附件")
+        return self
+
+
+class AntiQueueMoveReq(BaseModel):
+    direction: Literal["up", "down", "top"]
+
+
+class AntiQueueDispatchReq(BaseModel):
+    item_id: str | None = None
+
+
+class AntiQueuePromoteResp(BaseModel):
+    run: AntiRunResp
+    queue: AntiQueueStateResp
 
 
 class AntiStep(BaseModel):
@@ -950,3 +1007,59 @@ class AntiApprovalDecision(BaseModel):
 def approve(sid: str, rid: str, body: AntiApprovalDecision, request: Request):
     _require_action(request, "approve-agy", "Approval action header required")
     return _call("approve", sid, rid, body.approval_id, body.decision, body.option_id)
+
+
+@router.get("/sessions/{sid}/queue", response_model=AntiQueueStateResp)
+def get_queue(sid: str):
+    return _call("queue_state", sid)
+
+
+@router.post("/sessions/{sid}/queue", response_model=AntiQueueStateResp)
+def enqueue_prompt(sid: str, body: AntiQueueEnqueueReq):
+    return _call(
+        "enqueue",
+        sid,
+        body.prompt,
+        body.model,
+        body.effort,
+        [(ref.id, ref.path) for ref in body.references],
+        [att.model_dump() for att in body.attachments],
+        body.mode,
+        body.permission_mode,
+        body.orchestrator_planner,
+        body.orchestrator_executor,
+    )
+
+
+@router.delete("/sessions/{sid}/queue", response_model=AntiQueueStateResp)
+def clear_queue(sid: str):
+    return _call("clear_queue", sid)
+
+
+@router.delete("/sessions/{sid}/queue/{qid}", response_model=AntiQueueStateResp)
+def remove_queued_prompt(sid: str, qid: str):
+    return _call("remove_queued", sid, qid)
+
+
+@router.post("/sessions/{sid}/queue/{qid}/move", response_model=AntiQueueStateResp)
+def move_queued_prompt(sid: str, qid: str, body: AntiQueueMoveReq):
+    return _call("move_queued", sid, qid, body.direction)
+
+
+@router.post("/sessions/{sid}/queue/{qid}/steer", response_model=AntiQueuePromoteResp)
+def steer_queued_prompt(sid: str, qid: str):
+    return _call("steer_queued", sid, qid)
+
+
+@router.post("/sessions/{sid}/queue/dispatch", response_model=AntiQueuePromoteResp)
+def dispatch_queued_prompt(sid: str, body: AntiQueueDispatchReq | None = None):
+    try:
+        with daemon.submission() as profile_id:
+            return _call(
+                "dispatch_queued",
+                sid,
+                body.item_id if body else None,
+                profile_id=profile_id,
+            )
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc

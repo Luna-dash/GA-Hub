@@ -6,10 +6,10 @@ GeneraticAgent runtimes remain the only conversation truth sources.
 from __future__ import annotations
 
 import hashlib
-
 import json
 import logging
 import threading
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -757,3 +757,31 @@ def test_compact_history_validator_skips_projection_and_changes_on_append(tmp_pa
             assert changed.headers['etag'] != first.headers['etag']
         finally:
             client.portal.call(client.app.state.message_presentation.close)
+
+
+def test_session_lifecycle_touches_updated_at_when_run_completes(tmp_path: Path, monkeypatch) -> None:
+    from server.services.session_coordinator import RuntimeState
+    from server.services.session_lifecycle import SessionLifecycle
+    from server.services.session_metadata import SessionMetadataStore
+
+    store = SessionMetadataStore(tmp_path)
+    row = store.create(title="Completion touch")
+    domain = SessionLifecycle(store=store)
+    store.update(row["id"], {})
+    before = store.get(row["id"])["updated_at"]
+
+    published: list[RuntimeState] = []
+    monkeypatch.setattr("server.services.session_lifecycle._publish_runtime_state", published.append)
+
+    time.sleep(0.01)
+    done_state = RuntimeState(row["id"], status="idle", completed_run_id="run-done-1", outcome="completed")
+    domain._handle_runtime_state_change(done_state)
+
+    after = store.get(row["id"])["updated_at"]
+    assert after > before
+    assert published == [done_state]
+
+    # Missing/deleted session must not break runtime publishing.
+    missing_state = RuntimeState("deleted-session", status="idle", completed_run_id="run-done-2", outcome="completed")
+    domain._handle_runtime_state_change(missing_state)
+    assert published[-1] == missing_state

@@ -15,6 +15,7 @@ export const queryKeys = {
   llms: ['llms'] as const,
   schedules: ['schedules'] as const,
   sessions: ['sessions'] as const,
+  antiSessions: ['anti-sessions'] as const,
   projects: ['projects'] as const,
   runtimes: ['session.runtimes'] as const,
   scheduledChats: (sessionId: string | undefined) =>

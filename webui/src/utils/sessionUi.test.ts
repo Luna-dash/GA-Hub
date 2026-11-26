@@ -1,19 +1,30 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { AntiSession } from '@/api/client'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import {
+  antiSessionToRuntime,
   capacityConflictFromError,
   errorMessageFromError,
+  groupBestAttentionState,
+  isProtectedRailState,
   myKeyParseErrorFromError,
   myKeySyncErrorFromError,
+  openAntiSession,
   openSessionChat,
+  resolveGroupPreviewLimit,
+  resolveSessionRailState,
   sessionActivity,
+  sessionAttentionTier,
   sessionChatHref,
   sessionPreview,
   sessionRecencyMs,
   sessionStatusLabel,
+  sortRailGroups,
+  sortRailSessions,
   startAbortedFromError,
   structuredErrorDetailFromError,
 } from './sessionUi'
+import { readPageState, resetPageState } from './pageState'
 
 const session = (id: string, title = ''): HubSession => ({
   id,
@@ -188,6 +199,112 @@ describe('session UI contracts', () => {
     it('returns everything at or under the limit untouched', () => {
       expect(sessionPreview(rows.slice(0, 2), 'a', 3).map((item) => item.id)).toEqual(['a', 'b'])
       expect(sessionPreview(rows.slice(0, 3), 'e', 3).map((item) => item.id)).toEqual(['a', 'b', 'c'])
+    })
+
+    it('exempts protected sessions using Option A fill-to-limit and never evicts protected rows', () => {
+      const protectedIds = new Set(['a', 'b'])
+      const isProt = (item: HubSession) => protectedIds.has(item.id)
+      // 2 protected + 1 idle fills to limit=3
+      expect(sessionPreview(rows, 'a', 3, isProt).map((item) => item.id)).toEqual(['a', 'b', 'c'])
+      // currentId outside preview replaces the last idle slot, keeping all protected rows
+      expect(sessionPreview(rows, 'e', 3, isProt).map((item) => item.id)).toEqual(['a', 'b', 'e'])
+      // When protected count exceeds limit, all protected rows stay visible
+      const manyProtected = new Set(['a', 'b', 'c', 'd'])
+      expect(sessionPreview(rows, 'a', 3, (item) => manyProtected.has(item.id)).map((item) => item.id))
+        .toEqual(['a', 'b', 'c', 'd'])
+      // If currentId is idle when slots are full of protected rows, append without evicting protected rows
+      expect(sessionPreview(rows, 'e', 3, (item) => manyProtected.has(item.id)).map((item) => item.id))
+        .toEqual(['a', 'b', 'c', 'd', 'e'])
+    })
+  })
+
+  describe('unified ranking, dynamic preview limits, and Anti helpers', () => {
+    it('resolves rail states with cancelled runs mapped to idle', () => {
+      expect(resolveSessionRailState(runtime('a', 'running'), undefined, undefined)).toBe('active')
+      expect(resolveSessionRailState({ ...runtime('a', 'idle'), completed_run_id: 'r1', outcome: 'completed' }, undefined, undefined)).toBe('completed')
+      expect(resolveSessionRailState({ ...runtime('a', 'idle'), completed_run_id: 'r1', outcome: 'failed' }, undefined, undefined)).toBe('error')
+      expect(resolveSessionRailState({ ...runtime('a', 'idle'), completed_run_id: 'r1', outcome: 'cancelled' }, { runId: 'r0', kind: 'completed' }, undefined)).toBe('idle')
+      expect(resolveSessionRailState({ ...runtime('a', 'idle'), completed_run_id: 'r1', outcome: 'completed' }, undefined, 'r1')).toBe('idle')
+      expect(resolveSessionRailState(undefined, { runId: 'r2', kind: 'error' }, undefined)).toBe('error')
+      expect(resolveSessionRailState(undefined, { runId: 'r2', kind: 'error' }, 'r2')).toBe('idle')
+    })
+
+    it('orders sessions as completed > error > active > idle and ties by recency', () => {
+      const sCompleted = { ...session('c'), updated_at: '2026-08-04T08:00:00Z' }
+      const sError = { ...session('e'), updated_at: '2026-08-04T09:00:00Z' }
+      const sActive = { ...session('a'), updated_at: '2026-08-04T10:00:00Z' }
+      const sIdle = { ...session('i'), updated_at: '2026-08-04T12:00:00Z' }
+      const states = new Map([
+        ['c', 'completed' as const],
+        ['e', 'error' as const],
+        ['a', 'active' as const],
+        ['i', 'idle' as const],
+      ])
+      expect(sessionAttentionTier('completed')).toBeLessThan(sessionAttentionTier('error'))
+      expect(sessionAttentionTier('error')).toBeLessThan(sessionAttentionTier('active'))
+      expect(sessionAttentionTier('active')).toBeLessThan(sessionAttentionTier('idle'))
+      expect(sortRailSessions([sIdle, sActive, sError, sCompleted], (row) => states.get(row.id)!).map((row) => row.id))
+        .toEqual(['c', 'e', 'a', 'i'])
+    })
+
+    it('switches group preview limit from 5 (<3 projects) to 3 (>=3 projects)', () => {
+      expect(resolveGroupPreviewLimit(0)).toBe(5)
+      expect(resolveGroupPreviewLimit(1)).toBe(5)
+      expect(resolveGroupPreviewLimit(2)).toBe(5)
+      expect(resolveGroupPreviewLimit(3)).toBe(3)
+      expect(resolveGroupPreviewLimit(5)).toBe(3)
+    })
+
+    it('sorts groups by pin order, then attention tier, then recency', () => {
+      const groups = [
+        { key: 'project:idle', sessions: [{ ...session('1'), updated_at: '2026-08-04T12:00:00Z' }] },
+        { key: 'project:active', sessions: [{ ...session('2'), updated_at: '2026-08-04T08:00:00Z' }] },
+        { key: 'project:completed', sessions: [{ ...session('3'), updated_at: '2026-08-04T07:00:00Z' }] },
+        { key: 'project:pinned', sessions: [{ ...session('4'), updated_at: '2026-08-04T06:00:00Z' }] },
+      ]
+      const states = new Map([
+        ['1', 'idle' as const],
+        ['2', 'active' as const],
+        ['3', 'completed' as const],
+        ['4', 'idle' as const],
+      ])
+      expect(sortRailGroups(groups, ['project:pinned'], (row) => states.get(row.id)!).map((g) => g.key))
+        .toEqual(['project:pinned', 'project:completed', 'project:active', 'project:idle'])
+      expect(groupBestAttentionState(groups[2].sessions, (row) => states.get(row.id)!)).toBe('completed')
+      expect(groupBestAttentionState(groups[0].sessions, (row) => states.get(row.id)!)).toBeNull()
+      expect(isProtectedRailState('error')).toBe(true)
+      expect(isProtectedRailState('idle')).toBe(false)
+    })
+
+    it('maps Anti sessions to runtime state and opens Anti deep links', () => {
+      resetPageState()
+      const navigate = vi.fn()
+      openAntiSession(navigate, 'anti-123')
+      expect(readPageState('antiChat.currentSession', '')).toBe('anti-123')
+      expect(navigate).toHaveBeenCalledWith('/anti?session=anti-123')
+
+      const base: AntiSession = {
+        id: 'a1',
+        project: 'p',
+        title: 't',
+        workspace: 'D:/p',
+        engine: 'anti',
+        active_run_id: null,
+        completed_run_id: 'r1',
+        last_outcome: 'completed',
+        last_error: null,
+      }
+      expect(antiSessionToRuntime(base)).toMatchObject({
+        session_id: 'a1',
+        status: 'idle',
+        completed_run_id: 'r1',
+        outcome: 'completed',
+      })
+      expect(antiSessionToRuntime({ ...base, active_run_id: 'r2' })).toMatchObject({
+        session_id: 'a1',
+        status: 'running',
+        run_id: 'r2',
+      })
     })
   })
 

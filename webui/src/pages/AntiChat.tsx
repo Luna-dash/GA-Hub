@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
+import { useInRouterContext, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import type { TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -19,6 +20,7 @@ import { AntiAgyProfiles, useAgyProfiles } from '@/components/AntiAgyProfiles'
 import { AntiAccountUsageButton } from '@/components/AntiAccountUsageButton'
 import { AntiOrchestratorModal } from '@/components/AntiOrchestratorModal'
 import { AntiApprovalDock } from '@/components/AntiApprovalDock'
+import { AntiQueuedDock } from '@/components/AntiQueuedDock'
 import {
   AntiModelSelector,
   buildSelectorFamilies,
@@ -46,6 +48,8 @@ import { createRafScheduler } from '@/utils/rafScheduler'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
 import { formatRunUsage } from '@/utils/antiUsage'
+import { antiSessionToRuntime } from '@/utils/sessionUi'
+import { markSessionRead } from '@/stores/sessionUnreadStore'
 import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { useDraftStore } from '@/stores/draftStore'
 import { toast } from '@/stores/toastStore'
@@ -54,15 +58,30 @@ import { queryKeys } from '@/queries/queryKeys'
 import {
   antiApi, api, HttpError,
   type AgyProfiles, type AntiApprovalPrompt, type AntiAttachmentRef, type AntiMode,
-  type AntiPermissionMode, type AntiRun,
-  type AntiSession, type AntiSteerSubmission, type AntiSubmission,
+  type AntiPermissionMode, type AntiQueuedPromptItem, type AntiQueueEnqueueSubmission,
+  type AntiQueueState, type AntiRun, type AntiSession, type AntiSteerSubmission, type AntiSubmission,
 } from '@/api/client'
 
 type Session = AntiSession
 type Run = AntiRun
 const active = (run: Run) => ['submitting', 'queued', 'running', 'unknown'].includes(run.status)
-const sessionsKey = ['anti-sessions'] as const
+const sessionsKey = queryKeys.antiSessions
 type Submission = AntiSubmission
+const EMPTY_QUEUED_ITEMS: AntiQueuedPromptItem[] = []
+
+function AntiRouteSessionSync({ onSession }: { onSession: (id: string) => void }) {
+  const { pathname, search } = useLocation()
+  const navigate = useNavigate()
+  const onSessionRef = useRef(onSession)
+  onSessionRef.current = onSession
+  useEffect(() => {
+    const requested = new URLSearchParams(search).get('session')
+    if (!requested) return
+    onSessionRef.current(requested)
+    navigate(pathname, { replace: true })
+  }, [navigate, pathname, search])
+  return null
+}
 
 const permissionLabels: Record<AntiPermissionMode, string> = {
   'approval-required': '逐次审批',
@@ -217,6 +236,42 @@ function toUserAttachments(runId: string, list?: AntiAttachmentRef[]): PasteAtta
   }))
 }
 
+function queuedItemToAttachments(item: AntiQueuedPromptItem): PasteAttachment[] {
+  const attList: PasteAttachment[] = (item.attachments ?? []).map((att, index) => {
+    const name = att.name || att.path.split(/[/\\]/).pop() || 'attachment'
+    const ext = name.split('.').pop()?.toLowerCase() ?? ''
+    const isImg = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)
+    const mime = isImg ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : ''
+    const url = att.source === 'managed_upload' ? api.fileUrlByPath(att.path) : ''
+    return {
+      file_id: `${item.id}-att-${index}`,
+      name,
+      path: att.path,
+      url,
+      mime,
+      size: att.size ?? 0,
+      source: att.source ?? 'managed_upload',
+      ...(isImg && url ? { preview: url } : {}),
+    }
+  })
+  const refList: PasteAttachment[] = (item.references ?? []).map((ref) => {
+    const name = ref.path.split(/[/\\]/).pop() || ref.path
+    const ext = name.split('.').pop()?.toLowerCase() ?? ''
+    const mime = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)
+      ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : 'application/octet-stream'
+    return {
+      file_id: `${TRANSFER_PREFIX}${ref.id}`,
+      name,
+      path: ref.path,
+      url: '',
+      mime,
+      size: 0,
+      source: 'local_ref',
+    }
+  })
+  return [...attList, ...refList]
+}
+
 function buildRunInputs(rawPrompt: string, itemAttachments: PasteAttachment[]): AntiSteerSubmission {
   const trimmed = rawPrompt.trim()
   const transferRefs = itemAttachments
@@ -240,6 +295,7 @@ function buildRunInputs(rawPrompt: string, itemAttachments: PasteAttachment[]): 
 
 export default function AntiChat() {
   const cache = useQueryClient()
+  const inRouter = useInRouterContext()
   const [project, setProject] = useState<string | null>(null)
   const [sid, setSid] = usePageState('antiChat.currentSession', '')
   const [creating, setCreating] = useState(false)
@@ -276,6 +332,7 @@ export default function AntiChat() {
   const remove = useMutation({
     mutationFn: (id: string) => antiApi.deleteSession(id),
     onSuccess: async (_, id) => {
+      markSessionRead('anti', id)
       await updateList(rows => rows.filter(row => row.id !== id))
       setSid(current => current === id ? '' : current)
       cache.removeQueries({ queryKey: ['anti-runs', id] })
@@ -288,9 +345,9 @@ export default function AntiChat() {
     id: row.id, title: row.title, project_name: row.project, project_path: row.workspace,
     created_at: '', updated_at: row.updated_at ?? '', llm_index: null, archive_path: null,
   }))
-  const railRuntimes: Record<string, SessionRuntime> = Object.fromEntries((sessions.data ?? []).map(row => [row.id, {
-    session_id: row.id, status: row.active_run_id ? 'running' : 'idle', run_id: row.active_run_id ?? null, stream_id: null,
-  }]))
+  const railRuntimes: Record<string, SessionRuntime> = Object.fromEntries(
+    (sessions.data ?? []).map(row => [row.id, antiSessionToRuntime(row)]),
+  )
   const openCreate = () => {
     create.reset()
     setProject(available.some(item => item.name === selected?.project) ? selected?.project ?? null : null)
@@ -300,7 +357,7 @@ export default function AntiChat() {
   const selectedProfile = profiles.data?.profiles.find(item => item.id === profiles.data?.active)
   const cachedUsage = selectedProfile?.usage
   return <PageShell title="Agy 会话" wrapHeader
-    titleExtra={<AntiDaemonControl {...daemon} />}
+    titleExtra={<>{inRouter && <AntiRouteSessionSync onSession={setSid} />}<AntiDaemonControl {...daemon} /></>}
     actions={<>
       <div ref={setHeaderActions} className="empty:hidden flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2" />
       <AntiAgyProfiles
@@ -436,14 +493,15 @@ function Conversation({ session, headerActions, profileId, profilesData, support
   const setAttachments = useCallback((value: PasteAttachment[]) => useDraftStore.getState().setAttachments(draftKey, value), [draftKey])
   const [pending, setPending] = useState<Submission>()
   const [lastRateLimitedInput, setLastRateLimitedInput] = useState<Submission | null>(null)
-  const [queuedPrompt, setQueuedPrompt] = useState<{ prompt: string; attachments: PasteAttachment[] } | null>(null)
+  const [queueCollapsed, setQueueCollapsed] = useState(false)
+  const [pendingEditItem, setPendingEditItem] = useState<AntiQueuedPromptItem | null>(null)
   const effectiveProfileId = profileId ?? 'default'
   const [clock, setClock] = useState(Date.now)
   const [stoppingRunId, setStoppingRunId] = useState<string | null>(null)
   const [forceStopEligible, setForceStopEligible] = useState(false)
   const [lastActivityAt, setLastActivityAt] = useState(() => Date.now())
   const lastActivityAtRef = useRef(lastActivityAt)
-  const prevActiveRunIdRef = useRef<string | null>(null)
+  const prevActiveRunIdRef = useRef<string | null | undefined>(undefined)
   const [familyKey, setFamilyKey] = usePageState('antiChat.modelFamily', DEFAULT_FAMILY)
   const [preferredEffort, setEffort] = usePageState('antiChat.effort', DEFAULT_EFFORT)
   const [mode, setMode] = usePageState<AntiMode>('antiChat.mode', 'plan')
@@ -556,11 +614,28 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     }
   }, [cache, effectiveProfileId, families, setFamilyKey])
   const key = ['anti-runs', sid]
+  const queueKey = ['anti-queue', sid]
   const history = useQuery({
     queryKey: key, queryFn: ({ signal }) => antiApi.runs(sid, signal),
     refetchInterval: query => query.state.data?.some(active) || pending ? 1500 : false
   })
   const current = history.data?.find(active)
+  const queueQuery = useQuery({
+    queryKey: queueKey,
+    queryFn: ({ signal }) => antiApi.queue(sid, signal),
+    refetchInterval: query => {
+      const count = Array.isArray(query.state.data?.items) ? query.state.data.items.length : 0
+      return Boolean(current || pending) || count > 0 || (session.queued_count ?? 0) > 0 ? 1500 : false
+    },
+  })
+  const queueItems = Array.isArray(queueQuery.data?.items) ? queueQuery.data.items : EMPTY_QUEUED_ITEMS
+  const queuePaused = !current && queueItems.length > 0
+  const queuePauseReason = queueQuery.data?.pause_reason ?? null
+  useEffect(() => {
+    if (pendingEditItem && !queueItems.some(item => item.id === pendingEditItem.id)) {
+      setPendingEditItem(null)
+    }
+  }, [pendingEditItem, queueItems])
   const live = useQuery({
     queryKey: ['anti-live', sid, current?.id], enabled: Boolean(current), refetchInterval: 900,
     queryFn: async ({ signal }) => {
@@ -568,6 +643,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       if (!active(run)) {
         cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === run.id ? run : row))
         void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+        void cache.invalidateQueries({ queryKey: queueKey })
       }
       return run
     },
@@ -944,6 +1020,11 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     if (!el || !activeApprovalId || !followTranscript.current) return
     el.scrollTop = el.scrollHeight
   }, [activeApprovalId, approvalCollapsed])
+  useLayoutEffect(() => {
+    const el = transcript.current
+    if (!el || queueItems.length === 0 || !followTranscript.current) return
+    el.scrollTop = el.scrollHeight
+  }, [queueItems.length, queueCollapsed, Boolean(pendingEditItem)])
   useEffect(() => {
     const dock = approvalDockRef.current
     const el = transcript.current
@@ -1030,58 +1111,171 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     setPending(body)
     send.mutate(body)
   }
+  const buildQueuePayload = useCallback((rawPrompt: string, itemAttachments: PasteAttachment[]): AntiQueueEnqueueSubmission => {
+    const { operation: _ignored, ...rest } = createSubmission(rawPrompt, itemAttachments)
+    return rest
+  }, [createSubmission])
+  const enqueue = useMutation({
+    mutationFn: ({ payload }: {
+      payload: AntiQueueEnqueueSubmission
+      rawPrompt: string
+      rawAttachments: PasteAttachment[]
+      silent?: boolean
+    }) => antiApi.enqueuePrompt(sid, payload),
+    onSuccess: (updated, vars) => {
+      cache.setQueryData<AntiQueueState>(queueKey, updated)
+      useDraftStore.getState().clearDraftIfMatch(draftKey, vars.rawPrompt, vars.rawAttachments)
+      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+      if (!vars.silent) {
+        toast.info('已加入待发队列，本轮完成后自动发送')
+      }
+    },
+  })
+  const removeQueued = useMutation({
+    mutationFn: (qid: string) => antiApi.removeQueuedPrompt(sid, qid),
+    onSuccess: updated => {
+      cache.setQueryData<AntiQueueState>(queueKey, updated)
+      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+    },
+  })
+  const clearQueue = useMutation({
+    mutationFn: () => antiApi.clearQueue(sid),
+    onSuccess: updated => {
+      setPendingEditItem(null)
+      cache.setQueryData<AntiQueueState>(queueKey, updated)
+      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+    },
+  })
+  const moveQueued = useMutation({
+    mutationFn: ({ qid, direction }: { qid: string; direction: 'up' | 'down' | 'top' }) =>
+      antiApi.moveQueuedPrompt(sid, qid, direction),
+    onSuccess: updated => {
+      cache.setQueryData<AntiQueueState>(queueKey, updated)
+    },
+  })
+  const steerQueued = useMutation({
+    mutationFn: (qid: string) => antiApi.steerQueuedPrompt(sid, qid),
+    onSuccess: res => {
+      if (res.run) {
+        cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === res.run.id ? res.run : row))
+        void cache.invalidateQueries({ queryKey: ['anti-live', sid, res.run.id] })
+      }
+      cache.setQueryData<AntiQueueState>(queueKey, res.queue)
+      void cache.invalidateQueries({ queryKey: key })
+      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+      toast.success('已将该排队消息作为插话发出')
+    },
+  })
+  const dispatchQueued = useMutation({
+    mutationFn: (qid?: string) => antiApi.dispatchQueuedPrompt(sid, qid),
+    onSuccess: res => {
+      followTranscript.current = true
+      if (res.run) {
+        cache.setQueryData<Run[]>(key, old => [...(old ?? []).filter(row => row.id !== res.run.id), res.run])
+      }
+      cache.setQueryData<AntiQueueState>(queueKey, res.queue)
+      void cache.invalidateQueries({ queryKey: key })
+      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+    },
+  })
   const steer = useMutation({
-    mutationFn: ({ rid, body }: { rid: string; body: AntiSteerSubmission }) =>
-      antiApi.steerRun(sid, rid, body),
-    onSuccess: (updated, { rid }) => {
-      useDraftStore.getState().clearDraft(draftKey)
+    mutationFn: ({ rid, body }: {
+      rid: string
+      body: AntiSteerSubmission
+      rawPrompt: string
+      rawAttachments: PasteAttachment[]
+    }) => antiApi.steerRun(sid, rid, body),
+    onSuccess: (updated, { rid, rawPrompt, rawAttachments }) => {
+      useDraftStore.getState().clearDraftIfMatch(draftKey, rawPrompt, rawAttachments)
       cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === updated.id ? updated : row))
       void cache.invalidateQueries({ queryKey: ['anti-live', sid, rid] })
       void cache.invalidateQueries({ queryKey: key })
       toast.success('已向当前任务发送插话纠偏')
     },
-    onError: (error) => {
-      if (error instanceof HttpError && error.status === 409 && current) {
-        const currentText = prompt.trim()
-        const currentAtts = attachments
-        if (currentText || currentAtts.length) {
-          setQueuedPrompt({ prompt: currentText, attachments: currentAtts })
-          useDraftStore.getState().clearDraft(draftKey)
+    onError: (error, vars) => {
+      if (error instanceof HttpError && error.status === 409) {
+        if (vars.rawPrompt.trim() || vars.rawAttachments.length > 0) {
+          enqueue.mutate(
+            {
+              payload: buildQueuePayload(vars.rawPrompt, vars.rawAttachments),
+              rawPrompt: vars.rawPrompt,
+              rawAttachments: vars.rawAttachments,
+              silent: true,
+            },
+            {
+              onSuccess: () => {
+                toast.info('当前任务暂无法实时插话，已加入待发队列')
+              },
+            },
+          )
+        } else {
+          toast.info('当前任务暂无法实时插话，已加入待发队列')
         }
-        toast.info('当前任务暂无法实时插话，已加入排队等待本轮结束')
       }
     },
   })
   const queueCurrentInput = () => {
+    if (!current || enqueue.isPending || send.isPending || !history.isSuccess) return
     const trimmed = prompt.trim()
     if (!trimmed && !attachments.length) return
-    setQueuedPrompt({ prompt: trimmed, attachments })
-    useDraftStore.getState().clearDraft(draftKey)
-    toast.info('已加入排队，将在本轮完成后自动发送')
+    enqueue.mutate({
+      payload: buildQueuePayload(prompt, attachments),
+      rawPrompt: prompt,
+      rawAttachments: attachments,
+    })
   }
-  const steerOrQueue = () => {
-    if (!current || steer.isPending || send.isPending || !history.isSuccess) return
+  const steerCurrentInput = () => {
+    if (!current || !canNativeSteer || steer.isPending || send.isPending || !history.isSuccess) return
     const trimmed = prompt.trim()
     if (!trimmed && !attachments.length) return
-    if (canNativeSteer) {
-      steer.mutate({ rid: current.id, body: buildRunInputs(prompt, attachments) })
+    steer.mutate({
+      rid: current.id,
+      body: buildRunInputs(prompt, attachments),
+      rawPrompt: prompt,
+      rawAttachments: attachments,
+    })
+  }
+  const applyEditQueuedItem = async (item: AntiQueuedPromptItem, stashCurrentDraft: boolean) => {
+    if (enqueue.isPending || removeQueued.isPending) return
+    if (stashCurrentDraft && (prompt.trim() || attachments.length > 0)) {
+      await enqueue.mutateAsync({
+        payload: buildQueuePayload(prompt, attachments),
+        rawPrompt: prompt,
+        rawAttachments: attachments,
+        silent: true,
+      })
+    }
+    try {
+      await removeQueued.mutateAsync(item.id)
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 404) {
+        removeQueued.reset()
+        setPendingEditItem(null)
+        void cache.invalidateQueries({ queryKey: queueKey })
+        void cache.invalidateQueries({ queryKey: key })
+        toast.info('该排队消息已开始发送，无法再编辑')
+        return
+      }
+      throw error
+    }
+    setPrompt(item.prompt)
+    setAttachments(queuedItemToAttachments(item))
+    setPendingEditItem(null)
+    requestAnimationFrame(() => composerWrapRef.current?.querySelector('textarea')?.focus())
+  }
+  const handleEditQueuedItem = (item: AntiQueuedPromptItem) => {
+    if (prompt.trim() || attachments.length > 0) {
+      setPendingEditItem(item)
     } else {
-      queueCurrentInput()
+      void applyEditQueuedItem(item, false).catch(() => undefined)
     }
   }
   useEffect(() => {
     const prevId = prevActiveRunIdRef.current
     prevActiveRunIdRef.current = activeRunId
-    if (!prevId || activeRunId || pending || send.isPending || !queuedPrompt) return
-    const finishedRun = runs.find(row => row.id === prevId)
-    if (finishedRun?.status === 'success') {
-      const body = createSubmission(queuedPrompt.prompt, queuedPrompt.attachments)
-      setQueuedPrompt(null)
-      followTranscript.current = true
-      setPending(body)
-      send.mutate(body)
-    }
-  }, [activeRunId, createSubmission, pending, queuedPrompt, runs, send])
+    if (prevId === undefined || prevId === activeRunId) return
+    void cache.invalidateQueries({ queryKey: queueKey })
+  }, [activeRunId, cache, sid])
   return <>
     {headerActions && createPortal(<>
       <AntiModelSelector
@@ -1236,6 +1430,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
                           onStreamEnded={() => {
                             void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] })
                             void cache.invalidateQueries({ queryKey: key })
+                            void cache.invalidateQueries({ queryKey: queueKey })
                             void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
                           }}
                         >
@@ -1343,6 +1538,12 @@ function Conversation({ session, headerActions, profileId, profilesData, support
             live.error,
             send.error,
             steer.error instanceof HttpError && steer.error.status === 409 ? null : steer.error,
+            enqueue.error,
+            removeQueued.error instanceof HttpError && removeQueued.error.status === 404 ? null : removeQueued.error,
+            clearQueue.error,
+            moveQueued.error,
+            steerQueued.error,
+            dispatchQueued.error,
             switchAndRetry.error,
             clearGrants.error,
             cancel.error,
@@ -1389,6 +1590,34 @@ function Conversation({ session, headerActions, profileId, profilesData, support
             decision,
             ...(optionId ? { option_id: optionId } : {}),
           })}
+      />
+    )}
+    {queueItems.length > 0 && (
+      <AntiQueuedDock
+        items={queueItems}
+        paused={queuePaused}
+        pauseReason={queuePauseReason}
+        hasActiveRun={Boolean(current)}
+        canNativeSteer={canNativeSteer}
+        collapsed={queueCollapsed}
+        busy={enqueue.isPending || removeQueued.isPending || clearQueue.isPending || moveQueued.isPending}
+        steerPending={steerQueued.isPending}
+        dispatchPending={dispatchQueued.isPending}
+        pendingEditItem={pendingEditItem}
+        onToggleCollapsed={() => setQueueCollapsed(prev => !prev)}
+        onClearAll={() => clearQueue.mutate()}
+        onMoveItem={(qid, direction) => moveQueued.mutate({ qid, direction })}
+        onSteerItem={(item) => steerQueued.mutate(item.id)}
+        onDispatchItem={(item) => dispatchQueued.mutate(item.id)}
+        onEditItem={handleEditQueuedItem}
+        onRemoveItem={(qid) => removeQueued.mutate(qid)}
+        onConfirmEditStashDraft={() => {
+          if (pendingEditItem) void applyEditQueuedItem(pendingEditItem, true).catch(() => undefined)
+        }}
+        onConfirmEditOverwriteDraft={() => {
+          if (pendingEditItem) void applyEditQueuedItem(pendingEditItem, false).catch(() => undefined)
+        }}
+        onCancelPendingEdit={() => setPendingEditItem(null)}
       />
     )}
     <div ref={composerWrapRef}>
@@ -1438,27 +1667,30 @@ function Conversation({ session, headerActions, profileId, profilesData, support
             ? (activeApprovalId
               ? '当前任务正在等待上方审批确认；可提前输入下一条消息加入排队…'
               : canNativeSteer
-                ? '任务运行中：Enter 默认插话纠偏，Ctrl+Enter 加入排队…'
-                : '任务运行中，输入内容后可加入排队，本轮结束后自动发送…')
+                ? '任务运行中：Enter 加入排队，Ctrl+Enter 插话纠偏…'
+                : '任务运行中，输入内容后按 Enter 加入排队，本轮结束后自动发送…')
             : '发给 Agy，输入 / 查看原生命令，可粘贴/拖放图片或文件…'}
           readOnly={Boolean(pending)}
           maxLength={24000}
           onSubmit={submit}
           submitDisabled={Boolean(current) || send.isPending || !history.isSuccess}
           activeSubmit={current && !pending ? {
-            label: canNativeSteer ? '插话纠偏' : '加入排队',
+            label: '加入排队',
             title: canNativeSteer
-              ? '向运行中的 Agy 任务发送插话纠偏（Enter 默认插话 · Ctrl+Enter 加入排队）'
+              ? '加入待发队列（Enter 加入排队 · Ctrl+Enter 插话纠偏）'
               : '加入排队，本轮结束后自动发送',
-            disabled: steer.isPending || send.isPending || !history.isSuccess,
-            onSubmit: steerOrQueue,
+            description: '不打断当前推理，本轮成功后按顺序自动发送',
+            icon: 'queue',
+            disabled: enqueue.isPending || send.isPending || !history.isSuccess,
+            onSubmit: queueCurrentInput,
             ...(canNativeSteer ? {
               secondary: {
-                label: '加入排队',
-                description: '不打断当前推理，本轮成功后自动发送',
+                label: '插话纠偏',
+                description: '立即介入当前运行中的任务',
+                icon: 'send',
                 shortcutHint: 'Ctrl+Enter',
-                disabled: send.isPending || !history.isSuccess,
-                onSubmit: queueCurrentInput,
+                disabled: steer.isPending || send.isPending || !history.isSuccess,
+                onSubmit: steerCurrentInput,
               },
             } : {}),
           } : undefined}
@@ -1560,69 +1792,6 @@ function Conversation({ session, headerActions, profileId, profilesData, support
             cancel.mutate({ rid: current.id, force: canForceStop })
           }}
         />
-        {queuedPrompt && (
-          <div
-            data-anti-queued-bar
-            role="status"
-            className="flex flex-wrap items-center justify-between gap-2 border-t border-accent/30 bg-accent-soft/35 px-3 py-2 text-xs text-ink"
-          >
-            <div className="min-w-0 flex-1 truncate">
-              <span className="font-medium text-accent">
-                {current ? '已排队（本轮完成后发送）：' : '待确认排队消息：'}
-              </span>
-              <span className="text-ink-muted">
-                {queuedPrompt.prompt || `（${queuedPrompt.attachments.length} 个附件）`}
-              </span>
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {canNativeSteer && current && (
-                <button
-                  type="button"
-                  className="ga-btn-sm-primary"
-                  disabled={steer.isPending}
-                  onClick={() => {
-                    const body = buildRunInputs(queuedPrompt.prompt, queuedPrompt.attachments)
-                    setQueuedPrompt(null)
-                    steer.mutate({ rid: current.id, body })
-                  }}
-                >
-                  立即插话
-                </button>
-              )}
-              {!current && (
-                <button
-                  type="button"
-                  className="ga-btn-sm-primary"
-                  disabled={send.isPending}
-                  onClick={() => {
-                    const body = createSubmission(queuedPrompt.prompt, queuedPrompt.attachments)
-                    setQueuedPrompt(null)
-                    followTranscript.current = true
-                    setPending(body)
-                    send.mutate(body)
-                  }}
-                >
-                  立即发送
-                </button>
-              )}
-              <button
-                type="button"
-                className="ga-btn-sm"
-                onClick={() => {
-                  setPrompt(queuedPrompt.prompt)
-                  setAttachments(queuedPrompt.attachments)
-                  setQueuedPrompt(null)
-                  requestAnimationFrame(() => composerWrapRef.current?.querySelector('textarea')?.focus())
-                }}
-              >
-                编辑
-              </button>
-              <button type="button" className="ga-btn-sm" onClick={() => setQueuedPrompt(null)}>
-                取消排队
-              </button>
-            </div>
-          </div>
-        )}
         {showRecoveryBar && current && (
           <div
             data-anti-force-stop-bar

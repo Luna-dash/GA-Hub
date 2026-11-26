@@ -2923,6 +2923,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/anti/sessions/{sid}/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Queue */
+        get: operations["get_queue_api_anti_sessions__sid__queue_get"];
+        put?: never;
+        /** Enqueue Prompt */
+        post: operations["enqueue_prompt_api_anti_sessions__sid__queue_post"];
+        /** Clear Queue */
+        delete: operations["clear_queue_api_anti_sessions__sid__queue_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/anti/sessions/{sid}/queue/{qid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Queued Prompt */
+        delete: operations["remove_queued_prompt_api_anti_sessions__sid__queue__qid__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/anti/sessions/{sid}/queue/{qid}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move Queued Prompt */
+        post: operations["move_queued_prompt_api_anti_sessions__sid__queue__qid__move_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/anti/sessions/{sid}/queue/{qid}/steer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Steer Queued Prompt */
+        post: operations["steer_queued_prompt_api_anti_sessions__sid__queue__qid__steer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/anti/sessions/{sid}/queue/dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dispatch Queued Prompt */
+        post: operations["dispatch_queued_prompt_api_anti_sessions__sid__queue_dispatch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/file-transfer/reply": {
         parameters: {
             query?: never;
@@ -3505,6 +3592,101 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** AntiQueueDispatchReq */
+        AntiQueueDispatchReq: {
+            /** Item Id */
+            item_id?: string | null;
+        };
+        /** AntiQueueEnqueueReq */
+        AntiQueueEnqueueReq: {
+            /**
+             * Prompt
+             * @default
+             */
+            prompt: string;
+            /** Model */
+            model?: string | null;
+            /** Effort */
+            effort?: ("low" | "medium" | "high" | "xhigh" | "max") | null;
+            /** References */
+            references?: components["schemas"]["AntiFileReference"][];
+            /** Attachments */
+            attachments?: components["schemas"]["AttachmentRef"][];
+            /**
+             * Mode
+             * @default plan
+             * @enum {string}
+             */
+            mode: "plan" | "accept-edits";
+            /** Permission Mode */
+            permission_mode?: ("approval-required" | "auto-accept-edits" | "auto" | "full-access") | null;
+            /** Orchestrator Planner */
+            orchestrator_planner?: string | null;
+            /** Orchestrator Executor */
+            orchestrator_executor?: string | null;
+        };
+        /** AntiQueueMoveReq */
+        AntiQueueMoveReq: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "up" | "down" | "top";
+        };
+        /** AntiQueuePromoteResp */
+        AntiQueuePromoteResp: {
+            run: components["schemas"]["AntiRunResp"];
+            queue: components["schemas"]["AntiQueueStateResp"];
+        };
+        /** AntiQueueStateResp */
+        AntiQueueStateResp: {
+            /** Items */
+            items?: components["schemas"]["AntiQueuedPromptItem"][];
+            /**
+             * Paused
+             * @default false
+             */
+            paused: boolean;
+            /** Pause Reason */
+            pause_reason?: string | null;
+        };
+        /** AntiQueuedPromptItem */
+        AntiQueuedPromptItem: {
+            /** Id */
+            id: string;
+            /** Session Id */
+            session_id: string;
+            /** Position */
+            position: number;
+            /** Prompt */
+            prompt: string;
+            /** Model */
+            model?: string | null;
+            /** Effort */
+            effort?: string | null;
+            /** References */
+            references?: components["schemas"]["AntiFileReference"][];
+            /** Attachments */
+            attachments?: components["schemas"]["AttachmentRef"][];
+            /**
+             * Mode
+             * @default plan
+             * @enum {string}
+             */
+            mode: "plan" | "accept-edits";
+            /**
+             * Permission Mode
+             * @default approval-required
+             * @enum {string}
+             */
+            permission_mode: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
+            /** Orchestrator Planner */
+            orchestrator_planner?: string | null;
+            /** Orchestrator Executor */
+            orchestrator_executor?: string | null;
+            /** Created At */
+            created_at: string;
+        };
         /** AntiQuotaCalibrateReq */
         AntiQuotaCalibrateReq: {
             /** Model Group */
@@ -3711,6 +3893,12 @@ export interface components {
             updated_at?: string | null;
             /** Active Run Id */
             active_run_id?: string | null;
+            /** Completed Run Id */
+            completed_run_id?: string | null;
+            /** Last Outcome */
+            last_outcome?: ("completed" | "cancelled" | "failed") | null;
+            /** Last Error */
+            last_error?: string | null;
             /** Has Conversation */
             has_conversation?: boolean | null;
             /** Acp Connected */
@@ -3719,6 +3907,8 @@ export interface components {
             profile_id?: string | null;
             /** Grants */
             grants?: string[];
+            /** Queued Count */
+            queued_count?: number | null;
             /**
              * Engine
              * @default anti
@@ -11965,6 +12155,238 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AntiRunResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_queue_api_anti_sessions__sid__queue_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiQueueStateResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enqueue_prompt_api_anti_sessions__sid__queue_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AntiQueueEnqueueReq"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiQueueStateResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_queue_api_anti_sessions__sid__queue_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiQueueStateResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_queued_prompt_api_anti_sessions__sid__queue__qid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+                qid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiQueueStateResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_queued_prompt_api_anti_sessions__sid__queue__qid__move_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+                qid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AntiQueueMoveReq"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiQueueStateResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    steer_queued_prompt_api_anti_sessions__sid__queue__qid__steer_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+                qid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiQueuePromoteResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dispatch_queued_prompt_api_anti_sessions__sid__queue_dispatch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AntiQueueDispatchReq"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiQueuePromoteResp"];
                 };
             };
             /** @description Validation Error */

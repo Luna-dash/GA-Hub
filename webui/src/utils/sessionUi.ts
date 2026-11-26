@@ -1,7 +1,15 @@
+import type { AntiSession } from '@/api/client'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import { storageKeys } from '@/config/storageKeys'
+import { writePageState } from '@/utils/pageState'
 
 export type SessionActivity = 'active' | 'idle' | 'error' | 'unknown'
+export type SessionRailDisplayState = 'completed' | 'error' | 'active' | 'idle'
+export type SessionUnreadEntry = { runId: string; kind: 'completed' | 'error' }
+
+export const GROUP_PREVIEW_LIMIT = 3
+export const GROUP_PREVIEW_LIMIT_FEW_PROJECTS = 5
+export const COMPACT_PROJECT_COUNT_THRESHOLD = 3
 
 /** Rail ordering key: epoch ms of the last real activity (submit / btw / rewind).
  *
@@ -77,6 +85,39 @@ export function openSessionChat(
     // Private mode / quota: the explicit ?session= below still selects it.
   }
   navigate(sessionChatHref(sessionId))
+}
+
+export function antiSessionHref(sessionId: string): string {
+  const params = new URLSearchParams({ session: sessionId })
+  return `/anti?${params.toString()}`
+}
+
+export function openAntiSession(
+  navigate: (to: string) => void,
+  sessionId: string,
+): void {
+  writePageState('antiChat.currentSession', sessionId)
+  navigate(antiSessionHref(sessionId))
+}
+
+export function antiSessionToRuntime(row: AntiSession): SessionRuntime {
+  if (row.active_run_id) {
+    return {
+      session_id: row.id,
+      status: 'running',
+      run_id: row.active_run_id,
+      stream_id: null,
+    }
+  }
+  return {
+    session_id: row.id,
+    status: 'idle',
+    run_id: null,
+    stream_id: null,
+    completed_run_id: row.completed_run_id ?? null,
+    outcome: row.last_outcome ?? null,
+    error: row.last_error ?? null,
+  }
 }
 
 export function errorMessageFromError(error: unknown, fallback = '请求失败'): string {
@@ -183,20 +224,140 @@ export function startAbortedFromError(error: unknown): boolean {
   return (detail as Record<string, unknown>).code === 'run_start_aborted'
 }
 
-/** Rail 分组默认态（v3 三态之 D）的预览切片：取最近 `limit` 条。
+/** Resolve the display state of one session row in the rail.
+ *
+ * Cancelled outcomes explicitly map to `idle` so manually stopped runs never
+ * hijack the top unread slot.
+ */
+export function resolveSessionRailState(
+  runtime: SessionRuntime | undefined,
+  unread: SessionUnreadEntry | undefined,
+  seenRunId: string | undefined,
+): SessionRailDisplayState {
+  if (sessionActivity(runtime) === 'active') return 'active'
+  if (runtime?.completed_run_id) {
+    if (runtime.outcome === 'cancelled') return 'idle'
+    if (seenRunId === runtime.completed_run_id) return 'idle'
+    return runtime.outcome === 'failed' || Boolean(runtime.error) ? 'error' : 'completed'
+  }
+  if (runtime?.status === 'error') {
+    const errKey = runtime.run_id ?? 'error'
+    return seenRunId === errKey ? 'idle' : 'error'
+  }
+  if (unread && seenRunId !== unread.runId) return unread.kind
+  return 'idle'
+}
+
+export function isProtectedRailState(state: SessionRailDisplayState): boolean {
+  return state === 'completed' || state === 'error' || state === 'active'
+}
+
+/** Intra-group and inter-group attention rank (lower = higher priority).
+ *
+ * Order: unread completed (0) < unread error (1) < active (2) < idle (3).
+ */
+export function sessionAttentionTier(state: SessionRailDisplayState | SessionActivity): number {
+  switch (state) {
+    case 'completed':
+      return 0
+    case 'error':
+      return 1
+    case 'active':
+      return 2
+    default:
+      return 3
+  }
+}
+
+export function sortRailSessions<T extends Pick<HubSession, 'id' | 'updated_at' | 'created_at'>>(
+  sessions: readonly T[],
+  stateOf: (session: T) => SessionRailDisplayState,
+): T[] {
+  return [...sessions].sort((a, b) => {
+    const tierDiff = sessionAttentionTier(stateOf(a)) - sessionAttentionTier(stateOf(b))
+    if (tierDiff !== 0) return tierDiff
+    return sessionRecencyMs(b) - sessionRecencyMs(a)
+  })
+}
+
+export function resolveGroupPreviewLimit(projectGroupCount: number): number {
+  return projectGroupCount < COMPACT_PROJECT_COUNT_THRESHOLD
+    ? GROUP_PREVIEW_LIMIT_FEW_PROJECTS
+    : GROUP_PREVIEW_LIMIT
+}
+
+export function groupBestAttentionState<T>(
+  sessions: readonly T[],
+  stateOf: (session: T) => SessionRailDisplayState,
+): Exclude<SessionRailDisplayState, 'idle'> | null {
+  let best: Exclude<SessionRailDisplayState, 'idle'> | null = null
+  let bestTier = 3
+  for (const session of sessions) {
+    const state = stateOf(session)
+    if (state === 'idle') continue
+    const tier = sessionAttentionTier(state)
+    if (tier < bestTier) {
+      bestTier = tier
+      best = state
+      if (bestTier === 0) break
+    }
+  }
+  return best
+}
+
+export function sortRailGroups<G extends { key: string; sessions: readonly HubSession[] }>(
+  groups: readonly G[],
+  pinnedGroups: readonly string[],
+  stateOf: (session: HubSession) => SessionRailDisplayState,
+): G[] {
+  const groupRecency = (list: readonly HubSession[]) =>
+    list.reduce((latest, session) => Math.max(latest, sessionRecencyMs(session)), 0)
+  const groupTier = (list: readonly HubSession[]) => {
+    const best = groupBestAttentionState(list, stateOf)
+    return best ? sessionAttentionTier(best) : 3
+  }
+  return [...groups].sort((a, b) => {
+    const aIndex = pinnedGroups.indexOf(a.key)
+    const bIndex = pinnedGroups.indexOf(b.key)
+    const aPinned = aIndex !== -1
+    const bPinned = bIndex !== -1
+    if (aPinned !== bPinned) return aPinned ? -1 : 1
+    if (aPinned && bPinned) return aIndex - bIndex
+    const tierDiff = groupTier(a.sessions) - groupTier(b.sessions)
+    if (tierDiff !== 0) return tierDiff
+    return groupRecency(b.sessions) - groupRecency(a.sessions)
+  })
+}
+
+/** Rail 分组默认态（v3 三态之 D）的预览切片：取最近 `limit` 条，并豁免活跃/未读完成/异常会话。
  *
  * 当前会话在前 limit 条之外时不能被藏掉（它正是用户眼前在用的那条）：
- * 顶入最后一个预览位，而不是替换别的行——前两条仍是最新的，顺序语义不破。
- * 入参已按 sessionRecencyMs 降序（orderedSessions），这里不再排序。
+ * 有空闲名额时替换最后一个空闲槽位；若槽位已全被豁免会话占满，则额外追加而不挤掉豁免会话。
+ * 入参应已按 sortRailSessions 排好序。
  */
-export function sessionPreview(
-  sessions: HubSession[],
+export function sessionPreview<T extends { id: string }>(
+  sessions: readonly T[],
   currentId: string | null | undefined,
   limit: number,
-): HubSession[] {
-  const preview = sessions.slice(0, limit)
-  if (limit < 1 || !currentId || preview.some((session) => session.id === currentId)) return preview
+  isProtected?: (session: T) => boolean,
+): T[] {
+  if (!isProtected) {
+    const preview = sessions.slice(0, limit)
+    if (limit < 1 || !currentId || preview.some((session) => session.id === currentId)) return preview
+    const current = sessions.find((session) => session.id === currentId)
+    if (!current) return preview
+    return [...preview.slice(0, limit - 1), current]
+  }
+  const protectedRows = sessions.filter((session) => isProtected(session))
+  const normalRows = sessions.filter((session) => !isProtected(session))
+  if (limit < 1) return protectedRows
+  const remainingSlots = Math.max(0, limit - protectedRows.length)
+  const selected = [...protectedRows, ...normalRows.slice(0, remainingSlots)]
+  if (!currentId || selected.some((session) => session.id === currentId)) return selected
   const current = sessions.find((session) => session.id === currentId)
-  if (!current) return preview
-  return [...preview.slice(0, limit - 1), current]
+  if (!current) return selected
+  if (remainingSlots > 0) {
+    return [...selected.slice(0, -1), current]
+  }
+  return [...selected, current]
 }

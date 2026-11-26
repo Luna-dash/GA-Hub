@@ -259,4 +259,65 @@ describe('ImagePasteInput attachment presentation', () => {
     })
     expect(container.querySelector('[role="dialog"][aria-label="BTW 旁路提问"]')).toBeNull()
   })
+
+  it('supports queue-first activeSubmit with Enter defaulting to primary and Ctrl+Enter triggering secondary', () => {
+    const onQueue = vi.fn()
+    const onSteer = vi.fn()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    act(() => {
+      root?.render(
+        <ImagePasteInput
+          text="follow-up item"
+          onText={vi.fn()}
+          attachments={[]}
+          onAttachments={vi.fn()}
+          onSubmit={vi.fn()}
+          onStop={vi.fn()}
+          stopActive
+          activeSubmit={{
+            label: '加入排队',
+            title: '加入待发队列',
+            description: '不打断当前推理，本轮成功后按顺序自动发送',
+            icon: 'queue',
+            onSubmit: onQueue,
+            secondary: {
+              label: '插话纠偏',
+              description: '立即介入当前运行中的任务',
+              icon: 'send',
+              shortcutHint: 'Ctrl+Enter',
+              onSubmit: onSteer,
+            },
+          }}
+        />,
+      )
+    })
+
+    const primaryBtn = container.querySelector<HTMLButtonElement>('button[aria-label="加入排队"]')
+    expect(primaryBtn).not.toBeNull()
+    expect(primaryBtn?.querySelector('svg')?.getAttribute('class')).toContain('lucide-clock')
+
+    const textarea = container.querySelector('textarea')!
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(onQueue).toHaveBeenCalledTimes(1)
+    expect(onSteer).not.toHaveBeenCalled()
+
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    })
+    expect(onSteer).toHaveBeenCalledTimes(1)
+    expect(onQueue).toHaveBeenCalledTimes(1)
+
+    const splitToggle = container.querySelector<HTMLButtonElement>('button[aria-label="选择发送或排队方式"]')!
+    act(() => { splitToggle.click() })
+    const menu = container.querySelector<HTMLElement>('[role="menu"][aria-label="运行中发送方式"]')!
+    expect(menu.textContent).toContain('加入排队（默认）')
+    expect(menu.textContent).toContain('不打断当前推理，本轮成功后按顺序自动发送')
+    expect(menu.textContent).toContain('插话纠偏')
+    expect(menu.textContent).toContain('Ctrl+Enter')
+  })
 })

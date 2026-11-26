@@ -1,4 +1,5 @@
 import { useUnreadThemeCompletions } from '@/stores/themeCompletionStore'
+import { useHasUnreadSessions } from '@/stores/sessionUnreadStore'
 import brandIcon from '../assets/gahub-icon.png'
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
@@ -134,6 +135,8 @@ function NavIcon({ name }: { name: NavIconName }) {
 }
 export function SidebarNav() {
   const unreadTheme = useUnreadThemeCompletions()
+  const unreadChat = useHasUnreadSessions('chat')
+  const unreadAnti = useHasUnreadSessions('anti')
   const [items, setItems] = useState<NavItem[]>(() => getVisibleNavItems())
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(storageKeys.sidebarCollapsed) === '1')
   const toggleCollapsed = () => {
@@ -186,7 +189,16 @@ export function SidebarNav() {
       </div>
 
       <nav className="flex-1 min-h-0 overflow-y-auto py-1.5 ga-sidebar-nav">
-        {items.map((it) => (
+        {items.map((it) => {
+          const unreadLabel =
+            it.id === 'chat' && unreadChat
+              ? '实时聊天有未读消息'
+              : it.id === 'anti' && unreadAnti
+                ? 'Agy 有未读消息'
+                : it.id === 'theme-tasks' && unreadTheme
+                  ? '主题任务有未读完成结果'
+                  : null
+          return (
           <NavLink
             key={it.to}
             to={it.to}
@@ -197,7 +209,10 @@ export function SidebarNav() {
               clsx('ga-sidebar-item', collapsed && 'ga-sidebar-item-collapsed', isActive && 'active')
             }
           >
-            <span className="ga-nav-icon relative"><span aria-hidden="true"><NavIcon name={it.icon} /></span>{it.id === 'theme-tasks' && unreadTheme && <span role="status" aria-label="主题任务有未读完成结果" className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[var(--c-sidebar)]" />}</span>
+            <span className="ga-nav-icon relative">
+              <span aria-hidden="true"><NavIcon name={it.icon} /></span>
+              {unreadLabel && <span role="status" aria-label={unreadLabel} className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[var(--c-sidebar)]" />}
+            </span>
             {!collapsed && (
               <>
                 <span className="ga-nav-label">{it.label}</span>
@@ -205,7 +220,8 @@ export function SidebarNav() {
               </>
             )}
           </NavLink>
-        ))}
+          )
+        })}
       </nav>
 
       <div className={clsx('flex flex-col gap-1.5 pb-2.5 pt-1.5', collapsed ? 'items-center px-1.5' : 'px-2.5')}>

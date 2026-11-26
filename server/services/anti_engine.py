@@ -9,19 +9,21 @@ import shutil
 import sqlite3
 import threading
 import time
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from .. import _paths
+from ..event_topics import ANTI_RUNTIME
 from . import agy_models, agy_profile
 from .agy_profile import AgyProfileError as AntiError
 from .agy_protocol import PERMISSION_MODES, default_permission_mode
 from .agy_runtime import AgyRuntimeManager, runtime as default_runtime
 from .agy_usage import AgyLedger
 from .anti_references import ReferenceError, prepare_inputs
+from .event_bus import bus
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +59,14 @@ def _prompt_title(prompt: str) -> str:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _outcome_for_status(status: str) -> Literal["completed", "cancelled", "failed"]:
+    if status == "success":
+        return "completed"
+    if status == "cancelled":
+        return "cancelled"
+    return "failed"
 
 
 class _RunEventBus:
@@ -108,6 +118,8 @@ _EVENT_BUS = _RunEventBus()
 class AntiSessions:
     _local_runs: set[tuple[Path, str]] = set()
     _extra_staging_dirs: dict[tuple[Path, str], list[Path]] = {}
+    _steering_queued_ids: set[tuple[Path, str]] = set()
+    _terminal_states: dict[tuple[Path, str], dict[str, Any]] = {}
     _local_lock = threading.RLock()
     _schema_lock = threading.Lock()
     _initialized_dbs: dict[Path, int] = {}
@@ -124,12 +136,30 @@ class AntiSessions:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY, project TEXT NOT NULL, workspace TEXT NOT NULL,
-                title TEXT NOT NULL, conversation TEXT, updated_at TEXT, profile_id TEXT
+                title TEXT NOT NULL, conversation TEXT, updated_at TEXT, profile_id TEXT,
+                queue_pause_reason TEXT
             );
             CREATE TABLE IF NOT EXISTS profile_conversations (
                 session_id TEXT NOT NULL, profile_id TEXT NOT NULL, conversation TEXT NOT NULL,
                 PRIMARY KEY(session_id, profile_id)
             );
+            CREATE TABLE IF NOT EXISTS queued_prompts (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                prompt TEXT NOT NULL,
+                model TEXT,
+                effort TEXT,
+                references_json TEXT,
+                attachments_json TEXT,
+                mode TEXT,
+                permission_mode TEXT,
+                orchestrator_planner TEXT,
+                orchestrator_executor TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_queued_prompts_session_pos
+                ON queued_prompts(session_id, position);
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY, session_id TEXT NOT NULL, operation TEXT NOT NULL,
                 prompt TEXT NOT NULL, status TEXT NOT NULL, answer TEXT,
@@ -162,7 +192,12 @@ class AntiSessions:
                     if column not in columns:
                         conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
         session_columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
-        if "conversation" not in session_columns or "updated_at" not in session_columns or "profile_id" not in session_columns:
+        if (
+            "conversation" not in session_columns
+            or "updated_at" not in session_columns
+            or "profile_id" not in session_columns
+            or "queue_pause_reason" not in session_columns
+        ):
             with conn:
                 conn.execute("BEGIN IMMEDIATE")
                 session_columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
@@ -170,6 +205,8 @@ class AntiSessions:
                     conn.execute("ALTER TABLE sessions ADD COLUMN conversation TEXT")
                 if "profile_id" not in session_columns:
                     conn.execute("ALTER TABLE sessions ADD COLUMN profile_id TEXT")
+                if "queue_pause_reason" not in session_columns:
+                    conn.execute("ALTER TABLE sessions ADD COLUMN queue_pause_reason TEXT")
                 if "updated_at" not in session_columns:
                     conn.execute("ALTER TABLE sessions ADD COLUMN updated_at TEXT")
                     for sid, first_prompt in conn.execute("""
@@ -276,12 +313,29 @@ class AntiSessions:
                 pass
         return {"items": fn()}
 
+    @staticmethod
+    def _publish_anti_runtime(payload: dict[str, Any]) -> None:
+        try:
+            bus.publish(ANTI_RUNTIME, payload)
+        except Exception:
+            log.debug("Failed to publish anti runtime event", exc_info=True)
+
     def _enrich_session(self, item: dict) -> dict:
         fn = getattr(self.runtime, "session_connected", None)
         item["acp_connected"] = bool(fn(str(self._db_key), item["id"])) if callable(fn) else False
         item["profile_id"] = None
         grants_fn = getattr(self.runtime, "session_grants", None)
         item["grants"] = list(grants_fn(str(self._db_key), item["id"])) if callable(grants_fn) else []
+        if item.get("active_run_id"):
+            item["completed_run_id"] = None
+            item["last_outcome"] = None
+            item["last_error"] = None
+        else:
+            with self._local_lock:
+                terminal = dict(self._terminal_states.get((self._db_key, item["id"])) or {})
+            item["completed_run_id"] = terminal.get("completed_run_id")
+            item["last_outcome"] = terminal.get("outcome")
+            item["last_error"] = terminal.get("error")
         return item
 
     def list(self) -> list[dict]:
@@ -298,13 +352,15 @@ class AntiSessions:
             SELECT s.id, s.project, s.title, s.workspace, s.updated_at, NULL AS profile_id,
                 (s.conversation IS NOT NULL AND s.conversation != '') AS has_conversation,
                 (SELECT r.id FROM runs r WHERE r.session_id=s.id
-                 AND r.status IN ({placeholders}) ORDER BY r.rowid DESC LIMIT 1) AS active_run_id
+                 AND r.status IN ({placeholders}) ORDER BY r.rowid DESC LIMIT 1) AS active_run_id,
+                (SELECT COUNT(*) FROM queued_prompts q WHERE q.session_id=s.id) AS queued_count
             FROM sessions s {where} ORDER BY s.rowid DESC
         """, params)
         out = []
         for row in rows:
             item = dict(row) | {"engine": "anti"}
             item["has_conversation"] = bool(item.get("has_conversation"))
+            item["queued_count"] = int(item.get("queued_count") or 0)
             out.append(item)
         return out
 
@@ -334,7 +390,10 @@ class AntiSessions:
                 raise AntiError(404, "Anti session not found")
             db.execute("DELETE FROM run_events WHERE run_id IN (SELECT id FROM runs WHERE session_id=?)", (sid,))
             db.execute("DELETE FROM profile_conversations WHERE session_id=?", (sid,))
+            db.execute("DELETE FROM queued_prompts WHERE session_id=?", (sid,))
             db.execute("DELETE FROM runs WHERE session_id=?", (sid,))
+        with self._local_lock:
+            self._terminal_states.pop((self._db_key, sid), None)
         forget_fn = getattr(self.runtime, "forget_session_grants", None)
         if callable(forget_fn):
             forget_fn(str(self._db_key), sid)
@@ -675,6 +734,11 @@ class AntiSessions:
         if not result.get("auth_transient") and isinstance(error, str) and ("login" in error.lower() or "auth" in error.lower()):
             error_detail = "请先在顶部账号管理完成官方 Agy 登录后再试。"
 
+        finished_at = _now()
+        updated = False
+        session_title = ""
+        outcome = _outcome_for_status(status)
+        terminal_error = error if outcome == "failed" else None
         try:
             with self.connect() as db, db:
                 if thread_broken:
@@ -690,18 +754,42 @@ class AntiSessions:
                         "ON CONFLICT(session_id,profile_id) DO UPDATE SET conversation=excluded.conversation",
                         (sid, profile_id, conv_id),
                     )
-                db.execute(
+                cur = db.execute(
                     "UPDATE runs SET status=?, answer=?, error=?, error_detail=?, usage_json=?, finished_at=?, progress_messages_json=?, effective_model=?, fallback_notice=? WHERE id=? "
                     "AND status IN ('submitting','queued','running','unknown')",
                     (
-                        status, answer, error, error_detail, usage_json, _now(),
+                        status, answer, error, error_detail, usage_json, finished_at,
                         progress_messages_json, effective_model, fallback_notice, rid,
                     ),
                 )
+                updated = cur.rowcount > 0
+                if updated:
+                    db.execute("UPDATE sessions SET updated_at=? WHERE id=?", (finished_at, sid))
+                    title_row = db.execute("SELECT title FROM sessions WHERE id=?", (sid,)).fetchone()
+                    session_title = str(title_row[0] or "") if title_row else ""
+            if updated:
+                with self._local_lock:
+                    self._terminal_states[(self._db_key, sid)] = {
+                        "completed_run_id": rid,
+                        "outcome": outcome,
+                        "error": terminal_error,
+                    }
         finally:
             with self._local_lock:
                 self._local_runs.discard(key)
             _EVENT_BUS.notify(key, finished=True)
+
+        if updated:
+            self._publish_anti_runtime({
+                "session_id": sid,
+                "title": session_title,
+                "status": "idle",
+                "run_id": None,
+                "completed_run_id": rid,
+                "outcome": outcome,
+                "error": terminal_error,
+                "updated_at": finished_at,
+            })
 
         if status == "rate_limited" and isinstance(reset_seconds, (int, float)) and reset_seconds > 0:
             cooldown = max(60, min(int(reset_seconds), 3600))
@@ -721,6 +809,13 @@ class AntiSessions:
             generation_ms=int(usage.get("generation_ms") or 0),
             cooldown_seconds=cooldown,
         )
+        if updated:
+            self._handle_queue_after_run(
+                sid,
+                status=status,
+                error=error,
+                fallback_profile_id=profile_id,
+            )
 
     def submit(
         self,
@@ -736,6 +831,8 @@ class AntiSessions:
         permission_mode: str | None = None,
         orchestrator_planner: str | None = None,
         orchestrator_executor: str | None = None,
+        *,
+        consume_queued_id: str | None = None,
     ) -> dict:
         if mode not in {"plan", "accept-edits"}:
             raise AntiError(422, "不支持的 Anti 运行模式")
@@ -778,6 +875,13 @@ class AntiSessions:
                     return decoded
                 if any(row[0] in ACTIVE for row in db.execute("SELECT status FROM runs WHERE session_id=?", (sid,))):
                     raise AntiError(409, "Another Anti run is already active for this session")
+                if consume_queued_id is not None:
+                    cur = db.execute(
+                        "DELETE FROM queued_prompts WHERE session_id=? AND id=?",
+                        (sid, consume_queued_id),
+                    )
+                    if cur.rowcount == 0:
+                        raise AntiError(409, "该排队消息已取消或已开始发送")
                 allowed, blocked_reason = self.ledger.check_run_allowed(model, profile_id=profile_id, conn=db)
                 if not allowed:
                     raise AntiError(429, blocked_reason or "当前账号处于风控冷却中，请稍后重试。")
@@ -836,11 +940,20 @@ class AntiSessions:
                 )
                 if not session["title"]:
                     title_source = prompt or (attachments[0].get("name") if attachments else "") or "附件消息"
-                    db.execute("UPDATE sessions SET title=?, updated_at=? WHERE id=?", (_prompt_title(title_source), now, sid))
+                    effective_title = _prompt_title(title_source)
+                    db.execute(
+                        "UPDATE sessions SET title=?, updated_at=?, queue_pause_reason=NULL WHERE id=?",
+                        (effective_title, now, sid),
+                    )
                 else:
-                    db.execute("UPDATE sessions SET updated_at=? WHERE id=?", (now, sid))
+                    effective_title = str(session["title"])
+                    db.execute(
+                        "UPDATE sessions SET updated_at=?, queue_pause_reason=NULL WHERE id=?",
+                        (now, sid),
+                    )
 
             self._local_runs.add((self._db_key, rid))
+            self._terminal_states.pop((self._db_key, sid), None)
             threading.Thread(
                 target=self._run_background,
                 kwargs={
@@ -863,6 +976,16 @@ class AntiSessions:
                 },
                 daemon=True,
             ).start()
+            self._publish_anti_runtime({
+                "session_id": sid,
+                "title": effective_title,
+                "status": "running",
+                "run_id": rid,
+                "completed_run_id": None,
+                "outcome": None,
+                "error": None,
+                "updated_at": now,
+            })
             return self._decode_run(self._raw_run(sid, rid))
 
     def _raw_run(self, sid: str, rid: str) -> sqlite3.Row:
@@ -900,11 +1023,38 @@ class AntiSessions:
             alive = (self._db_key, rid) in self._local_runs
         if alive:
             return run
+        finished_at = _now()
+        dead_error = "原 Agy 会话已断开，可继续发送消息自动恢复上下文"
+        updated = False
+        session_title = ""
         with self.connect() as db, db:
-            db.execute(
+            cur = db.execute(
                 "UPDATE runs SET status=?, error=?, finished_at=? WHERE id=? AND status IN ('submitting','queued','running','unknown')",
-                ("cli_error", "原 Agy 会话已断开，可继续发送消息自动恢复上下文", _now(), rid),
+                ("cli_error", dead_error, finished_at, rid),
             )
+            updated = cur.rowcount > 0
+            if updated:
+                db.execute("UPDATE sessions SET updated_at=? WHERE id=?", (finished_at, sid))
+                title_row = db.execute("SELECT title FROM sessions WHERE id=?", (sid,)).fetchone()
+                session_title = str(title_row[0] or "") if title_row else ""
+        if updated:
+            self._set_queue_pause_reason_if_nonempty(sid, "原 Agy 会话已断开，已暂停自动发送排队消息")
+            with self._local_lock:
+                self._terminal_states[(self._db_key, sid)] = {
+                    "completed_run_id": rid,
+                    "outcome": "failed",
+                    "error": dead_error,
+                }
+            self._publish_anti_runtime({
+                "session_id": sid,
+                "title": session_title,
+                "status": "idle",
+                "run_id": None,
+                "completed_run_id": rid,
+                "outcome": "failed",
+                "error": dead_error,
+                "updated_at": finished_at,
+            })
         return self.run(sid, rid)
 
     def events(self, sid: str, rid: str, after: int = 0) -> list[dict]:
@@ -1045,15 +1195,45 @@ class AntiSessions:
 
     def _force_finalize_cancelled(self, rid: str, reason: str = "已强制终止任务") -> None:
         key = (self._db_key, rid)
-        with self._local_lock:
-            self._local_runs.discard(key)
+        finished_at = _now()
+        sid: str | None = None
+        session_title = ""
+        updated = False
         with self.connect() as db, db:
-            db.execute(
+            row = db.execute("SELECT session_id FROM runs WHERE id=?", (rid,)).fetchone()
+            if row is not None:
+                sid = row[0]
+            cur = db.execute(
                 "UPDATE runs SET status=?, error=?, finished_at=? WHERE id=? "
                 "AND status IN ('submitting','queued','running','unknown')",
-                ("cancelled", reason, _now(), rid),
+                ("cancelled", reason, finished_at, rid),
             )
+            updated = cur.rowcount > 0
+            if updated and sid:
+                db.execute("UPDATE sessions SET updated_at=? WHERE id=?", (finished_at, sid))
+                title_row = db.execute("SELECT title FROM sessions WHERE id=?", (sid,)).fetchone()
+                session_title = str(title_row[0] or "") if title_row else ""
+        with self._local_lock:
+            self._local_runs.discard(key)
+            if updated and sid:
+                self._terminal_states[(self._db_key, sid)] = {
+                    "completed_run_id": rid,
+                    "outcome": "cancelled",
+                    "error": None,
+                }
         _EVENT_BUS.notify(key, finished=True)
+        if updated and sid:
+            self._set_queue_pause_reason_if_nonempty(sid, "上一轮任务已强制终止，已暂停自动发送排队消息")
+            self._publish_anti_runtime({
+                "session_id": sid,
+                "title": session_title,
+                "status": "idle",
+                "run_id": None,
+                "completed_run_id": rid,
+                "outcome": "cancelled",
+                "error": None,
+                "updated_at": finished_at,
+            })
 
     def force_cancel_all_active(self) -> int:
         placeholders = ",".join("?" * len(ACTIVE))
@@ -1102,3 +1282,365 @@ class AntiSessions:
                 # A live worker still owns the turn until it commits the result.
                 return self.refresh(sid, rid)
             time.sleep(0.05)
+
+    @staticmethod
+    def _decode_queued_prompt(row: sqlite3.Row) -> dict:
+        item = dict(row)
+        raw_refs = item.get("references_json")
+        decoded_refs: list[dict[str, Any]] = []
+        if raw_refs:
+            try:
+                parsed_refs = json.loads(raw_refs)
+                if isinstance(parsed_refs, list):
+                    for entry in parsed_refs:
+                        if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                            try:
+                                decoded_refs.append({"id": int(entry[0]), "path": str(entry[1])})
+                            except (TypeError, ValueError):
+                                continue
+                        elif isinstance(entry, dict) and "id" in entry and "path" in entry:
+                            try:
+                                decoded_refs.append({"id": int(entry["id"]), "path": str(entry["path"])})
+                            except (TypeError, ValueError):
+                                continue
+            except ValueError:
+                pass
+        item["references"] = decoded_refs
+
+        raw_atts = item.get("attachments_json")
+        decoded_atts: list[dict[str, Any]] = []
+        if raw_atts:
+            try:
+                parsed_atts = json.loads(raw_atts)
+                if isinstance(parsed_atts, list):
+                    decoded_atts = [entry for entry in parsed_atts if isinstance(entry, dict)]
+            except ValueError:
+                pass
+        item["attachments"] = decoded_atts
+        mode = item.get("mode") if item.get("mode") in {"plan", "accept-edits"} else "plan"
+        item["mode"] = mode
+        item["permission_mode"] = item.get("permission_mode") or default_permission_mode(mode, None)
+        return item
+
+    def _session_queue_state_locked(
+        self,
+        db: sqlite3.Connection,
+        sid: str,
+        *,
+        session_row: sqlite3.Row | dict | None = None,
+    ) -> dict:
+        if session_row is None:
+            session_row = db.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
+        if not session_row:
+            raise AntiError(404, "Anti session not found")
+        rows = db.execute(
+            "SELECT * FROM queued_prompts WHERE session_id=? ORDER BY position ASC, rowid ASC",
+            (sid,),
+        ).fetchall()
+        items = [self._decode_queued_prompt(row) for row in rows]
+        has_active = any(row[0] in ACTIVE for row in db.execute("SELECT status FROM runs WHERE session_id=?", (sid,)))
+        stored_reason = session_row["queue_pause_reason"] if "queue_pause_reason" in session_row.keys() else None
+        paused = bool(items) and not has_active
+        pause_reason = (str(stored_reason) if stored_reason else "当前无运行中任务，请确认后继续发送") if paused else None
+        return {
+            "items": items,
+            "paused": paused,
+            "pause_reason": pause_reason,
+        }
+
+    def queue_state(self, sid: str) -> dict:
+        self.session(sid)
+        with self.connect() as db:
+            return self._session_queue_state_locked(db, sid)
+
+    def enqueue(
+        self,
+        sid: str,
+        prompt: str = "",
+        model: str | None = None,
+        effort: str | None = None,
+        references: list[tuple[int, str]] | None = None,
+        attachments: list[dict] | None = None,
+        mode: str = "plan",
+        permission_mode: str | None = None,
+        orchestrator_planner: str | None = None,
+        orchestrator_executor: str | None = None,
+    ) -> dict:
+        if mode not in {"plan", "accept-edits"}:
+            raise AntiError(422, "不支持的 Anti 运行模式")
+        def_model, def_effort = agy_models.default_model_and_effort()
+        model = model or def_model
+        effort = effort or def_effort
+        resolved_permission = default_permission_mode(mode, permission_mode)
+        if resolved_permission not in PERMISSION_MODES:
+            raise AntiError(422, "不支持的权限策略")
+        references = references or []
+        attachments = attachments or []
+        if not (prompt.strip() or references or attachments):
+            raise AntiError(422, "请输入内容或添加附件")
+        normalized_refs = [[file_id, path] for file_id, path in references]
+        refs_json = json.dumps(normalized_refs, ensure_ascii=False)
+        attachments_json = json.dumps(attachments, ensure_ascii=False)
+        session = self.session(sid)
+        workspace_dir = Path(session["workspace"])
+        if not workspace_dir.is_dir():
+            raise AntiError(409, "Project directory is unavailable")
+        qid = f"q_{uuid4().hex[:16]}"
+        created_at = _now()
+
+        with self._local_lock:
+            with self.connect() as db, db:
+                db.execute("BEGIN IMMEDIATE")
+                session_row = db.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
+                if not session_row:
+                    raise AntiError(404, "Anti session not found")
+                count = int(db.execute("SELECT COUNT(*) FROM queued_prompts WHERE session_id=?", (sid,)).fetchone()[0])
+                if count >= 50:
+                    raise AntiError(409, "当前会话待发队列已满（最多 50 条）")
+                next_pos = int(
+                    db.execute(
+                        "SELECT COALESCE(MAX(position), 0) + 1 FROM queued_prompts WHERE session_id=?",
+                        (sid,),
+                    ).fetchone()[0]
+                )
+                db.execute(
+                    """
+                    INSERT INTO queued_prompts (
+                        id, session_id, position, prompt, model, effort,
+                        references_json, attachments_json, mode, permission_mode,
+                        orchestrator_planner, orchestrator_executor, created_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        qid, sid, next_pos, prompt, model, effort,
+                        refs_json, attachments_json, mode, resolved_permission,
+                        orchestrator_planner, orchestrator_executor, created_at,
+                    ),
+                )
+                return self._session_queue_state_locked(db, sid, session_row=session_row)
+
+    def remove_queued(self, sid: str, qid: str) -> dict:
+        self.session(sid)
+        with self._local_lock:
+            if (self._db_key, qid) in self._steering_queued_ids:
+                raise AntiError(409, "该排队消息正在发送插话，请稍候")
+            with self.connect() as db, db:
+                db.execute("BEGIN IMMEDIATE")
+                cur = db.execute("DELETE FROM queued_prompts WHERE session_id=? AND id=?", (sid, qid))
+                if cur.rowcount == 0:
+                    raise AntiError(404, "排队消息不存在或已发出")
+                remaining = int(db.execute("SELECT COUNT(*) FROM queued_prompts WHERE session_id=?", (sid,)).fetchone()[0])
+                if remaining == 0:
+                    db.execute("UPDATE sessions SET queue_pause_reason=NULL WHERE id=?", (sid,))
+                return self._session_queue_state_locked(db, sid)
+
+    def clear_queue(self, sid: str) -> dict:
+        self.session(sid)
+        with self._local_lock:
+            with self.connect() as db, db:
+                db.execute("BEGIN IMMEDIATE")
+                protected = [qid for db_key, qid in self._steering_queued_ids if db_key == self._db_key]
+                if protected:
+                    placeholders = ",".join("?" for _ in protected)
+                    db.execute(
+                        f"DELETE FROM queued_prompts WHERE session_id=? AND id NOT IN ({placeholders})",
+                        (sid, *protected),
+                    )
+                else:
+                    db.execute("DELETE FROM queued_prompts WHERE session_id=?", (sid,))
+                remaining = int(db.execute("SELECT COUNT(*) FROM queued_prompts WHERE session_id=?", (sid,)).fetchone()[0])
+                if remaining == 0:
+                    db.execute("UPDATE sessions SET queue_pause_reason=NULL WHERE id=?", (sid,))
+                return self._session_queue_state_locked(db, sid)
+
+    def move_queued(self, sid: str, qid: str, direction: str) -> dict:
+        if direction not in {"up", "down", "top"}:
+            raise AntiError(422, "不支持的排队排序操作")
+        self.session(sid)
+        with self._local_lock:
+            with self.connect() as db, db:
+                db.execute("BEGIN IMMEDIATE")
+                ordered = [
+                    str(row[0])
+                    for row in db.execute(
+                        "SELECT id FROM queued_prompts WHERE session_id=? ORDER BY position ASC, rowid ASC",
+                        (sid,),
+                    )
+                ]
+                if qid not in ordered:
+                    raise AntiError(404, "排队消息不存在或已发出")
+                idx = ordered.index(qid)
+                if direction == "up" and idx > 0:
+                    ordered[idx - 1], ordered[idx] = ordered[idx], ordered[idx - 1]
+                elif direction == "down" and idx < len(ordered) - 1:
+                    ordered[idx + 1], ordered[idx] = ordered[idx], ordered[idx + 1]
+                elif direction == "top" and idx > 0:
+                    ordered.insert(0, ordered.pop(idx))
+                for pos, item_id in enumerate(ordered, 1):
+                    db.execute(
+                        "UPDATE queued_prompts SET position=? WHERE session_id=? AND id=?",
+                        (pos, sid, item_id),
+                    )
+                return self._session_queue_state_locked(db, sid)
+
+    def steer_queued(self, sid: str, qid: str) -> dict:
+        placeholders = ",".join("?" for _ in ACTIVE)
+        with self._local_lock:
+            self.session(sid)
+            if (self._db_key, qid) in self._steering_queued_ids:
+                raise AntiError(409, "该排队消息正在发送插话，请稍候")
+            with self.connect() as db:
+                row = db.execute("SELECT * FROM queued_prompts WHERE session_id=? AND id=?", (sid, qid)).fetchone()
+                if not row:
+                    raise AntiError(404, "排队消息不存在或已发出")
+                active_row = db.execute(
+                    f"SELECT id FROM runs WHERE session_id=? AND status IN ({placeholders}) ORDER BY rowid DESC LIMIT 1",
+                    (sid, *ACTIVE),
+                ).fetchone()
+                if not active_row:
+                    raise AntiError(409, "当前任务已结束，请直接点击「立即发送」")
+                item = self._decode_queued_prompt(row)
+                rid = str(active_row[0])
+            self._steering_queued_ids.add((self._db_key, qid))
+        try:
+            refs = [(int(ref["id"]), str(ref["path"])) for ref in item["references"]]
+            run = self.steer(
+                sid,
+                rid,
+                prompt=item["prompt"],
+                references=refs,
+                attachments=item["attachments"],
+            )
+            with self._local_lock:
+                with self.connect() as db, db:
+                    db.execute("BEGIN IMMEDIATE")
+                    db.execute("DELETE FROM queued_prompts WHERE session_id=? AND id=?", (sid, qid))
+                    remaining = int(db.execute("SELECT COUNT(*) FROM queued_prompts WHERE session_id=?", (sid,)).fetchone()[0])
+                    if remaining == 0:
+                        db.execute("UPDATE sessions SET queue_pause_reason=NULL WHERE id=?", (sid,))
+                    queue_state = self._session_queue_state_locked(db, sid)
+            return {"run": run, "queue": queue_state}
+        finally:
+            with self._local_lock:
+                self._steering_queued_ids.discard((self._db_key, qid))
+
+    def dispatch_queued(self, sid: str, qid: str | None = None, *, profile_id: str = "default") -> dict:
+        with self._local_lock:
+            self.session(sid)
+            with self.connect() as db:
+                if any(row[0] in ACTIVE for row in db.execute("SELECT status FROM runs WHERE session_id=?", (sid,))):
+                    raise AntiError(409, "当前仍有正在运行的任务，请等待本轮结束或直接插话")
+                if qid:
+                    row = db.execute("SELECT * FROM queued_prompts WHERE session_id=? AND id=?", (sid, qid)).fetchone()
+                    if not row:
+                        raise AntiError(404, "排队消息不存在或已发出")
+                else:
+                    row = db.execute(
+                        "SELECT * FROM queued_prompts WHERE session_id=? ORDER BY position ASC, rowid ASC LIMIT 1",
+                        (sid,),
+                    ).fetchone()
+                    if not row:
+                        raise AntiError(404, "当前没有待发送的排队消息")
+                item = self._decode_queued_prompt(row)
+            if (self._db_key, item["id"]) in self._steering_queued_ids:
+                raise AntiError(409, "该排队消息正在发送插话，请稍候")
+            refs = [(int(ref["id"]), str(ref["path"])) for ref in item["references"]]
+            try:
+                run = self.submit(
+                    sid,
+                    f"q_{item['id']}_{uuid4().hex[:8]}",
+                    item["prompt"],
+                    item["model"],
+                    item["effort"],
+                    refs,
+                    profile_id,
+                    item["attachments"],
+                    item["mode"],
+                    item["permission_mode"],
+                    item.get("orchestrator_planner"),
+                    item.get("orchestrator_executor"),
+                    consume_queued_id=item["id"],
+                )
+            except AntiError as exc:
+                self._set_queue_pause_reason_if_nonempty(sid, str(exc))
+                raise
+            return {"run": run, "queue": self.queue_state(sid)}
+
+    def _set_queue_pause_reason_if_nonempty(self, sid: str, reason: str) -> None:
+        with self._local_lock:
+            with self.connect() as db, db:
+                db.execute("BEGIN IMMEDIATE")
+                has_queued = db.execute(
+                    "SELECT 1 FROM queued_prompts WHERE session_id=? LIMIT 1",
+                    (sid,),
+                ).fetchone() is not None
+                if has_queued:
+                    db.execute("UPDATE sessions SET queue_pause_reason=? WHERE id=?", (reason, sid))
+
+    def _handle_queue_after_run(
+        self,
+        sid: str,
+        *,
+        status: str,
+        error: str | None,  # noqa: ARG002
+        fallback_profile_id: str,
+    ) -> None:
+        with self.connect() as db:
+            has_queued = db.execute(
+                "SELECT 1 FROM queued_prompts WHERE session_id=? LIMIT 1",
+                (sid,),
+            ).fetchone() is not None
+        if not has_queued:
+            return
+        if status != "success":
+            if status == "cancelled":
+                reason = "上一轮任务已中止，已暂停自动发送排队消息"
+            elif status == "rate_limited":
+                reason = "当前账号触发限流保护，已暂停自动发送排队消息"
+            elif status == "timeout":
+                reason = "上一轮任务超时，已暂停自动发送排队消息"
+            else:
+                reason = "上一轮任务未成功，已暂停自动发送排队消息"
+            self._set_queue_pause_reason_if_nonempty(sid, reason)
+            return
+
+        submission_fn = getattr(self.runtime, "submission", None)
+        submission_ctx = submission_fn if callable(submission_fn) else (lambda: nullcontext(fallback_profile_id))
+        try:
+            with submission_ctx() as active_profile_id:
+                with self._local_lock:
+                    with self.connect() as db:
+                        if any(row[0] in ACTIVE for row in db.execute("SELECT status FROM runs WHERE session_id=?", (sid,))):
+                            return
+                        rows = db.execute(
+                            "SELECT * FROM queued_prompts WHERE session_id=? ORDER BY position ASC, rowid ASC",
+                            (sid,),
+                        ).fetchall()
+                    candidate = next(
+                        (row for row in rows if (self._db_key, str(row["id"])) not in self._steering_queued_ids),
+                        None,
+                    )
+                    if candidate is None:
+                        return
+                    item = self._decode_queued_prompt(candidate)
+                    refs = [(int(ref["id"]), str(ref["path"])) for ref in item["references"]]
+                    self.submit(
+                        sid,
+                        f"q_{item['id']}_{uuid4().hex[:8]}",
+                        item["prompt"],
+                        item["model"],
+                        item["effort"],
+                        refs,
+                        str(active_profile_id or fallback_profile_id),
+                        item["attachments"],
+                        item["mode"],
+                        item["permission_mode"],
+                        item.get("orchestrator_planner"),
+                        item.get("orchestrator_executor"),
+                        consume_queued_id=item["id"],
+                    )
+        except AntiError as exc:
+            self._set_queue_pause_reason_if_nonempty(sid, str(exc))
+        except Exception as exc:
+            log.warning("Failed to auto-dispatch queued prompt for session %s", sid, exc_info=True)
+            self._set_queue_pause_reason_if_nonempty(sid, f"自动发送排队消息失败：{exc}")

@@ -665,6 +665,9 @@ export type AgyOrchestratorSettings = ApiComponents['schemas']['AgyOrchestratorS
 export type AntiOrchestratorPreset = ApiComponents['schemas']['AntiOrchestratorPreset']
 export type AgyCodeLoginState = ApiComponents['schemas']['AgyCodeLoginState']
 export type AntiAttachmentRef = ApiComponents['schemas']['AttachmentRef']
+export type AntiQueuedPromptItem = ApiComponents['schemas']['AntiQueuedPromptItem']
+export type AntiQueueState = ApiComponents['schemas']['AntiQueueStateResp']
+export type AntiQueuePromoteResponse = ApiComponents['schemas']['AntiQueuePromoteResp']
 export type AntiMode = 'plan' | 'accept-edits'
 export type AntiPermissionMode = 'approval-required' | 'auto-accept-edits' | 'auto' | 'full-access'
 export type AntiSubmission = {
@@ -679,6 +682,7 @@ export type AntiSubmission = {
   orchestrator_planner?: string | null
   orchestrator_executor?: string | null
 }
+export type AntiQueueEnqueueSubmission = Omit<AntiSubmission, 'operation'>
 export type AntiSteerSubmission = {
   prompt: string
   references?: { id: number; path: string }[]
@@ -877,6 +881,20 @@ export const antiApi = {
     antiHttp<AntiRun>('POST', force ? `/api/anti/sessions/${sessionId}/runs/${runId}/cancel?force=true` : `/api/anti/sessions/${sessionId}/runs/${runId}/cancel`, {}),
   steerRun: (sessionId: string, runId: string, body: AntiSteerSubmission) =>
     antiHttp<AntiRun>('POST', `/api/anti/sessions/${sessionId}/runs/${runId}/steer`, body),
+  queue: (sessionId: string, signal?: AbortSignal) =>
+    antiHttp<AntiQueueState>('GET', `/api/anti/sessions/${sessionId}/queue`, undefined, { signal }),
+  enqueuePrompt: (sessionId: string, body: AntiQueueEnqueueSubmission) =>
+    antiHttp<AntiQueueState>('POST', `/api/anti/sessions/${sessionId}/queue`, body),
+  removeQueuedPrompt: (sessionId: string, queueId: string) =>
+    antiHttp<AntiQueueState>('DELETE', `/api/anti/sessions/${sessionId}/queue/${queueId}`),
+  clearQueue: (sessionId: string) =>
+    antiHttp<AntiQueueState>('DELETE', `/api/anti/sessions/${sessionId}/queue`),
+  moveQueuedPrompt: (sessionId: string, queueId: string, direction: 'up' | 'down' | 'top') =>
+    antiHttp<AntiQueueState>('POST', `/api/anti/sessions/${sessionId}/queue/${queueId}/move`, { direction }),
+  steerQueuedPrompt: (sessionId: string, queueId: string) =>
+    antiHttp<AntiQueuePromoteResponse>('POST', `/api/anti/sessions/${sessionId}/queue/${queueId}/steer`),
+  dispatchQueuedPrompt: (sessionId: string, itemId?: string) =>
+    antiHttp<AntiQueuePromoteResponse>('POST', `/api/anti/sessions/${sessionId}/queue/dispatch`, itemId ? { item_id: itemId } : {}),
   approveRun: (
     sessionId: string,
     runId: string,

@@ -39,11 +39,14 @@ interface Props {
   activeSubmit?: {
     label: string
     title?: string
+    description?: string
+    icon?: 'send' | 'queue'
     disabled?: boolean
     onSubmit: () => void
     secondary?: {
       label: string
       description?: string
+      icon?: 'send' | 'queue'
       shortcutHint?: string
       disabled?: boolean
       onSubmit: () => void
@@ -709,8 +712,10 @@ export function ImagePasteInput({
           </button>
         )}
         {submitAccessory}
-        {stopActive && activeSubmit && (
-          activeSubmit.secondary ? (
+        {stopActive && activeSubmit && (() => {
+          const PrimaryActiveIcon = (activeSubmit.icon ?? 'send') === 'queue' ? Clock : SendHorizontal
+          const SecondaryActiveIcon = (activeSubmit.secondary?.icon ?? 'queue') === 'send' ? SendHorizontal : Clock
+          return activeSubmit.secondary ? (
             <div ref={activeMenuRef} className="relative mb-0.5 inline-flex shrink-0 items-stretch">
               <div className="inline-flex h-10 items-stretch overflow-hidden rounded-xl">
                 <button
@@ -721,7 +726,7 @@ export function ImagePasteInput({
                   aria-label={activeSubmit.label}
                   title={attachmentHint ?? activeSubmit.title ?? activeSubmit.label}
                 >
-                  <SendHorizontal className="h-4 w-4" aria-hidden="true" />
+                  <PrimaryActiveIcon className="h-4 w-4" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -730,7 +735,7 @@ export function ImagePasteInput({
                   aria-label="选择发送或排队方式"
                   aria-haspopup="menu"
                   aria-expanded={activeMenuOpen}
-                  title="选择插话纠偏或加入排队"
+                  title="选择排队或插话方式"
                   className="ga-solid-primary inline-flex h-full w-[18px] items-center justify-center rounded-l-none rounded-r-xl border-l border-white/25"
                 >
                   <ChevronDown className={clsx('h-3 w-3 transition-transform', activeMenuOpen && 'rotate-180')} aria-hidden="true" />
@@ -750,14 +755,14 @@ export function ImagePasteInput({
                     onClick={submit}
                     className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-accent-soft/70 disabled:opacity-45"
                   >
-                    <SendHorizontal className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" />
+                    <PrimaryActiveIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-2 text-xs font-semibold text-ink">
                         <span>{activeSubmit.label}（默认）</span>
                         <kbd className="font-mono text-[10px] font-normal text-ink-faint">Enter</kbd>
                       </span>
                       <span className="mt-0.5 block text-[11px] leading-snug text-ink-muted">
-                        立即介入当前运行中的任务
+                        {activeSubmit.description ?? '立即介入当前运行中的任务'}
                       </span>
                     </span>
                   </button>
@@ -768,7 +773,7 @@ export function ImagePasteInput({
                     onClick={submitSecondary}
                     className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-bg-card/85 disabled:opacity-45"
                   >
-                    <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden="true" />
+                    <SecondaryActiveIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden="true" />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-2 text-xs font-semibold text-ink">
                         <span>{activeSubmit.secondary.label}</span>
@@ -795,10 +800,10 @@ export function ImagePasteInput({
               aria-label={activeSubmit.label}
               title={attachmentHint ?? activeSubmit.title ?? activeSubmit.label}
             >
-              <SendHorizontal className="h-4 w-4" aria-hidden="true" />
+              <PrimaryActiveIcon className="h-4 w-4" aria-hidden="true" />
             </button>
           )
-        )}
+        })()}
         <button
           type="button"
           onClick={stopActive ? onStop : submit}

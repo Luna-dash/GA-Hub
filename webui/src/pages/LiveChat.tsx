@@ -41,6 +41,7 @@ import { noticeKeys, useChatStore } from '@/stores/chatStore'
 import { formatDateTime } from '@/utils/formatTime'
 import { useDraftStore } from '@/stores/draftStore'
 import { capacityConflictFromError, errorMessageFromError, openSessionChat, sessionChatHref, startAbortedFromError } from '@/utils/sessionUi'
+import { markSessionRead } from '@/stores/sessionUnreadStore'
 import { buildSessionPromptText } from '@/utils/sessionPrompt'
 import { isTauriDesktop, selectDirectory, referenceAttachments } from '@/utils/desktop'
 import { defaultSessionLlmKey, resolveSessionLlmKey } from '@/utils/llm'
@@ -162,6 +163,7 @@ export default function LiveChat() {
       }),
     )
     if (runtime.status === 'idle' && runtime.completed_run_id && runtime.outcome) {
+      markSessionUsed(queryClient, runtime.session_id)
       settleInactiveSessionView({
         type: 'session_runtime', session_id: runtime.session_id, status: runtime.status,
         run_id: runtime.run_id ?? null, stream_id: runtime.stream_id ?? null,
@@ -644,6 +646,7 @@ export default function LiveChat() {
   const deleteSession = useCallback(async (id: string) => {
     try {
       await api.deleteSession(id)
+      markSessionRead('chat', id)
       void queryClient.invalidateQueries({ queryKey: conversationKeys.details() })
       dropSessionView(id)
       useDraftStore.getState().clearDraft(`liveChat:${id}`)

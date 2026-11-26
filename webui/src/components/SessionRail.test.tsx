@@ -65,7 +65,11 @@ describe('SessionRail', () => {
   })
 
   it('keeps pin / expand / count in fixed trailing slots, including when pinned', () => {
-    const grouped = Array.from({ length: 5 }, (_, i) => ({ ...sessions[0], id: `layout-${i}` }))
+    const grouped = Array.from({ length: 7 }, (_, i) => ({
+      ...sessions[0],
+      id: `layout-${i}`,
+      updated_at: `2026-08-0${8 - i}T09:00:00Z`,
+    }))
     act(() => root.render(
       <SessionRail sessions={grouped} runtimes={{}} currentId={grouped[0].id} onSelect={vi.fn()} />,
     ))
@@ -381,10 +385,7 @@ describe('SessionRail', () => {
     act(() => root.render(
       <SessionRail
         sessions={[...sessions, newSession]}
-        runtimes={{
-          ...runtimes,
-          [newSession.id]: { session_id: newSession.id, status: 'idle', run_id: null, stream_id: null },
-        }}
+        runtimes={{}}
         currentId={newSession.id}
         onSelect={vi.fn()}
       />,
@@ -394,41 +395,52 @@ describe('SessionRail', () => {
     expect(firstCard?.textContent).toContain('未命名会话 · dddddddd')
   })
 
-  it('keeps the row order stable when a running task is stopped', () => {
-    // The 2026-09 review: state-grouped ordering made a session jump bands on
-    // stop. Recency is the only key now, so a run→idle transition must not
-    // reorder anything.
+  it('orders sessions by completed > error > active > idle and returns cancelled runs to idle', () => {
     const orderOf = () => Array.from(host.querySelectorAll('[data-activity]'))
       .map((card) => card.getAttribute('data-session-id'))
+    const freeSessions: HubSession[] = [
+      { ...sessions[1], id: 's-idle-newest', title: '空闲最新', updated_at: '2026-08-05T12:00:00Z' },
+      { ...sessions[1], id: 's-active', title: '运行中', updated_at: '2026-08-05T09:00:00Z' },
+      { ...sessions[1], id: 's-error', title: '异常失败', updated_at: '2026-08-05T08:00:00Z' },
+      { ...sessions[1], id: 's-completed', title: '完成未读', updated_at: '2026-08-05T07:00:00Z' },
+      { ...sessions[1], id: 's-cancelled', title: '手动中止', updated_at: '2026-08-05T11:00:00Z' },
+    ]
 
     act(() => root.render(
       <SessionRail
-        sessions={[...sessions, sessions[1]].filter((s, i, arr) => arr.findIndex((x) => x.id === s.id) === i)}
+        sessions={freeSessions}
         runtimes={{
-          [sessions[0].id]: { session_id: sessions[0].id, status: 'running', run_id: 'run-a', stream_id: 'stream-a' },
-          [sessions[1].id]: { session_id: sessions[1].id, status: 'running', run_id: 'run-b', stream_id: 'stream-b' },
+          's-idle-newest': { session_id: 's-idle-newest', status: 'idle', run_id: null, stream_id: null },
+          's-active': { session_id: 's-active', status: 'running', run_id: 'run-act', stream_id: null },
+          's-error': { session_id: 's-error', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-err', outcome: 'failed' },
+          's-completed': { session_id: 's-completed', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-ok', outcome: 'completed' },
+          's-cancelled': { session_id: 's-cancelled', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-can', outcome: 'cancelled' },
         }}
-        currentId={sessions[0].id}
-        onSelect={vi.fn()}
-      />,
-    ))
-    const whileRunning = orderOf()
-    // 唯一钥匙是最近活动时间：c(11:00) > b(10:00) > a(09:00)
-    expect(whileRunning).toEqual([sessions[2].id, sessions[1].id, sessions[0].id])
-
-    act(() => root.render(
-      <SessionRail
-        sessions={sessions}
-        runtimes={{
-          [sessions[0].id]: { session_id: sessions[0].id, status: 'idle', run_id: null, stream_id: null },
-          [sessions[1].id]: { session_id: sessions[1].id, status: 'idle', run_id: null, stream_id: null },
-        }}
-        currentId={sessions[0].id}
+        currentId="s-idle-newest"
         onSelect={vi.fn()}
       />,
     ))
 
-    expect(orderOf()).toEqual(whileRunning)
+    expect(orderOf()).toEqual(['s-completed', 's-error', 's-active', 's-idle-newest', 's-cancelled'])
+    expect(host.querySelector('[data-session-id="s-cancelled"]')?.getAttribute('data-activity')).toBe('idle')
+
+    // Running -> cancelled returns to idle sorted by recency.
+    act(() => root.render(
+      <SessionRail
+        sessions={freeSessions}
+        runtimes={{
+          's-idle-newest': { session_id: 's-idle-newest', status: 'idle', run_id: null, stream_id: null },
+          's-active': { session_id: 's-active', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-act', outcome: 'cancelled' },
+          's-error': { session_id: 's-error', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-err', outcome: 'failed' },
+          's-completed': { session_id: 's-completed', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-ok', outcome: 'completed' },
+          's-cancelled': { session_id: 's-cancelled', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-can', outcome: 'cancelled' },
+        }}
+        currentId="s-idle-newest"
+        onSelect={vi.fn()}
+      />,
+    ))
+
+    expect(orderOf()).toEqual(['s-completed', 's-error', 's-idle-newest', 's-cancelled', 's-active'])
   })
 
   it('lifts a session to the top as soon as its activity stamp moves', () => {
@@ -438,7 +450,7 @@ describe('SessionRail', () => {
       .map((card) => card.getAttribute('data-session-id'))
 
     act(() => root.render(
-      <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
+      <SessionRail sessions={sessions} runtimes={{}} currentId={sessions[0].id} onSelect={vi.fn()} />,
     ))
     expect(orderOf()).toEqual([sessions[2].id, sessions[1].id, sessions[0].id])
 
@@ -447,7 +459,7 @@ describe('SessionRail', () => {
         sessions={sessions.map((item) => (
           item.id === sessions[0].id ? { ...item, updated_at: '2026-08-05T12:00:00Z' } : item
         ))}
-        runtimes={runtimes}
+        runtimes={{}}
         currentId={sessions[0].id}
         onSelect={vi.fn()}
       />,
@@ -502,14 +514,14 @@ describe('SessionRail', () => {
     expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('false')
   })
 
-  // v3 收折：默认每组最多 3 条、chevron = C↔D、组底链接（仅 N>3）= D↔E、
-  // E 态组内活动抬升 → 自动回落 D。状态机注释见 SessionRail.tsx。
+  // 动态阈值（项目数 < 3 时 ≤5 条，≥ 3 时 ≤3 条）+ 三态收折：
+  // chevron = C↔D、标题按钮 = D↔E、E 态组内活动抬升 → 自动回落 D。
   const drawerSessions = (count: number, base: HubSession): HubSession[] =>
     Array.from({ length: count }, (_, index) => ({
       ...base,
       id: `drawer-${base.project_name ?? 'free'}-${index}`,
       title: `任务 ${index}`,
-      updated_at: `2026-08-0${6 - index}T09:00:00Z`,
+      updated_at: `2026-08-${String(20 - index).padStart(2, '0')}T09:00:00Z`,
     }))
 
   const sectionOf = (name: string) => Array.from(host.querySelectorAll('section'))
@@ -520,48 +532,95 @@ describe('SessionRail', () => {
 
   const linkOf = (key: string) => host.querySelector(`[data-testid="group-show-all-${key}"]`) as HTMLButtonElement | null
 
-  it('caps a drawer at its three newest sessions and the footer link toggles the rest', () => {
-    const many = drawerSessions(5, sessions[0])
+  it('uses a 5-session preview limit when fewer than 3 project groups exist (excluding free)', () => {
+    const alpha5 = drawerSessions(5, sessions[0])
+    const beta5 = drawerSessions(5, { ...sessions[0], project_name: 'beta', project_path: 'D:/projects/beta' })
+    const free2 = drawerSessions(2, sessions[1])
+    // 2 project groups (+ free group) => threshold stays 5, so 5-item drawers need no expand button
+    act(() => root.render(
+      <SessionRail sessions={[...alpha5, ...beta5, ...free2]} runtimes={{}} currentId={alpha5[0].id} onSelect={vi.fn()} />,
+    ))
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2', '3', '4'])
+    expect(shownInDrawer('beta')).toEqual(['0', '1', '2', '3', '4'])
+    expect(linkOf('project:alpha')).toBeNull()
+
+    // Adding a 3rd project group drops the threshold to 3
+    const gamma1 = drawerSessions(1, { ...sessions[0], project_name: 'gamma', project_path: 'D:/projects/gamma' })
+    act(() => root.render(
+      <SessionRail sessions={[...alpha5, ...beta5, ...gamma1, ...free2]} runtimes={{}} currentId={alpha5[0].id} onSelect={vi.fn()} />,
+    ))
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
+    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('展开全部 5 个会话')
+  })
+
+  it('caps a single-project drawer at five newest sessions and toggles the rest', () => {
+    const many = drawerSessions(7, sessions[0])
     act(() => root.render(
       <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[0].id} onSelect={vi.fn()} />,
     ))
 
-    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
-    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('展开全部 5 个会话')
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2', '3', '4'])
+    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('展开全部 7 个会话')
 
     act(() => linkOf('project:alpha')?.click())
-    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2', '3', '4'])
-    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('收起（仅显示最近3个）')
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2', '3', '4', '5', '6'])
+    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('收起（仅显示最近5个）')
     expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupShowAll') || '{}')).toEqual({ 'project:alpha': true })
 
     act(() => linkOf('project:alpha')?.click())
-    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2', '3', '4'])
     expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupShowAll') || '{}')).toEqual({})
   })
 
-  it('keeps the current session inside the three-item preview when it sits past the edge', () => {
-    const many = drawerSessions(5, sessions[0])
+  it('keeps the current session and all protected sessions visible past the preview edge', () => {
+    const many = drawerSessions(7, sessions[0])
     act(() => root.render(
-      <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[4].id} onSelect={vi.fn()} />,
+      <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[6].id} onSelect={vi.fn()} />,
     ))
-    // many[4] 是组内最旧：默认态把它顶入第 3 位，而不是整组跟着跳位
-    expect(shownInDrawer('alpha')).toEqual(['0', '1', '4'])
+    // many[6] 是组内最旧：默认态把它顶入第 5 位，而不是整组跟着跳位
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2', '3', '6'])
 
+    // Older completed/error/active sessions jump to the front and never get collapsed (Option A fills to 5)
     act(() => root.render(
-      <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[1].id} onSelect={vi.fn()} />,
+      <SessionRail
+        sessions={[...many, sessions[1]]}
+        runtimes={{
+          [many[6].id]: { session_id: many[6].id, status: 'idle', run_id: null, stream_id: null, completed_run_id: 'r6', outcome: 'completed' },
+          [many[5].id]: { session_id: many[5].id, status: 'running', run_id: 'r5', stream_id: null },
+        }}
+        currentId={many[1].id}
+        onSelect={vi.fn()}
+      />,
     ))
-    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
+    expect(shownInDrawer('alpha')).toEqual(['6', '5', '0', '1', '2'])
+  })
+
+  it('shows a group header dot when a collapsed project group holds protected sessions', () => {
+    localStorage.setItem('gahub.sessionRailGroupCollapse', JSON.stringify({ 'project:alpha': true }))
+    const many = drawerSessions(3, sessions[0])
+    act(() => root.render(
+      <SessionRail
+        sessions={many}
+        runtimes={{
+          [many[1].id]: { session_id: many[1].id, status: 'idle', run_id: null, stream_id: null, completed_run_id: 'r1', outcome: 'completed' },
+        }}
+        currentId={many[0].id}
+        onSelect={vi.fn()}
+      />,
+    ))
+    expect(shownInDrawer('alpha')).toEqual([])
+    expect(sectionOf('alpha')?.querySelector('[data-group-attention="completed"]')).not.toBeNull()
   })
 
   it('collapses and reopens a drawer from the chevron without ever landing on show-all', () => {
-    const many = drawerSessions(5, sessions[0])
+    const many = drawerSessions(7, sessions[0])
     const mount = (rows: HubSession[]) => act(() => root.render(
       <SessionRail sessions={[...rows, sessions[1]]} runtimes={{}} currentId={rows[0].id} onSelect={vi.fn()} />,
     ))
 
     mount(many)
     act(() => linkOf('project:alpha')?.click())
-    expect(shownInDrawer('alpha')).toHaveLength(5)
+    expect(shownInDrawer('alpha')).toHaveLength(7)
 
     // E → C：chevron 收起，show-all 标志同时清除
     const chevron = () => sectionOf('alpha')?.querySelector('button[aria-expanded]') as HTMLButtonElement
@@ -571,52 +630,52 @@ describe('SessionRail', () => {
 
     // C → D：展开恒回默认预览（不落回 E）
     act(() => chevron().click())
-    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2', '3', '4'])
 
     // 再进 E 后，组内活动抬升（乐观 updated_at）→ 自动回落 D
     act(() => linkOf('project:alpha')?.click())
-    expect(shownInDrawer('alpha')).toHaveLength(5)
-    mount(many.map((item) => (item.id === many[4].id ? { ...item, updated_at: '2026-08-07T00:00:00Z' } : item)))
-    expect(shownInDrawer('alpha')).toEqual(['4', '0', '1'])
-    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('展开全部 5 个会话')
+    expect(shownInDrawer('alpha')).toHaveLength(7)
+    mount(many.map((item) => (item.id === many[6].id ? { ...item, updated_at: '2026-08-25T00:00:00Z' } : item)))
+    expect(shownInDrawer('alpha')).toEqual(['6', '0', '1', '2', '3'])
+    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('展开全部 7 个会话')
     expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupShowAll') || '{}')).toEqual({})
   })
 
   it('restores a persisted show-all drawer on mount without treating the first paint as activation', () => {
     localStorage.setItem('gahub.sessionRailGroupShowAll', JSON.stringify({ 'project:alpha': true }))
-    const many = drawerSessions(5, sessions[0])
+    const many = drawerSessions(7, sessions[0])
     act(() => root.render(
       <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[0].id} onSelect={vi.fn()} />,
     ))
-    expect(shownInDrawer('alpha')).toHaveLength(5)
-    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('收起（仅显示最近3个）')
+    expect(shownInDrawer('alpha')).toHaveLength(7)
+    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('收起（仅显示最近5个）')
   })
 
   it('reads a legacy collapsed=false flag as the default preview state', () => {
     localStorage.setItem('gahub.sessionRailGroupCollapse', JSON.stringify({ 'project:alpha': false }))
-    const many = drawerSessions(4, sessions[0])
+    const many = drawerSessions(6, sessions[0])
     act(() => root.render(
       <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[0].id} onSelect={vi.fn()} />,
     ))
-    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
-    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('展开全部 4 个会话')
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2', '3', '4'])
+    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('展开全部 6 个会话')
   })
 
   it('reopens a legacy fully-collapsed drawer to the default preview', () => {
     localStorage.setItem('gahub.sessionRailGroupCollapse', JSON.stringify({ 'project:alpha': true }))
-    const many = drawerSessions(4, sessions[0])
+    const many = drawerSessions(6, sessions[0])
     act(() => root.render(
       <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[0].id} onSelect={vi.fn()} />,
     ))
     expect(shownInDrawer('alpha')).toEqual([])
     act(() => (sectionOf('alpha')?.querySelector('button[aria-expanded]') as HTMLButtonElement).click())
-    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2', '3', '4'])
     expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupCollapse') || '{}')).toEqual({})
   })
 
   it('opens all sessions directly from the collapsed header with an icon button', () => {
     localStorage.setItem('gahub.sessionRailGroupCollapse', JSON.stringify({ 'project:alpha': true }))
-    const many = drawerSessions(5, sessions[0])
+    const many = drawerSessions(7, sessions[0])
     act(() => root.render(
       <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[0].id} onSelect={vi.fn()} />,
     ))
@@ -626,21 +685,21 @@ describe('SessionRail', () => {
     expect(button.querySelector('svg')).not.toBeNull()
     expect(button.textContent).toBe('')
     expect(button.getAttribute('aria-pressed')).toBe('false')
-    expect(sectionOf('alpha')?.querySelector('[data-project-session-count]')?.textContent).toBe('5')
+    expect(sectionOf('alpha')?.querySelector('[data-project-session-count]')?.textContent).toBe('7')
     act(() => button.click())
-    expect(shownInDrawer('alpha')).toHaveLength(5)
+    expect(shownInDrawer('alpha')).toHaveLength(7)
     expect(button.getAttribute('aria-pressed')).toBe('true')
     expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupCollapse') || '{}')).toEqual({})
     act(() => button.click())
-    expect(shownInDrawer('alpha')).toHaveLength(3)
+    expect(shownInDrawer('alpha')).toHaveLength(5)
   })
 
   it('keeps the pure free area uncapped and without the footer link', () => {
-    const freeMany = drawerSessions(5, sessions[1])
+    const freeMany = drawerSessions(7, sessions[1])
     act(() => root.render(
       <SessionRail sessions={freeMany} runtimes={{}} currentId={freeMany[0].id} onSelect={vi.fn()} />,
     ))
-    expect(host.querySelectorAll('[data-activity]')).toHaveLength(5)
+    expect(host.querySelectorAll('[data-activity]')).toHaveLength(7)
     expect(host.querySelectorAll('[data-testid^="group-show-all"]')).toHaveLength(0)
   })
 

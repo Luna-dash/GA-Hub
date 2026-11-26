@@ -4,6 +4,7 @@ import { hubEventClient } from '@/runtime/hubEventClient'
 import { useConductorRuntimeEffects } from '@/hooks/useConductorRuntimeEffects'
 import { useDesktopNotifyEffects } from '@/hooks/useDesktopNotifyEffects'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
+import { useSessionUnreadEffects } from '@/hooks/useSessionUnreadEffects'
 import { useThemeCompletionEffects } from '@/hooks/useThemeCompletionEffects'
 
 /** Long-lived effects isolated from the visual application shell. */
@@ -11,6 +12,7 @@ export function RuntimeEffects() {
   const queryClient = useQueryClient()
   useDocumentTitle()
   useDesktopNotifyEffects()
+  useSessionUnreadEffects()
   useThemeCompletionEffects()
   useConductorRuntimeEffects()
 

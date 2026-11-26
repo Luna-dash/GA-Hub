@@ -221,6 +221,16 @@ export type ChatWSOut = WithChatWSMeta<ChatWSVariant>
 type EventBusBase = Omit<ApiSchemas['EventBusEnvelope'], 'topic' | 'payload'>
 export interface KnownEventPayloadMap {
   'session:runtime': SessionRuntime
+  'anti:runtime': {
+    session_id: string
+    title?: string
+    status: 'running' | 'idle'
+    run_id: string | null
+    completed_run_id?: string | null
+    outcome?: 'completed' | 'cancelled' | 'failed' | null
+    error?: string | null
+    updated_at?: string | null
+  }
   'chat:error': { session_id: string; run_id: string; stream_id: string; code: string; detail: string }
   'chat:rewound': { session_id: string; removed_sids: string[]; kept: number; history_lines: number }
   'conductor:subagents': { items: ConductorSubagent[]; boot_id?: string | null; snapshot_revision?: number }

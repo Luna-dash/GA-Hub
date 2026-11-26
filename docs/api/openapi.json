@@ -7175,6 +7175,360 @@
         }
       }
     },
+    "/api/anti/sessions/{sid}/queue": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Get Queue",
+        "operationId": "get_queue_api_anti_sessions__sid__queue_get",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiQueueStateResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Enqueue Prompt",
+        "operationId": "enqueue_prompt_api_anti_sessions__sid__queue_post",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntiQueueEnqueueReq"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiQueueStateResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Clear Queue",
+        "operationId": "clear_queue_api_anti_sessions__sid__queue_delete",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiQueueStateResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/queue/{qid}": {
+      "delete": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Remove Queued Prompt",
+        "operationId": "remove_queued_prompt_api_anti_sessions__sid__queue__qid__delete",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          },
+          {
+            "name": "qid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Qid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiQueueStateResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/queue/{qid}/move": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Move Queued Prompt",
+        "operationId": "move_queued_prompt_api_anti_sessions__sid__queue__qid__move_post",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          },
+          {
+            "name": "qid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Qid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntiQueueMoveReq"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiQueueStateResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/queue/{qid}/steer": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Steer Queued Prompt",
+        "operationId": "steer_queued_prompt_api_anti_sessions__sid__queue__qid__steer_post",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          },
+          {
+            "name": "qid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Qid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiQueuePromoteResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/queue/dispatch": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Dispatch Queued Prompt",
+        "operationId": "dispatch_queued_prompt_api_anti_sessions__sid__queue_dispatch_post",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AntiQueueDispatchReq"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiQueuePromoteResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/file-transfer/reply": {
       "post": {
         "tags": [
@@ -8834,6 +9188,307 @@
         ],
         "title": "AntiQuestionOption"
       },
+      "AntiQueueDispatchReq": {
+        "properties": {
+          "item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Id"
+          }
+        },
+        "type": "object",
+        "title": "AntiQueueDispatchReq"
+      },
+      "AntiQueueEnqueueReq": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "maxLength": 24000,
+            "title": "Prompt",
+            "default": ""
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "effort": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effort"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/AntiFileReference"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "References"
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentRef"
+            },
+            "type": "array",
+            "maxItems": 256,
+            "title": "Attachments"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "accept-edits"
+            ],
+            "title": "Mode",
+            "default": "plan"
+          },
+          "permission_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "approval-required",
+                  "auto-accept-edits",
+                  "auto",
+                  "full-access"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permission Mode"
+          },
+          "orchestrator_planner": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orchestrator Planner"
+          },
+          "orchestrator_executor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orchestrator Executor"
+          }
+        },
+        "type": "object",
+        "title": "AntiQueueEnqueueReq"
+      },
+      "AntiQueueMoveReq": {
+        "properties": {
+          "direction": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down",
+              "top"
+            ],
+            "title": "Direction"
+          }
+        },
+        "type": "object",
+        "required": [
+          "direction"
+        ],
+        "title": "AntiQueueMoveReq"
+      },
+      "AntiQueuePromoteResp": {
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/AntiRunResp"
+          },
+          "queue": {
+            "$ref": "#/components/schemas/AntiQueueStateResp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run",
+          "queue"
+        ],
+        "title": "AntiQueuePromoteResp"
+      },
+      "AntiQueueStateResp": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AntiQueuedPromptItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "paused": {
+            "type": "boolean",
+            "title": "Paused",
+            "default": false
+          },
+          "pause_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pause Reason"
+          }
+        },
+        "type": "object",
+        "title": "AntiQueueStateResp"
+      },
+      "AntiQueuedPromptItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effort"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/AntiFileReference"
+            },
+            "type": "array",
+            "title": "References"
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentRef"
+            },
+            "type": "array",
+            "title": "Attachments"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "accept-edits"
+            ],
+            "title": "Mode",
+            "default": "plan"
+          },
+          "permission_mode": {
+            "type": "string",
+            "enum": [
+              "approval-required",
+              "auto-accept-edits",
+              "auto",
+              "full-access"
+            ],
+            "title": "Permission Mode",
+            "default": "approval-required"
+          },
+          "orchestrator_planner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orchestrator Planner"
+          },
+          "orchestrator_executor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orchestrator Executor"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "position",
+          "prompt",
+          "created_at"
+        ],
+        "title": "AntiQueuedPromptItem"
+      },
       "AntiQuotaCalibrateReq": {
         "properties": {
           "model_group": {
@@ -9503,6 +10158,44 @@
             ],
             "title": "Active Run Id"
           },
+          "completed_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Run Id"
+          },
+          "last_outcome": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "completed",
+                  "cancelled",
+                  "failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Outcome"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
           "has_conversation": {
             "anyOf": [
               {
@@ -9542,6 +10235,17 @@
             },
             "type": "array",
             "title": "Grants"
+          },
+          "queued_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queued Count"
           },
           "engine": {
             "type": "string",

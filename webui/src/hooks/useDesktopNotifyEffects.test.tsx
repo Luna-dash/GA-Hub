@@ -2,16 +2,18 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-const m = vi.hoisted(() => ({ handlers: new Map<string, (e: any) => void>(), notify: vi.fn(), navigate: vi.fn(), messages: vi.fn(), start: vi.fn() }))
+const m = vi.hoisted(() => ({ handlers: new Map<string, (e: any) => void>(), notify: vi.fn(), navigate: vi.fn(), messages: vi.fn(), antiSessions: vi.fn(), start: vi.fn() }))
 const qc = { getQueryData: () => ({ items: [{ id: 's1', title: '测试会话' }] }) }
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => qc }))
 vi.mock('react-router-dom', () => ({ useNavigate: () => m.navigate }))
 vi.mock('@/runtime/hubEventClient', () => ({ hubEventClient: { subscribe: (topic: string, fn: (e: any) => void) => { m.handlers.set(topic, fn); return () => m.handlers.delete(topic) } } }))
 vi.mock('@/utils/notify', () => ({ notify: m.notify }))
-vi.mock('@/api/client', () => ({ api: { sessions: vi.fn(), getSessionMessages: m.messages } }))
+vi.mock('@/api/client', () => ({ api: { sessions: vi.fn(), getSessionMessages: m.messages }, antiApi: { sessions: m.antiSessions } }))
 vi.mock('@/stores/chatStore', () => ({ useChatStore: { getState: () => ({ start: m.start }) } }))
 import { useDesktopNotifyEffects } from './useDesktopNotifyEffects'
 import { storageKeys } from '@/config/storageKeys'
+import { recordSessionTerminal } from '@/stores/sessionUnreadStore'
+import { readPageState, resetPageState } from '@/utils/pageState'
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 function Probe() { useDesktopNotifyEffects(); return null }
 const emit = (payload: any) => m.handlers.get('session:runtime')?.({ topic: 'session:runtime', payload })
@@ -19,8 +21,9 @@ const settled = { session_id: 's1', status: 'idle', completed_run_id: 'r1' }
 describe('state notifications', () => {
   let root: Root, host: HTMLDivElement
   beforeEach(() => {
-    vi.clearAllMocks(); m.handlers.clear()
+    vi.clearAllMocks(); m.handlers.clear(); localStorage.clear(); resetPageState()
     m.messages.mockResolvedValue({ items: [{ role: 'assistant', content: 'PRIVATE OUTPUT' }] })
+    m.antiSessions.mockResolvedValue([])
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
     act(() => root.render(<Probe />))
   })
@@ -144,5 +147,35 @@ describe('state notifications', () => {
     m.handlers.get('conductor:workflow_completed')?.({ payload: { item: { msg: 'PRIVATE' } } })
     expect(m.notify).toHaveBeenCalledWith('流程结果可以查看了', expect.objectContaining({ body: 'Conductor 本次流程已结束，可以查看结果了。', confirmText: '查看流程' }))
     expect(m.handlers.has('conductor:request_outcome')).toBe(false)
+  })
+  it('notifies Agy completions once, hides raw errors, opens target session and clears unread', async () => {
+    const emitAnti = (payload: any) => m.handlers.get('anti:runtime')?.({ topic: 'anti:runtime', payload })
+    recordSessionTerminal('anti', 'a1', 'ar1', 'completed')
+    await act(async () => {
+      emitAnti({ session_id: 'a1', title: 'Agy 排查', status: 'idle', run_id: null, completed_run_id: 'ar1', outcome: 'completed' })
+      emitAnti({ session_id: 'a1', title: 'Agy 排查', status: 'idle', run_id: null, completed_run_id: 'ar1', outcome: 'completed' })
+      emitAnti({ session_id: 'a2', title: 'Agy 停止', status: 'idle', run_id: null, completed_run_id: 'ar2', outcome: 'cancelled' })
+    })
+    expect(m.notify).toHaveBeenCalledTimes(1)
+    expect(m.notify).toHaveBeenCalledWith('可以查看结果了', expect.objectContaining({
+      body: '「Agy 排查」已结束本次处理，结果已可查看。',
+      confirmText: '查看会话',
+      tag: 'anti:a1:ar1',
+    }))
+    m.notify.mock.calls[0][1].onOpen()
+    expect(m.navigate).toHaveBeenCalledWith('/anti?session=a1')
+    expect(readPageState('antiChat.currentSession', '')).toBe('a1')
+    expect(JSON.parse(localStorage.getItem(`${storageKeys.sessionRailSeenCompletedRuns}.anti`) || '{}')).toEqual({ a1: 'ar1' })
+
+    m.antiSessions.mockResolvedValueOnce([{ id: 'a3', title: 'Agy 失败会话' }])
+    await act(async () => {
+      emitAnti({ session_id: 'a3', status: 'idle', run_id: null, completed_run_id: 'ar3', outcome: 'failed', error: 'SECRET_STACK' })
+    })
+    expect(m.notify).toHaveBeenLastCalledWith('会话处理失败', expect.objectContaining({
+      body: '「Agy 失败会话」本次处理未能完成，请进入会话查看原因。',
+      confirmText: '查看会话',
+      tag: 'anti:a3:ar3',
+    }))
+    expect(JSON.stringify(m.notify.mock.calls)).not.toContain('SECRET_STACK')
   })
 })

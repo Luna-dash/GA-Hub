@@ -1025,4 +1025,235 @@ def test_submit_run_aligns_orchestrator_roles_before_get_worker(tmp_path, monkey
         ]
 
 
+def test_anti_sessions_track_terminal_state_updated_at_and_publish_events(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from server.event_topics import ANTI_RUNTIME
+    from server.services.event_bus import bus
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path / "data")
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+    db = tmp_path / "anti_terminal_notify.sqlite"
+    runtime = FakeRuntime()
+    monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(db, runtime))
+    monkeypatch.setattr(anti.daemon, "submission", lambda profile_id=None: nullcontext(profile_id or "default"))
+
+    published: list[tuple[str, dict]] = []
+    orig_publish = bus.publish
+    monkeypatch.setattr(bus, "publish", lambda topic, payload: (published.append((topic, payload)), orig_publish(topic, payload))[1])
+
+    outcome_holder = {"status": "success", "error": None}
+    monkeypatch.setattr(
+        FakeWorker,
+        "run_turn",
+        lambda self, **kw: {
+            "status": outcome_holder["status"],
+            "conversation_id": "conv-1",
+            "answer": "ok" if outcome_holder["status"] == "success" else None,
+            "error": outcome_holder["error"],
+            "usage": {},
+        },
+    )
+
+    app = FastAPI()
+    app.include_router(anti.router)
+    with TestClient(app) as client:
+        sid = client.post("/api/anti/sessions", json={"project": "project", "title": "通知测试"}).json()["id"]
+        r1 = client.post(f"/api/anti/sessions/{sid}/runs", json={"operation": "op-ok", "prompt": "run ok"}).json()
+        done1 = _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{r1['id']}")
+        assert done1["status"] == "success"
+
+        row1 = next(item for item in client.get("/api/anti/sessions").json() if item["id"] == sid)
+        assert row1["completed_run_id"] == r1["id"]
+        assert row1["last_outcome"] == "completed"
+        assert row1["last_error"] is None
+        assert row1["updated_at"] >= done1["finished_at"]
+
+        anti_events = [payload for topic, payload in published if topic == ANTI_RUNTIME and payload["session_id"] == sid]
+        assert any(evt["status"] == "running" and evt["run_id"] == r1["id"] for evt in anti_events)
+        assert any(evt["status"] == "idle" and evt["completed_run_id"] == r1["id"] and evt["outcome"] == "completed" for evt in anti_events)
+
+        outcome_holder["status"] = "cli_error"
+        outcome_holder["error"] = "upstream exploded"
+        r2 = client.post(f"/api/anti/sessions/{sid}/runs", json={"operation": "op-fail", "prompt": "run fail"}).json()
+        done2 = _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{r2['id']}")
+        assert done2["status"] == "cli_error"
+        row2 = next(item for item in client.get("/api/anti/sessions").json() if item["id"] == sid)
+        assert row2["completed_run_id"] == r2["id"]
+        assert row2["last_outcome"] == "failed"
+        assert row2["last_error"] == "upstream exploded"
+
+        outcome_holder["status"] = "cancelled"
+        outcome_holder["error"] = None
+        r3 = client.post(f"/api/anti/sessions/{sid}/runs", json={"operation": "op-cancel", "prompt": "run cancel"}).json()
+        done3 = _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{r3['id']}")
+        assert done3["status"] == "cancelled"
+        row3 = next(item for item in client.get("/api/anti/sessions").json() if item["id"] == sid)
+        assert row3["completed_run_id"] == r3["id"]
+        assert row3["last_outcome"] == "cancelled"
+
+        assert client.delete(f"/api/anti/sessions/{sid}").status_code == 204
+        assert (db.resolve(), sid) not in engine.AntiSessions._terminal_states
+
+
+def test_session_queued_prompts_auto_dispatch_reorder_steer_pause_and_cleanup(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    import sqlite3
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path / "data")
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+    db = tmp_path / "anti_queue.sqlite"
+
+    class QueueRuntime(FakeRuntime):
+        def __init__(self):
+            super().__init__()
+            self.steers: list[dict] = []
+            self.fail_steer = False
+            self.turn_gates: dict[str, threading.Event] = {}
+            self.turn_entered: dict[str, threading.Event] = {}
+            self.prompt_outcomes: dict[str, str] = {}
+
+        def steer_turn(self, db_path, run_id, *, prompt_text, staged_paths, attachments, allowed_roots):
+            if self.fail_steer:
+                raise engine.AntiError(409, "当前任务暂无法实时插话")
+            self.steers.append({"run_id": run_id, "prompt_text": prompt_text})
+            return {"steered": True, "prompt_seq": 2}
+
+    runtime = QueueRuntime()
+
+    def controlled_run_turn(self, **kw):
+        rid = kw["run_id"]
+        prompt = kw["prompt_text"]
+        entered = runtime.turn_entered.setdefault(rid, threading.Event())
+        gate = runtime.turn_gates.setdefault(rid, threading.Event())
+        runtime.calls.append({"run_id": rid, "prompt": prompt})
+        entered.set()
+        gate.wait(3.0)
+        if runtime.cancelled_ids.get(rid):
+            return {"status": "cancelled", "conversation_id": kw["resume_conversation"], "answer": None, "usage": {}}
+        outcome = runtime.prompt_outcomes.get(prompt, "success")
+        return {
+            "status": outcome,
+            "conversation_id": "conv-q",
+            "answer": f"ans:{prompt}" if outcome == "success" else None,
+            "error": "boom" if outcome != "success" else None,
+            "usage": {},
+        }
+
+    monkeypatch.setattr(FakeWorker, "run_turn", controlled_run_turn)
+    monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(db, runtime))
+    monkeypatch.setattr(anti.daemon, "submission", lambda profile_id=None: nullcontext(profile_id or "default"))
+
+    app = FastAPI()
+    app.include_router(anti.router)
+    with TestClient(app) as client:
+        sid = client.post("/api/anti/sessions", json={"project": "project", "title": "队列测试"}).json()["id"]
+        r1 = client.post(f"/api/anti/sessions/{sid}/runs", json={"operation": "op-q1", "prompt": "step 1"}).json()
+        assert runtime.turn_entered.setdefault(r1["id"], threading.Event()).wait(2.0)
+
+        # Enqueue two items while r1 is running
+        q_res1 = client.post(f"/api/anti/sessions/{sid}/queue", json={"prompt": "step 2"}).json()
+        q1_id = q_res1["items"][0]["id"]
+        q_res2 = client.post(f"/api/anti/sessions/{sid}/queue", json={"prompt": "step 3", "mode": "accept-edits", "permission_mode": "auto"}).json()
+        assert q_res2["paused"] is False
+        assert [item["prompt"] for item in q_res2["items"]] == ["step 2", "step 3"]
+        q2_id = q_res2["items"][1]["id"]
+
+        sess_row = next(item for item in client.get("/api/anti/sessions").json() if item["id"] == sid)
+        assert sess_row["queued_count"] == 2
+
+        # Reorder q2 up -> [step 3, step 2]
+        moved = client.post(f"/api/anti/sessions/{sid}/queue/{q2_id}/move", json={"direction": "up"}).json()
+        assert [item["prompt"] for item in moved["items"]] == ["step 3", "step 2"]
+
+        # Finish r1 -> background auto-dispatches q2 ("step 3")
+        runtime.turn_gates[r1["id"]].set()
+        assert _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{r1['id']}")["status"] == "success"
+
+        deadline = time.monotonic() + 3.0
+        runs_after_1 = []
+        while time.monotonic() < deadline:
+            runs_after_1 = client.get(f"/api/anti/sessions/{sid}/runs").json()
+            if len(runs_after_1) >= 2:
+                break
+            time.sleep(0.02)
+        assert len(runs_after_1) == 2
+        r2 = runs_after_1[1]
+        assert r2["prompt"] == "step 3"
+        assert r2["mode"] == "accept-edits"
+        assert r2["permission_mode"] == "auto"
+
+        # Finish r2 -> background auto-dispatches q1 ("step 2")
+        runtime.turn_entered.setdefault(r2["id"], threading.Event()).wait(2.0)
+        runtime.turn_gates.setdefault(r2["id"], threading.Event()).set()
+        assert _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{r2['id']}")["status"] == "success"
+
+        deadline = time.monotonic() + 3.0
+        runs_after_2 = []
+        while time.monotonic() < deadline:
+            runs_after_2 = client.get(f"/api/anti/sessions/{sid}/runs").json()
+            if len(runs_after_2) >= 3:
+                break
+            time.sleep(0.02)
+        assert len(runs_after_2) == 3
+        r3 = runs_after_2[2]
+        assert r3["prompt"] == "step 2"
+        runtime.turn_entered.setdefault(r3["id"], threading.Event()).wait(2.0)
+        runtime.turn_gates.setdefault(r3["id"], threading.Event()).set()
+        assert _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{r3['id']}")["status"] == "success"
+        assert client.get(f"/api/anti/sessions/{sid}/queue").json()["items"] == []
+
+        # Non-success completion pauses queue instead of auto-dispatching
+        r4 = client.post(f"/api/anti/sessions/{sid}/runs", json={"operation": "op-q-cancel", "prompt": "long run"}).json()
+        assert runtime.turn_entered.setdefault(r4["id"], threading.Event()).wait(2.0)
+        client.post(f"/api/anti/sessions/{sid}/queue", json={"prompt": "after pause"})
+        client.post(f"/api/anti/sessions/{sid}/runs/{r4['id']}/cancel")
+        assert _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{r4['id']}")["status"] == "cancelled"
+
+        paused_state = client.get(f"/api/anti/sessions/{sid}/queue").json()
+        assert paused_state["paused"] is True
+        assert "已中止" in (paused_state["pause_reason"] or "")
+        assert [item["prompt"] for item in paused_state["items"]] == ["after pause"]
+
+        # Manual dispatch resumes paused queue; test steer failure preserves item, steer success consumes it
+        dispatched = client.post(f"/api/anti/sessions/{sid}/queue/dispatch", json={}).json()
+        r5 = dispatched["run"]
+        assert r5["prompt"] == "after pause"
+        assert dispatched["queue"]["items"] == []
+        assert runtime.turn_entered.setdefault(r5["id"], threading.Event()).wait(2.0)
+
+        q_steer_id = client.post(f"/api/anti/sessions/{sid}/queue", json={"prompt": "turn into steer"}).json()["items"][0]["id"]
+        runtime.fail_steer = True
+        assert client.post(f"/api/anti/sessions/{sid}/queue/{q_steer_id}/steer").status_code == 409
+        assert len(client.get(f"/api/anti/sessions/{sid}/queue").json()["items"]) == 1
+
+        runtime.fail_steer = False
+        steered = client.post(f"/api/anti/sessions/{sid}/queue/{q_steer_id}/steer").json()
+        assert steered["run"]["id"] == r5["id"]
+        assert steered["queue"]["items"] == []
+        assert runtime.steers[-1]["prompt_text"] == "turn into steer"
+
+        runtime.turn_gates.setdefault(r5["id"], threading.Event()).set()
+        assert _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{r5['id']}")["status"] == "success"
+
+        # Single removal, clear all, and session deletion cleanup
+        q_del = client.post(f"/api/anti/sessions/{sid}/queue", json={"prompt": "remove me"}).json()["items"][0]["id"]
+        after_del = client.delete(f"/api/anti/sessions/{sid}/queue/{q_del}").json()
+        assert after_del["items"] == []
+
+        client.post(f"/api/anti/sessions/{sid}/queue", json={"prompt": "clear 1"})
+        client.post(f"/api/anti/sessions/{sid}/queue", json={"prompt": "clear 2"})
+        assert len(client.delete(f"/api/anti/sessions/{sid}/queue").json()["items"]) == 0
+
+        client.post(f"/api/anti/sessions/{sid}/queue", json={"prompt": "orphan"})
+        assert client.delete(f"/api/anti/sessions/{sid}").status_code == 204
+        with sqlite3.connect(db) as conn:
+            remaining = conn.execute("SELECT COUNT(*) FROM queued_prompts WHERE session_id=?", (sid,)).fetchone()[0]
+        assert remaining == 0
+
+
+
 

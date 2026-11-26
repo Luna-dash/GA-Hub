@@ -1752,7 +1752,7 @@ it('escalates unresponsive soft stop into force stop recovery bar and supports f
   }
 })
 
-it('escalates daemon 409 conflicts to force confirm, shows active workers, and supports mid-turn steer & follow-up queue', async () => {
+it('escalates daemon 409 conflicts to force confirm, shows active workers, and supports queue-first composer, persistent QueueDock, Ctrl+Enter steer, and draft-safe edit', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const session = { id: 's-steer-ui', title: 'Steer UI', project: 'demo', workspace: 'D:/demo', acp_connected: true }
   let supportsSteering = true
@@ -1764,11 +1764,24 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
     mode: 'plan',
     permission_mode: 'approval-required',
   }
-  const called: Array<{ path: string; body?: unknown }> = []
+  let queueItems: Array<Record<string, unknown>> = []
+  let queuePauseReason: string | null = null
+  let qSeq = 0
+  const queueStatePayload = () => {
+    const hasActive = Boolean(activeRun && ['submitting', 'queued', 'running', 'unknown'].includes(String(activeRun.status)))
+    const paused = queueItems.length > 0 && !hasActive
+    return {
+      items: queueItems,
+      paused,
+      pause_reason: paused ? (queuePauseReason ?? '上一轮任务已中止，已暂停自动发送排队消息') : null,
+    }
+  }
+  const called: Array<{ path: string; method?: string; body?: unknown }> = []
 
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
-    called.push({ path, body })
+    const method = init?.method ?? 'GET'
+    called.push({ path, method, body })
     const reply = (data: unknown, status = 200) =>
       ({ ok: status < 400, status, json: async () => JSON.parse(JSON.stringify(data)) })
 
@@ -1793,8 +1806,8 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
       return reply({ ...session, acp_connected: false })
     }
     if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
-    if (path === '/api/anti/sessions') return reply([session])
-    if (path === `/api/anti/sessions/${session.id}/runs` && init?.method === 'POST') {
+    if (path === '/api/anti/sessions') return reply([{ ...session, queued_count: queueItems.length }])
+    if (path === `/api/anti/sessions/${session.id}/runs` && method === 'POST') {
       const next = { id: 'r-queued-1', operation: body.operation, prompt: body.prompt, status: 'success', answer: 'queued ok', mode: 'plan', permission_mode: 'approval-required' }
       activeRun = next
       return reply(next)
@@ -1807,6 +1820,60 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
     }
     if (path === `/api/anti/sessions/${session.id}/runs/r-active-1/steer`) {
       return reply(activeRun)
+    }
+    if (path === `/api/anti/sessions/${session.id}/queue` && method === 'GET') {
+      return reply(queueStatePayload())
+    }
+    if (path === `/api/anti/sessions/${session.id}/queue` && method === 'POST') {
+      qSeq += 1
+      queueItems.push({
+        id: `q-${qSeq}`,
+        session_id: session.id,
+        position: queueItems.length + 1,
+        prompt: body.prompt ?? '',
+        model: body.model ?? null,
+        effort: body.effort ?? null,
+        references: body.references ?? [],
+        attachments: body.attachments ?? [],
+        mode: body.mode ?? 'plan',
+        permission_mode: body.permission_mode ?? 'approval-required',
+        created_at: new Date().toISOString(),
+      })
+      return reply(queueStatePayload())
+    }
+    if (path === `/api/anti/sessions/${session.id}/queue` && method === 'DELETE') {
+      queueItems = []
+      queuePauseReason = null
+      return reply(queueStatePayload())
+    }
+    if (path === `/api/anti/sessions/${session.id}/queue/dispatch` && method === 'POST') {
+      const head = queueItems.shift()!
+      const dispatched = { id: 'r-dispatched-1', operation: `q-${head.id}`, prompt: head.prompt, status: 'running', mode: head.mode, permission_mode: head.permission_mode }
+      activeRun = dispatched
+      queuePauseReason = null
+      return reply({ run: dispatched, queue: queueStatePayload() })
+    }
+    const moveMatch = path.match(new RegExp(`^/api/anti/sessions/${session.id}/queue/([^/]+)/move$`))
+    if (moveMatch && method === 'POST') {
+      const qid = moveMatch[1]
+      const idx = queueItems.findIndex(item => item.id === qid)
+      if (idx > 0 && body?.direction === 'up') {
+        ;[queueItems[idx - 1], queueItems[idx]] = [queueItems[idx], queueItems[idx - 1]]
+      }
+      return reply(queueStatePayload())
+    }
+    const steerQueuedMatch = path.match(new RegExp(`^/api/anti/sessions/${session.id}/queue/([^/]+)/steer$`))
+    if (steerQueuedMatch && method === 'POST') {
+      const qid = steerQueuedMatch[1]
+      queueItems = queueItems.filter(item => item.id !== qid)
+      return reply({ run: activeRun, queue: queueStatePayload() })
+    }
+    const delMatch = path.match(new RegExp(`^/api/anti/sessions/${session.id}/queue/([^/]+)$`))
+    if (delMatch && method === 'DELETE') {
+      const qid = delMatch[1]
+      queueItems = queueItems.filter(item => item.id !== qid)
+      if (!queueItems.length) queuePauseReason = null
+      return reply(queueStatePayload())
     }
     if (path.endsWith('/events')) return reply([])
     if (path.startsWith('/api/file-transfer')) return reply([])
@@ -1823,47 +1890,123 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
     await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
     await vi.waitFor(async () => {
       await flush()
-      expect(host.querySelector('button[aria-label="插话纠偏"]')).not.toBeNull()
+      expect(host.querySelector('button[aria-label="加入排队"]')).not.toBeNull()
     })
 
-    // 1. Mid-turn steering Split Button: Enter & primary click steer by default without layout-jumping bottom bar,
-    //    while the split dropdown & Ctrl+Enter allow queueing without interrupting.
+    // 1. Default Enter & primary click enqueue into QueueDock above composer without calling /steer
     expect(host.querySelector('button[aria-label="选择发送或排队方式"]')).not.toBeNull()
     const textarea = host.querySelector('textarea')!
+    expect(textarea.placeholder).toContain('Enter 加入排队')
+    expect(textarea.placeholder).toContain('Ctrl+Enter 插话纠偏')
+
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '先跑单测')
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '排队第1条')
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    expect(host.textContent).not.toContain('不想打断当前推理')
     await act(async () => {
       textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     })
     await vi.waitFor(async () => {
       await flush()
-      expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/runs/r-active-1/steer`)).toBe(true)
+      expect(host.querySelector('[data-anti-queued-dock]')?.textContent).toContain('排队第1条')
+      expect(host.querySelector('[data-anti-queued-dock]')?.textContent).toContain('下一条')
     })
+    expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/runs/r-active-1/steer`)).toBe(false)
 
-    // Split menu -> "加入排队" queues even while native steering is supported
+    // Primary button click enqueues a 2nd item, showing multi-item FIFO dock & allowing reorder/immediate steer
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '先排个队')
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '排队第2条')
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="选择发送或排队方式"]')!.click() })
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="加入排队"]')!.click() })
     await vi.waitFor(async () => {
       await flush()
-      expect(host.querySelector('[role="menu"][aria-label="运行中发送方式"]')).not.toBeNull()
-    })
-    const queueMenuItem = [...host.querySelectorAll<HTMLButtonElement>('[role="menu"][aria-label="运行中发送方式"] [role="menuitem"]')]
-      .find(b => b.textContent?.includes('加入排队'))!
-    await act(async () => { queueMenuItem.click() })
-    await vi.waitFor(async () => {
-      await flush()
-      expect(host.querySelector('[data-anti-queued-bar]')?.textContent).toContain('先排个队')
+      const dock = host.querySelector('[data-anti-queued-dock]')
+      expect(dock?.textContent).toContain('2 条')
+      expect(dock?.textContent).toContain('排队第2条')
     })
 
-    // Ctrl+Enter directly queues without opening menu
+    // Move item #2 up -> becomes "下一条"
+    const moveUpBtn = host.querySelector<HTMLButtonElement>('[data-anti-queued-item="q-2"] button[aria-label="上移排队消息"]')!
+    await act(async () => { moveUpBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-queued-item="q-2"]')?.textContent).toContain('下一条')
+    })
+
+    // Promote queued item to immediate steer
+    const promoteBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-queued-item="q-2"] button')]
+      .find(b => b.textContent?.trim() === '立即插话')!
+    await act(async () => { promoteBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/queue/q-2/steer`)).toBe(true)
+      expect(host.querySelector('[data-anti-queued-item="q-2"]')).toBeNull()
+    })
+
+    // Plan B edit flow:
+    // 1a. Non-empty composer -> clicking 编辑 shows conflict resolution bar
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Ctrl回车排队')
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '新写草稿')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const editQ1Btn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-queued-item="q-1"] button')]
+      .find(b => b.textContent?.trim() === '编辑')!
+    await act(async () => { editQ1Btn.click() })
+    expect(host.querySelector('[data-anti-queue-edit-conflict]')).not.toBeNull()
+
+    // Cancel keeps draft untouched & item still queued
+    const cancelConflictBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-queue-edit-conflict] button')]
+      .find(b => b.textContent?.trim() === '取消')!
+    await act(async () => { cancelConflictBtn.click() })
+    expect(host.querySelector('[data-anti-queue-edit-conflict]')).toBeNull()
+    expect(textarea.value).toBe('新写草稿')
+
+    // Choose "草稿先入队再编辑" -> stashes '新写草稿' as q-3 and refills '排队第1条' into composer
+    await act(async () => { editQ1Btn.click() })
+    const stashBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-queue-edit-conflict] button')]
+      .find(b => b.textContent?.trim() === '草稿先入队再编辑')!
+    await act(async () => { stashBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(textarea.value).toBe('排队第1条')
+      expect(host.querySelector('[data-anti-queued-dock]')?.textContent).toContain('新写草稿')
+    })
+
+    // Choose "覆盖当前草稿" -> replaces '排队第1条' in composer with q-3 ('新写草稿') directly
+    const editQ3Btn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-queued-item="q-3"] button')]
+      .find(b => b.textContent?.trim() === '编辑')!
+    await act(async () => { editQ3Btn.click() })
+    const overwriteBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-queue-edit-conflict] button')]
+      .find(b => b.textContent?.trim() === '覆盖当前草稿')!
+    await act(async () => { overwriteBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(textarea.value).toBe('新写草稿')
+      expect(host.querySelector('[data-anti-queued-dock]')).toBeNull()
+    })
+
+    // Empty composer direct edit refill
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-queued-item="q-4"]')).not.toBeNull()
+      expect(textarea.value).toBe('')
+    })
+    const directEditBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-queued-item="q-4"] button')]
+      .find(b => b.textContent?.trim() === '编辑')!
+    await act(async () => { directEditBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(textarea.value).toBe('新写草稿')
+      expect(host.querySelector('[data-anti-queued-dock]')).toBeNull()
+    })
+
+    // Ctrl+Enter & Split menu -> "插话纠偏" send /steer
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '先跑单测')
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
     })
     await act(async () => {
@@ -1871,15 +2014,27 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
     })
     await vi.waitFor(async () => {
       await flush()
-      expect(host.querySelector('[data-anti-queued-bar]')?.textContent).toContain('Ctrl回车排队')
+      expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/runs/r-active-1/steer` && (c.body as { prompt?: string })?.prompt === '先跑单测')).toBe(true)
     })
 
-    // Dismiss queued bar before switching supports_steering mode
-    const cancelQueueBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-queued-bar] button')]
-      .find(b => b.textContent?.trim() === '取消排队')!
-    await act(async () => { cancelQueueBtn.click() })
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '菜单插话')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="选择发送或排队方式"]')!.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[role="menu"][aria-label="运行中发送方式"]')).not.toBeNull()
+    })
+    const steerMenuItem = [...host.querySelectorAll<HTMLButtonElement>('[role="menu"][aria-label="运行中发送方式"] [role="menuitem"]')]
+      .find(b => b.textContent?.includes('插话纠偏'))!
+    await act(async () => { steerMenuItem.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/runs/r-active-1/steer` && (c.body as { prompt?: string })?.prompt === '菜单插话')).toBe(true)
+    })
 
-    // 2. When supports_steering is false, split dropdown hides and single queue button auto-sends once completed.
+    // 2. When supports_steering is false, split dropdown hides; paused dock offers "继续发送" -> /queue/dispatch.
     supportsSteering = false
     await act(async () => { await cache.invalidateQueries({ queryKey: ['anti-daemon-status'] }) })
     await vi.waitFor(async () => {
@@ -1894,15 +2049,28 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
     await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="加入排队"]')!.click() })
     await vi.waitFor(async () => {
       await flush()
-      expect(host.querySelector('[data-anti-queued-bar]')?.textContent).toContain('排队补充总结')
+      expect(host.querySelector('[data-anti-queued-dock]')?.textContent).toContain('排队补充总结')
     })
 
-    // Complete activeRun -> auto-dispatches queued prompt.
-    activeRun = { ...activeRun, status: 'success', answer: 'done' }
-    await act(async () => { await cache.invalidateQueries({ queryKey: ['anti-live', session.id, 'r-active-1'] }) })
+    // Non-success stop leaves queue paused with reason and "继续发送" button
+    activeRun = { ...activeRun, status: 'cancelled' }
+    await act(async () => {
+      await cache.invalidateQueries({ queryKey: ['anti-live', session.id, 'r-active-1'] })
+      await cache.invalidateQueries({ queryKey: ['anti-runs', session.id] })
+      await cache.invalidateQueries({ queryKey: ['anti-queue', session.id] })
+    })
     await vi.waitFor(async () => {
       await flush()
-      expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/runs` && (c.body as { prompt?: string })?.prompt === '排队补充总结')).toBe(true)
+      const dock = host.querySelector('[data-anti-queued-dock]')
+      expect(dock?.textContent).toContain('上一轮任务已中止')
+      expect([...(dock?.querySelectorAll('button') ?? [])].some(b => b.textContent?.trim() === '继续发送')).toBe(true)
+    })
+    const resumeBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-queued-dock] button')]
+      .find(b => b.textContent?.trim() === '继续发送')!
+    await act(async () => { resumeBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.path === `/api/anti/sessions/${session.id}/queue/dispatch`)).toBe(true)
     })
 
     // 3. Header restart returning 409 shows inline force confirm; Active Workers panel resets stuck session.
@@ -2920,6 +3088,91 @@ it('previews cached quota popover on hover without network refresh, keeps open o
     cache.clear()
     host.remove()
     vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('selects the session from ?session= query param and highlights unread completed runs from /api/anti/sessions', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const sessionsPayload = [
+    {
+      id: 'anti-1',
+      project: 'demo',
+      title: '最近空闲',
+      workspace: 'D:/demo',
+      updated_at: '2026-11-26T10:00:00Z',
+      active_run_id: null,
+      completed_run_id: null,
+      last_outcome: null,
+      last_error: null,
+      has_conversation: true,
+      acp_connected: false,
+      profile_id: null,
+      grants: [],
+      engine: 'anti',
+    },
+    {
+      id: 'anti-2',
+      project: 'demo',
+      title: '后台已完成',
+      workspace: 'D:/demo',
+      updated_at: '2026-11-26T09:00:00Z',
+      active_run_id: null,
+      completed_run_id: 'run-done-2',
+      last_outcome: 'completed',
+      last_error: null,
+      has_conversation: true,
+      acp_connected: false,
+      profile_id: null,
+      grants: [],
+      engine: 'anti',
+    },
+  ]
+  const fetchMock = vi.fn(async (path: string) => {
+    const reply = (data: unknown) => ({ ok: true, json: async () => JSON.parse(JSON.stringify(data)) })
+    if (path === '/api/anti/status') return reply({ state: 'ready', agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
+    if (path === '/api/anti/sessions') return reply(sessionsPayload)
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen' }] })
+    if (path === '/api/anti/models/config') return reply({ config_path: '', orchestrator_presets: [], hidden_models: [] })
+    if (path === '/api/anti/commands') return reply({ items: [] })
+    if (path === '/api/anti/sessions/anti-1/runs' || path === '/api/anti/sessions/anti-2/runs') return reply([])
+    if (path === '/api/anti/quota') return reply([])
+    if (path === '/api/anti/stats?today=true') {
+      return reply({ window_hours: 24, total_runs: 0, success_runs: 0, failed_runs: 0, rate_limited_runs: 0, total_tokens: 0, cache_hit_ratio: 0, estimated_cost_usd: 0 })
+    }
+    throw new Error(`Unexpected request: ${path}`)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  function LocationProbe() {
+    const loc = useLocation()
+    return <output data-loc={`${loc.pathname}${loc.search}`} />
+  }
+  try {
+    await act(async () => root.render(
+      <QueryClientProvider client={cache}>
+        <MemoryRouter initialEntries={['/anti?session=anti-2']}>
+          <AntiChat />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ))
+    await vi.waitFor(async () => {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+      const completedRow = host.querySelector('[data-session-id="anti-2"]')
+      expect(completedRow?.getAttribute('data-activity')).toBe('completed')
+      expect(completedRow?.querySelector('[aria-current="page"]')).not.toBeNull()
+      // Deep link ?session= is consumed cleanly back to /anti
+      expect(host.querySelector('output')?.getAttribute('data-loc')).toBe('/anti')
+    })
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
     vi.unstubAllGlobals()
   }
 })

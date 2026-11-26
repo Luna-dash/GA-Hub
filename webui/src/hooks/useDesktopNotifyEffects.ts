@@ -2,13 +2,14 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { api } from '@/api/client'
+import { antiApi, api, type AntiSession } from '@/api/client'
 import { queryKeys } from '@/queries/queryKeys'
 import type { SessionRuntime } from '@/api/types'
-import { openSessionChat } from '@/utils/sessionUi'
+import { openAntiSession, openSessionChat } from '@/utils/sessionUi'
 import { hubEventClient } from '@/runtime/hubEventClient'
 import { extractPendingAskUserPayload } from '@/utils/assistantTranscript'
 import { notify } from '@/utils/notify'
+import { markSessionRead } from '@/stores/sessionUnreadStore'
 
 export function useDesktopNotifyEffects() {
   const navigate = useNavigate()
@@ -17,7 +18,10 @@ export function useDesktopNotifyEffects() {
     let alive = true
     const seen = new Set<string>()
     const aborted = new Set<string>()
-    const onOpen = (id: string) => () => openSessionChat(navigate, id)
+    const onOpen = (id: string, runId?: string) => () => {
+      markSessionRead('chat', id, runId)
+      openSessionChat(navigate, id)
+    }
     const unsubscribeRuntime = hubEventClient.subscribe('session:runtime', (event) => {
       if (event.topic !== 'session:runtime') return
       const state = event.payload as unknown as SessionRuntime
@@ -58,7 +62,42 @@ export function useDesktopNotifyEffects() {
           // Theme tasks open their conclusion; questions still go to the chat.
           confirmText: needsInput ? '前往回复' : themeTask ? '查看结论' : '查看会话',
           tag: key,
-          onOpen: themeTask && !needsInput ? () => navigate(`/theme-tasks?open=${encodeURIComponent(state.session_id)}`) : onOpen(state.session_id),
+          onOpen: themeTask && !needsInput
+            ? () => navigate(`/theme-tasks?open=${encodeURIComponent(state.session_id)}`)
+            : onOpen(state.session_id, run),
+        })
+      })().catch(() => undefined)
+    })
+    const unsubscribeAnti = hubEventClient.subscribe('anti:runtime', (event) => {
+      if (event.topic !== 'anti:runtime') return
+      const state = event.payload
+      const run = state?.completed_run_id
+      if (!state?.session_id || !run || state.status !== 'idle' || state.outcome === 'cancelled') return
+      const key = `anti:${state.session_id}:${run}`
+      if (seen.has(key)) return
+      seen.add(key)
+      if (seen.size > 500) seen.delete(seen.values().next().value!)
+      void (async () => {
+        const cachedAnti = qc.getQueryData<AntiSession[]>(queryKeys.antiSessions)
+        let session = Array.isArray(cachedAnti) ? cachedAnti.find((s) => s.id === state.session_id) : undefined
+        let name = state.title || session?.title
+        if (!name && typeof antiApi?.sessions === 'function') {
+          try {
+            session = (await antiApi.sessions()).find((s) => s.id === state.session_id) ?? session
+            name = session?.title
+          } catch { /* fall back to session id */ }
+        }
+        if (!alive) return
+        const failed = state.outcome === 'failed' || Boolean(state.error)
+        const label = String(name || state.session_id).replace(/\s+/g, ' ').slice(0, 64)
+        await notify(failed ? '会话处理失败' : '可以查看结果了', {
+          body: `「${label}」${failed ? '本次处理未能完成，请进入会话查看原因。' : '已结束本次处理，结果已可查看。'}`,
+          confirmText: '查看会话',
+          tag: key,
+          onOpen: () => {
+            markSessionRead('anti', state.session_id, run)
+            openAntiSession(navigate, state.session_id)
+          },
         })
       })().catch(() => undefined)
     })
@@ -74,6 +113,7 @@ export function useDesktopNotifyEffects() {
     return () => {
       alive = false
       unsubscribeRuntime()
+      unsubscribeAnti()
       unsubscribeConductor()
       unsubscribeConductorFailed()
     }

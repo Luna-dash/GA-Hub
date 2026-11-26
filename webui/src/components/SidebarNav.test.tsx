@@ -8,6 +8,7 @@ import { SidebarNav } from './SidebarNav'
 import { defaultNavPreferences } from '@/config/navigation'
 import { setNavPreferences } from '@/stores/navPreferenceStore'
 import { recordThemeCompletion, readThemeCompletion } from '@/stores/themeCompletionStore'
+import { markSessionActive, markSessionRead, recordSessionTerminal } from '@/stores/sessionUnreadStore'
 import type { ThemeRun } from '@/api/types'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -61,6 +62,42 @@ describe('SidebarNav', () => {
     expect(dot()).toBeNull()
     act(() => recordThemeCompletion('s1', run))
     expect(dot()).toBeNull()
+  })
+
+  it('shows unread red dots for chat and anti in both expanded and collapsed sidebar modes', async () => {
+    setNavPreferences(defaultNavPreferences().map((item) => item.id === 'anti' ? { ...item, visible: true } : item))
+    await renderNav()
+    const chatDot = () => host.querySelector('[aria-label="实时聊天有未读消息"]')
+    const antiDot = () => host.querySelector('[aria-label="Agy 有未读消息"]')
+    expect(chatDot()).toBeNull()
+    expect(antiDot()).toBeNull()
+
+    // Cancelled runs must never raise a red dot.
+    act(() => {
+      recordSessionTerminal('chat', 'c-cancel', 'rc', 'cancelled')
+      recordSessionTerminal('anti', 'a-cancel', 'ra', 'cancelled')
+    })
+    expect(chatDot()).toBeNull()
+    expect(antiDot()).toBeNull()
+
+    act(() => {
+      recordSessionTerminal('chat', 'c1', 'r1', 'completed')
+      recordSessionTerminal('anti', 'a1', 'r2', 'failed')
+    })
+    expect(chatDot()?.closest('a')?.getAttribute('href')).toBe('/chat')
+    expect(antiDot()?.closest('a')?.getAttribute('href')).toBe('/anti')
+
+    // Red dots stay visible when the sidebar is collapsed.
+    act(() => (host.querySelector('[aria-label="折叠/展开导航栏"]') as HTMLButtonElement).click())
+    expect(chatDot()).not.toBeNull()
+    expect(antiDot()).not.toBeNull()
+
+    act(() => markSessionRead('chat', 'c1', 'r1'))
+    expect(chatDot()).toBeNull()
+    expect(antiDot()).not.toBeNull()
+
+    act(() => markSessionActive('anti', 'a1'))
+    expect(antiDot()).toBeNull()
   })
 
   it('collapses to icon rail with logo and expand toggle, then expands back', async () => {

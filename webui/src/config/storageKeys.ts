@@ -15,6 +15,8 @@ export const storageKeys = {
   conversationIndexCollapsed: 'gahub.conversationIndexCollapsed',
   /** SessionRail: per-session completed-run bookkeeping (JSON object). */
   sessionRailSeenCompletedRuns: 'gahub.sessionRailSeenCompletedRuns',
+  /** SessionRail: per-session unread terminal runs (JSON object). */
+  sessionRailUnreadRuns: 'gahub.sessionRailUnreadRuns',
   /** SessionRail: terminal state per session id (JSON object). */
   sessionRailTerminalState: 'gahub.sessionRailTerminalState',
   /** SessionRail: collapsed rail groups (JSON object). */

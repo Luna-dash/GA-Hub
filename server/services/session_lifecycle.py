@@ -39,7 +39,7 @@ from .session_coordinator import (
 )
 from .session_metadata import SessionMetadataStore
 from .session_runtime_factory import SessionRuntimeFactory
-from .session_runtime_status import STATUS_ERROR
+from .session_runtime_status import STATUS_ERROR, STATUS_IDLE
 from .system_channels import SystemChannels
 
 log = logging.getLogger(__name__)
@@ -181,7 +181,7 @@ class SessionLifecycle:
             if self._coordinator is None:
                 capacity = _session_run_capacity()
                 kwargs = {
-                    "on_state_change": _publish_runtime_state,
+                    "on_state_change": self._handle_runtime_state_change,
                     "is_theme_task": lambda session_id: bool(self._store.get(session_id).get("theme_task")),
                 }
                 if capacity != 1:
@@ -191,6 +191,18 @@ class SessionLifecycle:
                     **kwargs,
                 )
             return self._coordinator
+
+    def _handle_runtime_state_change(self, state: RuntimeState) -> None:
+        if state.status == STATUS_IDLE and state.completed_run_id:
+            try:
+                self._store.touch(state.session_id)
+            except Exception:
+                log.debug(
+                    "session store touch skipped on completion session_id=%s",
+                    state.session_id,
+                    exc_info=True,
+                )
+        _publish_runtime_state(state)
 
     def peek_coordinator(self) -> SessionCoordinator | None:
         """Current coordinator without constructing one (peek-only callers).
