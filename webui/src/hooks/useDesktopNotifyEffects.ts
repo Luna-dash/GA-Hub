@@ -27,9 +27,13 @@ export function useDesktopNotifyEffects() {
       const state = event.payload as unknown as SessionRuntime
       // completed_run_id is emitted only for settled runs, not a tab/WS switch.
       const run = state.completed_run_id
-      if (state.status === 'aborting' && state.run_id) aborted.add(state.run_id)
-      if (!state.session_id || !run || state.status !== 'idle' || state.outcome === 'cancelled') return
-      if (aborted.delete(run)) return
+      if (state.status === 'aborting' && state.run_id) {
+        aborted.add(state.run_id)
+        if (aborted.size > 500) aborted.delete(aborted.values().next().value!)
+      }
+      if (!state.session_id || !run || state.status !== 'idle') return
+      const wasAborted = aborted.delete(run)
+      if (state.outcome === 'cancelled' || wasAborted) return
       const key = `${state.session_id}:${run}`
       if (seen.has(key)) return
       seen.add(key)

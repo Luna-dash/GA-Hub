@@ -178,4 +178,17 @@ describe('state notifications', () => {
     }))
     expect(JSON.stringify(m.notify.mock.calls)).not.toContain('SECRET_STACK')
   })
+
+  it('evicts run_id from aborted set even when the cancelled idle event drops out first', async () => {
+    await act(async () => {
+      emit({ session_id: 's1', status: 'aborting', run_id: 'r1' })
+      emit({ session_id: 's1', status: 'idle', completed_run_id: 'r1', outcome: 'cancelled' })
+    })
+    expect(m.notify).not.toHaveBeenCalled()
+
+    await act(async () => {
+      emit({ session_id: 's1', status: 'idle', completed_run_id: 'r1', outcome: 'completed' })
+    })
+    expect(m.notify).toHaveBeenCalledTimes(1)
+  })
 })

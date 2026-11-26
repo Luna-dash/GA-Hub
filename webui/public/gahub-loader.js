@@ -83,6 +83,7 @@
 
   /* ── 隐藏协议（与旧版完全一致） ───────────────────────────────── */
   var hidden = false
+  var disposed = false
   var startedAt = performance.now()
   var rafId = 0
   var running = false
@@ -92,9 +93,23 @@
   var particles = []
   var W = 0, H = 0, cx = 0, cy = 0
 
-  function teardown() {
+  function pauseLoop() {
     running = false
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0 }
+  }
+
+  function teardown() {
+    disposed = true
+    pauseLoop()
+    clearTimeout(resizeTimer)
+    resizeTimer = null
+    window.removeEventListener('resize', onResize)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+    particles.length = 0
+    if (canvas) {
+      canvas.width = 0
+      canvas.height = 0
+    }
   }
 
   function hideLoading() {
@@ -105,6 +120,7 @@
       if (bursting) return
       if (!running) {
         // 静态降级（reduced-motion / 无 Canvas）或渲染循环已停：直接淡出移除。
+        teardown()
         root.style.pointerEvents = 'none'
         root.style.opacity = '0'
         document.documentElement.removeAttribute('data-boot-splash')
@@ -374,11 +390,19 @@
   /* ── 尺寸与启动 ──────────────────────────────────────────────── */
   var resizeTimer = null
   function onResize() {
+    if (disposed) return
     clearTimeout(resizeTimer)
     resizeTimer = setTimeout(function () {
+      if (disposed) return
       resizeCanvas()
       buildGalaxy()
     }, 180)
+  }
+
+  function onVisibilityChange() {
+    if (disposed) return
+    if (document.hidden) pauseLoop()
+    else if (!hidden && !running) { running = true; rafId = requestAnimationFrame(frame) }
   }
 
   function resizeCanvas() {
@@ -398,8 +422,5 @@
   rafId = requestAnimationFrame(frame)
 
   window.addEventListener('resize', onResize)
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) teardown()
-    else if (!hidden) { running = true; rafId = requestAnimationFrame(frame) }
-  })
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })()
