@@ -11,6 +11,7 @@ import { api } from '@/api/client'
 import { NovaSettingsPanel } from '@/components/NovaSettingsPanel'
 import { UpdateSettingsPanel } from '@/components/UpdateSettingsPanel'
 import { FontAppearancePanel } from '@/components/FontAppearancePanel'
+import { ThemeAppearancePanel } from '@/components/ThemeAppearancePanel'
 import type { ChatRetryConfig } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { notify, useNotifyStore } from '@/utils/notify'
@@ -38,7 +39,7 @@ import { errorMessageFromError } from '@/utils/sessionUi'
 import { queryKeys } from '@/queries/queryKeys'
 const SETTINGS_TABS = [
   { id: 'general', label: '目录与环境', description: 'GenericAgent 项目目录与 Python 执行环境', icon: Settings2 },
-  { id: 'display', label: '字号缩放', description: '调整会话正文与侧栏标题的显示比例', icon: ALargeSmall },
+  { id: 'display', label: '外观与显示', description: '切换主题风格、纸面纹理及会话与栏目标题字号缩放', icon: ALargeSmall },
   { id: 'fonts', label: '字体方案', description: '管理字体包、本地字体导入与加粗表现', icon: Type },
   { id: 'navigation', label: '侧栏导航', description: '勾选要显示的页面入口并调整排序', icon: PanelLeft },
   { id: 'chat', label: '自动重试', description: '配置实时会话与定时任务的网络异常重试策略', icon: MessagesSquare },
@@ -299,7 +300,8 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
             )}
           </div>
           {!inSetup && <>
-            <div id="settings-panel-display" role="tabpanel" aria-labelledby="settings-tab-display" tabIndex={0} hidden={activeTab !== 'display'}>
+            <div id="settings-panel-display" role="tabpanel" aria-labelledby="settings-tab-display" tabIndex={0} hidden={activeTab !== 'display'} className="space-y-4">
+              <ThemeAppearancePanel />
               <ChatAppearancePanel />
             </div>
             <div id="settings-panel-fonts" role="tabpanel" aria-labelledby="settings-tab-fonts" tabIndex={0} hidden={activeTab !== 'fonts'}>

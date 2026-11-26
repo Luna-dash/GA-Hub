@@ -5,11 +5,11 @@ import { bubbleTone } from './bubbleTone'
 // surface class, unknown/absent roles fall back deterministically, and no
 // caller can crash on an undefined role.
 const KNOWN_EXPECTATIONS: Array<[string, 'chat' | 'card', RegExp]> = [
-  ['user', 'chat', /bg-accent/],
+  ['user', 'chat', /--c-user-bubble-bg/],
   ['user', 'card', /border-accent\/40/],
   ['assistant', 'chat', /bg-bg-card/],
   ['assistant', 'card', /bg-bg-card/],
-  ['system', 'chat', /#E8D8B8/],
+  ['system', 'chat', /--c-system-bubble-bg/],
   ['system', 'card', /status-warning-soft/],
 ]
 

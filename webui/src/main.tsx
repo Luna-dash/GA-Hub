@@ -9,6 +9,7 @@ import { installExternalLinkInterceptor } from './utils/openExternal'
 import { DesktopRuntimeGate } from './runtime/DesktopRuntimeGate'
 import { DesktopChrome } from './components/DesktopChrome'
 import { storageKeys } from './config/storageKeys'
+import { initThemeAppearance } from './utils/themeAppearance'
 
 // A production rebuild replaces Vite's hashed lazy-route chunks. An already
 // open desktop window can still reference the previous filenames; when that
@@ -37,6 +38,7 @@ const qc = new QueryClient({
 // External http(s) links → OS default browser (Tauri opener plugin).
 // Prevents WebView2 from navigating away from the SPA with no back UI.
 installExternalLinkInterceptor()
+initThemeAppearance()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

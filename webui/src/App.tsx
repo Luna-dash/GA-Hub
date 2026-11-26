@@ -15,6 +15,7 @@ import { hubEventClient } from '@/runtime/hubEventClient'
 import { queryKeys } from '@/queries/queryKeys'
 import { RuntimeEffects } from '@/runtime/RuntimeEffects'
 import { initFontAppearance, syncFontAppearance } from '@/utils/fontLoader'
+import { initThemeAppearance } from '@/utils/themeAppearance'
 
 const routeFallback = (
   <div className="h-full flex items-center justify-center text-ink-faint text-sm">载入中…</div>
@@ -35,6 +36,7 @@ export default function App() {
   const stop = useAgentStore((s) => s.stop)
 
   useEffect(() => {
+    initThemeAppearance()
     initFontAppearance()
     void syncFontAppearance()
   }, [])

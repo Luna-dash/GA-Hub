@@ -15,6 +15,8 @@ export const DURABLE_UI_SETTING_KEYS = [
   storageKeys.mykeyShowUpload,
   storageKeys.chatPerformance,
   storageKeys.desktopNotifications,
+  storageKeys.uiTheme,
+  storageKeys.uiPaperTexture,
 ] as const
 
 export type DurableUiSettingKey = (typeof DURABLE_UI_SETTING_KEYS)[number]

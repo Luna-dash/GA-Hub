@@ -46,6 +46,10 @@ export const storageKeys = {
   railTitleScaleRelative: 'gahub.rail-title-scale.relative.v2',
   /** fontLoader: cached font pack mode & bold strategy for zero-flash boot. */
   fontAppearanceCache: 'gahub.fontAppearance.v1',
+  /** themeAppearance: selected UI palette preset id. */
+  uiTheme: 'gahub.uiTheme.v1',
+  /** themeAppearance: selected paper texture mode ('fiber' | 'cotton' | 'none'). */
+  uiPaperTexture: 'gahub.uiPaperTexture.v1',
   /** mykeySyncUi: '1'/'0' upload hint visibility. */
   mykeyShowUpload: 'gahub.mykey-show-upload',
   /** chatPerformance: '1' = performance mode enabled. */

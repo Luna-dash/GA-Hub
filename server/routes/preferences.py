@@ -35,6 +35,8 @@ _ALLOWED_SETTING_KEYS = {
     "gahub.mykey-show-upload",
     "gahub.chatPerformance",
     "ga.desktopNotifications.v1",
+    "gahub.uiTheme.v1",
+    "gahub.uiPaperTexture.v1",
 }
 _MAX_SETTING_VALUE_LEN = 512
 

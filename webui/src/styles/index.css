@@ -5,49 +5,215 @@
 @tailwind utilities;
 
 /* ─────────────────────────────────────────────────────────────
-   Paper-yellow eye-friendly theme (single forced theme)
+   Theme & paper texture tokens
    ─────────────────────────────────────────────────────────────
-   Goals (from design ref):
-   - 用低饱和米黄替代纯白，长时间使用更舒适
-   - 暖棕拟物层次，暖棕阴影，避免冷灰
-   - 深橄榄侧栏稳定视觉重心
-   - 不使用高饱和/荧光色，不出现纯白大面积
-
+   Default (`:root` / `crisp-green-soft`): 清朗宣纸底 + 松烟墨字 + 松墨绿强调.
+   Additional presets selected via `html[data-theme="..."]` in Settings;
+   paper textures selected via `html[data-paper-texture="fiber"|"cotton"|"none"]`.
    Tailwind tokens (bg/line/accent/status in tailwind.config.js) read
-   these CSS vars. There is no dark variant: :root is the only theme;
-   the old html.light/html.dark class machinery is gone.
+   these CSS variables directly.
 */
 :root {
-  --c-bg: #DED6C5;            /* 低饱和灰米旧纸底，不再黄亮 */
-  --c-bg-rgb: 222 214 197;    /* = #DED6C5，供 Tailwind alpha 变体 */
-  --c-bg-soft: #D3C8B3;       /* 次级旧纸面 */
-  --c-bg-soft-rgb: 211 200 179; /* = #D3C8B3 */
-  --c-bg-card: #E7DFCF;       /* 实体纸卡片 */
-  --c-bg-card-rgb: 231 223 207; /* = #E7DFCF */
-  --c-line: #A99572;          /* 细棕灰边框 */
-  --c-line-rgb: 169 149 114;  /* = #A99572 */
-  --c-accent: #7A562D;        /* 克制复古棕（与白字/纸底均达 WCAG AA） */
-  --c-accent-rgb: 122 86 45;  /* = #7A562D，供 Tailwind alpha 变体（bg-accent/10 等） */
-  --c-accent-hover: #644522;  /* 悬停深棕：加深而非变淡 */
-  --c-accent-soft: #D3C3A6;
-  --c-accent-soft-rgb: 211 195 166; /* = #D3C3A6 */
-  --c-scrollbar-thumb: #9E8965;
-  --c-scrollbar-thumb-hover: #806A48;
-  --c-overlay-soft: rgba(54, 42, 28, 0.045);
-  --c-overlay-soft-strong: rgba(54, 42, 28, 0.10);
-  --c-text: #2C2418;
-  --c-text-rgb: 44 36 24;     /* = #2C2418 */
-  --c-text-muted: #524533;
-  --c-text-muted-rgb: 82 69 51; /* = #524533，全纸面 ≥ 5.6:1 */
-  --c-text-faint: #61523E;
-  --c-text-faint-rgb: 97 82 62; /* = #61523E，即使在 bg-soft 上亦 ≥ 4.5:1 */
-  --c-disabled-bg: #CEC3B0;
-  --c-disabled-text: #564734;
-  --c-disabled-line: #B2A289;
+  --c-bg: #EFECE4;
+  --c-bg-rgb: 239 236 228;
+  --c-bg-soft: #E6E1D6;
+  --c-bg-soft-rgb: 230 225 214;
+  --c-bg-card: #FAF8F3;
+  --c-bg-card-rgb: 250 248 243;
+  --c-line: #CFC8B8;
+  --c-line-rgb: 207 200 184;
+  --c-accent: #1B5E47;
+  --c-accent-rgb: 27 94 71;
+  --c-accent-hover: #134735;
+  --c-accent-soft: #DCEBE4;
+  --c-accent-soft-rgb: 220 235 228;
+  --c-accent-fg: #FFFFFF;
+  --c-scrollbar-thumb: #A9A08E;
+  --c-scrollbar-thumb-hover: #857D6D;
+  --c-overlay-soft: rgba(28, 25, 23, 0.045);
+  --c-overlay-soft-strong: rgba(28, 25, 23, 0.09);
+  --c-overlay-border: rgba(58, 42, 28, 0.12);
+  --c-inset-highlight: rgba(255, 255, 255, 0.78);
+  --c-text: #1C1917;
+  --c-text-rgb: 28 25 23;
+  --c-strong-ink: #110E0B;
+  --c-text-muted: #4A453F;
+  --c-text-muted-rgb: 74 69 63;
+  --c-text-faint: #635D55;
+  --c-text-faint-rgb: 99 93 85;
+  --c-disabled-bg: #DFD9CC;
+  --c-disabled-text: #5C554C;
+  --c-disabled-line: #C5BCAE;
+  --c-user-bubble-bg: #E1EFE9;
+  --c-user-bubble-fg: #1C1917;
+  --c-user-bubble-border: #9BC0B0;
+  --c-system-bubble-bg: #EFE6D4;
+  --c-system-bubble-fg: #2D2418;
+  --c-system-bubble-border: #C9B48B;
+  --c-code-inline-fg: #8C3B14;
+  --c-code-inline-bg: rgba(140, 59, 20, 0.08);
+  --c-hljs-comment: #625D54;
+  --c-hljs-keyword: #8F2D14;
+  --c-hljs-string: #235C36;
+  --c-hljs-number: #944206;
+  --c-hljs-title: #184E77;
+  --c-hljs-type: #57448A;
+  --c-hljs-built-in: #6E4614;
+  --c-hljs-meta: #575046;
+  --c-hljs-add-bg: rgba(35, 92, 54, 0.09);
+  --c-hljs-del-bg: rgba(143, 45, 20, 0.09);
+  --c-status-danger-rgb: 158 51 40;
+  --c-status-danger-soft-rgb: 253 239 234;
+  --c-status-danger-line-rgb: 229 189 181;
+  --c-status-danger-muted-rgb: 115 54 44;
+  --c-status-danger-strong-rgb: 130 40 31;
+  --c-status-info-rgb: 31 83 115;
+  --c-status-info-soft-rgb: 232 241 247;
+  --c-status-info-line-rgb: 195 216 230;
+  --c-status-info-strong-rgb: 21 63 90;
+  --c-status-success-rgb: 35 92 54;
+  --c-status-success-soft-rgb: 230 243 234;
+  --c-status-success-line-rgb: 185 216 194;
+  --c-status-success-strong-rgb: 26 112 58;
+  --c-status-warning-rgb: 122 79 8;
+  --c-status-warning-soft-rgb: 253 242 216;
+  --c-status-warning-line-rgb: 229 206 154;
+  --c-status-warning-muted-rgb: 102 68 18;
+  --c-status-warning-strong-rgb: 138 72 16;
+  --c-status-warning-hot-rgb: 196 104 28;
+  --c-solid-danger-bg: #9E3328;
+  --c-solid-danger-hover: #82281F;
+  --c-solid-danger-fg: #FFFFFF;
   --c-sidebar: #0B261D;
   --c-sidebar-soft: #12382B;
   --c-sidebar-text: #E8DFC9;
   color-scheme: light;
+}
+
+html[data-theme="crisp-green-solid"] {
+  --c-user-bubble-bg: #1B5E47;
+  --c-user-bubble-fg: #F6FBF9;
+  --c-user-bubble-border: #134735;
+}
+
+html[data-theme="crisp-brown-soft"] {
+  --c-accent: #6E4219;
+  --c-accent-rgb: 110 66 25;
+  --c-accent-hover: #573312;
+  --c-accent-soft: #EFE3D2;
+  --c-accent-soft-rgb: 239 227 210;
+  --c-user-bubble-bg: #EFE6D8;
+  --c-user-bubble-fg: #1C1917;
+  --c-user-bubble-border: #CBB79B;
+}
+
+html[data-theme="crisp-brown-solid"] {
+  --c-accent: #6E4219;
+  --c-accent-rgb: 110 66 25;
+  --c-accent-hover: #573312;
+  --c-accent-soft: #EFE3D2;
+  --c-accent-soft-rgb: 239 227 210;
+  --c-user-bubble-bg: #6E4219;
+  --c-user-bubble-fg: #FFF8EC;
+  --c-user-bubble-border: #573312;
+}
+
+html[data-theme="warm-parchment"] {
+  --c-bg: #E6DEC9;
+  --c-bg-rgb: 230 222 201;
+  --c-bg-soft: #DCD3BB;
+  --c-bg-soft-rgb: 220 211 187;
+  --c-bg-card: #F2EBDA;
+  --c-bg-card-rgb: 242 235 218;
+  --c-line: #C2B69A;
+  --c-line-rgb: 194 182 154;
+  --c-accent-soft: #D4E4DB;
+  --c-accent-soft-rgb: 212 228 219;
+  --c-text-muted: #474036;
+  --c-text-muted-rgb: 71 64 54;
+  --c-text-faint: #5E5549;
+  --c-text-faint-rgb: 94 85 73;
+  --c-disabled-bg: #D5CCB5;
+  --c-disabled-text: #564D40;
+  --c-disabled-line: #B8AA8F;
+  --c-inset-highlight: rgba(255, 250, 232, 0.72);
+  --c-user-bubble-bg: #DAE7DF;
+  --c-user-bubble-fg: #1C1917;
+  --c-user-bubble-border: #96B7A6;
+}
+
+html[data-theme="dark-forest"] {
+  --c-bg: #121715;
+  --c-bg-rgb: 18 23 21;
+  --c-bg-soft: #1C2421;
+  --c-bg-soft-rgb: 28 36 33;
+  --c-bg-card: #171E1B;
+  --c-bg-card-rgb: 23 30 27;
+  --c-line: #2F3C36;
+  --c-line-rgb: 47 60 54;
+  --c-accent: #5EC29B;
+  --c-accent-rgb: 94 194 155;
+  --c-accent-hover: #74D1AC;
+  --c-accent-soft: #1E3A30;
+  --c-accent-soft-rgb: 30 58 48;
+  --c-accent-fg: #0C1A14;
+  --c-scrollbar-thumb: #3C4D46;
+  --c-scrollbar-thumb-hover: #536960;
+  --c-overlay-soft: rgba(255, 255, 255, 0.045);
+  --c-overlay-soft-strong: rgba(255, 255, 255, 0.09);
+  --c-overlay-border: rgba(255, 255, 255, 0.11);
+  --c-inset-highlight: rgba(255, 255, 255, 0.05);
+  --c-text: #ECE8DF;
+  --c-text-rgb: 236 232 223;
+  --c-strong-ink: #FAF7F0;
+  --c-text-muted: #B8B2A6;
+  --c-text-muted-rgb: 184 178 166;
+  --c-text-faint: #948E82;
+  --c-text-faint-rgb: 148 142 130;
+  --c-disabled-bg: #1C2320;
+  --c-disabled-text: #6D7670;
+  --c-disabled-line: #2C3732;
+  --c-user-bubble-bg: #1D3A2F;
+  --c-user-bubble-fg: #EDF4F0;
+  --c-user-bubble-border: #3A6C58;
+  --c-system-bubble-bg: #2A2418;
+  --c-system-bubble-fg: #E9DEC5;
+  --c-system-bubble-border: #594A2C;
+  --c-code-inline-fg: #F0B078;
+  --c-code-inline-bg: rgba(240, 176, 120, 0.13);
+  --c-hljs-comment: #8E9993;
+  --c-hljs-keyword: #F09B74;
+  --c-hljs-string: #85CF98;
+  --c-hljs-number: #E8B064;
+  --c-hljs-title: #7DC0F2;
+  --c-hljs-type: #BCAEEB;
+  --c-hljs-built-in: #E3BA76;
+  --c-hljs-meta: #B5AEA0;
+  --c-hljs-add-bg: rgba(133, 207, 152, 0.14);
+  --c-hljs-del-bg: rgba(240, 155, 116, 0.14);
+  --c-status-danger-rgb: 240 140 128;
+  --c-status-danger-soft-rgb: 58 29 26;
+  --c-status-danger-line-rgb: 125 60 53;
+  --c-status-danger-muted-rgb: 217 132 122;
+  --c-status-danger-strong-rgb: 246 168 158;
+  --c-status-info-rgb: 126 192 232;
+  --c-status-info-soft-rgb: 24 44 58;
+  --c-status-info-line-rgb: 55 96 124;
+  --c-status-info-strong-rgb: 158 212 245;
+  --c-status-success-rgb: 127 209 153;
+  --c-status-success-soft-rgb: 24 49 34;
+  --c-status-success-line-rgb: 56 108 74;
+  --c-status-success-strong-rgb: 152 224 176;
+  --c-status-warning-rgb: 236 193 107;
+  --c-status-warning-soft-rgb: 52 38 16;
+  --c-status-warning-line-rgb: 112 83 34;
+  --c-status-warning-muted-rgb: 212 167 84;
+  --c-status-warning-strong-rgb: 245 212 138;
+  --c-status-warning-hot-rgb: 242 155 76;
+  --c-solid-danger-bg: #B8382B;
+  --c-solid-danger-hover: #9E2E22;
+  --c-solid-danger-fg: #FFFFFF;
+  color-scheme: dark;
 }
 
 html {
@@ -104,7 +270,7 @@ html:not([data-font-pack="enhanced"])[data-bold-style="restrained"] body :is(.fo
   letter-spacing: 0.01em;
 }
 html:not([data-font-pack="enhanced"])[data-bold-style="restrained"] .prose-chat :is(strong, b):not(code, pre *, .font-mono) {
-  color: #1E170E;
+  color: var(--c-strong-ink);
 }
 html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(strong, b) {
   font-weight: 600;
@@ -151,7 +317,7 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
 .bg-white\/10 { background-color: var(--c-overlay-soft-strong); }
 .hover\:bg-white\/5:hover  { background-color: var(--c-overlay-soft); }
 .hover\:bg-white\/10:hover { background-color: var(--c-overlay-soft-strong); }
-.border-white\/10 { border-color: rgba(58, 42, 28, 0.12); }
+.border-white\/10 { border-color: var(--c-overlay-border); }
 
 /* Status hues live in the tailwind `status-*` tokens (see tailwind.config.js);
    state-semantic hue utilities were converged onto them, so the old
@@ -217,12 +383,16 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
 .prose-chat code {
   font-family: var(--ga-font-mono);
   font-size: 0.92em;
-  color: #8A5A1F;
+  color: var(--c-code-inline-fg);
+  background: var(--c-code-inline-bg);
+  padding: 0.05em 0.32em;
+  border-radius: 0.25rem;
 }
 .prose-chat pre code {
   color: var(--c-text);
   background: transparent;
   padding: 0;
+  border-radius: 0;
   font-size: 0.88em;
   line-height: 1.5;
 }
@@ -264,26 +434,26 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
   padding: 0;
 }
 .prose-chat .hljs-comment,
-.prose-chat .hljs-quote { color: #8a7b68; font-style: italic; }
+.prose-chat .hljs-quote { color: var(--c-hljs-comment); font-style: italic; }
 .prose-chat .hljs-keyword,
 .prose-chat .hljs-selector-tag,
-.prose-chat .hljs-subst { color: #8a3d1f; font-weight: 600; }
+.prose-chat .hljs-subst { color: var(--c-hljs-keyword); font-weight: 600; }
 .prose-chat .hljs-string,
 .prose-chat .hljs-doctag,
-.prose-chat .hljs-template-variable { color: #2f6b3a; }
+.prose-chat .hljs-template-variable { color: var(--c-hljs-string); }
 .prose-chat .hljs-number,
-.prose-chat .hljs-literal { color: #a65c12; }
+.prose-chat .hljs-literal { color: var(--c-hljs-number); }
 .prose-chat .hljs-title,
 .prose-chat .hljs-section,
-.prose-chat .hljs-selector-id { color: #1f4f7a; font-weight: 600; }
+.prose-chat .hljs-selector-id { color: var(--c-hljs-title); font-weight: 600; }
 .prose-chat .hljs-type,
-.prose-chat .hljs-class .hljs-title { color: #5a4a8a; }
+.prose-chat .hljs-class .hljs-title { color: var(--c-hljs-type); }
 .prose-chat .hljs-built_in,
-.prose-chat .hljs-builtin-name { color: #6b4f1f; }
+.prose-chat .hljs-builtin-name { color: var(--c-hljs-built-in); }
 .prose-chat .hljs-meta,
-.prose-chat .hljs-attr { color: #6a5a48; }
-.prose-chat .hljs-addition { color: #2f6b3a; background: rgba(47, 107, 58, 0.08); }
-.prose-chat .hljs-deletion { color: #8a3d1f; background: rgba(138, 61, 31, 0.08); }
+.prose-chat .hljs-attr { color: var(--c-hljs-meta); }
+.prose-chat .hljs-addition { color: var(--c-hljs-string); background: var(--c-hljs-add-bg); }
+.prose-chat .hljs-deletion { color: var(--c-hljs-keyword); background: var(--c-hljs-del-bg); }
 
 /* 标题/表格/代码块原本用 rem 固定字号，吃不到气泡容器的 font-size %，
    会话字体缩放对它们不生效；统一改 calc(原值 × var(--chat-scale))，
@@ -370,7 +540,7 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
 }
 .prose-chat li.task-list-item input[type="checkbox"] {
   margin: 0.35rem 0 0 0;
-  accent-color: #8A6438;
+  accent-color: var(--c-accent);
   flex-shrink: 0;
   pointer-events: none;
 }
@@ -515,22 +685,27 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
   position: relative;
   isolation: isolate;
   background-color: var(--c-bg);
-  background-image:
-    linear-gradient(180deg, rgba(255,255,255,0.10), rgba(55,42,25,0.035)),
-    radial-gradient(rgba(80,60,35,0.045) 0.8px, transparent 0.9px);
-  background-size: auto, 4px 4px;
 }
-/* 轻量旧纸纹理：用纯 CSS 梯度替代整屏 fixed feTurbulence + multiply 混合，避免滚动重绘 */
-.app-aurora::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
-  opacity: 0.35;
-  background-image:
-    repeating-linear-gradient(0deg, rgba(95, 72, 42, 0.018) 0 1px, transparent 1px 10px),
-    radial-gradient(ellipse at 18% 12%, rgba(255, 250, 232, 0.25), transparent 55%);
+.ga-paper-canvas {
+  background-color: var(--c-bg);
+}
+html[data-paper-texture="fiber"]:not([data-theme="dark-forest"]) :is(.app-aurora, .ga-paper-canvas) {
+  background-image: url('../assets/textures/paper-fiber-canvas.png');
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+html[data-paper-texture="cotton"]:not([data-theme="dark-forest"]) :is(.app-aurora, .ga-paper-canvas) {
+  background-image: url('../assets/textures/paper-cotton-canvas.png');
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+html[data-paper-texture="cotton"]:not([data-theme="dark-forest"]) :is(.ga-paper-card, .ga-surface-card) {
+  background-image: url('../assets/textures/paper-cotton-card.png');
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+html[data-paper-texture="none"] :is(.app-aurora, .ga-paper-canvas, .ga-paper-card, .ga-surface-card) {
+  background-image: none;
 }
 
 /* Sidebar (深橄榄稳定视觉重心) — opt-in via .ga-sidebar */
@@ -952,9 +1127,15 @@ option {
   background-position: right 0.6rem center, 0 0;
   background-size: 14px 14px, 100% 100%;
   padding-right: 1.85rem !important;
-  box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.7), 0 1px 2px rgba(58, 42, 28, 0.06);
+  box-shadow: inset 0 1px 0 var(--c-inset-highlight), 0 1px 2px rgba(28, 25, 23, 0.06);
   color: var(--c-text);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+html[data-theme="dark-forest"] .ga-select {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23B8B2A6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"),
+    linear-gradient(160deg, var(--c-bg-soft), var(--c-bg-card));
 }
 
 .ga-select:hover:not(:disabled) {

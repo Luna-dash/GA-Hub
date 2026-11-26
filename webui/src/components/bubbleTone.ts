@@ -10,9 +10,9 @@ export interface BubbleTone {
 }
 
 const CHAT_TONES: Record<string, BubbleTone> = {
-  user: { surfaceClass: 'bg-accent text-[#FFF4DF] border border-[#6F4D28]' },
-  assistant: { surfaceClass: 'bg-bg-card border border-line text-ink' },
-  system: { surfaceClass: 'bg-[#E8D8B8] border border-[#B69761] text-[#3C2C19]' },
+  user: { surfaceClass: 'bg-[var(--c-user-bubble-bg)] text-[var(--c-user-bubble-fg)] border border-[var(--c-user-bubble-border)]' },
+  assistant: { surfaceClass: 'bg-bg-card border border-line text-ink ga-surface-card' },
+  system: { surfaceClass: 'bg-[var(--c-system-bubble-bg)] border border-[var(--c-system-bubble-border)] text-[var(--c-system-bubble-fg)]' },
 }
 
 const CARD_TONES: Record<string, BubbleTone> = {

@@ -96,4 +96,12 @@ def test_ui_settings_persist_merge_and_reject_unknown_keys(tmp_path, monkeypatch
     stored = json.loads(target.read_text("utf-8"))
     assert stored["settings"] == {"gahub.chat-font-scale.relative.v2": "115", "ga.desktopNotifications.v1": "0"}
 
+    theme_saved = client.put(
+        "/api/preferences/ui",
+        json={"settings": {"gahub.uiTheme.v1": "warm-parchment", "gahub.uiPaperTexture.v1": "cotton"}},
+    )
+    assert theme_saved.status_code == 200
+    assert theme_saved.json()["settings"]["gahub.uiTheme.v1"] == "warm-parchment"
+    assert theme_saved.json()["settings"]["gahub.uiPaperTexture.v1"] == "cotton"
+
     assert client.put("/api/preferences/ui", json={"settings": {"evil.key": "1"}}).status_code == 422

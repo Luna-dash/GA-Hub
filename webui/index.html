@@ -6,6 +6,27 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png?v=7e746a62" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GA-Hub</title>
+    <script>
+      (function () {
+        var root = document.documentElement;
+        var themes = {
+          'crisp-green-soft': 1, 'crisp-green-solid': 1,
+          'crisp-brown-soft': 1, 'crisp-brown-solid': 1,
+          'warm-parchment': 1, 'dark-forest': 1
+        };
+        var textures = { fiber: 1, cotton: 1, none: 1 };
+        var theme = 'crisp-green-soft';
+        var tex = 'fiber';
+        try {
+          var t = localStorage.getItem('gahub.uiTheme.v1');
+          if (t && themes[t]) theme = t;
+          var x = localStorage.getItem('gahub.uiPaperTexture.v1');
+          if (x && textures[x]) tex = x;
+        } catch (e) {}
+        root.dataset.theme = theme;
+        root.dataset.paperTexture = tex;
+      })();
+    </script>
   </head>
   <body class="bg-bg text-ink">
     <!-- 启动加载层：仅 Tauri 运行时激活，见 public/gahub-loader.js -->

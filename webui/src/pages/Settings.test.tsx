@@ -163,4 +163,46 @@ describe('Settings functional tabs', () => {
     await act(async () => toggle.click())
     expect(numbers.every((input) => !input.disabled)).toBe(true)
   })
+
+  it('switches UI theme presets, toggles A/B/off paper textures, and resets to default in display tab', async () => {
+    delete document.documentElement.dataset.theme
+    delete document.documentElement.dataset.paperTexture
+    await mount()
+    await click('display')
+
+    const p = panel()
+    expect(p.querySelectorAll('[data-theme-option]')).toHaveLength(6)
+    expect(p.querySelectorAll('[data-texture-option]')).toHaveLength(3)
+
+    const brownBtn = p.querySelector<HTMLButtonElement>('[data-theme-option="crisp-brown-solid"]')!
+    const darkBtn = p.querySelector<HTMLButtonElement>('[data-theme-option="dark-forest"]')!
+    const cottonBtn = p.querySelector<HTMLButtonElement>('[data-texture-option="cotton"]')!
+    const noneBtn = p.querySelector<HTMLButtonElement>('[data-texture-option="none"]')!
+
+    await act(async () => { brownBtn.click() })
+    expect(document.documentElement.dataset.theme).toBe('crisp-brown-solid')
+    expect(brownBtn.getAttribute('aria-pressed')).toBe('true')
+    expect(localStorage.getItem('gahub.uiTheme.v1')).toBe('crisp-brown-solid')
+
+    await act(async () => { cottonBtn.click() })
+    expect(document.documentElement.dataset.paperTexture).toBe('cotton')
+    expect(cottonBtn.getAttribute('aria-pressed')).toBe('true')
+    expect(localStorage.getItem('gahub.uiPaperTexture.v1')).toBe('cotton')
+
+    await act(async () => { noneBtn.click() })
+    expect(document.documentElement.dataset.paperTexture).toBe('none')
+    expect(localStorage.getItem('gahub.uiPaperTexture.v1')).toBe('none')
+
+    await act(async () => { darkBtn.click() })
+    expect(document.documentElement.dataset.theme).toBe('dark-forest')
+    expect(p.textContent).toContain('深色主题下自动关闭浅色纸纹')
+
+    const resetBtn = Array.from(p.querySelectorAll<HTMLButtonElement>('button'))
+      .find(btn => btn.textContent?.includes('恢复默认'))!
+    await act(async () => { resetBtn.click() })
+    expect(document.documentElement.dataset.theme).toBe('crisp-green-soft')
+    expect(document.documentElement.dataset.paperTexture).toBe('fiber')
+    expect(localStorage.getItem('gahub.uiTheme.v1')).toBe('crisp-green-soft')
+    expect(localStorage.getItem('gahub.uiPaperTexture.v1')).toBe('fiber')
+  })
 })
