@@ -2412,7 +2412,6 @@ class AgyRuntimeManager:
         return [
             {"name": "plan", "description": "先进行调研并生成结构化方案", "hint": "<目标>"},
             {"name": "compact", "description": "压缩当前对话上下文以节省额度"},
-            {"name": "review", "description": "审查工作区改动与潜在问题"},
         ]
 
     def session_connected(self, db_key: str, session_id: str) -> bool:

@@ -28,7 +28,6 @@ const CORE_ANTI_COMMANDS: readonly {
 }[] = [
   { name: 'compact', description: '压缩当前对话上下文，节省额度' },
   { name: 'plan', description: '先调研并生成结构化方案', hint: '<目标>' },
-  { name: 'review', description: '审查工作区改动与潜在问题' },
   { name: 'grill-me', description: '交互式追问，逐项对齐设计决策' },
   { name: 'boost', description: '复杂任务深度思考与严谨验证' },
   { name: 'goal', description: '长程目标持续推进直至完成' },
@@ -81,12 +80,23 @@ const BLOCKED_ANTI_COMMANDS = new Set([
   'swarm_narrator',
   'migrate-agent-settings',
   'migrate-workflows',
+  // Antigravity builtin skills that duplicate GA-Hub UI, depend on IDE side panes, or leak internal instructions into custom tier
+  'agy-customizations',
+  'antigravity-guide',
+  'antigravity_guide',
+  'automation',
+  'conversations',
+  'generative_ui',
+  'generative-ui',
+  'mcp-app-development',
+  'permissioned-github',
+  'plugin',
+  'ui-plugin-navigation',
 ])
 
 export const DEFAULT_ANTI_COMMANDS: readonly AntiSlashCommandInput[] = [
   { name: 'compact', description: '压缩当前对话上下文，节省额度' },
   { name: 'plan', description: '先调研并生成结构化方案', hint: '<目标>' },
-  { name: 'review', description: '审查工作区改动与潜在问题' },
 ]
 
 function normalizeCommandName(rawName: string): string {
