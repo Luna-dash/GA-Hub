@@ -965,3 +965,24 @@ option {
   border-color: var(--c-accent);
   outline: none;
 }
+
+/* 会话管理栏运行中圆点呼吸光环：保持实心琥珀橙核心常亮，仅柔和呼吸外环 */
+@keyframes ga-session-dot-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.28);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(217, 119, 6, 0.06);
+  }
+}
+
+.ga-session-dot-running {
+  animation: ga-session-dot-pulse 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ga-session-dot-running {
+    animation: none;
+    box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.24);
+  }
+}

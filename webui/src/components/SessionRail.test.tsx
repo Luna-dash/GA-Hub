@@ -710,4 +710,64 @@ describe('SessionRail', () => {
     expect(host.querySelectorAll('[data-testid^="group-show-all"]')).toHaveLength(0)
     expect(host.querySelectorAll('[data-activity]')).toHaveLength(3)
   })
+
+  it('separates orthogonal state dots from lifted active-row highlighting', () => {
+    const stateSessions: HubSession[] = [
+      { ...sessions[1], id: 'state-active', title: '运行任务', updated_at: '2026-08-05T12:00:00Z' },
+      { ...sessions[1], id: 'state-completed', title: '完成任务', updated_at: '2026-08-05T11:00:00Z' },
+      { ...sessions[1], id: 'state-error', title: '异常任务', updated_at: '2026-08-05T10:00:00Z' },
+      { ...sessions[1], id: 'state-idle', title: '空闲任务', updated_at: '2026-08-05T09:00:00Z' },
+    ]
+    const stateRuntimes: Record<string, SessionRuntime> = {
+      'state-active': { session_id: 'state-active', status: 'running', run_id: 'r-act', stream_id: null },
+      'state-completed': { session_id: 'state-completed', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'r-ok', outcome: 'completed' },
+      'state-error': { session_id: 'state-error', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'r-err', outcome: 'failed' },
+      'state-idle': { session_id: 'state-idle', status: 'idle', run_id: null, stream_id: null },
+    }
+
+    const renderWithCurrent = (currentId: string) => {
+      act(() => root.render(
+        <SessionRail sessions={stateSessions} runtimes={stateRuntimes} currentId={currentId} onSelect={vi.fn()} />,
+      ))
+    }
+
+    renderWithCurrent('state-idle')
+
+    for (const id of ['state-active', 'state-completed', 'state-error']) {
+      const row = host.querySelector(`[data-session-id="${id}"]`) as HTMLDivElement
+      expect(row.getAttribute('data-current')).toBe('false')
+      const classes = row.className.split(/\s+/)
+      expect(classes).toContain('text-ink-muted')
+      expect(classes).not.toContain('bg-status-success-soft')
+      expect(classes).not.toContain('bg-status-info-soft')
+      expect(classes).not.toContain('bg-status-danger-soft')
+      expect(classes).not.toContain('bg-[#F7F1E5]')
+    }
+
+    const idleActiveRow = host.querySelector('[data-session-id="state-idle"]') as HTMLDivElement
+    expect(idleActiveRow.getAttribute('data-current')).toBe('true')
+    const activeClasses = idleActiveRow.className.split(/\s+/)
+    expect(activeClasses).toContain('bg-[#F7F1E5]')
+    expect(activeClasses).toContain('ring-accent/35')
+    expect(activeClasses).toContain('before:bg-accent')
+    expect(activeClasses).toContain('shadow-sm')
+    expect(idleActiveRow.querySelector('button span span:last-child')?.className).toContain('font-semibold')
+
+    const dotClasses = (id: string) =>
+      (host.querySelector(`[data-session-id="${id}"] [data-status-dot]`) as HTMLElement).className.split(/\s+/)
+
+    expect(dotClasses('state-active')).toContain('bg-[#D97706]')
+    expect(dotClasses('state-active')).toContain('ga-session-dot-running')
+    expect(dotClasses('state-completed')).toContain('bg-[#1F8A4C]')
+    expect(dotClasses('state-completed')).not.toContain('ga-session-dot-running')
+    expect(dotClasses('state-error')).toContain('bg-[#C93B2B]')
+    expect(dotClasses('state-idle')).toContain('bg-[#A89C8B]/75')
+
+    // Selected running row also receives the lifted card highlight without losing its running dot.
+    renderWithCurrent('state-active')
+    const activeSelectedRow = host.querySelector('[data-session-id="state-active"]') as HTMLDivElement
+    expect(activeSelectedRow.getAttribute('data-current')).toBe('true')
+    expect(activeSelectedRow.className.split(/\s+/)).toContain('bg-[#F7F1E5]')
+    expect(dotClasses('state-active')).toContain('bg-[#D97706]')
+  })
 })

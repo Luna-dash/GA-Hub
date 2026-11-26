@@ -51,24 +51,18 @@ interface SessionRailProps {
 }
 
 const activityDot = {
-  // Glow rings reuse the status hex from tailwind.config.js — the old
-  // emerald/sky/rose rgba values were pre-palette hues that no token owns.
-  active: 'bg-status-success shadow-[0_0_0_3px_rgba(45,106,63,0.18)]',
-  completed: 'bg-status-info shadow-[0_0_0_3px_rgba(40,90,120,0.16)]',
-  // Idle is a neutral on purpose (palette comment sanctions it), shared
-  // with Conductor's stopped dot — one hex, not two near-misses.
-  idle: 'bg-[#9A8E7D]',
-  error: 'bg-status-danger shadow-[0_0_0_3px_rgba(158,51,40,0.16)]',
-  unknown: 'bg-status-warning',
+  // 状态仅通过圆点区分：高色相与明度反差，避免 8px 小圆点混色；运行中叠加柔和呼吸外环。
+  active: 'bg-[#D97706] ga-session-dot-running',
+  completed: 'bg-[#1F8A4C] shadow-[0_0_0_3px_rgba(31,138,76,0.20)]',
+  idle: 'bg-[#A89C8B]/75',
+  error: 'bg-[#C93B2B] shadow-[0_0_0_3px_rgba(201,59,43,0.20)]',
+  unknown: 'bg-[#A89C8B]/75',
 }
 
-const activityCard = {
-  active: 'bg-status-success-soft text-status-success',
-  completed: 'bg-status-info-soft text-status-info',
-  idle: 'text-ink-muted hover:bg-bg-card',
-  error: 'bg-status-danger-soft text-status-danger',
-  unknown: 'bg-status-warning-soft text-status-warning',
-}
+// 激活态高亮与状态完全正交：非当前行不再铺状态底色，当前行以暖白浮起纸卡 + 左侧复古棕竖条强高亮。
+const ACTIVE_ROW_CLASS =
+  "bg-[#F7F1E5] text-ink ring-1 ring-accent/35 shadow-sm before:pointer-events-none before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-r-full before:bg-accent before:content-['']"
+const INACTIVE_ROW_CLASS = 'text-ink-muted hover:bg-bg-card/75 hover:text-ink'
 
 const activityLabel = {
   active: '运行中',
@@ -79,11 +73,11 @@ const activityLabel = {
 }
 
 const activityRail = {
-  active: 'bg-status-success shadow-[0_0_0_3px_rgba(60,138,82,0.13)] group-hover:bg-status-success-strong',
-  completed: 'bg-status-info shadow-[0_0_0_3px_rgba(31,74,99,0.11)] group-hover:bg-status-info-strong',
-  idle: 'bg-[#8D7B5D]/55 shadow-[0_0_0_3px_rgba(141,123,93,0.10)] group-hover:bg-[#8D7B5D]/70',
-  error: 'bg-status-danger shadow-[0_0_0_3px_rgba(126,42,32,0.11)] group-hover:bg-status-danger-strong',
-  unknown: 'bg-status-warning shadow-[0_0_0_3px_rgba(154,83,21,0.11)] group-hover:bg-status-warning-strong',
+  active: 'bg-[#D97706] ga-session-dot-running group-hover:bg-[#B45309]',
+  completed: 'bg-[#1F8A4C] shadow-[0_0_0_3px_rgba(31,138,76,0.16)] group-hover:bg-[#176E3B]',
+  idle: 'bg-[#A89C8B]/75 shadow-[0_0_0_3px_rgba(168,156,139,0.12)] group-hover:bg-[#8D7B5D]',
+  error: 'bg-[#C93B2B] shadow-[0_0_0_3px_rgba(201,59,43,0.16)] group-hover:bg-[#A62D20]',
+  unknown: 'bg-[#A89C8B]/75 shadow-[0_0_0_3px_rgba(168,156,139,0.12)] group-hover:bg-[#8D7B5D]',
 }
 
 const LEGACY_RECENT_KEY = storageKeys.sessionRailLegacyRecentActivity
@@ -461,12 +455,11 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                   <div
                     key={session.id}
                     data-activity={activity}
+                    data-current={current ? 'true' : 'false'}
                     data-session-id={session.id}
                     className={clsx(
-                      'group relative w-52 shrink-0 rounded-md transition-colors md:w-full',
-                      activityCard[activity],
-                      // 当前行以底色强调，无框会话行不再加描边。
-                      current && 'bg-accent/10 font-medium',
+                      'group relative w-52 shrink-0 rounded-md transition-[background-color,color,box-shadow] md:w-full',
+                      current ? ACTIVE_ROW_CLASS : INACTIVE_ROW_CLASS,
                     )}
                   >
                     <div className="relative">
@@ -491,11 +484,11 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                           onDoubleClick={() => beginRename(session)}
                           aria-current={current ? 'page' : undefined}
                           title={`${sessionTitle(session)} · ${sessionStatusLabel(runtime)}${session.project_name ? ` · ${session.project_name}` : ''}`}
-                          className="block min-h-7 w-full px-2 py-1 text-left"
+                          className="block min-h-7 w-full pl-2.5 pr-2 py-1 text-left"
                         >
                           <span className="flex items-center gap-2 pr-8">
-                            <span aria-hidden="true" title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
-                            <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ fontSize: `${railTitlePercent(titleScale)}%` }} title={sessionTitle(session)}>{sessionTitle(session)}</span>
+                            <span aria-hidden="true" data-status-dot={activity} title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
+                            <span className={clsx('min-w-0 flex-1 truncate text-sm', current ? 'font-semibold' : 'font-medium')} style={{ fontSize: `${railTitlePercent(titleScale)}%` }} title={sessionTitle(session)}>{sessionTitle(session)}</span>
                           </span>
                         </button>
                       )}
@@ -639,7 +632,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
               aria-label={`${sessionTitle(session)}，${activityLabel[activity]}`}
               className={clsx(
                 'group flex h-6 w-6 min-w-6 flex-none items-center justify-center rounded-full border border-line bg-bg-card/95 p-0 shadow-sm backdrop-blur-sm transition-[background-color,box-shadow,transform] hover:-translate-y-px hover:bg-bg-card hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 md:hover:-translate-x-px md:hover:translate-y-0',
-                currentId === session.id && 'border-accent bg-bg-card ring-1 ring-accent/35 shadow-md',
+                currentId === session.id && 'border-accent bg-[#F7F1E5] ring-1 ring-accent/40 shadow-md',
               )}
             >
               <span
