@@ -170,7 +170,7 @@ export function SidebarNav() {
       )}
     >
       <div className="ga-sidebar-brand-row border-b border-white/10 flex items-center">
-        <div className="ga-brand-mark min-w-0" aria-label="GA Hub">
+        <div className="ga-brand-mark min-w-0" aria-label="GAHUB">
           <button
             type="button"
             onClick={toggleCollapsed}
@@ -182,7 +182,7 @@ export function SidebarNav() {
               <div className="ga-brand-orb" aria-hidden="true">
                 <img className="ga-brand-image" src={brandIcon} alt="" draggable={false} />
               </div>
-              {!collapsed && <span className="ga-brand-hub">HUB</span>}
+              {!collapsed && <span className="ga-brand-hub">GAHUB</span>}
             </div>
           </button>
         </div>
