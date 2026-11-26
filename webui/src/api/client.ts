@@ -578,9 +578,9 @@ export interface NovaAccountInput {
   confirm: boolean
 }
 export const novaApi = {
-  status: () => http<NovaStatus>('GET', '/nova/settings', undefined, { cache: 'no-store' }),
-  action: async (action: 'associate' | 'revoke' | 'reconnect', body?: NovaAccountInput) => {
-    const state = await novaApi.status()
+  status: () => http<NovaStatus>('GET', '/nova/status', undefined, { cache: 'no-store' }),
+  action: async (action: 'associate' | 'revoke' | 'reconnect' | 'pause' | 'resume', body?: NovaAccountInput) => {
+    const state = await http<NovaStatus>('GET', '/nova/settings', undefined, { cache: 'no-store' })
     if (!state.local_token) throw new Error('本机授权令牌不可用')
     const options = {
       timeoutMs: 120000,
@@ -588,6 +588,8 @@ export const novaApi = {
     }
     if (action === 'associate') return http<NovaStatus>('POST', '/nova/associate', body ?? {}, options)
     if (action === 'revoke') return http<NovaStatus>('POST', '/nova/revoke', body ?? {}, options)
+    if (action === 'pause') return http<NovaStatus>('POST', '/nova/pause', {}, options)
+    if (action === 'resume') return http<NovaStatus>('POST', '/nova/resume', {}, options)
     return http<NovaStatus>('POST', '/nova/reconnect', {}, options)
   },
 }

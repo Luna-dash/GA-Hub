@@ -46,6 +46,22 @@ describe('Nova embedded settings', () => {
     expect(host.querySelector('form')).toBeNull()
   })
 
+  it('shows cloud connection status, RTT, device name, error detail and pause/resume controls', async () => {
+    const connected = { ...status, paired: true, running: true, connected: true, rtt_ms: 42, device_name: 'Office PC' }
+    vi.mocked(novaApi.status).mockResolvedValue(connected)
+    vi.mocked(novaApi.action).mockResolvedValue({ ...connected, running: false, connected: false, paused: true })
+    await act(async () => root.render(<NovaSettingsPanel />))
+    expect(host.textContent).toContain('连接器运行中 · 已连接云端 · 42ms')
+    expect(host.textContent).toContain('(Office PC)')
+    await act(async () => button('暂停连接').click())
+    expect(novaApi.action).toHaveBeenCalledWith('pause', undefined)
+    expect(host.textContent).toContain('连接器已暂停')
+    vi.mocked(novaApi.action).mockResolvedValue({ ...connected, error: 'ConnectorAuthError', error_detail: '设备已撤销或凭证无效' })
+    await act(async () => button('恢复连接').click())
+    expect(novaApi.action).toHaveBeenCalledWith('resume', undefined)
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('设备已撤销或凭证无效')
+  })
+
   it('requires explicit confirmation and current credentials when revoking', async () => {
     vi.mocked(novaApi.status).mockResolvedValue({ ...status, paired: true, running: true })
     vi.mocked(novaApi.action).mockResolvedValue(status)

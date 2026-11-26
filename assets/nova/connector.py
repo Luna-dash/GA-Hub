@@ -6,12 +6,14 @@ import contextlib
 import hashlib
 import json
 import os
+import random
 import re
 from pathlib import Path
 import secrets
 import sys
 import time
 from urllib.parse import urlsplit
+import zlib
 
 import aiohttp
 from aiohttp import web, WSMsgType
@@ -26,6 +28,86 @@ STATE = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'GAHubNova'
 CRED_PREFIX = 'GAHub.Nova.'
 ARTIFACT_ROOTS = None  # Set by the desktop host; standalone keeps legacy roots.
 
+CONNECTOR_VERSION = '2.0.0'
+PROTOCOL_VERSION = 2
+FRAME_MAGIC = b'NV'
+FRAME_REQ_CHUNK = 1
+FRAME_RESP_CHUNK = 2
+FLAG_GZIP = 1
+CAPABILITIES = (
+    'binary',
+    'credit_flow',
+    'gzip',
+    'extended_transfers',
+    'image_previews',
+    'agy_stream',
+    'agy_acp_v2',
+)
+
+
+class ConnectorAuthError(RuntimeError):
+    pass
+
+
+class ConnectorConflictError(RuntimeError):
+    pass
+
+
+def pack_frame(frame_type: int, rid_hex: str, payload: bytes, flags: int = 0) -> bytes:
+    return FRAME_MAGIC + bytes((frame_type, flags)) + bytes.fromhex(rid_hex) + payload
+
+
+def unpack_frame(raw: bytes) -> tuple[int, int, str, bytes]:
+    if len(raw) < 20 or raw[:2] != FRAME_MAGIC:
+        raise ValueError('Invalid binary relay frame')
+    return raw[2], raw[3], raw[4:20].hex(), raw[20:]
+
+
+def _is_hex_rid(value) -> bool:
+    return isinstance(value, str) and len(value) == 32 and all(c in '0123456789abcdefABCDEF' for c in value)
+
+
+def acquire_instance_lock(state_dir=None):
+    root = Path(state_dir) if state_dir is not None else STATE
+    root.mkdir(parents=True, exist_ok=True)
+    lock_path = root / 'connector.lock'
+    handle = lock_path.open('a+b')
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b'1')
+            handle.flush()
+        handle.seek(0)
+        if os.name == 'nt':
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return handle
+    except OSError as exc:
+        with contextlib.suppress(Exception):
+            handle.close()
+        raise ConnectorConflictError('检测到另一个 Nova 连接器正在运行，请先关闭重复实例。') from exc
+
+
+def release_instance_lock(handle):
+    if handle is None:
+        return
+    try:
+        if os.name == 'nt':
+            import msvcrt
+            with contextlib.suppress(OSError):
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            with contextlib.suppress(OSError):
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        with contextlib.suppress(Exception):
+            handle.close()
+
 
 _STEP_KEYS = ('index', 'kind', 'state', 'tool', 'duration_seconds', 'text_delta', 'detail', 'command', 'exit_code', 'diff')
 _USAGE_KEYS = ('input_tokens', 'output_tokens', 'cache_read_tokens', 'thinking_tokens')
@@ -37,6 +119,19 @@ _QUOTA_KEYS = ('model_group', 'display_name', 'status', 'cooldown_remaining_seco
 
 def _public_dict(raw, keys):
     return {k: raw[k] for k in keys if k in raw} if isinstance(raw, dict) else None
+
+
+def _public_agy_event(row):
+    if not isinstance(row, dict):
+        return None
+    out = {k: row[k] for k in ('seq', 'type', 'text', 'status', 'error') if k in row}
+    step = _public_dict(row.get('step'), _STEP_KEYS)
+    if step:
+        out['step'] = step
+    approval = _public_dict(row.get('approval'), _APPROVAL_KEYS)
+    if approval:
+        out['approval'] = approval
+    return out
 
 
 def _public_session(row):
@@ -258,13 +353,6 @@ class LocalGateway(gateway.Gateway):
         upstream = path + '?' + request.query_string if event_query else path
         data = await self.anti_json(method, upstream, payload, **({"action": "approve-agy"} if action == "/approval" else {}))
 
-        def public_event(row):
-            out = {k: row[k] for k in ('seq', 'type', 'text') if k in row}
-            step = _public_dict(row.get('step'), _STEP_KEYS)
-            if step:
-                out['step'] = step
-            return out
-
         def public_run(row):
             out = {k: row[k] for k in ('id', 'status', 'prompt', 'answer', 'error', 'created_at', 'mode', 'permission_mode') if k in row}
             usage = _public_dict(row.get('usage'), _USAGE_KEYS)
@@ -274,7 +362,7 @@ class LocalGateway(gateway.Gateway):
                 out['approval'] = _public_dict(row['approval'], _APPROVAL_KEYS)
             return out
 
-        public = public_event if action == '/events' else public_run
+        public = _public_agy_event if action == '/events' else public_run
         if compact:
             offset = max(0, len(data) - 40)
             return web.json_response({'items': [public(row) for row in data[offset:]], 'offset': offset})
@@ -326,7 +414,7 @@ def save_pair(server, device, name, token):
 
 
 async def pair(server, name, confirm=False):
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http:
+    async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=30)) as http:
         async with http.post(server + '/v1/agent/pair/start', json={'name': name}) as r:
             r.raise_for_status(); data = await r.json()
         print('请在浏览器登录 ' + data['confirm_url'], flush=True)
@@ -347,124 +435,491 @@ async def pair(server, name, confirm=False):
         raise RuntimeError('Pair expired')
 
 
-async def connect_once(server, device, token, backend=None, *, on_connection=None):
-    local = LocalGateway()
-    local.fixed_backend = backend
-    local.http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120))
-    app = web.Application(client_max_size=26 * 1024 * 1024)
-    app.router.add_route('*', '/{tail:.*}', local.handle)
-    runner = web.AppRunner(app, access_log=None)
-    await runner.setup()
-    site = web.TCPSite(runner, '127.0.0.1', 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]
-    tasks = {}
-    sockets = {}
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=30)) as http:
-        async def process(ws, data):
-            rid = data['id']
+class LocalGatewayRuntime:
+    """Persistent local gateway and loopback HTTP pool shared across WS reconnects."""
+
+    def __init__(self, backend=None):
+        self.backend = backend
+        self.local = LocalGateway()
+        self.local.fixed_backend = backend
+        self.local.http = None
+        self.local_http = None
+        self.runner = None
+        self.site = None
+        self.port = None
+
+    async def start(self):
+        if self.port is not None:
+            return
+        self.local.http = aiohttp.ClientSession(
+            trust_env=False,
+            timeout=aiohttp.ClientTimeout(total=120),
+        )
+        self.local_http = aiohttp.ClientSession(
+            trust_env=False,
+            read_bufsize=1024 * 1024,
+            connector=aiohttp.TCPConnector(limit=64),
+            timeout=aiohttp.ClientTimeout(total=None, sock_connect=10),
+        )
+        app = web.Application(client_max_size=26 * 1024 * 1024)
+        app.router.add_route('*', '/{tail:.*}', self.local.handle)
+        self.runner = web.AppRunner(app, access_log=None)
+        await self.runner.setup()
+        self.site = web.TCPSite(self.runner, '127.0.0.1', 0)
+        await self.site.start()
+        self.port = self.site._server.sockets[0].getsockname()[1]
+
+    async def close(self):
+        if self.local_http is not None:
+            await self.local_http.close()
+            self.local_http = None
+        if self.runner is not None:
+            await self.runner.cleanup()
+            self.runner = None
+            self.site = None
+            self.port = None
+        if self.local.http is not None:
+            await self.local.close()
+            self.local.http = None
+        else:
+            await self.local.progress_hub.close()
+
+
+async def connect_once(
+    server,
+    device,
+    token,
+    backend=None,
+    *,
+    on_connection=None,
+    local_runtime=None,
+    on_heartbeat=None,
+):
+    owns_runtime = local_runtime is None
+    runtime = LocalGatewayRuntime(backend) if owns_runtime else local_runtime
+    await runtime.start()
+    local = runtime.local
+    local_http = runtime.local_http
+    port = runtime.port
+    http_tasks = {}
+    ws_tasks = {}
+    open_streams = set()
+    req_queues = {}
+    out_credits = {}
+    negotiated = 1
+    health_supported = True
+    ping_sent_at = None
+    last_ready = False
+
+    async def probe_ready():
+        nonlocal health_supported
+        try:
+            base = await local.backend()
+            if health_supported:
+                async with local_http.get(
+                    base + '/api/health',
+                    headers={'Origin': base},
+                    timeout=aiohttp.ClientTimeout(total=4),
+                ) as check:
+                    if check.status == 200:
+                        info = await check.json()
+                        return info.get('status') != 'unavailable'
+                    if check.status == 404:
+                        health_supported = False
+            async with local_http.get(
+                base + '/api/sessions',
+                headers={'Origin': base},
+                timeout=aiohttp.ClientTimeout(total=4),
+            ) as check:
+                return check.status == 200
+        except (aiohttp.ClientError, OSError, asyncio.TimeoutError, ValueError, web.HTTPException):
+            return False
+
+    try:
+        async with aiohttp.ClientSession(
+            trust_env=True,
+            timeout=aiohttp.ClientTimeout(total=None, sock_connect=30),
+        ) as cloud_http:
+            async def process(ws, data, req_queue=None):
+                rid = data['id']
+                is_ws = data.get('kind') == 'ws_open'
+                try:
+                    path = str(data['path'])
+                    if not path.startswith('/api/') or path.startswith('//') or '\\' in path or '#' in path or '\r' in path or '\n' in path:
+                        raise ValueError('Invalid path')
+                    # Never accept an origin, destination, local port or Authorization from cloud.
+                    headers = {'Authorization': 'Bearer ' + local.local_secret, 'Origin': 'https://' + gateway.PUBLIC}
+                    source = data.get('headers', {})
+                    if source.get('Content-Type'): headers['Content-Type'] = source['Content-Type']
+                    if source.get('Range'): headers['Range'] = source['Range']
+                    if data.get('method') == 'GET' and source.get('If-None-Match'):
+                        headers['If-None-Match'] = source['If-None-Match']
+                    # Stable, opaque per-browser owner; don't forward cloud session credential.
+                    owner = str(source.get('X-Nova-Owner', ''))
+                    if len(owner) != 64 or any(c not in '0123456789abcdef' for c in owner): raise ValueError('Invalid owner')
+                    headers['Cookie'] = gateway.COOKIE + '=' + owner
+
+                    if is_ws:
+                        chat_live = re.fullmatch(r'/api/sessions/([A-Za-z0-9_-]+)/live', path)
+                        agy_live = re.fullmatch(
+                            r'/api/agy/sessions/([A-Za-z0-9_-]{1,128})/runs/([A-Za-z0-9_-]{1,128})/live(?:\?after=([0-9]{1,15}))?',
+                            path,
+                        )
+                        if chat_live:
+                            import copy
+                            sid = chat_live.group(1)
+                            base = await local.backend()
+                            channel = await local.progress_hub.get(base, sid)
+                            queue = asyncio.Queue(maxsize=1)
+                            channel.listeners.add(queue)
+                            open_streams.add(rid)
+                            try:
+                                await ws.send_json({'kind': 'ws_opened', 'id': rid})
+
+                                async def push_snapshot(frame):
+                                    payload = copy.deepcopy(frame)
+                                    local.artifacts.decorate(payload, sid, owner)
+                                    await ws.send_json({'kind': 'ws_text', 'id': rid, 'data': json.dumps(payload)})
+
+                                await push_snapshot(channel.latest)
+                                while True:
+                                    update = await queue.get()
+                                    if update is None:
+                                        break
+                                    await push_snapshot(update)
+                            finally:
+                                open_streams.discard(rid)
+                                channel.listeners.discard(queue)
+                                channel.last_used = time.monotonic()
+                            with contextlib.suppress(Exception):
+                                await ws.send_json({'kind': 'ws_closed', 'id': rid})
+                            return
+
+                        if agy_live:
+                            sid, run_id, after = agy_live.groups()
+                            base = await local.backend()
+                            stream_url = f'{base}/api/anti/sessions/{sid}/runs/{run_id}/events/stream'
+                            if after and int(after) > 0:
+                                stream_url += f'?after={int(after)}'
+                            async with local_http.get(stream_url, headers={'Origin': base}) as sse_resp:
+                                if sse_resp.status != 200:
+                                    raise ValueError(f'SSE status {sse_resp.status}')
+                                open_streams.add(rid)
+                                try:
+                                    await ws.send_json({'kind': 'ws_opened', 'id': rid})
+                                    data_lines = []
+                                    async for raw_line in sse_resp.content:
+                                        line = raw_line.decode('utf-8', errors='replace').rstrip('\r\n')
+                                        if not line:
+                                            if data_lines:
+                                                raw_json = '\n'.join(data_lines)
+                                                data_lines.clear()
+                                                try:
+                                                    evt = _public_agy_event(json.loads(raw_json))
+                                                except ValueError:
+                                                    evt = None
+                                                if evt:
+                                                    await ws.send_json({'kind': 'ws_text', 'id': rid, 'data': json.dumps(evt)})
+                                        elif line.startswith('data:'):
+                                            data_lines.append(line[5:].lstrip(' '))
+                                    if data_lines:
+                                        try:
+                                            evt = _public_agy_event(json.loads('\n'.join(data_lines)))
+                                        except ValueError:
+                                            evt = None
+                                        if evt:
+                                            await ws.send_json({'kind': 'ws_text', 'id': rid, 'data': json.dumps(evt)})
+                                finally:
+                                    open_streams.discard(rid)
+                            with contextlib.suppress(Exception):
+                                await ws.send_json({'kind': 'ws_closed', 'id': rid})
+                            return
+
+                        raise ValueError('Invalid live path')
+
+                    use_binary = negotiated >= 2 and _is_hex_rid(rid)
+                    credit_state = None
+                    if use_binary:
+                        init_credits = max(1, int(data.get('credits', 8)))
+                        ev = asyncio.Event()
+                        ev.set()
+                        credit_state = {'count': init_credits, 'event': ev}
+                        out_credits[rid] = credit_state
+
+                    async def send_resp_chunk(chunk_bytes: bytes, flags: int = 0):
+                        if not use_binary:
+                            await ws.send_json({'kind': 'chunk', 'id': rid, 'data': base64.b64encode(chunk_bytes).decode()})
+                            return
+                        offset = 0
+                        total = len(chunk_bytes)
+                        while offset < total:
+                            piece = chunk_bytes[offset:offset + 65536]
+                            offset += len(piece)
+                            while credit_state['count'] <= 0:
+                                credit_state['event'].clear()
+                                if credit_state['count'] <= 0:
+                                    await credit_state['event'].wait()
+                            credit_state['count'] -= 1
+                            if credit_state['count'] <= 0:
+                                credit_state['event'].clear()
+                            await ws.send_bytes(pack_frame(FRAME_RESP_CHUNK, rid, piece, flags))
+
+                    if req_queue is not None:
+                        async def body_stream():
+                            total = 0
+                            acked = 0
+                            while True:
+                                item = await req_queue.get()
+                                if item is None:
+                                    break
+                                total += len(item)
+                                if total > 26 * 1024 * 1024:
+                                    raise ValueError('Body too large')
+                                yield item
+                                acked += 1
+                                if acked >= 4:
+                                    acked = 0
+                                    with contextlib.suppress(Exception):
+                                        await ws.send_json({'kind': 'window_ack', 'id': rid, 'credits': 4})
+
+                        req_data = body_stream()
+                    else:
+                        body = base64.b64decode(data.get('body', ''), validate=True)
+                        if len(body) > 26 * 1024 * 1024:
+                            raise ValueError('Body too large')
+                        req_data = body
+
+                    async with local_http.request(
+                        data['method'],
+                        f'http://127.0.0.1:{port}' + path,
+                        data=req_data,
+                        headers=headers,
+                        allow_redirects=False,
+                    ) as response:
+                        await ws.send_json({
+                            'kind': 'headers',
+                            'id': rid,
+                            'status': response.status,
+                            'headers': {
+                                k: v for k, v in response.headers.items()
+                                if k.lower() in {'content-type', 'content-disposition', 'content-range', 'accept-ranges', 'etag', 'content-length'}
+                            },
+                        })
+                        is_file_resp = path.startswith('/api/sessions/') and '/artifacts/' in path
+                        ctype = response.headers.get('Content-Type', '').lower()
+                        cenc = response.headers.get('Content-Encoding', '').lower()
+                        want_gzip = (
+                            use_binary
+                            and bool(data.get('accept_gzip'))
+                            and not is_file_resp
+                            and 'gzip' not in cenc
+                            and ctype.startswith(('application/json', 'text/'))
+                        )
+                        if not want_gzip:
+                            async for chunk in response.content.iter_chunked(64 * 1024):
+                                await send_resp_chunk(chunk, 0)
+                        else:
+                            first = None
+                            comp = None
+                            async for chunk in response.content.iter_chunked(64 * 1024):
+                                if first is None:
+                                    first = chunk
+                                    continue
+                                if comp is None:
+                                    comp = zlib.compressobj(level=4, wbits=16 + zlib.MAX_WBITS)
+                                    compressed = comp.compress(first)
+                                    if compressed:
+                                        await send_resp_chunk(compressed, FLAG_GZIP)
+                                compressed = comp.compress(chunk)
+                                if compressed:
+                                    await send_resp_chunk(compressed, FLAG_GZIP)
+                            if first is not None:
+                                if comp is None and len(first) <= 1024:
+                                    await send_resp_chunk(first, 0)
+                                else:
+                                    if comp is None:
+                                        comp = zlib.compressobj(level=4, wbits=16 + zlib.MAX_WBITS)
+                                        compressed = comp.compress(first)
+                                    else:
+                                        compressed = b''
+                                    tail = compressed + comp.flush()
+                                    if tail:
+                                        await send_resp_chunk(tail, FLAG_GZIP)
+                        await ws.send_json({'kind': 'end', 'id': rid})
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    with contextlib.suppress(Exception):
+                        await ws.send_json({'kind': 'error', 'id': rid, 'error': 'Local request failed: ' + type(e).__name__})
+                finally:
+                    req_queues.pop(rid, None)
+                    out_credits.pop(rid, None)
+                    open_streams.discard(rid)
+                    if is_ws:
+                        ws_tasks.pop(rid, None)
+                    else:
+                        http_tasks.pop(rid, None)
+
+            async def heartbeat(ws):
+                nonlocal ping_sent_at, last_ready
+                while True:
+                    ready = await probe_ready()
+                    last_ready = ready
+                    ping_sent_at = time.monotonic()
+                    await ws.send_json({'kind': 'ping', 'ready': ready})
+                    await asyncio.sleep(5)
+
+            pulse = None
             try:
-                path = str(data['path'])
-                if not path.startswith('/api/') or path.startswith('//') or '\\' in path or '#' in path or '\r' in path or '\n' in path:
-                    raise ValueError('Invalid path')
-                # Never accept an origin, destination, local port or Authorization from cloud.
-                headers = {'Authorization': 'Bearer ' + local.local_secret, 'Origin': 'https://' + gateway.PUBLIC}
-                source = data.get('headers', {})
-                if source.get('Content-Type'): headers['Content-Type'] = source['Content-Type']
-                if source.get('Range'): headers['Range'] = source['Range']
-                if data.get('method') == 'GET' and source.get('If-None-Match'):
-                    headers['If-None-Match'] = source['If-None-Match']
-                # Stable, opaque per-browser owner; don't forward cloud session credential.
-                owner = str(source.get('X-Nova-Owner', ''))
-                if len(owner) != 64 or any(c not in '0123456789abcdef' for c in owner): raise ValueError('Invalid owner')
-                headers['Cookie'] = gateway.COOKIE + '=' + owner
-                if data.get('kind') == 'ws_open':
-                    import re
-                    if not re.fullmatch(r'/api/sessions/[A-Za-z0-9_-]+/live', path): raise ValueError('Invalid live path')
-                    async with http.ws_connect(f'http://127.0.0.1:{port}' + path, headers=headers, heartbeat=20, max_msg_size=4*1024*1024) as live:
-                        sockets[rid] = live
-                        await ws.send_json({'kind': 'ws_opened', 'id': rid})
-                        async for event in live:
-                            if event.type == WSMsgType.TEXT:
-                                await ws.send_json({'kind': 'ws_text', 'id': rid, 'data': event.data})
-                        await ws.send_json({'kind': 'ws_closed', 'id': rid})
-                    return
-                body = base64.b64decode(data.get('body', ''), validate=True)
-                if len(body) > 26 * 1024 * 1024: raise ValueError('Body too large')
-                async with http.request(data['method'], f'http://127.0.0.1:{port}' + path, data=body, headers=headers, allow_redirects=False) as response:
-                    await ws.send_json({'kind': 'headers', 'id': rid, 'status': response.status,
-                                        'headers': {k: v for k, v in response.headers.items() if k.lower() in {'content-type', 'content-disposition', 'content-range', 'accept-ranges', 'etag'}}})
-                    async for chunk in response.content.iter_chunked(64 * 1024):
-                        await ws.send_json({'kind': 'chunk', 'id': rid, 'data': base64.b64encode(chunk).decode()})
-                    await ws.send_json({'kind': 'end', 'id': rid})
+                async with cloud_http.ws_connect(
+                    server + '/v1/agent/connect',
+                    headers={
+                        'Authorization': 'Bearer ' + token,
+                        'X-Nova-Device': device,
+                        'X-Nova-Protocol': str(PROTOCOL_VERSION),
+                    },
+                    heartbeat=25,
+                    max_msg_size=55 * 1024 * 1024,
+                    compress=0,
+                ) as ws:
+                    if on_connection is not None:
+                        on_connection(True)
+                    pulse = asyncio.create_task(heartbeat(ws))
+                    print('Nova 已连接，设备：' + device, flush=True)
+                    async for msg in ws:
+                        if msg.type == WSMsgType.BINARY:
+                            try:
+                                ftype, _flags, rid_hex, payload = unpack_frame(msg.data)
+                            except ValueError:
+                                continue
+                            if ftype == FRAME_REQ_CHUNK:
+                                q = req_queues.get(rid_hex)
+                                if q is not None:
+                                    try:
+                                        q.put_nowait(payload)
+                                    except asyncio.QueueFull:
+                                        task = http_tasks.get(rid_hex)
+                                        if task:
+                                            task.cancel()
+                            continue
+                        if msg.type != WSMsgType.TEXT:
+                            break
+                        data = json.loads(msg.data)
+                        kind = data.get('kind')
+                        if kind == 'hello':
+                            negotiated = min(PROTOCOL_VERSION, int(data.get('protocol', 1)))
+                            if negotiated >= 2:
+                                initial_ready = await probe_ready()
+                                last_ready = initial_ready
+                                await ws.send_json({
+                                    'kind': 'hello_ack',
+                                    'protocol': negotiated,
+                                    'connector_version': CONNECTOR_VERSION,
+                                    'platform': sys.platform,
+                                    'ready': initial_ready,
+                                    'capabilities': list(CAPABILITIES),
+                                })
+                        elif kind == 'pong':
+                            if ping_sent_at is not None and on_heartbeat is not None:
+                                rtt_ms = max(0, int((time.monotonic() - ping_sent_at) * 1000))
+                                on_heartbeat(ready=last_ready, rtt_ms=rtt_ms)
+                                ping_sent_at = None
+                        elif kind == 'window_ack':
+                            state = out_credits.get(data.get('id'))
+                            if state is not None:
+                                state['count'] += int(data.get('credits', 0))
+                                if state['count'] > 0:
+                                    state['event'].set()
+                        elif kind == 'ws_open':
+                            if len(ws_tasks) >= 16:
+                                await ws.send_json({'kind': 'error', 'id': data['id'], 'error': 'Device busy'})
+                            else:
+                                ws_tasks[data['id']] = asyncio.create_task(process(ws, data))
+                        elif kind in ('request', 'request_start'):
+                            if len(http_tasks) >= 24:
+                                await ws.send_json({'kind': 'error', 'id': data['id'], 'error': 'Device busy'})
+                            else:
+                                rq = None
+                                if kind == 'request_start':
+                                    rq = asyncio.Queue(maxsize=16)
+                                    req_queues[data['id']] = rq
+                                http_tasks[data['id']] = asyncio.create_task(process(ws, data, req_queue=rq))
+                        elif kind == 'request_end':
+                            q = req_queues.get(data.get('id'))
+                            if q is not None:
+                                with contextlib.suppress(asyncio.QueueFull):
+                                    q.put_nowait(None)
+                        elif kind == 'ws_text':
+                            rid = data.get('id')
+                            if rid in open_streams:
+                                with contextlib.suppress(ValueError, TypeError):
+                                    if json.loads(data.get('data', '{}')) == {'type': 'ping'}:
+                                        await ws.send_json({'kind': 'ws_text', 'id': rid, 'data': '{"type":"pong"}'})
+                        elif kind == 'cancel':
+                            rid = data.get('id')
+                            task = http_tasks.get(rid) or ws_tasks.get(rid)
+                            if task:
+                                task.cancel()
+            finally:
+                if on_connection is not None:
+                    on_connection(False)
+                active = list(http_tasks.values()) + list(ws_tasks.values()) + ([pulse] if pulse else [])
+                for task in active:
+                    task.cancel()
+                await asyncio.gather(*active, return_exceptions=True)
+    finally:
+        if owns_runtime:
+            await runtime.close()
+
+
+async def run(backend=None, *, on_connection=None, on_heartbeat=None, state_dir=None):
+    base_state = Path(state_dir) if state_dir is not None else STATE
+    lock_handle = acquire_instance_lock(base_state)
+    runtime = LocalGatewayRuntime(backend)
+    try:
+        config = json.loads((base_state / 'device.json').read_text(encoding='utf-8'))
+        server = config['server']
+        blob = win32cred.CredRead(credential_target(server), 1)['CredentialBlob']
+        token = blob.decode('utf-16-le')
+        delay = 2
+        while True:
+            connected_at = None
+
+            def handle_conn(state: bool):
+                nonlocal connected_at
+                if state:
+                    connected_at = time.monotonic()
+                if on_connection is not None:
+                    on_connection(state)
+
+            try:
+                await connect_once(
+                    server,
+                    config['device'],
+                    token,
+                    backend,
+                    on_connection=handle_conn,
+                    local_runtime=runtime,
+                    on_heartbeat=on_heartbeat,
+                )
+            except aiohttp.WSServerHandshakeError as e:
+                if e.status in (401, 403):
+                    raise ConnectorAuthError('设备已撤销或凭证无效，请重新配对。') from e
+                print('连接暂不可用：' + type(e).__name__, flush=True)
             except asyncio.CancelledError:
                 raise
+            except (aiohttp.ClientError, OSError, asyncio.TimeoutError) as e:
+                print('连接中断：' + type(e).__name__, flush=True)
             except Exception as e:
-                with contextlib.suppress(Exception):
-                    await ws.send_json({'kind': 'error', 'id': rid, 'error': 'Local request failed: ' + type(e).__name__})
-            finally:
-                sockets.pop(rid, None)
-                tasks.pop(rid, None)
-        async def heartbeat(ws):
-            while True:
-                ready = False
-                try:
-                    base = await local.backend()
-                    async with http.get(base + '/api/sessions', headers={'Origin': base}, timeout=aiohttp.ClientTimeout(total=4)) as check:
-                        ready = check.status == 200
-                except (aiohttp.ClientError, OSError, asyncio.TimeoutError, web.HTTPException): pass
-                await ws.send_json({'kind': 'ping', 'ready': ready})
-                await asyncio.sleep(5)
-        pulse = None
-        try:
-            async with http.ws_connect(server + '/v1/agent/connect', headers={'Authorization': 'Bearer ' + token, 'X-Nova-Device': device}, heartbeat=25, max_msg_size=55 * 1024 * 1024, compress=0) as ws:
-                if on_connection is not None:
-                    on_connection(True)
-                pulse = asyncio.create_task(heartbeat(ws))
-                print('Nova 已连接，设备：' + device, flush=True)
-                async for msg in ws:
-                    if msg.type != WSMsgType.TEXT: break
-                    data = json.loads(msg.data)
-                    if data['kind'] in ('request', 'ws_open'):
-                        if len(tasks) >= 12:
-                            await ws.send_json({'kind': 'error', 'id': data['id'], 'error': 'Device busy'})
-                        else:
-                            task = asyncio.create_task(process(ws, data))
-                            tasks[data['id']] = task
-                    elif data['kind'] == 'ws_text':
-                        live = sockets.get(data['id'])
-                        if live and json.loads(data.get('data', '{}')) == {'type': 'ping'}:
-                            await live.send_json({'type': 'ping'})
-                    elif data['kind'] == 'cancel':
-                        task = tasks.get(data['id'])
-                        if task: task.cancel()
-        finally:
-            if on_connection is not None:
-                on_connection(False)
-            active = list(tasks.values()) + ([pulse] if pulse else [])
-            for task in active: task.cancel()
-            await asyncio.gather(*active, return_exceptions=True)
-            await runner.cleanup()
-            await local.close()
+                print('连接异常，稍后重试：' + type(e).__name__, flush=True)
 
-
-async def run(backend=None, *, on_connection=None):
-    config = json.loads((STATE / 'device.json').read_text(encoding='utf-8'))
-    server = config['server']
-    blob = win32cred.CredRead(credential_target(server), 1)['CredentialBlob']
-    token = blob.decode('utf-16-le')
-    delay = 2
-    while True:
-        try:
-            await connect_once(server, config['device'], token, backend, on_connection=on_connection)
-            delay = 2
-        except aiohttp.WSServerHandshakeError as e:
-            if e.status in (401, 403): raise RuntimeError('设备已撤销或凭证无效，请重新配对。') from e
-            print('连接暂不可用：' + type(e).__name__, flush=True)
-        except (aiohttp.ClientError, OSError, asyncio.TimeoutError) as e:
-            print('连接中断：' + type(e).__name__, flush=True)
-        await asyncio.sleep(delay)
-        delay = min(60, delay * 2)
+            if connected_at is not None and time.monotonic() - connected_at >= 10.0:
+                delay = 2
+            await asyncio.sleep(random.uniform(delay * 0.5, delay))
+            delay = min(60, delay * 2)
+    finally:
+        await runtime.close()
+        release_instance_lock(lock_handle)
 
 
 if __name__ == '__main__':

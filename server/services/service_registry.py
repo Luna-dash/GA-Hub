@@ -76,12 +76,16 @@ class ServiceRegistry:
             return ServicePanelItem('nova', name, 'error', '无法读取本机绑定状态', '/dashboard')
         paired = status['paired']
         if status['error']:
-            return ServicePanelItem('nova', name, 'error', '连通器异常，请检查远程连接设置', '/dashboard',
+            summary = status.get('error_detail') or '连通器异常，请检查远程连接设置'
+            return ServicePanelItem('nova', name, 'error', str(summary), '/dashboard',
                                     health='attention' if paired else 'unknown', expected_running=bool(paired))
         if paired is None:
             return ServicePanelItem('nova', name, 'error', '状态尚未读取', '/dashboard')
         if not paired:
             return ServicePanelItem('nova', name, 'stopped', '未绑定 Nova 账号', '/dashboard')
+        if status.get('paused'):
+            return ServicePanelItem('nova', name, 'stopped', '已暂停连接 Nova 云端', '/dashboard',
+                                    expected_running=False)
         if status['connected']:
             return ServicePanelItem('nova', name, 'running', '已连接 Nova 云端', '/dashboard',
                                     expected_running=True)

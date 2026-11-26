@@ -25,16 +25,24 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
     return () => { alive = false; clearInterval(timer) }
   }, [active])
 
-  const act = async (action: 'associate' | 'revoke' | 'reconnect') => {
+  const act = async (action: 'associate' | 'revoke' | 'reconnect' | 'pause' | 'resume') => {
     setBusy(true); setError(''); setMessage('')
     try {
-      const result = await novaApi.action(action, action === 'reconnect' ? undefined : {
-        username, password, name, confirm: confirmed,
-        ...(register && action === 'associate' ? { invite } : {}),
-      })
+      const result = await novaApi.action(
+        action,
+        action === 'associate' || action === 'revoke'
+          ? {
+              username, password, name, confirm: confirmed,
+              ...(register && action === 'associate' ? { invite } : {}),
+            }
+          : undefined,
+      )
       setStatus(result); setRevoking(false); setConfirmed(false)
       setMessage(action === 'revoke' ? '云端授权已撤销，本机绑定已清除；固定设备码保留。'
-        : action === 'associate' ? '账号关联完成。以后 Nova 将随 GA-Hub 自动启动。' : '已请求重连。')
+        : action === 'associate' ? '账号关联完成。以后 Nova 将随 GA-Hub 自动启动。'
+        : action === 'pause' ? '已暂停远程连接。'
+        : action === 'resume' ? '已恢复远程连接。'
+        : '已请求重连。')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Nova 操作失败')
     } finally {
@@ -42,6 +50,12 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
     }
   }
   const showAccount = status && (!status.paired || revoking)
+  const runtimeLabel = !status ? ''
+    : status.paused ? '连接器已暂停'
+    : status.running && status.connected === true ? `连接器运行中 · 已连接云端${typeof status.rtt_ms === 'number' ? ` · ${status.rtt_ms}ms` : ''}`
+    : status.running && status.connected === false ? '连接器运行中 · 正在连接云端'
+    : status.running ? '连接器运行中'
+    : '连接器未运行'
   const inputClass = 'mt-1.5 w-full min-w-0 rounded-lg border border-line/80 bg-bg-soft/75 px-3 py-2 text-sm text-ink outline-none focus:border-accent focus:bg-bg-card focus:ring-1 focus:ring-accent disabled:opacity-50'
   return <section className="ga-paper-card p-4 space-y-4" aria-label="Nova 远程连接">
     <header>
@@ -52,18 +66,22 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
       <div className="ga-paper-subcard p-3 space-y-2.5">
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${status.paired ? 'bg-status-success-soft text-status-success' : 'bg-bg-card text-ink-muted ring-1 ring-line/45'}`}>{status.paired ? '已关联账号' : '未关联账号'}</span>
-          <span className="text-ink-muted">{status.running ? '连接器运行中' : '连接器未运行'}</span>
+          <span className="text-ink-muted">{runtimeLabel}</span>
+          {status.paired && status.device_name && <span className="text-ink-faint">({status.device_name})</span>}
         </div>
         <dl className="flex flex-col gap-1 text-xs sm:flex-row sm:items-start sm:gap-3">
           <dt className="shrink-0 text-ink-faint">设备码</dt>
           <dd className="min-w-0"><code className="select-text break-all font-mono text-ink">{status.device || '不可用'}</code></dd>
         </dl>
       </div>
-      {status.error && <p role="alert" className="break-words text-sm text-status-warning">连接器错误：{status.error}</p>}
+      {(status.error_detail || status.error) && <p role="alert" className="break-words text-sm text-status-warning">连接器错误：{status.error_detail || status.error}</p>}
       {status.paired && <div className="flex flex-wrap gap-2">
         <button type="button" disabled={busy} onClick={() => void act('reconnect')} className="ga-btn">
           <RefreshIcon spinning={busy} size={13} />
           <span>重新连接</span>
+        </button>
+        <button type="button" disabled={busy} onClick={() => void act(status.paused ? 'resume' : 'pause')} className="ga-btn">
+          <span>{status.paused ? '恢复连接' : '暂停连接'}</span>
         </button>
         <button type="button" disabled={busy} onClick={() => { setRevoking(!revoking); setConfirmed(false) }} className={revoking ? 'ga-btn' : 'ga-btn text-status-danger hover:border-status-danger/60 hover:bg-status-danger-soft'}>
           {revoking ? <X className="h-3.5 w-3.5" aria-hidden="true" /> : <Unlink className="h-3.5 w-3.5" aria-hidden="true" />}

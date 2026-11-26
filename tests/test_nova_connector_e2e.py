@@ -142,6 +142,13 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                 return web.json_response([{'seq': 1, 'type': 'step.update',
                                            'step': {'index': 0, 'kind': 'tool_call', 'tool': 'read_file', 'state': 'DONE'}},
                                           {'seq': 2, 'type': 'message.delta', 'text': 'hi'}])
+            if resource == 'sessions/a1/runs/run-1/events/stream':
+                resp = web.StreamResponse(status=200, headers={'Content-Type': 'text/event-stream'})
+                await resp.prepare(r)
+                await resp.write(b'event: step.update\ndata: {"seq": 3, "type": "step.update", "step": {"index": 1, "kind": "tool_call", "tool": "grep", "state": "DONE", "cwd": "C:/secret"}}\n\n')
+                await resp.write(b'event: message.delta\ndata: {"seq": 4, "type": "message.delta", "text": "streamed"}\n\n')
+                await resp.write_eof()
+                return resp
             if resource == 'sessions/a1/runs/run-1/approval':
                 self.assertEqual(r.method, 'POST')
                 self.assertEqual(r.headers['Origin'], str(backend.make_url('/')).rstrip('/'))
@@ -159,9 +166,13 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
 
         async def upload(r):
             part = await (await r.multipart()).next()
-            self.assertEqual(part.filename, 'note.txt')
-            self.assertEqual(await part.read(), b'note')
-            return web.json_response({'path': str(report), 'name': part.filename, 'size': 4})
+            content = await part.read()
+            if part.filename == 'note.txt':
+                self.assertEqual(content, b'note')
+                return web.json_response({'path': str(report), 'name': part.filename, 'size': 4})
+            big_path = report.parent / part.filename
+            big_path.write_bytes(content)
+            return web.json_response({'path': str(big_path), 'name': part.filename, 'size': len(content)})
 
         app.router.add_route('*', '/api/anti/{resource:.*}', anti)
         app.router.add_post('/api/upload', upload)
@@ -169,6 +180,9 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             report = Path(tmp) / '验收 report.txt'
             report.write_bytes(b'relay artifact verified')
+            large_file = Path(tmp) / 'big.bin.txt'
+            large_payload = (b'0123456789abcdef' * (128 * 1024))  # 2 MiB
+            large_file.write_bytes(large_payload)
             nova = cloud.Nova(Path(tmp)/'e2e.db')
             client = TestClient(TestServer(nova.app()));await client.start_server()
             task = None
@@ -192,6 +206,10 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(.05)
                     self.assertTrue(nova.devices[device].ready)
                     self.assertEqual(connection_states, [True])
+                    me_info = await (await client.get('/v1/me', headers=auth)).json()
+                    self.assertEqual(me_info['devices'][0]['protocol'], 2)
+                    self.assertIn('credit_flow', me_info['devices'][0]['capabilities'])
+                    self.assertIn('agy_stream', me_info['devices'][0]['capabilities'])
                     r=await client.get('/d/'+device+'/api/sessions',headers=auth)
                     self.assertEqual(r.status,200);self.assertEqual((await r.json())['items'][0]['title'],'E2E')
                     history = '/d/'+device+'/api/sessions/s1/messages?view=compact&limit=4'
@@ -295,6 +313,52 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                     for path in ('/api/agy/sessions', history):
                         r = await client.get('/d/' + device + path, headers=auth)
                         self.assertEqual(r.status, 200, await r.text())
+
+                    # Protocol v2 Agy SSE live stream over WS
+                    agy_ws = await client.ws_connect('/d/' + device + '/api/agy/sessions/a1/runs/run-1/live?after=0', headers=auth)
+                    ev1 = await agy_ws.receive_json(timeout=5)
+                    self.assertEqual(ev1['step'], {'index': 1, 'kind': 'tool_call', 'tool': 'grep', 'state': 'DONE'})
+                    ev2 = await agy_ws.receive_json(timeout=5)
+                    self.assertEqual(ev2['text'], 'streamed')
+                    await agy_ws.close()
+
+                    # Protocol v2 streaming upload (> 256 KiB) and early-rejection wakeup (> 8 * 64 KiB credits)
+                    big_upload = b'U' * (300 * 1024)
+                    uform = FormData()
+                    uform.add_field('file', big_upload, filename='streamed.txt')
+                    ur = await client.post(api + '/upload', data=uform, headers=auth)
+                    self.assertEqual(ur.status, 200, await ur.text())
+                    self.assertEqual((await ur.json())['size'], len(big_upload))
+
+                    bad_form = FormData()
+                    bad_form.add_field('file', b'X' * (700 * 1024), filename='bad.exe')
+                    bad_resp = await asyncio.wait_for(client.post(api + '/upload', data=bad_form, headers=auth), timeout=5)
+                    self.assertEqual(bad_resp.status, 415)
+
+                    # Register artifact token via chat messages path containing large_file
+                    original_bytes = report.read_bytes()
+                    report.write_bytes(large_payload)
+                    try:
+                        ref_page = await (await client.get('/d/' + device + '/api/sessions/s1/messages?view=compact&limit=40', headers=auth)).json()
+                        big_url = ref_page['items'][0]['artifacts'][0]['url']
+                        async with client.get('/d/' + device + big_url, headers=auth) as dr:
+                            self.assertEqual(dr.status, 200)
+                            received = bytearray()
+                            # Concurrent request mid-stream proves no HOL/disconnect
+                            concurrent = asyncio.create_task(client.get('/d/' + device + '/api/sessions', headers=auth))
+                            while True:
+                                chunk = await dr.content.read(32 * 1024)
+                                if not chunk:
+                                    break
+                                received.extend(chunk)
+                                await asyncio.sleep(0.002)
+                            cr = await concurrent
+                            self.assertEqual(cr.status, 200)
+                            self.assertEqual(bytes(received), large_payload)
+                        self.assertTrue(nova.devices[device].ready)
+                    finally:
+                        report.write_bytes(original_bytes)
+
                     task.cancel();await asyncio.gather(task,return_exceptions=True)
                     self.assertEqual(connection_states, [True, False])
                     for _ in range(30):

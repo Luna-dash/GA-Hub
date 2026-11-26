@@ -9,14 +9,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib
+import inspect
 import json
 import secrets
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 PUBLIC = "https://nova.lunadash.me"
 _ERROR_NOT_FOUND = 1168  # Win32: credential was already removed.
+_SAFE_USER_ERRORS = ("ConnectorAuthError", "ConnectorConflictError")
 
 
 def _clear_binding(connector, config: Path, data: dict) -> None:
@@ -34,6 +37,17 @@ def _save_revocation(config: Path, data: dict) -> None:
     staged.replace(config)
 
 
+def _read_device_name(config: Path) -> str | None:
+    try:
+        if config.exists():
+            raw = json.loads(config.read_text(encoding="utf-8"))
+            name = raw.get("name")
+            return str(name) if isinstance(name, str) and name.strip() else None
+    except (OSError, ValueError):
+        return None
+    return None
+
+
 class NovaServiceError(Exception):
     def __init__(self, status: int, detail: str):
         super().__init__(detail)
@@ -49,7 +63,11 @@ class NovaService:
         self.lock = asyncio.Lock()
         self.nonce = secrets.token_urlsafe(32)
         self.error: str | None = None
+        self.error_detail: str | None = None
         self.connected = False
+        self.paused = False
+        self.last_connected_at: float | None = None
+        self.rtt_ms: int | None = None
 
     def load(self):
         if self.connector is None:
@@ -77,38 +95,56 @@ class NovaService:
 
     async def start(self) -> None:
         # An unavailable optional connector must never prevent Hub startup.
-        if self.task and not self.task.done():
+        if self.paused or (self.task and not self.task.done()):
             return
         self.connected = False
         self.error = None
+        self.error_detail = None
+        self.rtt_ms = None
         try:
             c = self._require_connector()
             if await asyncio.to_thread((c.STATE / "device.json").exists):
                 from ..constants import DEFAULT_WEBUI_PORT
                 from ..runtime_endpoint import runtime_http_origin
 
-                self.task = asyncio.create_task(
-                    c.run(
-                        backend=runtime_http_origin("127.0.0.1", DEFAULT_WEBUI_PORT),
-                        on_connection=self._set_connected,
-                    ),
-                    name="nova-connector",
-                )
+                kwargs: dict[str, object] = {
+                    "backend": runtime_http_origin("127.0.0.1", DEFAULT_WEBUI_PORT),
+                    "on_connection": self._set_connected,
+                }
+                with contextlib.suppress(TypeError, ValueError):
+                    if "on_heartbeat" in inspect.signature(c.run).parameters:
+                        kwargs["on_heartbeat"] = self._on_heartbeat
+                self.task = asyncio.create_task(c.run(**kwargs), name="nova-connector")
                 self.task.add_done_callback(self._done)
         except Exception as exc:
             if isinstance(exc, NovaServiceError) and exc.__cause__ is None:
                 self.error = exc.detail
+                self.error_detail = exc.detail
             else:
                 self.error = type(exc.__cause__ or exc).__name__
 
     def _set_connected(self, connected: bool) -> None:
         self.connected = connected
+        if connected:
+            self.last_connected_at = time.time()
+            self.error = None
+            self.error_detail = None
+        else:
+            self.rtt_ms = None
+
+    def _on_heartbeat(self, *, ready: bool, rtt_ms: int | None = None) -> None:
+        if rtt_ms is not None:
+            self.rtt_ms = rtt_ms
 
     def _done(self, task) -> None:
         if task is self.task:
             self.connected = False
+            self.rtt_ms = None
         if not task.cancelled() and (exc := task.exception()) and task is self.task:
-            self.error = type(exc).__name__
+            name = type(exc).__name__
+            self.error = name
+            if name in _SAFE_USER_ERRORS:
+                self.error_detail = str(exc)
 
     async def stop(self) -> None:
         if self.task:
@@ -116,6 +152,7 @@ class NovaService:
             await asyncio.gather(self.task, return_exceptions=True)
             self.task = None
         self.connected = False
+        self.rtt_ms = None
 
     def runtime_status(self) -> dict[str, object]:
         # A panel read must not load the connector, access credentials, or start it.
@@ -126,21 +163,34 @@ class NovaService:
             "paired": (c.STATE / "device.json").exists() if c is not None else None,
             "running": running,
             "connected": running and self.connected,
+            "paused": self.paused,
             "error": self.error,
+            "error_detail": self.error_detail,
         }
 
     def snapshot(self) -> dict[str, object]:
         try:
             c = self._require_connector()
+            config = c.STATE / "device.json"
+            running = bool(self.task and not self.task.done())
+            connected = running and self.connected
             return {
                 "device": c.identity(),
-                "paired": (c.STATE / "device.json").exists(),
-                "running": bool(self.task and not self.task.done()),
+                "device_name": _read_device_name(config),
+                "paired": config.exists(),
+                "running": running,
+                "connected": connected,
+                "paused": self.paused,
+                "rtt_ms": self.rtt_ms if connected else None,
+                "last_connected_at": self.last_connected_at,
                 "error": self.error,
+                "error_detail": self.error_detail,
+                "connector_version": getattr(c, "CONNECTOR_VERSION", None),
                 "server": PUBLIC,
             }
         except Exception as exc:
-            return {"error": exc.detail if isinstance(exc, NovaServiceError) else type(exc).__name__, "running": False}
+            detail = exc.detail if isinstance(exc, NovaServiceError) else type(exc).__name__
+            return {"error": detail, "error_detail": exc.detail if isinstance(exc, NovaServiceError) else None, "running": False}
 
     async def unpair(self) -> dict[str, object]:
         async with self.lock:
@@ -156,6 +206,8 @@ class NovaService:
                 raise NovaServiceError(502, "本机 Nova 绑定清理未完成，请重试") from exc
             self.pending = None
             self.error = None
+            self.error_detail = None
+            self.paused = False
             return {"paired": False, "device": device}
 
     async def start_pair(self, read_name: Callable[[], Awaitable[str]]) -> dict[str, object]:
@@ -198,14 +250,32 @@ class NovaService:
             await asyncio.to_thread(c.save_pair, PUBLIC, done["device"], p["name"], token)
             self.pending = None
             self.error = None
+            self.error_detail = None
+            self.paused = False
             await self.stop()
             await self.start()
             return {"paired": True, "device": done["device"]}
 
     async def reconnect(self) -> dict[str, object]:
         async with self.lock:
+            self.paused = False
             await self.stop()
             self.error = None
+            self.error_detail = None
+            await self.start()
+            return await asyncio.to_thread(self.snapshot)
+
+    async def pause(self) -> dict[str, object]:
+        async with self.lock:
+            self.paused = True
+            await self.stop()
+            return await asyncio.to_thread(self.snapshot)
+
+    async def resume(self) -> dict[str, object]:
+        async with self.lock:
+            self.paused = False
+            self.error = None
+            self.error_detail = None
             await self.start()
             return await asyncio.to_thread(self.snapshot)
 
@@ -285,11 +355,15 @@ class NovaService:
                         )
                         await asyncio.to_thread(c.save_pair, PUBLIC, done["device"], name, token)
                         self.error = None
+                        self.error_detail = None
+                        self.paused = False
                         await self.stop()
                         await self.start()
                     self.pending = None
                     if unlink:
                         self.error = None
+                        self.error_detail = None
+                        self.paused = False
                     return await asyncio.to_thread(self.snapshot)
                 except NovaServiceError:
                     raise

@@ -946,11 +946,11 @@ def events(sid: str, rid: str, after: int = Query(default=0, ge=0)) -> list[Anti
 
 
 @router.get("/sessions/{sid}/runs/{rid}/events/stream")
-async def events_stream(sid: str, rid: str, request: Request):
+async def events_stream(sid: str, rid: str, request: Request, after: int = Query(default=0, ge=0)):
     sessions_svc = AntiSessions()
     try:
         cursor, eph_cursor, initial_chunks, done = await asyncio.to_thread(
-            sessions_svc.poll_stream_step, sid, rid, 0, 0
+            sessions_svc.poll_stream_step, sid, rid, after, 0
         )
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc

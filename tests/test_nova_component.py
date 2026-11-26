@@ -455,3 +455,181 @@ class ConnectorAgyParityTest(unittest.IsolatedAsyncioTestCase):
         }))
         self.assertEqual(chat_resp.status, 200)
         self.assertEqual(json.loads(chat_resp.body.decode()), {'run_id': 'chat-run-1', 'accepted': True})
+
+
+class ConnectorHardeningTests(unittest.IsolatedAsyncioTestCase):
+    def test_single_instance_lock_rejects_duplicate_and_releases(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'assets' / 'nova'))
+        import connector
+        with tempfile.TemporaryDirectory() as tmp:
+            handle = connector.acquire_instance_lock(tmp)
+            try:
+                with self.assertRaises(connector.ConnectorConflictError):
+                    connector.acquire_instance_lock(tmp)
+            finally:
+                connector.release_instance_lock(handle)
+            reacquired = connector.acquire_instance_lock(tmp)
+            connector.release_instance_lock(reacquired)
+
+    async def test_loopback_ignores_proxy_and_runtime_persists_state(self):
+        from aiohttp import web
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'assets' / 'nova'))
+        import connector
+
+        app = web.Application()
+        app.router.add_get('/api/health', lambda r: web.json_response({'status': 'healthy'}))
+        app.router.add_get('/api/sessions', lambda r: web.json_response({'items': []}))
+        from aiohttp.test_utils import TestServer
+        srv = TestServer(app)
+        await srv.start_server()
+        runtime = connector.LocalGatewayRuntime(str(srv.make_url('')).rstrip('/'))
+        try:
+            with patch.dict('os.environ', {'HTTP_PROXY': 'http://127.0.0.1:1', 'HTTPS_PROXY': 'http://127.0.0.1:1'}):
+                await runtime.start()
+                base = await runtime.local.backend()
+                async with runtime.local_http.get(base + '/api/health') as resp:
+                    self.assertEqual(resp.status, 200)
+                runtime.local.uploads['u-persist'] = (10**12, 'owner', {'name': 'a.txt'})
+                self.assertIn('u-persist', runtime.local.uploads)
+        finally:
+            await runtime.close()
+            await srv.close()
+
+    async def test_pause_resume_and_auth_error_detail(self):
+        import httpx
+        from server.services.service_registry import ServiceRegistry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            (path / 'device.json').write_text(json.dumps({'name': 'Studio PC'}), encoding='utf-8')
+            started = asyncio.Event()
+            stop_evt = asyncio.Event()
+
+            class ConnectorAuthError(RuntimeError):
+                pass
+
+            fail_auth = False
+
+            async def run(backend, *, on_connection, on_heartbeat=None):
+                on_connection(True)
+                if on_heartbeat:
+                    on_heartbeat(ready=True, rtt_ms=19)
+                started.set()
+                if fail_auth:
+                    raise ConnectorAuthError('设备已撤销或凭证无效，请重新配对。')
+                await stop_evt.wait()
+
+            svc = NovaService()
+            svc.connector = SimpleNamespace(
+                STATE=path,
+                identity=lambda: 'e' * 24,
+                CONNECTOR_VERSION='2.0.0',
+                run=run,
+            )
+            registry = ServiceRegistry(nova=svc)
+            app = FastAPI()
+            app.include_router(build_nova_router(svc))
+            transport = httpx.ASGITransport(app=app, client=('127.0.0.1', 5000))
+            async with httpx.AsyncClient(transport=transport, base_url='http://testserver') as client:
+                try:
+                    await svc.start()
+                    await asyncio.wait_for(started.wait(), 2)
+                    st = (await client.get('/nova/status')).json()
+                    self.assertTrue(st['connected'])
+                    self.assertEqual(st['rtt_ms'], 19)
+                    self.assertEqual(st['device_name'], 'Studio PC')
+                    self.assertFalse(st['paused'])
+
+                    headers = {'Origin': 'http://testserver', 'X-Nova-Local': svc.nonce}
+                    paused = (await client.post('/nova/pause', headers=headers)).json()
+                    self.assertTrue(paused['paused'])
+                    self.assertFalse(paused['running'])
+                    panel_item = next(i for i in registry.panel()['services'] if i['id'] == 'nova')
+                    self.assertEqual(panel_item['summary'], '已暂停连接 Nova 云端')
+
+                    started.clear()
+                    fail_auth = True
+                    resumed = (await client.post('/nova/resume', headers=headers)).json()
+                    self.assertFalse(resumed['paused'])
+                    await asyncio.wait_for(started.wait(), 2)
+                    await asyncio.gather(svc.task, return_exceptions=True)
+                    err_st = (await client.get('/nova/status')).json()
+                    self.assertEqual(err_st['error'], 'ConnectorAuthError')
+                    self.assertIn('设备已撤销', err_st['error_detail'])
+                finally:
+                    stop_evt.set()
+                    await svc.stop()
+
+    async def test_heartbeat_probes_health_and_falls_back_on_404(self):
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'assets' / 'nova'))
+        import connector
+
+        health_mode = {'status': 'unavailable'}
+        seen_paths = []
+
+        async def health(r):
+            seen_paths.append('/api/health')
+            if health_mode['status'] == 404:
+                return web.Response(status=404)
+            return web.json_response({'status': health_mode['status']})
+
+        async def sessions(r):
+            seen_paths.append('/api/sessions')
+            return web.json_response({'items': []})
+
+        backend_app = web.Application()
+        backend_app.router.add_get('/api/health', health)
+        backend_app.router.add_get('/api/sessions', sessions)
+        backend = TestServer(backend_app)
+        await backend.start_server()
+
+        pings = []
+
+        async def agent_ws(r):
+            ws = web.WebSocketResponse()
+            await ws.prepare(r)
+            await ws.send_json({'kind': 'hello', 'protocol': 2})
+            async for msg in ws:
+                if msg.type == web.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    if data.get('kind') in ('hello_ack', 'ping'):
+                        pings.append(data.get('ready'))
+                        if data.get('kind') == 'ping':
+                            await ws.send_json({'kind': 'pong'})
+                        if len(pings) == 2:
+                            health_mode['status'] = 'healthy'
+                        elif len(pings) == 4:
+                            health_mode['status'] = 404
+                        elif len(pings) >= 6:
+                            await ws.close()
+            return ws
+
+        cloud_app = web.Application()
+        cloud_app.router.add_get('/v1/agent/connect', agent_ws)
+        cloud_srv = TestServer(cloud_app)
+        await cloud_srv.start_server()
+        heartbeats = []
+        real_sleep = asyncio.sleep
+
+        async def yield_sleep(_delay):
+            await real_sleep(0)
+
+        try:
+            with patch.object(asyncio, 'sleep', side_effect=yield_sleep):
+                await connector.connect_once(
+                    str(cloud_srv.make_url('')).rstrip('/'),
+                    'f' * 24,
+                    'tok',
+                    str(backend.make_url('')).rstrip('/'),
+                    on_heartbeat=lambda **kw: heartbeats.append(kw),
+                )
+            self.assertFalse(pings[0])
+            self.assertIn(True, pings)
+            self.assertIn('/api/sessions', seen_paths)
+            self.assertTrue(heartbeats)
+            self.assertIsInstance(heartbeats[0]['rtt_ms'], int)
+        finally:
+            await cloud_srv.close()
+            await backend.close()

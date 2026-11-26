@@ -24,9 +24,16 @@ class NovaStatusResp(BaseModel):
     model_config = {"extra": "allow"}
 
     device: str | None = None
+    device_name: str | None = None
     paired: bool | None = None
     running: bool = False
+    connected: bool = False
+    paused: bool = False
+    rtt_ms: int | None = None
+    last_connected_at: float | None = None
     error: str | None = None
+    error_detail: str | None = None
+    connector_version: str | None = None
     server: str | None = None
     local_token: str | None = None
 
@@ -132,6 +139,16 @@ def build_nova_router(service: NovaService) -> APIRouter:
     async def reconnect(r: Request):
         _guard(r, service.nonce)
         return await _run(service.reconnect())
+
+    @router.post("/nova/pause", response_model=NovaStatusResp)
+    async def pause(r: Request):
+        _guard(r, service.nonce)
+        return await _run(service.pause())
+
+    @router.post("/nova/resume", response_model=NovaStatusResp)
+    async def resume(r: Request):
+        _guard(r, service.nonce)
+        return await _run(service.resume())
 
     return router
 

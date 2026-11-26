@@ -6968,6 +6968,17 @@
               "type": "string",
               "title": "Rid"
             }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "After"
+            }
           }
         ],
         "responses": {
@@ -7833,6 +7844,42 @@
       "post": {
         "summary": "Reconnect",
         "operationId": "reconnect_nova_reconnect_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NovaStatusResp"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/nova/pause": {
+      "post": {
+        "summary": "Pause",
+        "operationId": "pause_nova_pause_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NovaStatusResp"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/nova/resume": {
+      "post": {
+        "summary": "Resume",
+        "operationId": "resume_nova_resume_post",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -14984,6 +15031,17 @@
             ],
             "title": "Device"
           },
+          "device_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Name"
+          },
           "paired": {
             "anyOf": [
               {
@@ -15000,6 +15058,38 @@
             "title": "Running",
             "default": false
           },
+          "connected": {
+            "type": "boolean",
+            "title": "Connected",
+            "default": false
+          },
+          "paused": {
+            "type": "boolean",
+            "title": "Paused",
+            "default": false
+          },
+          "rtt_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rtt Ms"
+          },
+          "last_connected_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Connected At"
+          },
           "error": {
             "anyOf": [
               {
@@ -15010,6 +15100,28 @@
               }
             ],
             "title": "Error"
+          },
+          "error_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Detail"
+          },
+          "connector_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connector Version"
           },
           "server": {
             "anyOf": [
