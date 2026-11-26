@@ -2208,8 +2208,10 @@ class AgyRuntimeManager:
                     continue
                 state = str(report.get("state") or "unverified") if isinstance(report, dict) else "unverified"
                 rows = report.get("rows") if isinstance(report, dict) and isinstance(report.get("rows"), list) else []
+                tier = report.get("account_tier") if isinstance(report, dict) and isinstance(report.get("account_tier"), str) else None
+                tier_name = report.get("account_tier_name") if isinstance(report, dict) and isinstance(report.get("account_tier_name"), str) else None
                 if rows:
-                    agy_profile.record_usage(pid, state, rows)
+                    agy_profile.record_usage(pid, state, rows, account_tier=tier, account_tier_name=tier_name)
                     refreshed += 1
                 else:
                     if state == "login_required":

@@ -3182,6 +3182,10 @@ export interface components {
             has_credentials?: boolean | null;
             /** Auth State */
             auth_state?: string | null;
+            /** Account Tier */
+            account_tier?: ("ultra" | "pro" | "plus" | "enterprise" | "free") | null;
+            /** Account Tier Name */
+            account_tier_name?: string | null;
             usage?: components["schemas"]["AgyProfileUsageSnapshot"] | null;
             /** Cooldown Seconds */
             cooldown_seconds?: number | null;
@@ -3255,6 +3259,10 @@ export interface components {
             rows: components["schemas"]["AntiAccountQuotaRow"][];
             /** Detail */
             detail?: string | null;
+            /** Account Tier */
+            account_tier?: ("ultra" | "pro" | "plus" | "enterprise" | "free") | null;
+            /** Account Tier Name */
+            account_tier_name?: string | null;
         };
         /** AntiApprovalDecision */
         AntiApprovalDecision: {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { RefreshCw, UserRound } from 'lucide-react'
+import { Building2, Crown, Gem, RefreshCw, Sparkles, UserRound } from 'lucide-react'
 import { ChevronDown, ChevronLeft, ChevronRight, RefreshIcon, Settings2, Trash2, X } from '@/components/ActionIcons'
 import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
@@ -16,6 +16,8 @@ import {
   isUsageStaleForHour,
   nextTopOfHourMs,
   quotaWindowShortLabel,
+  resolveAccountTier,
+  type AgyAccountTier,
   type QuotaWindowReading,
 } from '@/utils/antiUsage'
 import type { useAntiDaemonStatus } from './AntiDaemonControl'
@@ -88,6 +90,21 @@ function quotaBarTone(pct: number) {
   if (pct >= 50) return 'bg-status-success'
   if (pct >= 20) return 'bg-status-warning'
   return 'bg-status-danger'
+}
+
+function renderTierPillIcon(tier: AgyAccountTier | undefined, fallbackAccent: boolean) {
+  switch (tier) {
+    case 'ultra':
+      return <Crown className="h-3.5 w-3.5 shrink-0 text-[#9A6B16]" strokeWidth={2} aria-hidden="true" />
+    case 'pro':
+      return <Gem className="h-3.5 w-3.5 shrink-0 text-[#8A5622]" strokeWidth={1.9} aria-hidden="true" />
+    case 'plus':
+      return <Sparkles className="h-3.5 w-3.5 shrink-0 text-[#2E6B50]" strokeWidth={1.9} aria-hidden="true" />
+    case 'enterprise':
+      return <Building2 className="h-3.5 w-3.5 shrink-0 text-[#335073]" strokeWidth={1.9} aria-hidden="true" />
+    default:
+      return <UserRound className={clsx('h-3.5 w-3.5 shrink-0', fallbackAccent && 'text-accent')} strokeWidth={1.85} aria-hidden="true" />
+  }
 }
 
 function formatIdleSeconds(seconds: number) {
@@ -616,6 +633,7 @@ export function AntiAgyProfiles({
     const detailRows = profile.usage?.rows ?? []
     const checkedLabel = formatTimeLabel(profile.usage?.checked_at)
     const showStatusTag = !badge.healthy || cooldownSec > 0
+    const tierInfo = resolveAccountTier(profile.account_tier, profile.account_tier_name)
 
     return (
       <li
@@ -624,7 +642,7 @@ export function AntiAgyProfiles({
         className={clsx(
           'overflow-hidden rounded-xl border transition-colors',
           isActive
-            ? 'border-accent/55 bg-bg-card shadow-sm'
+            ? clsx('border-accent/55 bg-bg-card shadow-sm', tierInfo?.cardFrameAccentClass)
             : 'border-line/70 bg-bg-card/75 hover:border-line',
         )}
       >
@@ -655,6 +673,19 @@ export function AntiAgyProfiles({
               <span className="min-w-0 truncate text-sm font-medium text-ink" title={profile.name}>
                 {profile.name}
               </span>
+              {tierInfo && (
+                <span
+                  data-account-tier-badge={tierInfo.tier}
+                  title={tierInfo.fullLabel}
+                  className={clsx(
+                    'inline-flex shrink-0 items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none tracking-wide',
+                    tierInfo.cardBadgeClass,
+                  )}
+                >
+                  {tierInfo.glyph && <span aria-hidden="true">{tierInfo.glyph}</span>}
+                  <span>{tierInfo.shortLabel}</span>
+                </span>
+              )}
               {isActive && (
                 <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-accent">
                   当前
@@ -725,6 +756,7 @@ export function AntiAgyProfiles({
     const badge = authBadge(profile, loginProfile === profile.id)
     const cooldownSec = profile.cooldown_seconds ?? 0
     const checkedLabel = formatTimeLabel(profile.usage?.checked_at)
+    const tierInfo = resolveAccountTier(profile.account_tier, profile.account_tier_name)
     const canClearCredentials = (profile.has_credentials || profile.auth_state === 'authenticated')
       && !(isActive && (daemon?.status.data?.active_count ?? 0) > 0)
     const showCodeLoginForm = Boolean(codeLogin && codeLogin.profile_id === profile.id)
@@ -737,6 +769,18 @@ export function AntiAgyProfiles({
               <span className={clsx('shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none', badge.tone)}>
                 {badge.label}
               </span>
+              {tierInfo && (
+                <span
+                  data-account-settings-tier={tierInfo.tier}
+                  className={clsx(
+                    'inline-flex shrink-0 items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none tracking-wide',
+                    tierInfo.cardBadgeClass,
+                  )}
+                >
+                  {tierInfo.glyph && <span aria-hidden="true">{tierInfo.glyph}</span>}
+                  <span>{tierInfo.fullLabel}</span>
+                </span>
+              )}
               {cooldownSec > 0 && (
                 <span className="shrink-0 rounded border border-status-warning-line bg-status-warning-soft px-1.5 py-0.5 text-[10px] font-medium leading-none tabular-nums text-status-warning">
                   风控冷却 {cooldownSec}s
@@ -1166,13 +1210,18 @@ export function AntiAgyProfiles({
   const activeCooldown = selected?.cooldown_seconds ?? 0
   const activeNeedLogin = Boolean(selected && (selected.auth_state === 'login_required' || selected.has_credentials === false))
   const activeFiveHourPct = fiveHourRemainingPct(selected?.usage)
-  const triggerTitle = activeCooldown > 0
-    ? `${triggerLabel} · 风控冷却 ${activeCooldown}s`
-    : activeNeedLogin
-      ? `${triggerLabel} · 需要登录`
-      : typeof activeFiveHourPct === 'number'
-        ? `${triggerLabel} · 5h 剩余 ${activeFiveHourPct}%`
-        : triggerLabel
+  const activeTierInfo = resolveAccountTier(selected?.account_tier, selected?.account_tier_name)
+  const showTierEffect = Boolean(activeTierInfo && !activeNeedLogin && activeCooldown === 0)
+  const triggerParts = [triggerLabel]
+  if (activeTierInfo) triggerParts.push(activeTierInfo.fullLabel)
+  if (activeCooldown > 0) {
+    triggerParts.push(`风控冷却 ${activeCooldown}s`)
+  } else if (activeNeedLogin) {
+    triggerParts.push('需要登录')
+  } else if (typeof activeFiveHourPct === 'number') {
+    triggerParts.push(`5h 剩余 ${activeFiveHourPct}%`)
+  }
+  const triggerTitle = triggerParts.join(' · ')
 
   const daemonDotClass = daemon?.running
     ? 'bg-status-success'
@@ -1234,13 +1283,18 @@ export function AntiAgyProfiles({
     <button
       type="button"
       data-anti-account-pill
+      data-account-tier={activeTierInfo?.tier}
       className={clsx(
-        'ga-btn inline-flex h-[35px] max-w-full shrink-0 items-center gap-1.5 rounded-[9px] px-2.5 text-xs leading-none transition-colors',
+        'ga-btn ga-account-pill inline-flex h-[35px] max-w-full shrink-0 items-center gap-1.5 rounded-[9px] px-2.5 text-xs leading-none transition-colors',
         activeNeedLogin
           ? 'border-status-danger-line/80 text-status-danger hover:text-status-danger'
-          : customActive
-            ? 'border-accent/45 text-ink hover:border-accent/70'
-            : 'text-ink-muted hover:text-ink',
+          : activeCooldown > 0
+            ? 'border-status-warning-line text-status-warning hover:text-status-warning'
+            : showTierEffect && activeTierInfo?.pillClass
+              ? clsx(activeTierInfo.pillClass, 'text-ink hover:text-ink')
+              : customActive
+                ? 'border-accent/45 text-ink hover:border-accent/70'
+                : 'text-ink-muted hover:text-ink',
       )}
       aria-label={triggerLabel}
       title={triggerTitle}
@@ -1248,7 +1302,7 @@ export function AntiAgyProfiles({
       aria-expanded={open}
       onClick={() => setOpen(true)}
     >
-      <UserRound className={clsx('h-3.5 w-3.5 shrink-0', customActive && !activeNeedLogin && 'text-accent')} strokeWidth={1.85} aria-hidden="true" />
+      {renderTierPillIcon(showTierEffect ? activeTierInfo?.tier : undefined, customActive && !activeNeedLogin)}
       <span className="max-w-[7.5rem] truncate font-medium text-ink">{selected?.name ?? 'Agy 账号'}</span>
       {activeCooldown > 0 ? (
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-warning" aria-hidden="true" />

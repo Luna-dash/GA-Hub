@@ -428,6 +428,10 @@ def snapshot_details() -> tuple[str, list[dict[str, Any]]]:
             entry["auth_state"] = eff_auth
         if p_meta and isinstance(p_meta.get("usage"), dict):
             entry["usage"] = p_meta["usage"]
+        if p_meta and isinstance(p_meta.get("account_tier"), str) and p_meta["account_tier"].strip():
+            entry["account_tier"] = p_meta["account_tier"].strip().lower()
+        if p_meta and isinstance(p_meta.get("account_tier_name"), str) and p_meta["account_tier_name"].strip():
+            entry["account_tier_name"] = p_meta["account_tier_name"].strip()[:64]
         items.append(entry)
     return active, items
 
@@ -626,7 +630,14 @@ def profile_meta(profile_id: str) -> dict[str, Any]:
         return {}
 
 
-def record_usage(profile_id: str, auth_state: str, rows: list[dict[str, Any]]) -> None:
+def record_usage(
+    profile_id: str,
+    auth_state: str,
+    rows: list[dict[str, Any]],
+    *,
+    account_tier: str | None = None,
+    account_tier_name: str | None = None,
+) -> None:
     if not re.fullmatch(PROFILE_ID, profile_id):
         return
     with _profile_metadata_lock:
@@ -641,6 +652,12 @@ def record_usage(profile_id: str, auth_state: str, rows: list[dict[str, Any]]) -
         entry = dict(meta.get(profile_id) or {})
         entry["auth_state"] = auth_state
         entry["auth_state_at"] = now_iso
+        if isinstance(account_tier, str) and account_tier.strip():
+            entry["account_tier"] = account_tier.strip().lower()
+            if isinstance(account_tier_name, str) and account_tier_name.strip():
+                entry["account_tier_name"] = account_tier_name.strip()[:64]
+            else:
+                entry.pop("account_tier_name", None)
         entry["usage"] = {
             "checked_at": now_iso,
             "min_remaining_pct": min(pcts) if pcts else None,

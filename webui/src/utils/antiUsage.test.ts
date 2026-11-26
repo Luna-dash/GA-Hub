@@ -7,6 +7,7 @@ import {
   geminiQuotaSummary,
   isUsageStaleForHour,
   nextTopOfHourMs,
+  resolveAccountTier,
 } from './antiUsage'
 
 describe('formatCompactTokens', () => {
@@ -119,5 +120,20 @@ describe('geminiQuotaSummary and hourly slot helpers', () => {
     expect(isUsageStaleForHour('not-a-date', now)).toBe(true)
     expect(isUsageStaleForHour(new Date(hourStart - 1_000).toISOString(), now)).toBe(true)
     expect(isUsageStaleForHour(new Date(hourStart + 60_000).toISOString(), now)).toBe(false)
+  })
+})
+
+describe('resolveAccountTier', () => {
+  it('maps ultra, pro, plus, enterprise, and free tiers to warm-luxury presentations and rejects unknown values', () => {
+    const ultra = resolveAccountTier('ultra', 'Google AI Ultra')
+    expect(ultra).toMatchObject({ tier: 'ultra', shortLabel: 'Ultra', fullLabel: 'Google AI Ultra', pillClass: 'ga-account-pill--ultra' })
+    expect(ultra?.cardFrameAccentClass).toContain('#B68934')
+
+    expect(resolveAccountTier('pro')).toMatchObject({ tier: 'pro', shortLabel: 'Pro', fullLabel: 'Google AI Pro', pillClass: 'ga-account-pill--pro' })
+    expect(resolveAccountTier('plus')).toMatchObject({ tier: 'plus', shortLabel: 'Plus', fullLabel: 'Google AI Plus', pillClass: 'ga-account-pill--plus' })
+    expect(resolveAccountTier('enterprise')).toMatchObject({ tier: 'enterprise', shortLabel: 'Enterprise', fullLabel: 'Enterprise', pillClass: 'ga-account-pill--enterprise' })
+    expect(resolveAccountTier('free')).toMatchObject({ tier: 'free', shortLabel: 'Free', fullLabel: 'Free', pillClass: '' })
+    expect(resolveAccountTier(null)).toBeNull()
+    expect(resolveAccountTier('unknown')).toBeNull()
   })
 })

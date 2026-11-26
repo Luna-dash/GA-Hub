@@ -7686,6 +7686,35 @@
             ],
             "title": "Auth State"
           },
+          "account_tier": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ultra",
+                  "pro",
+                  "plus",
+                  "enterprise",
+                  "free"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Tier"
+          },
+          "account_tier_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Tier Name"
+          },
           "usage": {
             "anyOf": [
               {
@@ -7909,6 +7938,35 @@
               }
             ],
             "title": "Detail"
+          },
+          "account_tier": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ultra",
+                  "pro",
+                  "plus",
+                  "enterprise",
+                  "free"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Tier"
+          },
+          "account_tier_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Tier Name"
           }
         },
         "type": "object",

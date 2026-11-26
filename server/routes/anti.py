@@ -74,10 +74,15 @@ class AntiAccountQuotaRow(BaseModel):
     resets_at: AwareDatetime | None = None
 
 
+AgyAccountTier = Literal["ultra", "pro", "plus", "enterprise", "free"]
+
+
 class AntiAccountUsage(BaseModel):
     state: Literal["authenticated", "login_required", "unverified"]
     rows: list[AntiAccountQuotaRow]
     detail: str | None = None
+    account_tier: AgyAccountTier | None = None
+    account_tier_name: str | None = None
 
 
 class AntiModelItem(BaseModel):
@@ -400,6 +405,8 @@ class AgyProfile(BaseModel):
     name: str
     has_credentials: bool | None = None
     auth_state: str | None = None
+    account_tier: AgyAccountTier | None = None
+    account_tier_name: str | None = None
     usage: AgyProfileUsageSnapshot | None = None
     cooldown_seconds: int | None = None
 
@@ -656,6 +663,8 @@ def check_account_usage(request: Request, profile_id: str | None = Query(default
             target_id,
             parsed.state,
             [json.loads(row.model_dump_json()) for row in parsed.rows],
+            account_tier=parsed.account_tier,
+            account_tier_name=parsed.account_tier_name,
         )
         return parsed
     except AntiError as exc:

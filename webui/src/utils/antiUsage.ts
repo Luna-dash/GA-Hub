@@ -170,3 +170,79 @@ export function formatRunUsage(usage?: AntiRunUsage | null): FormattedRunUsage |
     title: titleParts.join(' · '),
   }
 }
+
+export type AgyAccountTier = 'ultra' | 'pro' | 'plus' | 'enterprise' | 'free'
+
+export interface AccountTierPresentation {
+  tier: AgyAccountTier
+  shortLabel: string
+  fullLabel: string
+  glyph: string
+  cardBadgeClass: string
+  cardFrameAccentClass: string
+  pillClass: string
+}
+
+const TIER_PRESENTATIONS: Record<AgyAccountTier, Omit<AccountTierPresentation, 'tier' | 'fullLabel'> & { defaultFullLabel: string }> = {
+  ultra: {
+    shortLabel: 'Ultra',
+    defaultFullLabel: 'Google AI Ultra',
+    glyph: '✦',
+    cardBadgeClass:
+      'border-[#B8892D]/65 bg-gradient-to-r from-[#2D2417] via-[#41321D] to-[#2B2216] text-[#F5D68A] shadow-[inset_0_1px_0_rgba(255,232,163,0.28)]',
+    cardFrameAccentClass: 'border-[#B68934]/65 shadow-[0_2px_10px_rgba(168,121,36,0.12)]',
+    pillClass: 'ga-account-pill--ultra',
+  },
+  pro: {
+    shortLabel: 'Pro',
+    defaultFullLabel: 'Google AI Pro',
+    glyph: '◆',
+    cardBadgeClass:
+      'border-[#8C5B2B]/55 bg-gradient-to-r from-[#EFE3CE] to-[#E6D2B2] text-[#6B421A] shadow-[inset_0_1px_0_rgba(255,248,230,0.75)]',
+    cardFrameAccentClass: 'border-[#966533]/55 shadow-[0_2px_8px_rgba(122,80,34,0.09)]',
+    pillClass: 'ga-account-pill--pro',
+  },
+  plus: {
+    shortLabel: 'Plus',
+    defaultFullLabel: 'Google AI Plus',
+    glyph: '◈',
+    cardBadgeClass: 'border-[#4E7A65]/45 bg-[#DDE9E1] text-[#26523E]',
+    cardFrameAccentClass: '',
+    pillClass: 'ga-account-pill--plus',
+  },
+  enterprise: {
+    shortLabel: 'Enterprise',
+    defaultFullLabel: 'Enterprise',
+    glyph: '',
+    cardBadgeClass: 'border-[#4F6685]/45 bg-[#DFE6EE] text-[#283E59]',
+    cardFrameAccentClass: '',
+    pillClass: 'ga-account-pill--enterprise',
+  },
+  free: {
+    shortLabel: 'Free',
+    defaultFullLabel: 'Free',
+    glyph: '',
+    cardBadgeClass: 'border-line/70 bg-bg-soft/75 text-ink-muted',
+    cardFrameAccentClass: '',
+    pillClass: '',
+  },
+}
+
+export function resolveAccountTier(
+  tier?: string | null,
+  tierName?: string | null,
+): AccountTierPresentation | null {
+  const key = (tier ?? '').trim().toLowerCase() as AgyAccountTier
+  if (!key || !(key in TIER_PRESENTATIONS)) return null
+  const spec = TIER_PRESENTATIONS[key]
+  const cleanFull = (tierName ?? '').trim()
+  return {
+    tier: key,
+    shortLabel: spec.shortLabel,
+    fullLabel: cleanFull || spec.defaultFullLabel,
+    glyph: spec.glyph,
+    cardBadgeClass: spec.cardBadgeClass,
+    cardFrameAccentClass: spec.cardFrameAccentClass,
+    pillClass: spec.pillClass,
+  }
+}

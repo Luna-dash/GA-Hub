@@ -2038,7 +2038,11 @@ def test_usage_probe_t3_code_endpoints_proxy_and_untouched_reset_suppression(tmp
     assert resp.status_code == 200
     body = resp.json()
     assert body["state"] == "authenticated"
-    assert len(seen_calls) == 2
+    assert body.get("account_tier") == "enterprise"
+    quota_calls = [c for c in seen_calls if c[0].endswith(":retrieveUserQuotaSummary")]
+    assert len(quota_calls) == 2
+    assert not any(c[0].endswith(":fetchAvailableModels") for c in seen_calls)
+    assert any(c[0].endswith(":loadCodeAssist") for c in seen_calls)
     assert all(allow_redir is False and isinstance(to, tuple) for _, to, allow_redir in seen_calls)
     by_model = {(r["model"], r["limit"]): r for r in body["rows"]}
     # PROD_ENDPOINT priority kept 100.0% and suppressed untouched 5h rolling resetTime -> omitted/None
@@ -2047,12 +2051,93 @@ def test_usage_probe_t3_code_endpoints_proxy_and_untouched_reset_suppression(tmp
     assert by_model[("Claude & GPT (shared)", "Weekly Limit Remaining")]["remaining_pct"] == 72.0
     assert by_model[("Gemini Argon", "Weekly Limit Remaining")]["remaining_pct"] == 55.0
 
-    # Usage snapshot persisted strictly under `work.id`
+    # Usage snapshot & tier persisted strictly under `work.id`
     profiles_resp = client.get("/api/anti/profiles").json()
     work_entry = next(p for p in profiles_resp["profiles"] if p["id"] == work.id)
     def_entry = next(p for p in profiles_resp["profiles"] if p["id"] == "default")
     assert work_entry["usage"]["min_remaining_pct"] == 55.0
+    assert work_entry["account_tier"] == "enterprise"
     assert "usage" not in def_entry
+
+
+def test_account_tier_detection_paid_tier_override_persistence_and_clear(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
+    agy_usage.clear_token_cache()
+
+    prof = agy_profile.add("Ultra Account")
+    app_dir = agy_profile.profile_app_data_dir(prof.id)
+    app_dir.mkdir(parents=True, exist_ok=True)
+    (app_dir / "antigravity-oauth-token").write_text(
+        json.dumps({
+            "token": {
+                "access_token": "valid-personal-token",
+                "expiry": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    tier_payload: dict[str, object] = {
+        "currentTier": {"id": "free-tier", "name": "Antigravity"},
+        "paidTier": {"id": "g1-ultra-tier", "name": "Google AI Ultra"},
+    }
+
+    class FakeSession:
+        def post(self, url, headers=None, json=None, timeout=None, allow_redirects=True):
+            if url.endswith(":retrieveUserQuotaSummary"):
+                return SimpleNamespace(
+                    status_code=200,
+                    json=lambda: {
+                        "buckets": [
+                            {
+                                "bucketId": "gemini-5h",
+                                "window": "5h",
+                                "remainingFraction": 0.88,
+                                "resetTime": "2026-11-26T12:00:00Z",
+                            }
+                        ]
+                    },
+                )
+            if url.endswith(":loadCodeAssist"):
+                assert json == {"metadata": {"ideType": "ANTIGRAVITY"}}
+                if not tier_payload:
+                    return SimpleNamespace(status_code=503, json=lambda: {})
+                return SimpleNamespace(status_code=200, json=lambda: tier_payload)
+            return SimpleNamespace(status_code=404, json=lambda: {})
+
+    monkeypatch.setattr(agy_usage, "_make_http_session", lambda: FakeSession())
+    client = make_client(monkeypatch)
+
+    # 1. paidTier overrides stale currentTier="free-tier" -> Ultra persisted on profile & API
+    resp = client.post(
+        f"/api/anti/account-usage?profile_id={prof.id}",
+        headers={"X-GA-Hub-Action": "check-anti-usage"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["account_tier"] == "ultra"
+    assert resp.json()["account_tier_name"] == "Google AI Ultra"
+
+    listed = client.get("/api/anti/profiles").json()
+    prof_entry = next(p for p in listed["profiles"] if p["id"] == prof.id)
+    assert prof_entry["account_tier"] == "ultra"
+    assert prof_entry["account_tier_name"] == "Google AI Ultra"
+
+    # 2. Transient loadCodeAssist failure keeps last known tier intact
+    tier_payload = {}
+    agy_profile.record_usage(prof.id, "authenticated", [{"model": "Gemini", "limit": "5h", "remaining_pct": 85.0}])
+    listed_after = client.get("/api/anti/profiles").json()
+    prof_after = next(p for p in listed_after["profiles"] if p["id"] == prof.id)
+    assert prof_after["account_tier"] == "ultra"
+
+    # 3. Clearing credentials resets stored account_tier cleanly
+    agy_profile.clear_credentials(prof.id)
+    listed_cleared = client.get("/api/anti/profiles").json()
+    prof_cleared = next(p for p in listed_cleared["profiles"] if p["id"] == prof.id)
+    assert "account_tier" not in prof_cleared
 
 
 def test_usage_probe_refreshes_expired_cli_token_safely_without_pipe_hang(tmp_path, monkeypatch):

@@ -129,9 +129,10 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     expect(usageButton.closest('header')).not.toBeNull()
     expect(host.querySelector('[role=group][aria-label="Anti 状态"]')?.contains(usageButton)).toBe(false)
     await act(async () => usageButton.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
-    expect(quotaDialog()).toBeNull()
+    expect(quotaDialog()?.textContent).toContain('点击检测官方剩余额度。')
     expect(usageRequests()).toHaveLength(0)
     usageButton.focus()
+    expect(document.activeElement).toBe(usageButton)
     await act(async () => usageButton.click())
     await wait(() => expect(quotaDialog()?.textContent).toContain('42.5%'))
     expect(usageButton.getAttribute('aria-expanded')).toBe('true')
@@ -2652,6 +2653,8 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
         name: '系统默认',
         has_credentials: true,
         auth_state: 'authenticated',
+        account_tier: 'ultra',
+        account_tier_name: 'Google AI Ultra',
         usage: {
           checked_at: staleAt,
           min_remaining_pct: 40,
@@ -2668,6 +2671,8 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
         name: '备用账号',
         has_credentials: true,
         auth_state: 'authenticated',
+        account_tier: 'pro',
+        account_tier_name: 'Google AI Pro',
         usage: {
           checked_at: freshAt,
           min_remaining_pct: 18,
@@ -2720,8 +2725,15 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
       expect(host.querySelector('[data-anti-account-pill]')).not.toBeNull()
     })
 
+    // Outer pill shows tier visual effect + full tier name in tooltip, WITHOUT adding tier text label (Option 2B)
+    const outerPill = host.querySelector<HTMLButtonElement>('[data-anti-account-pill]')!
+    expect(outerPill.dataset.accountTier).toBe('ultra')
+    expect(outerPill.className).toContain('ga-account-pill--ultra')
+    expect(outerPill.getAttribute('title')).toContain('Google AI Ultra')
+    expect(outerPill.textContent).not.toMatch(/ultra/i)
+
     // Open Account Management modal -> stale default triggers hourly catch-up once
-    await act(async () => { host.querySelector<HTMLButtonElement>('[data-anti-account-pill]')!.click() })
+    await act(async () => { outerPill.click() })
     await vi.waitFor(async () => {
       await flush()
       expect(document.body.querySelector('[data-account-card="default"]')).not.toBeNull()
@@ -2733,8 +2745,11 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
     expect(dialog.querySelector('[role="tab"]')).toBeNull()
     expect(dialog.textContent).not.toContain('所有会话共用上下文与配置')
 
-    // Layer 1 shows Gemini 5h & weekly progress bars + numbers cleanly, with ONLY one settings button per card
+    // Layer 1 shows Gemini 5h & weekly progress bars + account tier badge, with ONLY two buttons per card
     const defaultCard = dialog.querySelector('[data-account-card="default"]')!
+    const backupCard = dialog.querySelector('[data-account-card="backup"]')!
+    expect(defaultCard.querySelector('[data-account-tier-badge="ultra"]')?.textContent).toContain('Ultra')
+    expect(backupCard.querySelector('[data-account-tier-badge="pro"]')?.textContent).toContain('Pro')
     expect(defaultCard.querySelector('[aria-label="系统默认 Gemini 5h 额度"]')?.getAttribute('aria-valuenow')).toBe('82')
     expect(defaultCard.querySelector('[aria-label="系统默认 Gemini 周 额度"]')?.getAttribute('aria-valuenow')).toBe('64.5')
     expect(defaultCard.textContent).toContain('82%')
@@ -2762,6 +2777,28 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
     await vi.waitFor(async () => {
       await flush()
       expect(refreshCalls).toContain('/api/anti/account-usage/refresh-all')
+    })
+
+    // Navigate into account settings -> displays full tier badge and suppresses pill effect when login_required
+    await act(async () => {
+      defaultCard.querySelector<HTMLButtonElement>('button[aria-label="账号设置：系统默认"]')!.click()
+    })
+    await flush()
+    expect(dialog.querySelector('[data-account-settings-tier="ultra"]')?.textContent).toContain('Google AI Ultra')
+    await act(async () => { dialog.querySelector<HTMLButtonElement>('button[aria-label="返回账号列表"]')!.click() })
+    await flush()
+
+    // Alert state suppresses tier shimmer class on outer pill so warning/login-required remains dominant
+    profilesPayload = {
+      ...profilesPayload,
+      profiles: profilesPayload.profiles.map(p => (
+        p.id === 'default' ? { ...p, auth_state: 'login_required' } : p
+      )),
+    }
+    await act(async () => { await cache.refetchQueries({ queryKey: ['agy-profiles'] }) })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector<HTMLButtonElement>('[data-anti-account-pill]')?.className).not.toContain('ga-account-pill--ultra')
     })
   } finally {
     await act(async () => root.unmount())

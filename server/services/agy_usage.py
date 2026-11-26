@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -223,9 +224,8 @@ def _make_http_session() -> requests.Session:
     return session
 
 
-def _probe_endpoints(profile_id: str) -> tuple[str, ...]:
-    """Match T3 Code ENDPOINTS priority (`oauth-business` -> prod first, else daily first)."""
-    auth_type = "oauth-personal"
+def _profile_auth_type(profile_id: str) -> str:
+    """Return `oauth-business` or `oauth-personal` from profile/workspace `settings.json`."""
     candidates = [agy_profile.profile_vault_app_data_dir(profile_id) / "settings.json"]
     if agy_profile.active_workspace_profile() == profile_id:
         candidates.append(agy_profile.workspace_app_data_dir() / "settings.json")
@@ -235,10 +235,15 @@ def _probe_endpoints(profile_id: str) -> tuple[str, ...]:
                 raw = json.loads(settings_path.read_text(encoding="utf-8"))
                 auth_obj = raw.get("auth") if isinstance(raw, dict) else None
                 if isinstance(auth_obj, dict) and auth_obj.get("type") == "oauth-business":
-                    auth_type = "oauth-business"
-                    break
+                    return "oauth-business"
         except Exception:
             continue
+    return "oauth-personal"
+
+
+def _probe_endpoints(profile_id: str) -> tuple[str, ...]:
+    """Match T3 Code ENDPOINTS priority (`oauth-business` -> prod first, else daily first)."""
+    auth_type = _profile_auth_type(profile_id)
     return (PROD_ENDPOINT, DAILY_ENDPOINT) if auth_type == "oauth-business" else (DAILY_ENDPOINT, PROD_ENDPOINT)
 
 
@@ -689,6 +694,94 @@ def _fetch_operation_rows(
     return list(merged.values()), unauthorized, had_network_error
 
 
+_TIER_GENERIC_NAMES = frozenset({
+    "antigravity",
+    "free-tier",
+    "legacy-tier",
+    "standard-tier",
+    "g1-pro-tier",
+    "g1-ultra-tier",
+    "g1-plus-tier",
+})
+
+
+def _classify_tier_entry(obj: Any) -> tuple[str | None, str | None]:
+    if not isinstance(obj, dict):
+        return None, None
+    tid = str(obj.get("id") or "").strip()
+    tname = str(obj.get("name") or "").strip()
+    if not tid and not tname:
+        return None, None
+    combined = f"{tid} {tname}".lower()
+    friendly = "" if (not tname or tname.lower() == tid.lower() or tname.lower() in _TIER_GENERIC_NAMES) else tname[:64]
+    if "ultra" in combined:
+        return "ultra", friendly or "Google AI Ultra"
+    if re.search(r"\bpro\b|pro-tier|ai\s+pro", combined):
+        return "pro", friendly or "Google AI Pro"
+    if re.search(r"\bplus\b|plus-tier|ai\s+plus", combined):
+        return "plus", friendly or "Google AI Plus"
+    if any(tok in combined for tok in ("enterprise", "standard-tier", "business")):
+        return "enterprise", friendly or "Enterprise"
+    if "free" in combined or "legacy-tier" in combined:
+        return "free", friendly or "Free"
+    return None, None
+
+
+def _normalize_account_tier(
+    data: dict[str, Any] | None,
+    *,
+    auth_type: str = "oauth-personal",
+) -> tuple[str | None, str | None]:
+    if isinstance(data, dict):
+        paid_tier, paid_name = _classify_tier_entry(data.get("paidTier"))
+        cur_tier, cur_name = _classify_tier_entry(data.get("currentTier"))
+        if paid_tier is not None and (paid_tier != "free" or cur_tier is None):
+            return paid_tier, paid_name
+        if cur_tier is not None:
+            return cur_tier, cur_name
+        if paid_tier is not None:
+            return paid_tier, paid_name
+    if auth_type == "oauth-business":
+        return "enterprise", "Enterprise"
+    return None, None
+
+
+def _fetch_account_tier(
+    access_token: str,
+    project_id: str | None,
+    endpoints: tuple[str, ...],
+    *,
+    auth_type: str = "oauth-personal",
+) -> tuple[str | None, str | None]:
+    """Fetch subscription tier from CloudCode `loadCodeAssist`; never raises."""
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "User-Agent": _antigravity_user_agent(),
+        "Content-Type": "application/json",
+    }
+    body: dict[str, Any] = {"metadata": {"ideType": "ANTIGRAVITY"}}
+    if project_id:
+        body["cloudaicompanionProject"] = project_id
+    session = _make_http_session()
+    for endpoint in endpoints:
+        try:
+            res = session.post(
+                f"{endpoint}/v1internal:loadCodeAssist",
+                headers=headers,
+                json=body,
+                timeout=PROBE_TIMEOUT,
+                allow_redirects=False,
+            )
+            if res.status_code != 200:
+                continue
+            tier, tier_name = _normalize_account_tier(res.json(), auth_type=auth_type)
+            if tier is not None:
+                return tier, tier_name
+        except Exception:
+            continue
+    return _normalize_account_tier(None, auth_type=auth_type)
+
+
 def probe_account_usage(
     profile_id: str,
     *,
@@ -731,17 +824,47 @@ def probe_account_usage(
         }
 
     endpoints = _probe_endpoints(profile_id)
+    auth_type = _profile_auth_type(profile_id)
+    tier: str | None = None
+    tier_name: str | None = None
+
+    def with_tier(payload: dict[str, Any]) -> dict[str, Any]:
+        if tier:
+            payload["account_tier"] = tier
+            if tier_name:
+                payload["account_tier_name"] = tier_name
+        return payload
+
     for attempt in range(2):
-        summary_rows, sum_unauth, sum_net = _fetch_operation_rows(
-            access_token,
-            project_id,
-            endpoints,
-            "retrieveUserQuotaSummary",
-            _parse_summary_rows,
-        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            summary_future = pool.submit(
+                _fetch_operation_rows,
+                access_token,
+                project_id,
+                endpoints,
+                "retrieveUserQuotaSummary",
+                _parse_summary_rows,
+            )
+            tier_future = (
+                pool.submit(
+                    _fetch_account_tier,
+                    access_token,
+                    project_id,
+                    endpoints,
+                    auth_type=auth_type,
+                )
+                if tier is None
+                else None
+            )
+            summary_rows, sum_unauth, sum_net = summary_future.result()
+            if tier_future is not None:
+                try:
+                    tier, tier_name = tier_future.result()
+                except Exception:
+                    tier, tier_name = (None, None)
         if summary_rows:
             agy_profile.record_auth_state(profile_id, "authenticated")
-            return {"state": "authenticated", "rows": summary_rows}
+            return with_tier({"state": "authenticated", "rows": summary_rows})
         model_rows, mod_unauth, mod_net = _fetch_operation_rows(
             access_token,
             project_id,
@@ -751,7 +874,7 @@ def probe_account_usage(
         )
         if model_rows:
             agy_profile.record_auth_state(profile_id, "authenticated")
-            return {"state": "authenticated", "rows": model_rows}
+            return with_tier({"state": "authenticated", "rows": model_rows})
 
         unauthorized = sum_unauth or mod_unauth
         had_network_error = sum_net or mod_net
@@ -778,11 +901,11 @@ def probe_account_usage(
         break
 
     agy_profile.record_auth_state(profile_id, "authenticated")
-    return {
+    return with_tier({
         "state": "authenticated",
         "rows": [],
         "detail": "Google CloudCode 未返回该账号的可用额度窗口。",
-    }
+    })
 
 
 def normalize_ledger_input(
