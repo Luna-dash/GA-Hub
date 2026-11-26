@@ -241,7 +241,7 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
   const latest = steps.at(-1)
 
   return <>
-    <details ref={detailsRef} className="group mb-3 border-b border-line/70 pb-2 text-xs text-ink-muted" onToggle={event => setOpen(event.currentTarget.open)}>
+    <details ref={detailsRef} className="group mb-2.5 text-xs text-ink-muted" onToggle={event => setOpen(event.currentTarget.open)}>
       <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md border border-line bg-bg-soft px-3 py-2 text-left text-xs font-medium text-ink-muted transition-colors hover:bg-bg-card hover:text-ink [&::-webkit-details-marker]:hidden">
         <ChevronRight size={13} className="shrink-0 text-ink-faint transition-transform duration-150 group-open:rotate-90" aria-hidden="true" />
         <span className="shrink-0 whitespace-nowrap">{open ? '收起任务过程' : '查看任务过程'}</span>

@@ -468,6 +468,9 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
   font-size: calc(0.8125rem * var(--chat-scale, 1));
   line-height: 1.55;
 }
+.anti-progress-item-live .prose-chat {
+  color: var(--c-text);
+}
 .anti-progress-item .prose-chat p {
   margin: 0.125rem 0;
   line-height: 1.55;

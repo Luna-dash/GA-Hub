@@ -1,4 +1,5 @@
 import type { PointerEventHandler, ReactNode, Ref } from 'react'
+import clsx from 'clsx'
 import { FileTransferBox, type FileTransferBoxProps } from './FileTransferBox'
 
 // Leave the same space between the transcript and scrollbar on both chat pages.
@@ -56,7 +57,19 @@ export function TranscriptUtilityRail({
 export function ChatComposerFrame({ children }: { children: ReactNode }) {
   return (
     <div className="shrink-0 border-t border-line/40 bg-transparent px-3 py-2.5">
-      <div className="w-full rounded-xl border border-line/70 bg-bg-card shadow-[inset_0_1px_0_rgba(255,250,232,0.65),0_2px_8px_rgba(45,34,22,0.08)] transition-colors focus-within:border-accent/70">{children}</div>
+      <div className="w-full rounded-xl border border-line/70 bg-bg-card shadow-[inset_0_1px_0_var(--c-inset-highlight),0_2px_8px_rgba(45,34,22,0.08)] transition-colors focus-within:border-accent/70">{children}</div>
+    </div>
+  )
+}
+
+export function FinalConclusionDivider({ label = '最终结论', className }: { label?: string; className?: string }) {
+  return (
+    <div data-final-conclusion-divider className={clsx('mb-2 flex items-center gap-2', className)}>
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent-soft/55 px-2 py-0.5 text-[11px] font-semibold leading-none text-accent">
+        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-accent" />
+        {label}
+      </span>
+      <span aria-hidden="true" className="h-px flex-1 bg-line/45" />
     </div>
   )
 }

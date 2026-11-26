@@ -877,4 +877,37 @@ describe('MessageBubble render isolation', () => {
     expect(bubble?.className).toContain('rounded-lg')
     expect(bubble?.parentElement?.parentElement?.className).not.toContain('group/msg')
   })
+
+  it('uses the shared final conclusion divider below folded Chat process only for completed runs', () => {
+    const foldedContent = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>排查代码</summary>',
+      '🛠️ code_run({"script":"inspect"})',
+      '**LLM Running (Turn 2) ...**',
+      '<summary>汇总结果</summary>',
+      '排查完成，未见异常。',
+    ].join('\n')
+
+    act(() => root.render(
+      <MessageBubble role="assistant" content={foldedContent} streaming={false} />,
+    ))
+
+    const divider = host.querySelector('[data-final-conclusion-divider]')
+    expect(divider?.textContent).toContain('最终结论')
+    const foldButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.includes('查看执行过程'))!
+    expect(foldButton.parentElement?.className).not.toContain('border-b')
+
+    // Stopped runs must not badge partial text as "最终结论".
+    act(() => root.render(
+      <MessageBubble role="assistant" content={foldedContent} streaming={false} stopped />,
+    ))
+    expect(host.querySelector('[data-final-conclusion-divider]')).toBeNull()
+    expect(host.textContent).toContain('任务中止')
+
+    // Plain single-turn responses without a process fold do not show a divider.
+    act(() => root.render(
+      <MessageBubble role="assistant" content="直接回答一句。" streaming={false} />,
+    ))
+    expect(host.querySelector('[data-final-conclusion-divider]')).toBeNull()
+  })
 })

@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
 import { Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, X } from 'lucide-react'
 import { RotateCw, Square } from '@/components/ActionIcons'
-import { ChatComposerFrame, ChatUtilityDock, TranscriptUtilityRail, chatTranscriptClass } from '@/components/ChatLayout'
+import { ChatComposerFrame, ChatUtilityDock, FinalConclusionDivider, TranscriptUtilityRail, chatTranscriptClass } from '@/components/ChatLayout'
 import { ConversationCollapseControl, ConversationCollapseProvider } from '@/components/ConversationCollapse'
 import { ConversationTurnMinimap } from '@/components/ConversationTurnMinimap'
 import { TranscriptNavDock } from '@/components/TranscriptNavDock'
@@ -1436,49 +1436,62 @@ function Conversation({ session, headerActions, profileId, profilesData, support
                         >
                           {(partial, liveProgressMessages) => {
                             const persistedProgress = displayRun.progress_messages ?? []
-                            const progressMessages = persistedProgress.length > 0 ? persistedProgress : liveProgressMessages
-                            const finalAnswer = displayRun.answer ?? partial
+                            const liveTrailing = isRunActive && partial.trim() ? partial : ''
+                            const progressMessages = isRunActive
+                              ? (liveTrailing ? [...liveProgressMessages, liveTrailing] : liveProgressMessages)
+                              : (persistedProgress.length > 0 ? persistedProgress : liveProgressMessages)
+                            const finalAnswer = isRunActive ? '' : (displayRun.answer ?? partial)
                             const hasProgress = progressMessages.length > 0
-                            const showFinal = Boolean(finalAnswer.trim()) || (isRunActive && !approval && !hasProgress)
+                            const isSuccess = displayRun.status === 'success'
+                            const showFinal = !isRunActive && Boolean(finalAnswer.trim())
+                            const liveOutputActive = isRunActive && Boolean(liveTrailing) && !approval
                             return <>
                               {hasProgress && (
                                 <section
                                   data-anti-progress-outputs
                                   aria-label="过程阶段输出"
-                                  className="mb-3 rounded-lg border border-line/65 bg-bg-soft/65 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,250,232,0.45)]"
+                                  className={clsx(
+                                    showFinal ? 'mb-3' : 'mb-1',
+                                    'rounded-lg border border-line/65 bg-bg-soft/65 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,250,232,0.45)]',
+                                  )}
                                 >
                                   <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-medium text-ink-faint">
-                                    <span>过程输出</span>
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <span>过程输出</span>
+                                      {liveOutputActive && (
+                                        <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft/75 px-1.5 py-0.5 text-[10px] font-medium leading-none text-accent">
+                                          <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+                                          实时输出
+                                        </span>
+                                      )}
+                                    </span>
                                     <span className="tabular-nums">{progressMessages.length} 条</span>
                                   </div>
                                   <ul className="list-disc space-y-1.5 pl-4 text-ink-muted marker:text-accent/65">
-                                    {progressMessages.map((msg, idx) => (
-                                      <li key={idx} className="anti-progress-item min-w-0">
-                                        <MessageContent format="markdown" content={msg} cache={!isRunActive} />
-                                      </li>
-                                    ))}
+                                    {progressMessages.map((msg, idx) => {
+                                      const isLiveItem = isRunActive && Boolean(liveTrailing) && idx === progressMessages.length - 1
+                                      return (
+                                        <li
+                                          key={idx}
+                                          data-anti-progress-live={isLiveItem ? 'true' : undefined}
+                                          className={clsx(
+                                            'anti-progress-item min-w-0',
+                                            isLiveItem && 'anti-progress-item-live',
+                                            isLiveItem && !approval && 'cursor-blink',
+                                          )}
+                                        >
+                                          <MessageContent format="markdown" content={msg} cache={!isLiveItem} />
+                                        </li>
+                                      )
+                                    })}
                                   </ul>
                                 </section>
                               )}
                               {showFinal && (
-                                <FileTransferConclusion.Provider value={displayRun.status === 'success' ? { engine: 'anti', project } : null}>
-                                  <div
-                                    data-anti-final-answer
-                                    className={clsx(
-                                      hasProgress && 'pt-0.5',
-                                      isRunActive && !approval && 'cursor-blink',
-                                    )}
-                                  >
-                                    {hasProgress && (
-                                      <div className="mb-2 flex items-center gap-2">
-                                        <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent-soft/55 px-2 py-0.5 text-[11px] font-semibold leading-none text-accent">
-                                          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-accent" />
-                                          最终结论
-                                        </span>
-                                        <span aria-hidden="true" className="h-px flex-1 bg-line/45" />
-                                      </div>
-                                    )}
-                                    <MessageContent format="markdown" content={finalAnswer} cache={!isRunActive} />
+                                <FileTransferConclusion.Provider value={isSuccess ? { engine: 'anti', project } : null}>
+                                  <div data-anti-final-answer className="pt-0.5">
+                                    {isSuccess && <FinalConclusionDivider />}
+                                    <MessageContent format="markdown" content={finalAnswer} cache />
                                   </div>
                                 </FileTransferConclusion.Provider>
                               )}

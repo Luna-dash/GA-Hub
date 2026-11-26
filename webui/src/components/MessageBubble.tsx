@@ -32,6 +32,7 @@ import { TranscriptRecordContent } from './TranscriptRecordContent'
 import { AskUserCard } from './AskUserCard'
 import { RunningTranscript } from './RunningTranscript'
 import { CollapseToLatestButton } from './CollapseToLatestButton'
+import { FinalConclusionDivider } from './ChatLayout'
 import { useConversationCollapse } from './ConversationCollapse'
 import { bubbleTone } from './bubbleTone'
 import { ChevronDisclosureIcon, Paperclip, RewindIcon, Square } from './ActionIcons'
@@ -294,6 +295,9 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
         ) : (
           <div key={i} className={clsx(streaming && i === segs.length - 1 && 'cursor-blink')}>
             {/* Final segment: auto-detect tool-only tails vs real prose. */}
+            {!streaming && !stopped && i === segs.length - 1 && segs.some(s => s.type === 'fold') && (
+              <FinalConclusionDivider />
+            )}
             <FileTransferConclusion.Provider value={!streaming && !stopped && i === segs.length - 1 ? { engine: 'chat', ...(project ? { project } : {}) } : null}>
               <MessageContent content={seg.content} format="markdown" cache={!streaming} />
             </FileTransferConclusion.Provider>
@@ -409,13 +413,19 @@ function HistoryTranscriptReply({
   // 停止的两个来源——manualStop（abort 事实）与 transcript.stopped（悬空尾启发式）——
   // 共用同一条提示行；呈现与"是否还能拿到停止事实"无关，当场与事后一致。
 
+  const hasProcessFold = visibleProcessTurns.length > 0
+  const showFinalDivider = hasProcessFold && !stoppedState
+
   return (
     <>
-      {visibleProcessTurns.length > 0 && <LazyProcessFold key={collapseVersion} turns={visibleProcessTurns} onDetailsChange={setDetailsExpanded} />}
+      {hasProcessFold && <LazyProcessFold key={collapseVersion} turns={visibleProcessTurns} onDetailsChange={setDetailsExpanded} />}
       {visibleFinal ? (
-        <FileTransferConclusion.Provider value={stoppedState ? null : { engine: 'chat', ...(project ? { project } : {}) }}>
-          <StableMessageContent content={visibleFinal} format="markdown" cache />
-        </FileTransferConclusion.Provider>
+        <div data-chat-final-answer className={clsx(hasProcessFold && 'pt-0.5')}>
+          {showFinalDivider && <FinalConclusionDivider />}
+          <FileTransferConclusion.Provider value={stoppedState ? null : { engine: 'chat', ...(project ? { project } : {}) }}>
+            <StableMessageContent content={visibleFinal} format="markdown" cache />
+          </FileTransferConclusion.Provider>
+        </div>
       ) : stoppedState || transcript.finalAskUser ? null : (
         <p className="text-sm leading-6 text-ink-muted">该条历史回复未包含可提取的最终回答。</p>
       )}
@@ -458,7 +468,7 @@ function LazyProcessFold({ turns, onDetailsChange }: { turns: AssistantTranscrip
     onDetailsChange(expandedTurns.current.size > 0)
   }
   return (
-    <div className="mb-3 border-b border-line/70 pb-2">
+    <div className="mb-2.5">
       <button
         type="button"
         aria-expanded={open}

@@ -1639,7 +1639,148 @@ it('renders framed unnumbered progress outputs separately from the final conclus
     expect(turn1.querySelector('section[data-anti-progress-outputs]')).toBeNull()
     const turn1Final = turn1.querySelector('[data-anti-final-answer]')!
     expect(turn1Final.textContent).toContain('单段直接回复')
-    expect(turn1Final.textContent).not.toContain('最终结论')
+    expect(turn1Final.querySelector('[data-final-conclusion-divider]')?.textContent).toContain('最终结论')
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('streams active Agy segments in process outputs without premature final conclusion, then settles on completion', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  let activeSource: {
+    onopen: (() => void) | null
+    onerror: (() => void) | null
+    listeners: Map<string, EventListener[]>
+    emit: (type: string, payload: unknown) => void
+  } | null = null
+  class FakeEventSource {
+    onopen: (() => void) | null = null
+    onmessage: ((event: MessageEvent<string>) => void) | null = null
+    onerror: (() => void) | null = null
+    listeners = new Map<string, EventListener[]>()
+    close = vi.fn()
+    addEventListener(type: string, listener: EventListener) {
+      const list = this.listeners.get(type) ?? []
+      list.push(listener)
+      this.listeners.set(type, list)
+    }
+    emit(type: string, payload: unknown) {
+      const event = new MessageEvent(type, { data: JSON.stringify(payload) })
+      for (const listener of this.listeners.get(type) ?? []) listener(event)
+    }
+    constructor() {
+      activeSource = this
+    }
+  }
+  vi.stubGlobal('EventSource', FakeEventSource)
+
+  const session = { id: 's-live-progress', title: 'Live progress test', project: 'demo', workspace: 'D:/demo' }
+  let liveRun: Record<string, unknown> = {
+    id: 'r-live',
+    operation: 'op-live',
+    prompt: 'Run live task',
+    status: 'running',
+    mode: 'plan',
+    permission_mode: 'approval-required',
+  }
+  const cancelledRun: Record<string, unknown> = {
+    id: 'r-cancelled',
+    operation: 'op-cancelled',
+    prompt: 'Stopped task',
+    status: 'cancelled',
+    answer: '中断前的半截输出',
+    progress_messages: [],
+    mode: 'plan',
+    permission_mode: 'approval-required',
+  }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
+    if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path === '/api/anti/sessions') return reply([session])
+    if (path === '/api/anti/sessions/s-live-progress/runs') return reply([cancelledRun, liveRun])
+    if (path === '/api/anti/sessions/s-live-progress/runs/r-live') return reply(liveRun)
+    if (path.endsWith('/events')) return reply([])
+    if (path.startsWith('/api/file-transfer')) return reply([])
+    return reply({})
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 15)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-turn="0"]')).not.toBeNull()
+      expect(host.querySelector('[data-anti-turn="1"]')).not.toBeNull()
+      expect(activeSource).not.toBeNull()
+    })
+
+    // Cancelled run renders its partial body without a "最终结论" divider.
+    const cancelledTurn = host.querySelector('[data-anti-turn="0"]')!
+    expect(cancelledTurn.textContent).toContain('中断前的半截输出')
+    expect(cancelledTurn.textContent).toContain('任务中止')
+    expect(cancelledTurn.querySelector('[data-final-conclusion-divider]')).toBeNull()
+
+    const liveTurn = host.querySelector('[data-anti-turn="1"]')!
+    expect(liveTurn.querySelector('details')?.className).not.toContain('border-b')
+
+    // Emit segment 1 while active -> stays inside process outputs, never rendered as final answer.
+    await act(async () => {
+      activeSource!.onopen?.()
+      activeSource!.emit('message.delta', { seq: 1, type: 'message.delta', text: '阶段一说明', step: { index: 0, kind: 'agent_response', state: 'ACTIVE' } })
+    })
+    await vi.waitFor(() => {
+      const box = liveTurn.querySelector('section[data-anti-progress-outputs]')
+      expect(box?.textContent).toContain('阶段一说明')
+      expect(box?.textContent).toContain('实时输出')
+      expect(box?.querySelector('[data-anti-progress-live="true"]')?.textContent).toContain('阶段一说明')
+      expect(liveTurn.querySelector('[data-anti-final-answer]')).toBeNull()
+      expect(liveTurn.querySelector('[data-final-conclusion-divider]')).toBeNull()
+    })
+
+    // Follow with tool_call and segment 2 -> both remain in the same process stream; segment 2 becomes live.
+    await act(async () => {
+      activeSource!.emit('step.update', { seq: 2, type: 'step.update', step: { index: 1, kind: 'tool_call', tool: 'view_file', state: 'DONE' } })
+      activeSource!.emit('message.delta', { seq: 3, type: 'message.delta', text: '阶段二跟进', step: { index: 2, kind: 'agent_response', state: 'ACTIVE' } })
+    })
+    await vi.waitFor(() => {
+      const items = [...liveTurn.querySelectorAll('section[data-anti-progress-outputs] ul > li')]
+      expect(items.map(el => el.textContent?.trim())).toEqual(['阶段一说明', '阶段二跟进'])
+      expect(items[0].getAttribute('data-anti-progress-live')).toBeNull()
+      expect(items[1].getAttribute('data-anti-progress-live')).toBe('true')
+      expect(liveTurn.querySelector('[data-anti-final-answer]')).toBeNull()
+      expect(liveTurn.querySelector('[data-final-conclusion-divider]')).toBeNull()
+    })
+
+    // Once completed cleanly, progress box stays expanded and final conclusion settles once below divider.
+    liveRun = {
+      ...liveRun,
+      status: 'success',
+      progress_messages: ['阶段一说明'],
+      answer: '最终总结正文',
+    }
+    await act(async () => {
+      activeSource!.onerror?.()
+    })
+    await vi.waitFor(async () => {
+      await flush()
+      const box = liveTurn.querySelector('section[data-anti-progress-outputs]')
+      expect(box?.textContent).toContain('阶段一说明')
+      expect(box?.querySelector('[data-anti-progress-live]')).toBeNull()
+      const finalBox = liveTurn.querySelector('[data-anti-final-answer]')
+      expect(finalBox?.querySelector('[data-final-conclusion-divider]')?.textContent).toContain('最终结论')
+      expect(finalBox?.textContent).toContain('最终总结正文')
+    })
   } finally {
     await act(async () => root.unmount())
     cache.clear()
