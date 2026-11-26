@@ -692,7 +692,7 @@ export function ImagePasteInput({
           aria-controls={menuOpen ? 'slash-command-menu' : undefined}
           aria-activedescendant={menuOpen && menuList.length > 0 ? `slash-command-${menuActiveIndex}` : undefined}
           wrap="soft"
-          className="flex-1 min-w-0 w-0 bg-transparent resize-none outline-none text-ink placeholder:text-ink-faint px-3 py-2 max-h-60 leading-7 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+          className="flex-1 min-w-0 w-0 bg-transparent resize-none outline-none focus-visible:outline-none text-ink placeholder:text-ink-faint px-3 py-2 max-h-60 leading-7 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
         />
         {/* Center the right controls on the last 44px of the textarea. */}
         {onSchedule && (

@@ -3,6 +3,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ChatComposerFrame } from './ChatLayout'
 import { ImagePasteInput } from './ImagePasteInput'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -319,5 +320,37 @@ describe('ImagePasteInput attachment presentation', () => {
     expect(menu.textContent).toContain('不打断当前推理，本轮成功后按顺序自动发送')
     expect(menu.textContent).toContain('插话纠偏')
     expect(menu.textContent).toContain('Ctrl+Enter')
+  })
+
+  it('suppresses inner focus outline on textarea and shifts subtle focus border to ChatComposerFrame', () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    act(() => {
+      root?.render(
+        <ChatComposerFrame>
+          <ImagePasteInput
+            text=""
+            onText={vi.fn()}
+            attachments={[]}
+            onAttachments={vi.fn()}
+            onSubmit={vi.fn()}
+          />
+        </ChatComposerFrame>,
+      )
+    })
+
+    const textarea = container.querySelector('textarea')!
+    const taClasses = textarea.className.split(/\s+/)
+    expect(taClasses).toContain('outline-none')
+    expect(taClasses).toContain('focus-visible:outline-none')
+
+    const outerCard = container.querySelector('[data-file-composer]')?.parentElement
+    const cardClasses = outerCard?.className.split(/\s+/) ?? []
+    expect(cardClasses).toContain('border')
+    expect(cardClasses).toContain('focus-within:border-accent/70')
+    expect(cardClasses).not.toContain('border-2')
+    expect(cardClasses.some((cls) => cls.startsWith('ring-') || cls.includes(':ring-'))).toBe(false)
   })
 })

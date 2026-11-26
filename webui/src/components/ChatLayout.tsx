@@ -56,7 +56,7 @@ export function TranscriptUtilityRail({
 export function ChatComposerFrame({ children }: { children: ReactNode }) {
   return (
     <div className="shrink-0 border-t border-line/40 bg-transparent px-3 py-2.5">
-      <div className="w-full rounded-xl border border-line/70 bg-bg-card shadow-[inset_0_1px_0_rgba(255,250,232,0.65),0_2px_8px_rgba(45,34,22,0.08)]">{children}</div>
+      <div className="w-full rounded-xl border border-line/70 bg-bg-card shadow-[inset_0_1px_0_rgba(255,250,232,0.65),0_2px_8px_rgba(45,34,22,0.08)] transition-colors focus-within:border-accent/70">{children}</div>
     </div>
   )
 }
