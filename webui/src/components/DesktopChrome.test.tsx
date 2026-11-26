@@ -110,4 +110,28 @@ describe('DesktopChrome', () => {
     await click('最小化')
     expect(host.querySelector('[role="status"]')).toBeNull()
   })
+
+  it('does not trap inline overlays behind a transform stacking context on .ga-desktop-content', () => {
+    const proc = (globalThis as {
+      process?: {
+        cwd: () => string
+        getBuiltinModule?: (id: string) => Record<string, (...args: any[]) => any>
+      }
+    }).process
+    const fsMod = proc?.getBuiltinModule?.('node:fs') as
+      | { existsSync: (p: string) => boolean; readFileSync: (p: string, enc: 'utf8') => string }
+      | undefined
+    const pathMod = proc?.getBuiltinModule?.('node:path') as
+      | { resolve: (...parts: string[]) => string }
+      | undefined
+    const cwd = proc?.cwd() ?? ''
+    const cssPath = [
+      pathMod!.resolve(cwd, 'src/components/DesktopChrome.css'),
+      pathMod!.resolve(cwd, 'webui/src/components/DesktopChrome.css'),
+    ].find((p) => fsMod!.existsSync(p))!
+    const css = fsMod!.readFileSync(cssPath, 'utf8')
+    const match = css.match(/\.ga-desktop-content\s*\{([^}]*)\}/)
+    expect(match).not.toBeNull()
+    expect(match![1]).not.toMatch(/\btransform\s*:/)
+  })
 })

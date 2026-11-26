@@ -8,6 +8,7 @@ import './styles/index.css'
 import { installExternalLinkInterceptor } from './utils/openExternal'
 import { DesktopRuntimeGate } from './runtime/DesktopRuntimeGate'
 import { DesktopChrome } from './components/DesktopChrome'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { storageKeys } from './config/storageKeys'
 import { initThemeAppearance } from './utils/themeAppearance'
 
@@ -46,7 +47,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <DesktopRuntimeGate>
         <QueryClientProvider client={qc}>
           <BrowserRouter>
-            <App />
+            <ErrorBoundary>
+              <App />
+            </ErrorBoundary>
           </BrowserRouter>
         </QueryClientProvider>
       </DesktopRuntimeGate>

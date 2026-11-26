@@ -52,8 +52,7 @@ html[data-boot-splash="1"] .ga-desktop-controls button:active {
   flex: 1;
   min-height: 0;
   position: relative;
-  /* Contain fixed dialogs within the full-height client area. */
-  transform: translateZ(0);
+  /* Avoid creating a root stacking context so inline overlays and document.body portals share Z_LAYERS below .ga-desktop-titlebar. */
   overflow: hidden;
 }
 .ga-desktop-content > .h-screen { height: 100%; }

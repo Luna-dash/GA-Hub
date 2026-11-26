@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Gauge, LoaderCircle, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
+import { Z_LAYERS } from '@/config/zLayers'
 import {
   antiApi,
   HttpError,
@@ -381,8 +382,8 @@ export function AntiAccountUsageButton({
       {open && position && createPortal(
         <div
           ref={panel}
-          className="fixed z-[60] w-[min(20rem,calc(100vw-16px))] pt-2"
-          style={{ top: position.top, left: position.left }}
+          className="fixed w-[min(20rem,calc(100vw-16px))] pt-2"
+          style={{ top: position.top, left: position.left, zIndex: Z_LAYERS.tooltip }}
           onMouseEnter={handlePointerEnter}
           onMouseLeave={handlePointerLeave}
         >
