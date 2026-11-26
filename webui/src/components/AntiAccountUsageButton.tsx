@@ -1,15 +1,22 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Gauge, LoaderCircle, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
 import {
   antiApi,
   HttpError,
   HttpTimeoutError,
+  type AgyProfiles,
   type AgyProfileUsageSnapshot,
   type AntiAccountUsage,
 } from '@/api/client'
+import {
+  formatCompactTokens,
+  formatQuotaPct,
+  quotaLimitDisplayLabel,
+  sortQuotaRows,
+} from '@/utils/antiUsage'
 
 export const AUTO_USAGE_REFRESH_INTERVAL_MS = 10 * 60 * 1000
 const DWELL_TICK_MAX_MS = 60 * 1000
@@ -35,7 +42,6 @@ function getDwellState(key: string): UsageDwellState {
   }
   return entry
 }
-import { formatCompactTokens } from '@/utils/antiUsage'
 
 async function checkUsage(profileId?: string): Promise<AntiAccountUsage> {
   try {
@@ -68,13 +74,6 @@ function formatReset(value: string) {
   return Number.isNaN(date.getTime()) ? '时间未知' : resetFormat.format(date)
 }
 
-function limitLabel(limit: string) {
-  if (limit === 'Weekly Limit Remaining') return '每周额度'
-  if (limit === 'Five Hour Limit Remaining') return '5 小时额度'
-  if (limit.endsWith(' Weekly Limit')) return '每周额度'
-  return limit
-}
-
 export function AntiAccountUsageButton({
   running,
   profileId,
@@ -90,11 +89,41 @@ export function AntiAccountUsageButton({
   cachedUsage?: AgyProfileUsageSnapshot | null
   onChecked: () => void
 }) {
-  const [liveCheckedAtMs, setLiveCheckedAtMs] = useState(0)
+  const qc = useQueryClient()
+  const [liveSnapshot, setLiveSnapshot] = useState<{
+    rows: AntiAccountUsage['rows']
+    checkedAt: string
+    checkedAtMs: number
+  } | null>(null)
   const usage = useMutation({
     mutationFn: () => checkUsage(profileId),
     onSuccess: data => {
-      if (data.rows.length > 0) setLiveCheckedAtMs(Date.now())
+      if (!data.rows.length) return
+      const sortedRows = sortQuotaRows(data.rows)
+      const nowMs = Date.now()
+      const nowIso = new Date(nowMs).toISOString()
+      setLiveSnapshot({ rows: sortedRows, checkedAt: nowIso, checkedAtMs: nowMs })
+      const pcts = sortedRows
+        .map(row => row.remaining_pct)
+        .filter((pct): pct is number => typeof pct === 'number' && Number.isFinite(pct))
+      qc.setQueryData<AgyProfiles>(['agy-profiles'], old => {
+        if (!old) return old
+        const targetId = profileId ?? old.active
+        return {
+          ...old,
+          profiles: old.profiles.map(p => (p.id !== targetId ? p : {
+            ...p,
+            auth_state: 'authenticated',
+            ...(data.account_tier ? { account_tier: data.account_tier } : {}),
+            ...(data.account_tier_name ? { account_tier_name: data.account_tier_name } : {}),
+            usage: {
+              checked_at: nowIso,
+              min_remaining_pct: pcts.length ? Math.min(...pcts) : null,
+              rows: sortedRows,
+            },
+          })),
+        }
+      })
     },
     onSettled: onChecked,
   })
@@ -288,10 +317,24 @@ export function AntiAccountUsageButton({
     }
   }, [pinned, !!position])
   const cachedMs = Number.isFinite(cachedCheckedAtMs) ? cachedCheckedAtMs : 0
-  const hasFreshLive = Boolean(running && usage.data?.rows?.length && cachedMs <= liveCheckedAtMs + 1_000)
-  const liveRows = hasFreshLive ? usage.data?.rows : undefined
-  const fallbackRows = (!running || !liveRows) ? cachedUsage?.rows : undefined
-  const rows = liveRows ?? fallbackRows
+  const cachedRows = useMemo(
+    () => (cachedUsage?.rows?.length ? sortQuotaRows(cachedUsage.rows) : undefined),
+    [cachedUsage?.rows],
+  )
+  const useLiveSnapshot = Boolean(
+    running
+    && liveSnapshot
+    && !(cachedMs > liveSnapshot.checkedAtMs + 5_000 && cachedRows?.length),
+  )
+  const rows = useLiveSnapshot ? liveSnapshot!.rows : cachedRows
+  const displayCheckedAt = useLiveSnapshot ? liveSnapshot!.checkedAt : cachedUsage?.checked_at
+  const statusLine = !running
+    ? (cachedUsage?.checked_at ? `离线缓存 · ${formatReset(cachedUsage.checked_at)}` : null)
+    : useLiveSnapshot && displayCheckedAt
+      ? `更新于 ${formatReset(displayCheckedAt)}`
+      : cachedRows?.length && cachedUsage?.checked_at
+        ? `缓存 · ${formatReset(cachedUsage.checked_at)}`
+        : null
   const coolingPools = (pools.data ?? []).filter(
     p => p.status === 'cooling_down' || (p.cooldown_remaining_seconds ?? 0) > 0,
   )
@@ -345,7 +388,7 @@ export function AntiAccountUsageButton({
         >
           <div id={popoverId} tabIndex={-1} role="dialog" aria-label="反重力剩余额度" className="ga-paper-popover overflow-y-auto overscroll-contain rounded-xl p-3 text-xs text-ink" style={{ maxHeight: position.maxHeight }}>
             <div className="flex items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-1.5">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
                 <span className="shrink-0 font-semibold">反重力剩余额度</span>
                 {profileName && (
                   <span className="truncate rounded bg-bg-soft px-1.5 py-0.5 text-[10px] font-medium text-ink-muted" title={profileName}>
@@ -353,45 +396,47 @@ export function AntiAccountUsageButton({
                   </span>
                 )}
               </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                {!usage.isPending && !liveRows && fallbackRows?.length && cachedUsage?.checked_at ? (
-                  <span className="text-[11px] text-ink-muted tabular-nums">
-                    {running ? '缓存' : '离线缓存'} · {formatReset(cachedUsage.checked_at)}
-                  </span>
-                ) : null}
-                {running && (
-                  <button
-                    type="button"
-                    className="ga-btn-link px-1 py-0 text-[11px]"
-                    aria-label="刷新反重力额度"
-                    title="重新检测官方额度"
-                    disabled={usage.isPending}
-                    onClick={() => {
-                      cancelHoverClose()
-                      setPinned(true)
-                      if (!usage.isPending) triggerUsageRefresh()
-                      void pools.refetch()
-                      void stats.refetch()
-                    }}
-                  >
-                    <RefreshCw size={12} aria-hidden="true" className={clsx(usage.isPending && 'motion-safe:animate-spin')} />
-                    <span>{usage.isPending ? '检测中' : '刷新'}</span>
-                  </button>
-                )}
-              </div>
+              {running && (
+                <button
+                  type="button"
+                  className="ga-btn-link w-[4.25rem] shrink-0 justify-end whitespace-nowrap px-1 py-0 text-[11px]"
+                  aria-label="刷新反重力额度"
+                  title="重新检测官方额度"
+                  disabled={usage.isPending}
+                  onClick={() => {
+                    cancelHoverClose()
+                    setPinned(true)
+                    if (!usage.isPending) triggerUsageRefresh()
+                    void pools.refetch()
+                    void stats.refetch()
+                  }}
+                >
+                  <RefreshCw size={12} aria-hidden="true" className={clsx(usage.isPending && 'motion-safe:animate-spin')} />
+                  <span>{usage.isPending ? '检测中' : '刷新'}</span>
+                </button>
+              )}
             </div>
+            {statusLine && (
+              <div data-anti-usage-status className="mt-0.5 text-[11px] tabular-nums text-ink-muted">
+                {statusLine}
+              </div>
+            )}
             {rows?.length ? (
               <ul className="mt-1 divide-y divide-line/45">
                 {rows.map(row => (
-                  <li key={`${row.model}-${row.limit}`} className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 py-1.5">
-                    <span className="min-w-0 break-words font-medium">{row.model}</span>
-                    <span className="text-right font-semibold tabular-nums">{row.remaining_pct}%</span>
-                    <span className="text-ink-muted">{limitLabel(row.limit)}</span>
-                    {row.resets_at ? (
-                      <time dateTime={row.resets_at} className="text-right text-ink-muted tabular-nums">{formatReset(row.resets_at)} 重置</time>
-                    ) : (
-                      <span className="text-right text-ink-muted">满额未消耗</span>
-                    )}
+                  <li key={`${row.model}-${row.limit}`} className="space-y-0.5 py-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 flex-1 truncate font-medium" title={row.model}>{row.model}</span>
+                      <span className="w-12 shrink-0 text-right font-semibold tabular-nums">{formatQuotaPct(row.remaining_pct)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-ink-muted">
+                      <span className="min-w-0 truncate">{quotaLimitDisplayLabel(row.limit)}</span>
+                      {row.resets_at ? (
+                        <time dateTime={row.resets_at} className="shrink-0 whitespace-nowrap text-right tabular-nums">{formatReset(row.resets_at)} 重置</time>
+                      ) : (
+                        <span className="shrink-0 whitespace-nowrap text-right">满额未消耗</span>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>

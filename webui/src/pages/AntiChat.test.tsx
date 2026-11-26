@@ -3309,4 +3309,111 @@ it('selects the session from ?session= query param and highlights unread complet
   }
 })
 
+it('keeps cached quota rows and layout stable while pending or failing, then syncs profile cache on refresh', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const initialCheckedAt = new Date(Date.now() - 120_000).toISOString()
+  let resolveProbe: ((res: unknown) => void) | null = null
+  const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
+
+  vi.stubGlobal('fetch', vi.fn((path: string) => {
+    if (path === '/api/anti/account-usage') {
+      return new Promise(resolve => {
+        resolveProbe = resolve
+      })
+    }
+    if (path === '/api/anti/quota') return Promise.resolve(reply([]))
+    if (path === '/api/anti/stats?today=true') {
+      return Promise.resolve(reply({
+        window_hours: 24, total_runs: 1, success_runs: 1, failed_runs: 0,
+        rate_limited_runs: 0, total_tokens: 100, cache_hit_ratio: 0.5, estimated_cost_usd: 0.01,
+      }))
+    }
+    return Promise.resolve(reply({}))
+  }))
+
+  const initialRows = [
+    { model: 'Claude & GPT (shared)', limit: 'Weekly Limit Remaining', remaining_pct: 70, resets_at: '2026-12-01T00:00:00Z' },
+    { model: 'Gemini', limit: 'Five Hour Limit Remaining', remaining_pct: 80, resets_at: '2026-11-26T15:00:00Z' },
+  ]
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  cache.setQueryData(['agy-profiles'], {
+    active: 'default',
+    profiles: [{
+      id: 'default',
+      name: '系统默认',
+      has_credentials: true,
+      auth_state: 'authenticated',
+      usage: { checked_at: initialCheckedAt, min_remaining_pct: 70, rows: initialRows },
+    }],
+  })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const dialog = () => document.body.querySelector<HTMLElement>('[role=dialog][aria-label="反重力剩余额度"]')
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+
+  try {
+    await act(async () => root.render(
+      <QueryClientProvider client={cache}>
+        <AntiAccountUsageButton
+          running
+          profileName="系统默认"
+          autoRefreshKey="default"
+          cachedUsage={{ checked_at: initialCheckedAt, min_remaining_pct: 70, rows: initialRows }}
+          onChecked={() => {}}
+        />
+      </QueryClientProvider>,
+    ))
+
+    // Trigger click -> opens dialog & starts refresh (in flight)
+    const triggerBtn = host.querySelector<HTMLButtonElement>('button[aria-label="检测反重力额度"]')!
+    await act(async () => { triggerBtn.click() })
+    await flush()
+
+    const refreshBtn = dialog()!.querySelector<HTMLButtonElement>('button[aria-label="刷新反重力额度"]')!
+    expect(refreshBtn.className).toContain('w-[4.25rem]')
+    expect(refreshBtn.textContent).toBe('检测中')
+    // Status subline & sorted cached rows stay intact while refreshing (no hide/pop jump)
+    expect(dialog()!.querySelector('[data-anti-usage-status]')?.textContent).toContain('缓存 ·')
+    const pendingModels = [...dialog()!.querySelectorAll('ul > li')].map(li => li.querySelector('span')?.textContent)
+    expect(pendingModels).toEqual(['Gemini', 'Claude & GPT (shared)'])
+
+    // Empty probe failure keeps existing rows and shows detail message below
+    await act(async () => {
+      resolveProbe!(reply({ state: 'unverified', rows: [], detail: '网络超时，请稍后再试' }))
+    })
+    await flush()
+    expect(dialog()!.textContent).toContain('80%')
+    expect(dialog()!.textContent).toContain('70%')
+    expect(dialog()!.textContent).toContain('网络超时，请稍后再试')
+
+    // Second refresh succeeds with Reported Quota fallback -> sorts deterministically, translates label, updates profiles cache
+    resolveProbe = null
+    await act(async () => { refreshBtn.click() })
+    await flush()
+    await act(async () => {
+      resolveProbe!(reply({
+        state: 'authenticated',
+        rows: [
+          { model: 'Claude', limit: 'Reported Quota', remaining_pct: 35, resets_at: '2026-11-26T16:00:00Z' },
+          { model: 'Gemini', limit: 'Reported Quota', remaining_pct: 76, resets_at: null },
+        ],
+      }))
+    })
+    await flush()
+    expect(dialog()!.querySelector('[data-anti-usage-status]')?.textContent).toContain('更新于')
+    expect(dialog()!.textContent).toContain('当前额度')
+    const settledModels = [...dialog()!.querySelectorAll('ul > li')].map(li => li.querySelector('span')?.textContent)
+    expect(settledModels).toEqual(['Gemini', 'Claude'])
+    const cachedProfiles = cache.getQueryData<{ profiles: Array<{ id: string; usage?: { min_remaining_pct?: number; rows: Array<{ model: string }> } }> }>(['agy-profiles'])
+    expect(cachedProfiles?.profiles[0].usage?.min_remaining_pct).toBe(35)
+    expect(cachedProfiles?.profiles[0].usage?.rows.map(r => r.model)).toEqual(['Gemini', 'Claude'])
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
 

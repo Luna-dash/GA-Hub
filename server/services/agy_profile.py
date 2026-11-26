@@ -658,11 +658,14 @@ def record_usage(
                 entry["account_tier_name"] = account_tier_name.strip()[:64]
             else:
                 entry.pop("account_tier_name", None)
-        entry["usage"] = {
-            "checked_at": now_iso,
-            "min_remaining_pct": min(pcts) if pcts else None,
-            "rows": rows,
-        }
+        existing_usage = entry.get("usage")
+        has_existing_rows = isinstance(existing_usage, dict) and bool(existing_usage.get("rows"))
+        if rows or not has_existing_rows:
+            entry["usage"] = {
+                "checked_at": now_iso,
+                "min_remaining_pct": min(pcts) if pcts else None,
+                "rows": rows,
+            }
         meta[profile_id] = entry
         try:
             _save(active, profiles, meta)

@@ -716,13 +716,16 @@ def check_account_usage(request: Request, profile_id: str | None = Query(default
         target_id = _resolve_target_profile(profile_id)
         report = agy_usage.probe_account_usage(target_id)
         parsed = AntiAccountUsage.model_validate(report)
-        anti_profiles.record_usage(
-            target_id,
-            parsed.state,
-            [json.loads(row.model_dump_json()) for row in parsed.rows],
-            account_tier=parsed.account_tier,
-            account_tier_name=parsed.account_tier_name,
-        )
+        if parsed.rows:
+            anti_profiles.record_usage(
+                target_id,
+                parsed.state,
+                [json.loads(row.model_dump_json()) for row in parsed.rows],
+                account_tier=parsed.account_tier,
+                account_tier_name=parsed.account_tier_name,
+            )
+        else:
+            anti_profiles.record_auth_state(target_id, parsed.state)
         return parsed
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc

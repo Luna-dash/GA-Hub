@@ -7,7 +7,9 @@ import {
   geminiQuotaSummary,
   isUsageStaleForHour,
   nextTopOfHourMs,
+  quotaLimitDisplayLabel,
   resolveAccountTier,
+  sortQuotaRows,
 } from './antiUsage'
 
 describe('formatCompactTokens', () => {
@@ -135,5 +137,33 @@ describe('resolveAccountTier', () => {
     expect(resolveAccountTier('free')).toMatchObject({ tier: 'free', shortLabel: 'Free', fullLabel: 'Free', pillClass: '' })
     expect(resolveAccountTier(null)).toBeNull()
     expect(resolveAccountTier('unknown')).toBeNull()
+  })
+})
+
+describe('quotaLimitDisplayLabel and sortQuotaRows', () => {
+  it('translates Reported Quota and standard window labels consistently', () => {
+    expect(quotaLimitDisplayLabel('Five Hour Limit Remaining')).toBe('5 小时额度')
+    expect(quotaLimitDisplayLabel('Weekly Limit Remaining')).toBe('每周额度')
+    expect(quotaLimitDisplayLabel('Pro Weekly Limit')).toBe('每周额度')
+    expect(quotaLimitDisplayLabel('Reported Quota')).toBe('当前额度')
+    expect(quotaLimitDisplayLabel('Custom Limit')).toBe('Custom Limit')
+  })
+
+  it('deduplicates display rows and orders families & windows deterministically', () => {
+    const sorted = sortQuotaRows([
+      { model: 'Claude & GPT (shared)', limit: 'Weekly Limit Remaining', remaining_pct: 70, resets_at: '2026-12-01T00:00:00Z' },
+      { model: 'Gemini Argon', limit: 'Weekly Limit Remaining', remaining_pct: 90, resets_at: null },
+      { model: 'Gemini', limit: 'Weekly Limit Remaining', remaining_pct: 60, resets_at: '2026-12-01T00:00:00Z' },
+      { model: 'Gemini', limit: 'Five Hour Limit Remaining', remaining_pct: 80, resets_at: '2026-11-26T12:00:00Z' },
+      { model: 'Gemini', limit: 'Five Hour Limit Remaining', remaining_pct: 10, resets_at: null },
+      { model: 'Claude & GPT (shared)', limit: 'Five Hour Limit Remaining', remaining_pct: 40, resets_at: '2026-11-26T12:00:00Z' },
+    ])
+    expect(sorted.map(r => `${r.model}|${r.limit}|${r.remaining_pct}`)).toEqual([
+      'Gemini|Five Hour Limit Remaining|80',
+      'Gemini|Weekly Limit Remaining|60',
+      'Gemini Argon|Weekly Limit Remaining|90',
+      'Claude & GPT (shared)|Five Hour Limit Remaining|40',
+      'Claude & GPT (shared)|Weekly Limit Remaining|70',
+    ])
   })
 })

@@ -3224,6 +3224,102 @@ def test_hourly_quota_scheduler_helpers_and_refresh_all_route(tmp_path, monkeypa
     assert "usage" not in by_id[no_cred.id]
 
 
+def test_usage_probe_stable_order_dedup_and_preserves_cache_on_empty(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
+    agy_usage.clear_token_cache()
+
+    prof = agy_profile.add("Stable Quota")
+    app_dir = agy_profile.profile_app_data_dir(prof.id)
+    app_dir.mkdir(parents=True, exist_ok=True)
+    (app_dir / "antigravity-oauth-token").write_text(
+        json.dumps({
+            "token": {
+                "access_token": "valid-token",
+                "expiry": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    now = datetime.now(timezone.utc)
+    # Reversed buckets + two Gemini 5h buckets that collapse to same display label + 180s skewed 100% resetTime
+    payload = {
+        "buckets": [
+            {
+                "bucketId": "3p-weekly",
+                "window": "weekly",
+                "remainingFraction": 0.65,
+                "resetTime": "2026-12-01T00:00:00Z",
+            },
+            {
+                "bucketId": "gemini-argon-weekly",
+                "window": "weekly",
+                "remainingFraction": 1.0,
+                "resetTime": (now + timedelta(days=7, seconds=180)).isoformat().replace("+00:00", "Z"),
+            },
+            {
+                "bucketId": "gemini-5h-a",
+                "window": "5h",
+                "remainingFraction": 0.8,
+                "resetTime": "2026-11-26T15:00:00Z",
+            },
+            {
+                "bucketId": "gemini-5h-b",
+                "window": "5h",
+                "remainingFraction": 0.4,
+                "resetTime": "2026-11-26T14:00:00Z",
+            },
+        ]
+    }
+    return_empty = {"flag": False}
+
+    class FakeSession:
+        def post(self, url, headers=None, json=None, timeout=None, allow_redirects=True):
+            if return_empty["flag"]:
+                return SimpleNamespace(status_code=503, json=lambda: {})
+            if url.endswith(":retrieveUserQuotaSummary"):
+                return SimpleNamespace(status_code=200, json=lambda: payload)
+            return SimpleNamespace(status_code=404, json=lambda: {})
+
+    monkeypatch.setattr(agy_usage, "_make_http_session", lambda: FakeSession())
+    client = make_client(monkeypatch)
+
+    resp = client.post(
+        f"/api/anti/account-usage?profile_id={prof.id}",
+        headers={"X-GA-Hub-Action": "check-anti-usage"},
+    )
+    assert resp.status_code == 200
+    rows = resp.json()["rows"]
+    assert [(r["model"], r["limit"], r["remaining_pct"]) for r in rows] == [
+        ("Gemini", "Five Hour Limit Remaining", 40.0),
+        ("Gemini Argon", "Weekly Limit Remaining", 100.0),
+        ("Claude & GPT (shared)", "Weekly Limit Remaining", 65.0),
+    ]
+    assert rows[1].get("resets_at") is None
+
+    # Transient empty probe must preserve existing cached quota rows on the profile.
+    return_empty["flag"] = True
+    empty_resp = client.post(
+        f"/api/anti/account-usage?profile_id={prof.id}",
+        headers={"X-GA-Hub-Action": "check-anti-usage"},
+    )
+    assert empty_resp.status_code == 200
+    assert empty_resp.json()["rows"] == []
+
+    listed = client.get("/api/anti/profiles").json()
+    prof_entry = next(p for p in listed["profiles"] if p["id"] == prof.id)
+    assert [(r["model"], r["remaining_pct"]) for r in prof_entry["usage"]["rows"]] == [
+        ("Gemini", 40.0),
+        ("Gemini Argon", 100.0),
+        ("Claude & GPT (shared)", 65.0),
+    ]
+
+
+
 
 
 

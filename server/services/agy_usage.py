@@ -468,7 +468,7 @@ def _summary_reset_time(bucket: dict[str, Any], window: str, requested_at: datet
         and isinstance(raw_reset, str)
     ):
         parsed = _parse_iso(raw_reset)
-        if parsed is not None and abs((parsed - requested_at).total_seconds() - mins * 60) <= 60.0:
+        if parsed is not None and abs((parsed - requested_at).total_seconds() - mins * 60) <= 300.0:
             return None
     return _iso_utc_optional(raw_reset if isinstance(raw_reset, str) else None)
 
@@ -639,6 +639,43 @@ def probe_available_models(profile_id: str) -> dict[str, Any]:
     return {"state": "authenticated", "items": []}
 
 
+_MODEL_FAMILY_RANK = {
+    "gemini": 0,
+    "gemini argon": 1,
+    "gemini carbon": 2,
+    "claude & gpt (shared)": 3,
+    "claude": 4,
+    "gpt": 5,
+}
+
+
+def _quota_row_sort_key(row: dict[str, Any]) -> tuple[int, int, str, str]:
+    model_low = str(row.get("model") or "").strip().lower()
+    limit_low = str(row.get("limit") or "").strip().lower()
+    family_rank = _MODEL_FAMILY_RANK.get(model_low, 6)
+    if "5h" in limit_low or "five hour" in limit_low:
+        win_rank = 0
+    elif "weekly" in limit_low:
+        win_rank = 2
+    else:
+        win_rank = 1
+    return (family_rank, win_rank, model_low, limit_low)
+
+
+def _should_replace_display_row(prev: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    prev_pct = float(prev.get("remaining_pct", 100.0))
+    cand_pct = float(candidate.get("remaining_pct", 100.0))
+    if cand_pct != prev_pct:
+        return cand_pct < prev_pct
+    prev_reset = prev.get("resets_at")
+    cand_reset = candidate.get("resets_at")
+    if cand_reset and not prev_reset:
+        return True
+    if cand_reset and prev_reset and str(cand_reset) < str(prev_reset):
+        return True
+    return False
+
+
 def _fetch_operation_rows(
     access_token: str,
     project_id: str | None,
@@ -683,15 +720,25 @@ def _fetch_operation_rows(
             results = list(pool.map(query_one, endpoints))
 
     merged: dict[str, dict[str, Any]] = {}
+    seen_display: set[tuple[str, str]] = set()
     unauthorized = False
     had_network_error = False
     for rows, unauth, net_err in results:
         unauthorized = unauthorized or unauth
         had_network_error = had_network_error or net_err
+        ep_collapsed: dict[tuple[str, str], tuple[str, dict[str, Any]]] = {}
         for dedup_id, row in rows:
-            if dedup_id not in merged:
-                merged[dedup_id] = row
-    return list(merged.values()), unauthorized, had_network_error
+            disp_key = (str(row.get("model") or ""), str(row.get("limit") or ""))
+            existing = ep_collapsed.get(disp_key)
+            if existing is None or _should_replace_display_row(existing[1], row):
+                ep_collapsed[disp_key] = (dedup_id, row)
+        for disp_key, (dedup_id, row) in ep_collapsed.items():
+            if dedup_id in merged or disp_key in seen_display:
+                continue
+            merged[dedup_id] = row
+            seen_display.add(disp_key)
+    ordered = sorted(merged.values(), key=_quota_row_sort_key)
+    return ordered, unauthorized, had_network_error
 
 
 _TIER_GENERIC_NAMES = frozenset({
@@ -862,6 +909,15 @@ def probe_account_usage(
                     tier, tier_name = tier_future.result()
                 except Exception:
                     tier, tier_name = (None, None)
+        if not summary_rows and sum_net and not sum_unauth and attempt == 0:
+            summary_rows, retry_unauth, sum_net = _fetch_operation_rows(
+                access_token,
+                project_id,
+                endpoints,
+                "retrieveUserQuotaSummary",
+                _parse_summary_rows,
+            )
+            sum_unauth = sum_unauth or retry_unauth
         if summary_rows:
             agy_profile.record_auth_state(profile_id, "authenticated")
             return with_tier({"state": "authenticated", "rows": summary_rows})

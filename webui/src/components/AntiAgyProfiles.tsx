@@ -17,6 +17,7 @@ import {
   nextTopOfHourMs,
   quotaWindowShortLabel,
   resolveAccountTier,
+  sortQuotaRows,
   type AgyAccountTier,
   type QuotaWindowReading,
 } from '@/utils/antiUsage'
@@ -630,7 +631,7 @@ export function AntiAgyProfiles({
     const cooldownSec = profile.cooldown_seconds ?? 0
     const isExpanded = Boolean(expandedIds[profile.id])
     const gemini = geminiQuotaSummary(profile.usage)
-    const detailRows = profile.usage?.rows ?? []
+    const detailRows = sortQuotaRows(profile.usage?.rows ?? [])
     const checkedLabel = formatTimeLabel(profile.usage?.checked_at)
     const showStatusTag = !badge.healthy || cooldownSec > 0
     const tierInfo = resolveAccountTier(profile.account_tier, profile.account_tier_name)

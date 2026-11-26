@@ -32,6 +32,49 @@ export function quotaWindowShortLabel(limit?: string | null): string | null {
   return null
 }
 
+export function quotaLimitDisplayLabel(limit: string): string {
+  if (limit === 'Five Hour Limit Remaining') return '5 小时额度'
+  if (limit === 'Weekly Limit Remaining' || limit.endsWith(' Weekly Limit')) return '每周额度'
+  if (limit === 'Reported Quota') return '当前额度'
+  return limit
+}
+
+const QUOTA_MODEL_RANK: Record<string, number> = {
+  gemini: 0,
+  'gemini argon': 1,
+  'gemini carbon': 2,
+  'claude & gpt (shared)': 3,
+  claude: 4,
+  gpt: 5,
+}
+
+export function sortQuotaRows<
+  T extends { model: string; limit: string; remaining_pct: number; resets_at?: string | null },
+>(rows: ReadonlyArray<T>): T[] {
+  const deduped = new Map<string, T>()
+  for (const row of rows) {
+    const key = `${row.model}\0${row.limit}`
+    if (!deduped.has(key)) deduped.set(key, row)
+  }
+  return [...deduped.values()].sort((a, b) => {
+    const aModel = a.model.trim().toLowerCase()
+    const bModel = b.model.trim().toLowerCase()
+    const aRank = QUOTA_MODEL_RANK[aModel] ?? 6
+    const bRank = QUOTA_MODEL_RANK[bModel] ?? 6
+    if (aRank !== bRank) return aRank - bRank
+
+    const aLimit = a.limit.trim().toLowerCase()
+    const bLimit = b.limit.trim().toLowerCase()
+    const winRank = (low: string) => (low.includes('5h') || low.includes('five hour') ? 0 : low.includes('weekly') ? 2 : 1)
+    const aWin = winRank(aLimit)
+    const bWin = winRank(bLimit)
+    if (aWin !== bWin) return aWin - bWin
+
+    const modelCmp = aModel.localeCompare(bModel)
+    return modelCmp !== 0 ? modelCmp : aLimit.localeCompare(bLimit)
+  })
+}
+
 /**
  * Pick the minimum remaining percentage for the 5-hour quota window from a profile usage snapshot.
  * Falls back to non-weekly rows (e.g. `Reported Quota`) when upstream only reports a single quota row,
