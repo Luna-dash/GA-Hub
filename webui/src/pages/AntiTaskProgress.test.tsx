@@ -192,7 +192,6 @@ describe('AntiTaskProgress SSE stability', () => {
     expect(host.textContent).not.toContain('-old line')
     expect(host.textContent).not.toContain('+new line')
     expect(host.textContent).not.toContain('@@ -1 +1 @@')
-    expect(host.textContent).toContain('all passed')
 
     const thoughtDesc = host.querySelector('[data-step-description]')!
     expect(thoughtDesc.className).toContain('space-y-1')
@@ -209,6 +208,25 @@ describe('AntiTaskProgress SSE stability', () => {
     const steps = host.querySelectorAll('ol li')
     expect(steps[1].querySelector('span')?.getAttribute('title')).toBe('D:\\demo\\app.tsx')
     expect(steps[2].querySelector('span')?.getAttribute('title')).toBe('D:\\demo\\app.tsx')
+
+    // Non-command steps do not show a triangle toggle; command/output box stays collapsed by default.
+    expect(steps[1].querySelector('[data-step-code-toggle]')).toBeNull()
+    const codeToggle = steps[4].querySelector<HTMLButtonElement>('[data-step-code-toggle]')!
+    expect(codeToggle).not.toBeNull()
+    expect(codeToggle.getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('[data-step-command]')).toBeNull()
+    expect(host.textContent).not.toContain('npm test')
+    expect(host.textContent).not.toContain('all passed')
+
+    await act(async () => { codeToggle.click() })
+    expect(codeToggle.getAttribute('aria-expanded')).toBe('true')
+    expect(host.querySelector('[data-step-command]')?.textContent).toBe('npm test')
+    expect(host.textContent).toContain('all passed')
+
+    await act(async () => { codeToggle.click() })
+    expect(codeToggle.getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('[data-step-command]')).toBeNull()
+    expect(host.textContent).not.toContain('all passed')
   })
 
   it('splits live message.delta segments into progressMessages and trailing partial without demoting on late tool updates', async () => {
@@ -290,8 +308,12 @@ describe('AntiTaskProgress SSE stability', () => {
     const steerItem = host.querySelector('li[data-step-kind="user_steer"]')
     expect(steerItem?.textContent).toContain('运行中插话纠偏')
     expect(steerItem?.textContent).toContain('请只改 backend')
-    expect(host.querySelector('[data-live-terminal-output="streaming"]')?.textContent).toContain('line2')
     expect(host.textContent).toContain('实时输出')
+    expect(host.querySelector('[data-live-terminal-output]')).toBeNull()
+
+    const codeToggle = host.querySelector<HTMLButtonElement>('[data-step-code-toggle]')!
+    await act(async () => { codeToggle.click() })
+    expect(host.querySelector('[data-live-terminal-output="streaming"]')?.textContent).toContain('line2')
   })
 
   it('displays image_path cleanly without duplicating identical detail', async () => {

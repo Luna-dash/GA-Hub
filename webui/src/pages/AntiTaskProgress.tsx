@@ -178,6 +178,13 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
   const [startedLive] = useState(active)
   const [streamEvents, setStreamEvents] = useState<AntiEvent[]>([])
   const [streamConnected, setStreamConnected] = useState(false)
+  const [expandedCodeSteps, setExpandedCodeSteps] = useState<Record<number, boolean>>({})
+  useEffect(() => {
+    setExpandedCodeSteps({})
+  }, [runKey])
+  const toggleStepCode = useCallback((index: number) => {
+    setExpandedCodeSteps(prev => ({ ...prev, [index]: !prev[index] }))
+  }, [])
   const onEventsChangedRef = useRef(onEventsChanged)
   const onApprovalRequestedRef = useRef(onApprovalRequested)
   const onStreamEndedRef = useRef(onStreamEnded)
@@ -250,6 +257,8 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
             const isNotice = step.tool === 'runtime_notice'
             const isSteer = step.kind === 'user_steer'
             const isLiveOutput = step.state === 'ACTIVE' && Boolean(step.output)
+            const hasCodeBlock = Boolean(step.command || step.output)
+            const codeOpen = Boolean(expandedCodeSteps[step.index])
             const showDetail = Boolean(
               step.detail
               && !(step.image_path && step.detail === step.image_path)
@@ -264,8 +273,25 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
                 isSteer ? 'rounded-r-lg border-l-2 border-accent bg-accent-soft/25 py-1 pr-2' : 'border-l-2 border-accent/25',
               )}
             >
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <span className="font-medium text-ink" title={step.detail || step.tool || undefined}>{label}</span>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                {hasCodeBlock && (
+                  <button
+                    type="button"
+                    data-step-code-toggle
+                    aria-expanded={codeOpen}
+                    aria-label={codeOpen ? `收起${label}代码框` : `展开${label}代码框`}
+                    title={codeOpen ? '收起代码框' : '展开代码框'}
+                    onClick={() => toggleStepCode(step.index)}
+                    className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-ink-faint transition-colors hover:bg-bg-soft hover:text-ink"
+                  >
+                    <ChevronRight
+                      size={12}
+                      className={clsx('transition-transform duration-150', codeOpen && 'rotate-90')}
+                      aria-hidden="true"
+                    />
+                  </button>
+                )}
+                <span className="font-medium text-ink" title={step.command || step.detail || step.tool || undefined}>{label}</span>
                 {step.state && <span>{stepStatus(step.state)}</span>}
                 {isLiveOutput && (
                   <span className="rounded bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent">
@@ -275,7 +301,11 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
                 {typeof step.exit_code === 'number' && <span className={step.exit_code === 0 ? 'text-status-success' : 'text-status-danger'}>exit {step.exit_code}</span>}
                 {typeof step.duration_seconds === 'number' && <span>{step.duration_seconds.toLocaleString(undefined, { maximumFractionDigits: 2 })} 秒</span>}
               </div>
-              {step.command && <div className="mt-1 rounded bg-bg-soft px-2 py-1 font-mono text-[11px] text-ink">{step.command}</div>}
+              {codeOpen && step.command && (
+                <div data-step-command className="mt-1 rounded bg-bg-soft px-2 py-1 font-mono text-[11px] text-ink">
+                  {step.command}
+                </div>
+              )}
               {showDetail && !isSteer && (
                 <div
                   data-step-detail
@@ -305,7 +335,7 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
                   ))}
                 </div>
               )}
-              {step.output && (
+              {codeOpen && step.output && (
                 <TerminalOutputPre output={step.output} active={isLiveOutput} />
               )}
             </li>
