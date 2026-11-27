@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { MyKeyBackup, MyKeyData, MyKeyWriteResult } from '@/api/types'
 import { dialog } from '@/stores/dialogStore'
+import { useDirtyRouteGuard } from '@/stores/navigationGuardStore'
 import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
 import { ModalOverlay } from '@/components/ModalOverlay'
@@ -41,15 +42,7 @@ export function RawView({ data, onWrite, onDirtyChange }: {
     return () => onDirtyChange?.(false)
   }, [dirty, onDirtyChange])
 
-  useEffect(() => {
-    if (!dirty) return
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault()
-      event.returnValue = ''
-    }
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [dirty])
+  useDirtyRouteGuard('mykey-raw', dirty, 'mykey.py 原始视图有未保存的编辑，离开将丢失这些修改。')
 
   useEffect(() => {
     if (data.raw === observedRaw.current) return

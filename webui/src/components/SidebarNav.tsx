@@ -2,7 +2,7 @@ import { useUnreadThemeCompletions } from '@/stores/themeCompletionStore'
 import { useHasUnreadSessions } from '@/stores/sessionUnreadStore'
 import brandIcon from '../assets/gahub-icon.png'
 import { useEffect, useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { GuardedNavLink } from './GuardedLink'
 import { preloadRoute } from '@/routes/routeLoaders'
 import clsx from 'clsx'
 import { getNavPreferences, getVisibleNavItems } from '@/stores/navPreferenceStore'
@@ -199,7 +199,7 @@ export function SidebarNav() {
                   ? '主题任务有未读完成结果'
                   : null
           return (
-          <NavLink
+          <GuardedNavLink
             key={it.to}
             to={it.to}
             title={it.label}
@@ -229,13 +229,13 @@ export function SidebarNav() {
                 <span className="ga-nav-chev" aria-hidden="true">›</span>
               </>
             )}
-          </NavLink>
+          </GuardedNavLink>
           )
         })}
       </nav>
 
       <div className={clsx('flex flex-col gap-1.5 pb-2.5 pt-1.5', collapsed ? 'items-center px-1.5' : 'px-2.5')}>
-        <NavLink
+        <GuardedNavLink
           to="/settings"
           onMouseEnter={() => preloadRoute('/settings')}
           onFocus={() => preloadRoute('/settings')}
@@ -245,7 +245,7 @@ export function SidebarNav() {
         >
           <NavIcon name="settings" />
           {!collapsed && <span>系统设置</span>}
-        </NavLink>
+        </GuardedNavLink>
         <button
           type="button"
           onClick={toggleCollapsed}

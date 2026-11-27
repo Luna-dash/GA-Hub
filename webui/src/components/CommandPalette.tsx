@@ -11,9 +11,9 @@
 // Keyboard model: ↑/↓ navigate, Enter executes, Esc closes. Typing filters
 // by token-subsequence match (so "ai chat" matches "实时聊天 / live chat").
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { conversationCountsText } from '@/utils/conversationCounts'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Z_LAYERS } from '@/config/zLayers'
@@ -22,6 +22,7 @@ import { isTopOverlay, registerOverlay, restoreOverlayFocus } from '@/utils/over
 import { api } from '@/api/client'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
 import { dialog } from '@/stores/dialogStore'
+import { confirmLeaveIfDirty } from '@/stores/navigationGuardStore'
 import { conversationKeys } from '@/queries/conversations'
 import { createAndOpenSession, upsertSessionInList, type SessionListData } from '@/queries/sessions'
 import { useSessionSelectionGuard } from '@/hooks/useSessionSelectionGuard'
@@ -64,6 +65,15 @@ export function CommandPalette() {
   const restoreFocusRef = useRef(true)
   const overlayIdRef = useRef<number | null>(null)
   const nav = useNavigate()
+  const location = useLocation()
+  const pathnameRef = useRef(location.pathname)
+  pathnameRef.current = location.pathname
+  const guardedNav = useCallback(async (to: string) => {
+    const targetPath = to.split(/[?#]/)[0] || '/'
+    if (targetPath !== pathnameRef.current && !(await confirmLeaveIfDirty())) return false
+    nav(to)
+    return true
+  }, [nav])
   const qc = useQueryClient()
   const creatingSessionRef = useRef(false)
   const captureSelection = useSessionSelectionGuard()
@@ -157,7 +167,7 @@ export function CommandPalette() {
         group: '页面',
         icon: page.palette.icon,
         label: page.palette.label,
-        run: () => nav(page.to),
+        run: () => { void guardedNav(page.to) },
       })
     }
 
@@ -168,6 +178,7 @@ export function CommandPalette() {
       hint: '创建独立会话',
       run: async () => {
         if (creatingSessionRef.current) return
+        if (pathnameRef.current !== '/chat' && !(await confirmLeaveIfDirty())) return
         creatingSessionRef.current = true
         const previousSid = useChatStore.getState().sessionId
         const canSelect = captureSelection()
@@ -232,6 +243,7 @@ export function CommandPalette() {
         label: `立即触发：${s.name || s.id}`,
         hint: s.type,
         run: async () => {
+          if (pathnameRef.current !== '/autonomous' && !(await confirmLeaveIfDirty())) return
           const ok = await dialog.confirm('立即触发？', s.name || s.id, { confirmText: '触发' })
           if (!ok) return
           await api.triggerSchedule(s.id)
@@ -247,7 +259,7 @@ export function CommandPalette() {
         id: `sop:${s.name}`, group: 'SOP / 记忆', icon: '📋',
         label: s.name,
         hint: `${(s.size / 1024).toFixed(1)} KB`,
-        run: () => nav(`/memory?tab=sop&sop=${encodeURIComponent(s.name)}`),
+        run: () => { void guardedNav(`/memory?tab=sop&sop=${encodeURIComponent(s.name)}`) },
       })
     }
 
@@ -257,12 +269,12 @@ export function CommandPalette() {
         id: `conv:${c.id}`, group: '历史对话', icon: '💬',
         label: c.title || c.id,
         hint: conversationCountsText(c),
-        run: () => nav(`/conversations/${encodeURIComponent(c.id)}`),
+        run: () => { void guardedNav(`/conversations/${encodeURIComponent(c.id)}`) },
       })
     }
 
     return acts
-  }, [llms, sessionsData, schedules, sops, convs, nav, qc, sessionId, pushSystem, captureSelection])
+  }, [llms, sessionsData, schedules, sops, convs, nav, guardedNav, qc, sessionId, pushSystem, captureSelection])
 
   const filtered = useMemo(() => {
     if (!q.trim()) return actions

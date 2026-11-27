@@ -3543,9 +3543,13 @@ it('selects the session from ?session= query param and highlights unread complet
       const completedRow = host.querySelector('[data-session-id="anti-2"]')
       expect(completedRow?.getAttribute('data-activity')).toBe('completed')
       expect(completedRow?.querySelector('[aria-current="page"]')).not.toBeNull()
-      // Deep link ?session= is consumed cleanly back to /anti
-      expect(host.querySelector('output')?.getAttribute('data-loc')).toBe('/anti')
+      // Deep link ?session= is preserved in URL and selecting another session updates ?session=
+      expect(host.querySelector('output')?.getAttribute('data-loc')).toBe('/anti?session=anti-2')
     })
+
+    const firstRowBtn = host.querySelector<HTMLButtonElement>('[data-session-id="anti-1"] button')!
+    await act(async () => firstRowBtn.click())
+    expect(host.querySelector('output')?.getAttribute('data-loc')).toBe('/anti?session=anti-1')
   } finally {
     await act(async () => root.unmount())
     cache.clear()

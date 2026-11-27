@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { GuardedLink } from '@/components/GuardedLink'
 import { api } from '@/api/client'
 import type { ServicePanelItem } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
@@ -140,10 +140,10 @@ function SectionTitle({ title, hint, link }: { title: string; hint: string; link
         <span className="text-[11px] text-ink-faint truncate">{hint}</span>
       </div>
       {link && (
-        <Link to={link} className="ga-btn-link shrink-0">
+        <GuardedLink to={link} className="ga-btn-link shrink-0">
           <span>查看详情</span>
           <ArrowRight className="h-3 w-3" aria-hidden="true" />
-        </Link>
+        </GuardedLink>
       )}
     </div>
   )
@@ -195,7 +195,7 @@ function ServiceRow({ service }: { service: ServicePanelItem }) {
 function ServiceSurface({ service, className, children }: { service: ServicePanelItem; className: string; children: ReactNode }) {
   if (service.href === '/dashboard') return <div className={className}>{children}</div>
   const displayClass = /\b(flex|inline-flex|grid|inline-block|block)\b/.test(className) ? '' : 'block '
-  return <Link to={service.href} className={`${displayClass}${className} hover:bg-bg-soft/85 transition-colors`}>{children}</Link>
+  return <GuardedLink to={service.href} className={`${displayClass}${className} hover:bg-bg-soft/85 transition-colors`}>{children}</GuardedLink>
 }
 
 function TokenFact({ label, value, suffix = '', indented = false }: { label: string; value: number; suffix?: string; indented?: boolean }) {

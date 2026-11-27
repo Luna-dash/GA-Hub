@@ -48,4 +48,45 @@ describe('ErrorBoundary', () => {
     expect(host.textContent).toContain('recovered route')
     expect(host.textContent).not.toContain('页面渲染出错')
   })
+
+  it('supports in-place retry without full page reload and delegates home navigation', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    let fail = true
+    function Flaky() {
+      if (fail) throw new Error('transient crash')
+      return <p>in-place ok</p>
+    }
+    const onNavigateHome = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <ErrorBoundary resetKey="/flaky" onNavigateHome={onNavigateHome}>
+          <Flaky />
+        </ErrorBoundary>,
+      )
+    })
+    const buttons = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+    expect(buttons.every((b) => b.type === 'button')).toBe(true)
+    const retryBtn = buttons.find((b) => b.textContent === '重试')!
+    const homeBtn = buttons.find((b) => b.textContent === '返回首页')!
+    expect(retryBtn).toBeDefined()
+    expect(homeBtn).toBeDefined()
+
+    fail = false
+    await act(async () => retryBtn.click())
+    expect(host.textContent).toContain('in-place ok')
+    expect(onNavigateHome).not.toHaveBeenCalled()
+
+    fail = true
+    await act(async () => {
+      root.render(
+        <ErrorBoundary resetKey="/flaky-2" onNavigateHome={onNavigateHome}>
+          <Flaky />
+        </ErrorBoundary>,
+      )
+    })
+    const homeBtn2 = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent === '返回首页')!
+    await act(async () => homeBtn2.click())
+    expect(onNavigateHome).toHaveBeenCalledTimes(1)
+  })
 })

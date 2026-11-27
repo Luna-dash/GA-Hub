@@ -4,6 +4,7 @@
 // In normal mode, it's reachable at /settings via the sidebar.
 
 import { useEffect, useRef, useState } from 'react'
+import { useInRouterContext, useSearchParams } from 'react-router-dom'
 import { ALargeSmall, Bell, Download, Globe, HardDrive, KeyRound, MessagesSquare, PanelLeft, Settings2, Type } from 'lucide-react'
 import { ArrowDown, ArrowUp, BellOff, Eye, EyeOff, FolderOpen, RefreshIcon, RotateCcw, Save, SendHorizontal } from '@/components/ActionIcons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -55,8 +56,55 @@ const SETTINGS_TABS = [
 
 type SettingsTab = typeof SETTINGS_TABS[number]['id']
 
+function isSettingsTab(value: string | null): value is SettingsTab {
+  return Boolean(value && SETTINGS_TABS.some((tab) => tab.id === value))
+}
+
 export default function Settings({ initialMode = 'settings' }: { initialMode?: 'settings' | 'setup' }) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+  const inRouter = useInRouterContext()
+  if (inRouter) return <SettingsWithRouter initialMode={initialMode} />
+  return <SettingsInner initialMode={initialMode} />
+}
+
+function SettingsWithRouter({ initialMode }: { initialMode: 'settings' | 'setup' }) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const urlTab = searchParams.get('tab')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => (
+    initialMode !== 'setup' && isSettingsTab(urlTab) ? urlTab : 'general'
+  ))
+
+  useEffect(() => {
+    if (initialMode === 'setup') return
+    if (isSettingsTab(urlTab) && urlTab !== activeTab) {
+      setActiveTab(urlTab)
+    }
+  }, [initialMode, urlTab, activeTab])
+
+  const selectTab = (nextTab: SettingsTab) => {
+    setActiveTab(nextTab)
+    if (initialMode === 'setup') return
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('tab', nextTab)
+      return next
+    }, { replace: true })
+  }
+
+  return <SettingsInner initialMode={initialMode} controlledTab={activeTab} onSelectTab={selectTab} />
+}
+
+function SettingsInner({
+  initialMode = 'settings',
+  controlledTab,
+  onSelectTab,
+}: {
+  initialMode?: 'settings' | 'setup'
+  controlledTab?: SettingsTab
+  onSelectTab?: (tab: SettingsTab) => void
+}) {
+  const [localTab, setLocalTab] = useState<SettingsTab>('general')
+  const activeTab = controlledTab ?? localTab
+  const selectTab = onSelectTab ?? setLocalTab
   const qc = useQueryClient()
   const { data: setup } = useQuery({ queryKey: queryKeys.setup, queryFn: api.setupStatus })
   const [input, setInput] = useState('')
@@ -173,14 +221,14 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
                 aria-controls={`settings-panel-${id}`}
                 aria-selected={activeTab === id}
                 tabIndex={activeTab === id ? 0 : -1}
-                onClick={() => setActiveTab(id)}
+                onClick={() => selectTab(id)}
                 onKeyDown={(event) => {
                   const next = event.key === 'ArrowDown' ? (index + 1) % SETTINGS_TABS.length
-                    : event.key === 'ArrowUp' ? (index + SETTINGS_TABS.length - 1) % SETTINGS_TABS.length
+                    : event.key === 'ArrowUp' ? (SETTINGS_TABS.length + index - 1) % SETTINGS_TABS.length
                     : event.key === 'Home' ? 0 : event.key === 'End' ? SETTINGS_TABS.length - 1 : null
                   if (next === null) return
                   event.preventDefault()
-                  setActiveTab(SETTINGS_TABS[next].id)
+                  selectTab(SETTINGS_TABS[next].id)
                   event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
                 }}
                 className={`flex flex-col sm:flex-row items-center gap-1 sm:gap-2.5 rounded-lg px-2 sm:px-3 py-2 text-xs sm:text-sm text-center sm:text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${activeTab === id ? 'bg-accent/15 text-accent font-medium' : 'text-ink-muted hover:bg-bg-soft hover:text-ink'}`}

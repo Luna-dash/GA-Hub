@@ -1,7 +1,7 @@
 import { readThemeCompletion, recordThemeCompletion, useUnreadThemeSessionIds } from '@/stores/themeCompletionStore'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '@/api/client'
 import type { HubSession, ThemeRun } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
@@ -190,7 +190,6 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
 }
 
 function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, autoOpen = false, onAutoOpened, unread = false }: { session: HubSession; onSettings: () => void; refresh: () => void; expanded: boolean; onExpandedChange: (id: string | null) => void; autoOpen?: boolean; onAutoOpened?: () => void; unread?: boolean }) {
-  const navigate = useNavigate()
   const client = useQueryClient()
   // Idle cards do not poll. Runtime events/reconnect refresh the snapshots;
   // active cards also reconcile periodically in case a terminal event is lost.

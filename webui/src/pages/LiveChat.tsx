@@ -7,7 +7,8 @@ import { FileLinkContext } from '@/components/FileCitation'
 // async completions so events cannot leak across sessions.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
+import { useGuardedNavigate } from '@/hooks/useGuardedNavigate'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { conversationKeys } from '@/queries/conversations'
 import { api } from '@/api/client'
@@ -59,7 +60,7 @@ export default function LiveChat() {
   // `location.search` carries the selected session (`?session=<id>`); the
   // effect below resolves it against the session list.
   const location = useLocation()
-  const nav = useNavigate()
+  const nav = useGuardedNavigate()
   const captureSelection = useSessionSelectionGuard()
 
   const streaming = useChatStore((s) => s.streaming)

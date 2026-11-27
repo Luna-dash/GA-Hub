@@ -74,17 +74,47 @@ const sessionsKey = queryKeys.antiSessions
 type Submission = AntiSubmission
 const EMPTY_QUEUED_ITEMS: AntiQueuedPromptItem[] = []
 
-function AntiRouteSessionSync({ onSession }: { onSession: (id: string) => void }) {
+function AntiRouteSessionSync({
+  sid,
+  onSession,
+  syncUrlRef,
+}: {
+  sid: string
+  onSession: (id: string) => void
+  syncUrlRef: React.MutableRefObject<((id: string, opts?: { replace?: boolean }) => void) | null>
+}) {
   const { pathname, search } = useLocation()
   const navigate = useNavigate()
   const onSessionRef = useRef(onSession)
   onSessionRef.current = onSession
+  const sidRef = useRef(sid)
+  sidRef.current = sid
+
+  useEffect(() => {
+    syncUrlRef.current = (id: string, opts?: { replace?: boolean }) => {
+      const next = new URLSearchParams(search)
+      if (!id) {
+        if (!next.has('session')) return
+        next.delete('session')
+        const qs = next.toString()
+        navigate(qs ? `${pathname}?${qs}` : pathname, { replace: true })
+        return
+      }
+      if (next.get('session') === id) return
+      next.set('session', id)
+      navigate(`${pathname}?${next.toString()}`, { replace: opts?.replace })
+    }
+    return () => {
+      syncUrlRef.current = null
+    }
+  }, [navigate, pathname, search, syncUrlRef])
+
   useEffect(() => {
     const requested = new URLSearchParams(search).get('session')
-    if (!requested) return
+    if (!requested || requested === sidRef.current) return
     onSessionRef.current(requested)
-    navigate(pathname, { replace: true })
-  }, [navigate, pathname, search])
+  }, [search])
+
   return null
 }
 
@@ -300,6 +330,11 @@ export default function AntiChat() {
   const inRouter = useInRouterContext()
   const [project, setProject] = useState<string | null>(null)
   const [sid, setSid] = usePageState('antiChat.currentSession', '')
+  const syncUrlRef = useRef<((id: string, opts?: { replace?: boolean }) => void) | null>(null)
+  const selectSession = useCallback((id: string, opts?: { replace?: boolean }) => {
+    setSid(id)
+    syncUrlRef.current?.(id, opts)
+  }, [setSid])
   const [creating, setCreating] = useState(false)
   const [profilesOpen, setProfilesOpen] = useState(false)
   const [daemonDiagOpen, setDaemonDiagOpen] = useState(false)
@@ -318,7 +353,7 @@ export default function AntiChat() {
     mutationFn: (projectName: string) => antiApi.createSession(projectName),
     onSuccess: async session => {
       await updateList(rows => [session, ...rows.filter(row => row.id !== session.id)])
-      setSid(session.id)
+      selectSession(session.id, { replace: true })
       setCreating(false)
     },
   })
@@ -338,6 +373,7 @@ export default function AntiChat() {
       markSessionRead('anti', id)
       await updateList(rows => rows.filter(row => row.id !== id))
       setSid(current => current === id ? '' : current)
+      if (sid === id) syncUrlRef.current?.('', { replace: true })
       cache.removeQueries({ queryKey: ['anti-runs', id] })
     },
     onError: error => {
@@ -365,7 +401,7 @@ export default function AntiChat() {
   const selectedProfile = profiles.data?.profiles.find(item => item.id === profiles.data?.active)
   const cachedUsage = selectedProfile?.usage
   return <PageShell title="Agy 会话" wrapHeader
-    titleExtra={<>{inRouter && <AntiRouteSessionSync onSession={setSid} />}<AntiDaemonControl {...daemon} diagnosticsOpen={daemonDiagOpen} onDiagnosticsOpenChange={setDaemonDiagOpen} /></>}
+    titleExtra={<>{inRouter && <AntiRouteSessionSync sid={sid} onSession={setSid} syncUrlRef={syncUrlRef} />}<AntiDaemonControl {...daemon} diagnosticsOpen={daemonDiagOpen} onDiagnosticsOpenChange={setDaemonDiagOpen} /></>}
     actions={<>
       <div ref={setHeaderActions} className="empty:hidden flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2" />
       <AntiAgyProfiles
@@ -393,7 +429,7 @@ export default function AntiChat() {
     </>}>
     <div className="flex h-full min-h-0 min-w-0 flex-col md:flex-row">
       <SessionRail storageScope="anti" projects={projects.data?.items} sessions={railSessions}
-        runtimes={railRuntimes} currentId={selected?.id ?? null} creating={create.isPending} onSelect={setSid} onCreate={openCreate}
+        runtimes={railRuntimes} currentId={selected?.id ?? null} creating={create.isPending} onSelect={selectSession} onCreate={openCreate}
         onRename={(id, title) => rename.mutateAsync({ id, title }).then(() => undefined)}
         onDelete={id => remove.mutateAsync(id)}
         deleteDetail="将删除此会话及消息记录，不删除本地项目文件。" />

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CommandPalette } from './CommandPalette'
 import { APP_PAGES } from '@/config/pages'
 import { useChatStore } from '@/stores/chatStore'
+import { registerNavigationGuard, resetNavigationGuardsForTests } from '@/stores/navigationGuardStore'
 import { storageKeys } from '@/config/storageKeys'
 import { queryKeys } from '@/queries/queryKeys'
 import type { SessionListData } from '@/queries/sessions'
@@ -78,6 +79,7 @@ describe('command palette new conversation', () => {
     host.remove()
     client.clear()
     useChatStore.setState({ sessionId: null, msgs: [] })
+    resetNavigationGuardsForTests()
     vi.restoreAllMocks()
   })
 
@@ -284,5 +286,27 @@ describe('command palette new conversation', () => {
     expect(document.activeElement).toBe(input)
     expect(dlg.querySelector('button[aria-label="清空搜索"]')).toBeNull()
     expect(dlg.textContent).toContain('新对话')
+  })
+
+  it('closes palette before prompting dirty-route guard and respects cancel vs confirm on page jump', async () => {
+    registerNavigationGuard('memory-editor', '未保存修改')
+    dialog.confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+
+    await act(async () => { window.dispatchEvent(new Event('gahub:command-palette')) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)) })
+    const settingsBtn = Array.from(host.querySelectorAll('[role="dialog"] button')).find((b) => b.textContent?.includes('设置'))!
+    await act(async () => (settingsBtn as HTMLButtonElement).click())
+
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(dialog.confirm).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('output')?.textContent).toBe('/chat?session=old')
+
+    await act(async () => { window.dispatchEvent(new Event('gahub:command-palette')) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)) })
+    const settingsBtn2 = Array.from(host.querySelectorAll('[role="dialog"] button')).find((b) => b.textContent?.includes('设置'))!
+    await act(async () => (settingsBtn2 as HTMLButtonElement).click())
+
+    expect(dialog.confirm).toHaveBeenCalledTimes(2)
+    expect(host.querySelector('output')?.textContent).toBe('/settings')
   })
 })

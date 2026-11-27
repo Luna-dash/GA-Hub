@@ -26,6 +26,7 @@ import { QueryLoadState } from '@/components/QueryLoadState'
 import { SessionChannelIcon } from '@/components/SessionChannelIcon'
 import { RawView } from '@/components/MyKeyRawView'
 import { dialog } from '@/stores/dialogStore'
+import { useDirtyRouteGuard } from '@/stores/navigationGuardStore'
 import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
 import { useDirtyClose } from '@/hooks/useDirtyClose'
@@ -976,6 +977,7 @@ function GlobalsSection({ globals_, onWrite, rawText, onDirtyChange }: {
     onDirtyChange?.(dirty)
     return () => onDirtyChange?.(false)
   }, [dirty, onDirtyChange])
+  useDirtyRouteGuard('mykey-proxy', dirty, '全局 proxy 配置有未保存的修改，离开将丢失这些修改。')
   useEffect(() => {
     if (incoming === proxy) {
       setBaseline(incoming)

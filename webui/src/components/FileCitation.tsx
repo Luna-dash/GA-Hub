@@ -2,7 +2,8 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { createPortal } from 'react-dom'
 import { QueryClientContext } from '@tanstack/react-query'
 import { addTransferFile, fileTransferQueryKey } from './FileTransferBox'
-import { Link, useInRouterContext } from 'react-router-dom'
+import { useInRouterContext } from 'react-router-dom'
+import { GuardedLink } from './GuardedLink'
 import { defaultUrlTransform } from 'react-markdown'
 import { api } from '@/api/client'
 import { toast } from '@/stores/toastStore'
@@ -47,7 +48,7 @@ export function CitationLink({ href, children }: { href?: string; children: Reac
   const target = href?.trim() || ''
   if (!target) return <>{children}</>
   if (isLocalCitation(target)) return <PathLink path={citationPathFromUrl(target)} display={children} />
-  if (APP_ROUTE.test(target) && inRouter) return <Link to={target}>{children}</Link>
+  if (APP_ROUTE.test(target) && inRouter) return <GuardedLink to={target}>{children}</GuardedLink>
   return <a href={target} target={target.startsWith('/api/files') ? '_blank' : undefined} rel="noopener noreferrer" onClick={(event) => {
     if (isHttpUrl(target) && !isAppInternalUrl(target)) {
       event.preventDefault()

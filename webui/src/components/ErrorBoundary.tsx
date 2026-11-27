@@ -4,6 +4,7 @@ import { AlertTriangle } from 'lucide-react'
 interface Props {
   children: ReactNode
   resetKey?: string
+  onNavigateHome?: () => void
 }
 
 interface State {
@@ -31,6 +32,19 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error('ErrorBoundary caught:', error, errorInfo)
   }
 
+  private handleRetry = () => {
+    this.setState({ hasError: false, error: undefined })
+  }
+
+  private handleNavigateHome = () => {
+    this.setState({ hasError: false, error: undefined })
+    if (this.props.onNavigateHome) {
+      this.props.onNavigateHome()
+    } else {
+      window.location.href = '/'
+    }
+  }
+
   render() {
     if (this.state.hasError) {
       return (
@@ -41,16 +55,22 @@ export class ErrorBoundary extends Component<Props, State> {
             <p className="text-sm text-ink-muted">
               {this.state.error?.message || '未知错误'}
             </p>
-            <button
-              type="button"
-              onClick={() => {
-                this.setState({ hasError: false, error: undefined })
-                window.location.href = '/'
-              }}
-              className="ga-btn-primary px-4 py-2 font-medium rounded-lg"
-            >
-              返回首页
-            </button>
+            <div className="flex items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={this.handleRetry}
+                className="ga-btn-primary px-4 py-2 font-medium rounded-lg"
+              >
+                重试
+              </button>
+              <button
+                type="button"
+                onClick={this.handleNavigateHome}
+                className="ga-btn px-4 py-2 font-medium rounded-lg"
+              >
+                返回首页
+              </button>
+            </div>
           </div>
         </div>
       )

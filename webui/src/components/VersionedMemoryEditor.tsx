@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MemoryWriteRequest, MemoryWriteResponse } from '@/api/types'
+import { useDirtyRouteGuard } from '@/stores/navigationGuardStore'
 import { MarkdownEditor } from './MarkdownEditor'
 import { FileText, RotateCcw, Save } from './ActionIcons'
 
@@ -35,15 +36,7 @@ export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSav
     return () => onDirtyChange?.(false)
   }, [dirty, onDirtyChange])
 
-  useEffect(() => {
-    if (!dirty) return
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault()
-      event.returnValue = ''
-    }
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [dirty])
+  useDirtyRouteGuard('memory-editor', dirty, '当前记忆文档有未保存的编辑，离开将丢失这些修改。')
 
   useEffect(() => {
     if (snapshotVersion === observedVersion.current) return

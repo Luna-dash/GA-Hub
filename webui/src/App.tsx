@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { SidebarNav } from '@/components/SidebarNav'
 import { DialogHost } from '@/components/DialogHost'
@@ -32,6 +32,7 @@ const SettingsPage = PAGE_ROUTES.find((page) => page.id === 'settings')!.Compone
 
 export default function App() {
   const { pathname } = useLocation()
+  const navigate = useNavigate()
   const start = useAgentStore((s) => s.start)
   const stop = useAgentStore((s) => s.stop)
 
@@ -125,7 +126,7 @@ export default function App() {
       <RuntimeEffects />
       <SidebarNav />
       <main className="flex-1 min-w-0 bg-transparent">
-        <ErrorBoundary resetKey={pathname}>
+        <ErrorBoundary resetKey={pathname} onNavigateHome={() => navigate('/chat')}>
           <Suspense fallback={<div className="h-full flex items-center justify-center text-ink-faint text-sm">载入中…</div>}>
             <Routes>
               <Route path="/" element={<Navigate to="/chat" replace />} />

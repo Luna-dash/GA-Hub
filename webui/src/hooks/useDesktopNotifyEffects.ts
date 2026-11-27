@@ -1,18 +1,18 @@
 // Runtime subscriber; completions are independent of the mounted chat page.
 import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { antiApi, api, type AntiSession } from '@/api/client'
 import { queryKeys } from '@/queries/queryKeys'
 import type { SessionRuntime } from '@/api/types'
 import { openAntiSession, openSessionChat } from '@/utils/sessionUi'
+import { useGuardedNavigate } from '@/hooks/useGuardedNavigate'
 import { hubEventClient } from '@/runtime/hubEventClient'
 import { extractPendingAskUserPayload } from '@/utils/assistantTranscript'
 import { notify } from '@/utils/notify'
 import { markSessionRead } from '@/stores/sessionUnreadStore'
 
 export function useDesktopNotifyEffects() {
-  const navigate = useNavigate()
+  const navigate = useGuardedNavigate()
   const qc = useQueryClient()
   useEffect(() => {
     let alive = true

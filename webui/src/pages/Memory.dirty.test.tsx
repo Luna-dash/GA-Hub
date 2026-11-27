@@ -2,12 +2,14 @@
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Memory from './Memory'
+import { GuardedLink } from '@/components/GuardedLink'
 import { api } from '@/api/client'
 import { dialog } from '@/stores/dialogStore'
+import { hasDirtyGuard, resetNavigationGuardsForTests } from '@/stores/navigationGuardStore'
 import { resetPageState } from '@/utils/pageState'
 
 vi.mock('@/api/client', () => ({
@@ -73,6 +75,7 @@ describe('Memory unsaved draft guard', () => {
     host.remove()
     client.clear()
     resetPageState()
+    resetNavigationGuardsForTests()
     vi.restoreAllMocks()
   })
 
@@ -153,5 +156,43 @@ describe('Memory unsaved draft guard', () => {
     expect(confirmSpy).toHaveBeenCalledTimes(2)
     expect(host.textContent).toContain('memory/beta.md')
     expect(host.querySelector('[data-location]')?.textContent).toBe('?keep=1')
+  })
+
+  it('blocks SPA route navigation via GuardedLink when Memory editor is dirty until confirmed', async () => {
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    function NavProbe() {
+      const loc = useLocation()
+      return <>
+        <GuardedLink to="/chat">Go Chat</GuardedLink>
+        <output data-path>{loc.pathname}</output>
+      </>
+    }
+    await act(async () => root.render(
+      <MemoryRouter initialEntries={['/memory?tab=insight']}>
+        <QueryClientProvider client={client}>
+          <NavProbe />
+          <Routes>
+            <Route path="/memory" element={<Memory />} />
+            <Route path="/chat" element={<div>Chat Page</div>} />
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    ))
+    await vi.waitFor(() => expect(host.querySelector('textarea[aria-label="编辑器"]')).not.toBeNull())
+    expect(hasDirtyGuard()).toBe(false)
+
+    setEditorText('dirty insight draft')
+    expect(hasDirtyGuard()).toBe(true)
+
+    const link = host.querySelector<HTMLAnchorElement>('a[href="/chat"]')!
+    await act(async () => link.click())
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[data-path]')?.textContent).toBe('/memory')
+    expect(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="编辑器"]')?.value).toBe('dirty insight draft')
+
+    await act(async () => link.click())
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(host.querySelector('[data-path]')?.textContent).toBe('/chat')
+    expect(hasDirtyGuard()).toBe(false)
   })
 })

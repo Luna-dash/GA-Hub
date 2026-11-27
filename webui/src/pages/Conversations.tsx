@@ -1,6 +1,7 @@
 import { QueryLoadState } from '@/components/QueryLoadState'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
+import { useGuardedNavigate } from '@/hooks/useGuardedNavigate'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { readPageState, usePageState, writePageState } from '@/utils/pageState'
@@ -98,7 +99,7 @@ function sourceMeta(source: ConversationSummary['source'] | undefined) {
 
 export default function Conversations() {
   const qc = useQueryClient()
-  const nav = useNavigate()
+  const nav = useGuardedNavigate()
   const { id: routeConversationId } = useParams<{ id?: string }>()
   const active = routeConversationId || null
   // Remember the last opened conversation so returning to this page via the

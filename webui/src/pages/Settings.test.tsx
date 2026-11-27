@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Settings from './Settings'
@@ -275,5 +276,38 @@ describe('Settings functional tabs', () => {
     const saveBtn = Array.from(panel().querySelectorAll('button')).find(b => b.textContent === '保存')!
     await act(async () => { saveBtn.click(); await Promise.resolve() })
     expect(useToastStore.getState().items.some(t => t.kind === 'success' && t.message === '已保存重试配置')).toBe(true)
+  })
+
+  it('persists ?tab= in router search params while preserving unrelated query params and ignoring in setup mode', async () => {
+    function LocationProbe() {
+      const loc = useLocation()
+      return <output data-loc={`${loc.pathname}${loc.search}`} />
+    }
+    await act(async () => root.render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/settings?tab=display&keep=1']}>
+          <Settings />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
+    expect(tab('display').getAttribute('aria-selected')).toBe('true')
+    expect(panel().id).toBe('settings-panel-display')
+
+    await click('fonts')
+    expect(tab('fonts').getAttribute('aria-selected')).toBe('true')
+    expect(host.querySelector('output[data-loc]')?.getAttribute('data-loc')).toBe('/settings?tab=fonts&keep=1')
+
+    await act(async () => root.render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/settings?tab=display']}>
+          <Settings initialMode="setup" />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
+    expect(host.querySelector('[role="tablist"]')).toBeNull()
+    expect(host.querySelector('#settings-panel-general')?.hasAttribute('hidden')).toBe(false)
   })
 })
