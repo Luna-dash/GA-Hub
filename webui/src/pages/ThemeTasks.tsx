@@ -29,12 +29,14 @@ import {
   Play,
   Plus,
   RefreshIcon,
+  Search,
   Settings2,
   Square,
+  X,
 } from '@/components/ActionIcons'
 
 const button = 'ga-btn-sm'
-const field = 'w-full rounded-lg border border-line bg-bg-soft p-2 text-sm'
+const field = 'ga-textarea'
 const activeStatuses = ['starting', 'running', 'aborting', 'recovering']
 const outcomes: Record<string, string> = { completed: '执行完成', failed: '执行失败', cancelled: '已取消', interrupted: '运行中断，结果未确认', waiting: '等待回复', waiting_user: '等待回复' }
 export function elapsed(run: ThemeRun, now: number) {
@@ -114,7 +116,7 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
       onSaved(); onClose()
     } catch (e) { setError(errorMessageFromError(e)) } finally { setSaving(false) }
   }
-  const settingsField = `mt-2 w-full rounded-xl border border-line bg-bg p-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/15 disabled:opacity-50`
+  const settingsField = 'mt-2 ga-input'
   return <ModalOverlay onClose={requestClose} labelledBy={`theme-settings-title-${session.id}`} closeOnBackdrop={false} panelClassName="flex max-h-[90dvh] w-[min(600px,94vw)] flex-col overflow-hidden !rounded-2xl border border-line bg-bg shadow-2xl">
     <header className="flex shrink-0 items-center justify-between gap-4 border-b border-line px-5 py-3">
       <div><h2 id={`theme-settings-title-${session.id}`} className="text-base font-semibold">{session.theme_task ? '任务设置' : '转入主题任务'}</h2></div>
@@ -415,6 +417,7 @@ export default function ThemeTasks() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
   const [search, setSearch] = useState('')
+  const pickingSearchRef = useRef<HTMLInputElement>(null)
   const refresh = () => { void client.invalidateQueries({ queryKey: queryKeys.sessions }) }
   const tasks = sessions.filter(s => s.theme_task)
   const unreadSessionIds = useUnreadThemeSessionIds()
@@ -504,7 +507,31 @@ export default function ThemeTasks() {
           <h2 id="theme-pick-title" className="font-semibold">选择已有会话</h2>
           <CloseIconButton label="关闭选择会话" variant="ghost" iconSize={15} onClick={() => { setPicking(false); setSearch('') }} className="h-7 w-7 text-ink-muted hover:bg-bg-soft hover:text-ink" />
         </div>
-        <input aria-label="搜索会话" className={field} placeholder="搜索名称或项目" value={search} onChange={e => setSearch(e.target.value)} />
+        <div className="relative flex items-center">
+          <Search size={14} strokeWidth={1.85} aria-hidden="true" className="pointer-events-none absolute left-2.5 text-ink-faint" />
+          <input
+            ref={pickingSearchRef}
+            aria-label="搜索会话"
+            className="ga-input pl-8 pr-7"
+            placeholder="搜索名称或项目"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearch('')
+                pickingSearchRef.current?.focus()
+              }}
+              aria-label="清空搜索"
+              title="清空搜索"
+              className="absolute right-1.5 inline-flex h-5 w-5 items-center justify-center rounded text-ink-faint transition-colors hover:bg-ink/10 hover:text-ink"
+            >
+              <X size={12} strokeWidth={2} aria-hidden="true" />
+            </button>
+          )}
+        </div>
         <div className="mt-3 max-h-96 space-y-2 overflow-auto">
           {pickable.length === 0 ? (
             <p className="py-8 text-center text-sm text-ink-muted">

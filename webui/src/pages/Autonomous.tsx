@@ -669,7 +669,7 @@ function ReportDrawer({
   )
 }
 
-const inp = 'w-full bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent text-ink'
+const inp = 'ga-input'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

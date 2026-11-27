@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, Clock, HardDrive, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { AlertTriangle, Clock, HardDrive, Save, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
 import {
   storageApi,
   type AgyGcPolicy,
@@ -31,6 +31,15 @@ function formatTime(iso: string | null): string {
   return d.toLocaleString()
 }
 
+type PolicyNumericKey = 'l0' | 'l1' | 'l2' | 'l3'
+
+const POLICY_BOUNDS: Record<PolicyNumericKey, { min: number; max: number; label: string; field: keyof Pick<AgyGcPolicy, 'l0_log_retention_days' | 'l1_grace_hours' | 'l2_idle_retention_days' | 'l3_cold_root_days'> }> = {
+  l0: { min: 1, max: 365, label: 'L0 日志保留天数', field: 'l0_log_retention_days' },
+  l1: { min: 0, max: 720, label: 'L1 宽限小时', field: 'l1_grace_hours' },
+  l2: { min: 1, max: 365, label: 'L2 保留天数', field: 'l2_idle_retention_days' },
+  l3: { min: 7, max: 3650, label: 'L3 冷门主会话天数', field: 'l3_cold_root_days' },
+}
+
 export function StorageSettingsPanel({ active = true }: { active?: boolean } = {}) {
   const [summary, setSummary] = useState<StorageSummary | null>(null)
   const [gcStatus, setGcStatus] = useState<AgyGcPolicyStatus | null>(null)
@@ -40,6 +49,27 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
   const [error, setError] = useState('')
   const [policyError, setPolicyError] = useState('')
   const [showPolicy, setShowPolicy] = useState(false)
+  const [drafts, setDrafts] = useState<Record<PolicyNumericKey, string>>({
+    l0: '30',
+    l1: '24',
+    l2: '30',
+    l3: '90',
+  })
+  const [draftErrors, setDraftErrors] = useState<Partial<Record<PolicyNumericKey, string>>>({})
+  const l0Ref = useRef<HTMLInputElement>(null)
+  const l1Ref = useRef<HTMLInputElement>(null)
+  const l2Ref = useRef<HTMLInputElement>(null)
+  const l3Ref = useRef<HTMLInputElement>(null)
+
+  const syncDraftsFromPolicy = useCallback((p: AgyGcPolicy) => {
+    setDrafts({
+      l0: String(p.l0_log_retention_days),
+      l1: String(p.l1_grace_hours),
+      l2: String(p.l2_idle_retention_days),
+      l3: String(p.l3_cold_root_days),
+    })
+    setDraftErrors({})
+  }, [])
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
@@ -57,6 +87,7 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
       }
       if (policyRes.status === 'fulfilled') {
         setGcStatus(policyRes.value)
+        syncDraftsFromPolicy(policyRes.value.policy)
       } else if ((policyRes.reason as { name?: string })?.name !== 'AbortError') {
         setPolicyError(extractErrorMessage(policyRes.reason, '无法读取自动清理策略'))
       }
@@ -67,7 +98,7 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [syncDraftsFromPolicy])
 
   useEffect(() => {
     if (!active) return
@@ -76,18 +107,57 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
     return () => controller.abort()
   }, [active, refresh])
 
-  const patchPolicy = async (patch: Partial<AgyGcPolicy>) => {
+  const patchPolicy = async (patch: Partial<AgyGcPolicy>, syncDrafts = false) => {
     setSavingPolicy(true)
     try {
       const updated = await storageApi.updateAgyGcPolicy(patch)
       setGcStatus(updated)
+      if (syncDrafts) {
+        syncDraftsFromPolicy(updated.policy)
+      }
       const nextSummary = await storageApi.summary()
       setSummary(nextSummary)
+      return true
     } catch (e) {
       toast.error(extractErrorMessage(e, '保存自动清理策略失败'))
+      return false
     } finally {
       setSavingPolicy(false)
     }
+  }
+
+  const saveNumericPolicy = async () => {
+    if (!policy || savingPolicy) return
+    const refs: Record<PolicyNumericKey, HTMLInputElement | null> = {
+      l0: l0Ref.current,
+      l1: l1Ref.current,
+      l2: l2Ref.current,
+      l3: l3Ref.current,
+    }
+    const nextErrors: Partial<Record<PolicyNumericKey, string>> = {}
+    const parsed: Partial<AgyGcPolicy> = {}
+    let firstInvalid: HTMLInputElement | null = null
+
+    for (const key of ['l0', 'l1', 'l2', 'l3'] as const) {
+      const bounds = POLICY_BOUNDS[key]
+      const raw = drafts[key].trim()
+      const num = /^\d+$/.test(raw) ? Number(raw) : NaN
+      if (!Number.isInteger(num) || num < bounds.min || num > bounds.max) {
+        nextErrors[key] = `${bounds.label}需为 ${bounds.min}–${bounds.max} 的整数`
+        firstInvalid ??= refs[key]
+      } else {
+        parsed[bounds.field] = num
+      }
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setDraftErrors(nextErrors)
+      firstInvalid?.focus()
+      return
+    }
+    setDraftErrors({})
+    const ok = await patchPolicy(parsed, true)
+    if (ok) toast.success('已保存自动清理策略')
   }
 
   const cleanCategories = async (categories: StorageCategory[], label: string) => {
@@ -204,7 +274,14 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
       )}
 
       {policy && showPolicy && (
-        <div className="ga-paper-card p-4 space-y-3 text-xs">
+        <form
+          noValidate
+          className="ga-paper-card p-4 space-y-3 text-xs"
+          onSubmit={e => {
+            e.preventDefault()
+            void saveNumericPolicy()
+          }}
+        >
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-2.5">
             <div className="flex items-center gap-2">
               <Clock className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
@@ -228,115 +305,150 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="flex items-center justify-between gap-2 rounded-lg border border-line/60 bg-bg-soft/50 px-3 py-2">
-              <span className="text-ink">L0 孤儿存档与过期日志</span>
-              <span className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  max={365}
-                  value={policy.l0_log_retention_days}
-                  disabled={savingPolicy}
-                  onChange={e => {
-                    const v = Number(e.target.value)
-                    if (Number.isInteger(v) && v >= 1) void patchPolicy({ l0_log_retention_days: v })
-                  }}
-                  className="w-14 rounded border border-line bg-surface px-1.5 py-0.5 text-right tabular-nums"
-                  aria-label="L0 日志保留天数"
-                />
-                <span className="text-ink-faint">天</span>
-                <input
-                  type="checkbox"
-                  checked={policy.l0_orphans_enabled}
-                  disabled={savingPolicy}
-                  onChange={e => void patchPolicy({ l0_orphans_enabled: e.target.checked })}
-                  aria-label="启用 L0 自动清理"
-                />
-              </span>
-            </label>
+            <div className="rounded-lg border border-line/60 bg-bg-soft/50 px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <label htmlFor="gc-policy-l0" className="text-ink">L0 孤儿存档与过期日志</label>
+                <span className="flex items-center gap-2">
+                  <input
+                    id="gc-policy-l0"
+                    ref={l0Ref}
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={drafts.l0}
+                    disabled={savingPolicy}
+                    aria-invalid={Boolean(draftErrors.l0) || undefined}
+                    aria-describedby={draftErrors.l0 ? 'gc-policy-l0-error' : undefined}
+                    onChange={e => {
+                      setDrafts(prev => ({ ...prev, l0: e.target.value }))
+                      if (draftErrors.l0) setDraftErrors(prev => ({ ...prev, l0: undefined }))
+                    }}
+                    className="ga-input-sm h-7 w-16 text-right tabular-nums"
+                    aria-label="L0 日志保留天数"
+                  />
+                  <span className="text-ink-faint">天</span>
+                  <input
+                    type="checkbox"
+                    checked={policy.l0_orphans_enabled}
+                    disabled={savingPolicy}
+                    onChange={e => void patchPolicy({ l0_orphans_enabled: e.target.checked })}
+                    aria-label="启用 L0 自动清理"
+                  />
+                </span>
+              </div>
+              {draftErrors.l0 && <p id="gc-policy-l0-error" role="alert" className="ga-field-error">{draftErrors.l0}</p>}
+            </div>
 
-            <label className="flex items-center justify-between gap-2 rounded-lg border border-line/60 bg-bg-soft/50 px-3 py-2">
-              <span className="text-ink">L1 活跃会话冗余副本（宽限小时）</span>
-              <span className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={0}
-                  max={720}
-                  value={policy.l1_grace_hours}
-                  disabled={savingPolicy}
-                  onChange={e => {
-                    const v = Number(e.target.value)
-                    if (Number.isInteger(v) && v >= 0) void patchPolicy({ l1_grace_hours: v })
-                  }}
-                  className="w-14 rounded border border-line bg-surface px-1.5 py-0.5 text-right tabular-nums"
-                  aria-label="L1 宽限小时"
-                />
-                <span className="text-ink-faint">小时</span>
-                <input
-                  type="checkbox"
-                  checked={policy.l1_redundant_enabled}
-                  disabled={savingPolicy}
-                  onChange={e => void patchPolicy({ l1_redundant_enabled: e.target.checked })}
-                  aria-label="启用 L1 自动清理"
-                />
-              </span>
-            </label>
+            <div className="rounded-lg border border-line/60 bg-bg-soft/50 px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <label htmlFor="gc-policy-l1" className="text-ink">L1 活跃会话冗余副本（宽限小时）</label>
+                <span className="flex items-center gap-2">
+                  <input
+                    id="gc-policy-l1"
+                    ref={l1Ref}
+                    type="number"
+                    min={0}
+                    max={720}
+                    value={drafts.l1}
+                    disabled={savingPolicy}
+                    aria-invalid={Boolean(draftErrors.l1) || undefined}
+                    aria-describedby={draftErrors.l1 ? 'gc-policy-l1-error' : undefined}
+                    onChange={e => {
+                      setDrafts(prev => ({ ...prev, l1: e.target.value }))
+                      if (draftErrors.l1) setDraftErrors(prev => ({ ...prev, l1: undefined }))
+                    }}
+                    className="ga-input-sm h-7 w-16 text-right tabular-nums"
+                    aria-label="L1 宽限小时"
+                  />
+                  <span className="text-ink-faint">小时</span>
+                  <input
+                    type="checkbox"
+                    checked={policy.l1_redundant_enabled}
+                    disabled={savingPolicy}
+                    onChange={e => void patchPolicy({ l1_redundant_enabled: e.target.checked })}
+                    aria-label="启用 L1 自动清理"
+                  />
+                </span>
+              </div>
+              {draftErrors.l1 && <p id="gc-policy-l1-error" role="alert" className="ga-field-error">{draftErrors.l1}</p>}
+            </div>
 
-            <label className="flex items-center justify-between gap-2 rounded-lg border border-line/60 bg-bg-soft/50 px-3 py-2">
-              <span className="text-ink">L2 已结束子会话（已完结保留天数）</span>
-              <span className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  max={365}
-                  value={policy.l2_idle_retention_days}
-                  disabled={savingPolicy}
-                  onChange={e => {
-                    const v = Number(e.target.value)
-                    if (Number.isInteger(v) && v >= 1) void patchPolicy({ l2_idle_retention_days: v })
-                  }}
-                  className="w-14 rounded border border-line bg-surface px-1.5 py-0.5 text-right tabular-nums"
-                  aria-label="L2 已完结子会话保留天数"
-                />
-                <span className="text-ink-faint">天</span>
-                <input
-                  type="checkbox"
-                  checked={policy.l2_subagents_enabled}
-                  disabled={savingPolicy}
-                  onChange={e => void patchPolicy({ l2_subagents_enabled: e.target.checked })}
-                  aria-label="启用 L2 自动清理"
-                />
-              </span>
-            </label>
+            <div className="rounded-lg border border-line/60 bg-bg-soft/50 px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <label htmlFor="gc-policy-l2" className="text-ink">L2 已结束子会话（已完结保留天数）</label>
+                <span className="flex items-center gap-2">
+                  <input
+                    id="gc-policy-l2"
+                    ref={l2Ref}
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={drafts.l2}
+                    disabled={savingPolicy}
+                    aria-invalid={Boolean(draftErrors.l2) || undefined}
+                    aria-describedby={draftErrors.l2 ? 'gc-policy-l2-error' : undefined}
+                    onChange={e => {
+                      setDrafts(prev => ({ ...prev, l2: e.target.value }))
+                      if (draftErrors.l2) setDraftErrors(prev => ({ ...prev, l2: undefined }))
+                    }}
+                    className="ga-input-sm h-7 w-16 text-right tabular-nums"
+                    aria-label="L2 已完结子会话保留天数"
+                  />
+                  <span className="text-ink-faint">天</span>
+                  <input
+                    type="checkbox"
+                    checked={policy.l2_subagents_enabled}
+                    disabled={savingPolicy}
+                    onChange={e => void patchPolicy({ l2_subagents_enabled: e.target.checked })}
+                    aria-label="启用 L2 自动清理"
+                  />
+                </span>
+              </div>
+              {draftErrors.l2 && <p id="gc-policy-l2-error" role="alert" className="ga-field-error">{draftErrors.l2}</p>}
+            </div>
 
-            <label className="flex items-center justify-between gap-2 rounded-lg border border-line/60 bg-bg-soft/50 px-3 py-2">
-              <span className="text-ink">L3 冷门主会话降级（默认关闭）</span>
-              <span className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={7}
-                  max={3650}
-                  value={policy.l3_cold_root_days}
-                  disabled={savingPolicy}
-                  onChange={e => {
-                    const v = Number(e.target.value)
-                    if (Number.isInteger(v) && v >= 7) void patchPolicy({ l3_cold_root_days: v })
-                  }}
-                  className="w-14 rounded border border-line bg-surface px-1.5 py-0.5 text-right tabular-nums"
-                  aria-label="L3 冷门主会话天数"
-                />
-                <span className="text-ink-faint">天</span>
-                <input
-                  type="checkbox"
-                  checked={policy.l3_cold_roots_enabled}
-                  disabled={savingPolicy}
-                  onChange={e => void patchPolicy({ l3_cold_roots_enabled: e.target.checked })}
-                  aria-label="启用 L3 自动清理"
-                />
-              </span>
-            </label>
+            <div className="rounded-lg border border-line/60 bg-bg-soft/50 px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <label htmlFor="gc-policy-l3" className="text-ink">L3 冷门主会话降级（默认关闭）</label>
+                <span className="flex items-center gap-2">
+                  <input
+                    id="gc-policy-l3"
+                    ref={l3Ref}
+                    type="number"
+                    min={7}
+                    max={3650}
+                    value={drafts.l3}
+                    disabled={savingPolicy}
+                    aria-invalid={Boolean(draftErrors.l3) || undefined}
+                    aria-describedby={draftErrors.l3 ? 'gc-policy-l3-error' : undefined}
+                    onChange={e => {
+                      setDrafts(prev => ({ ...prev, l3: e.target.value }))
+                      if (draftErrors.l3) setDraftErrors(prev => ({ ...prev, l3: undefined }))
+                    }}
+                    className="ga-input-sm h-7 w-16 text-right tabular-nums"
+                    aria-label="L3 冷门主会话天数"
+                  />
+                  <span className="text-ink-faint">天</span>
+                  <input
+                    type="checkbox"
+                    checked={policy.l3_cold_roots_enabled}
+                    disabled={savingPolicy}
+                    onChange={e => void patchPolicy({ l3_cold_roots_enabled: e.target.checked })}
+                    aria-label="启用 L3 自动清理"
+                  />
+                </span>
+              </div>
+              {draftErrors.l3 && <p id="gc-policy-l3-error" role="alert" className="ga-field-error">{draftErrors.l3}</p>}
+            </div>
           </div>
-        </div>
+
+          <div className="flex items-center justify-end gap-2 border-t border-line/50 pt-2.5">
+            <button type="submit" disabled={savingPolicy} className="ga-btn-sm-primary">
+              <Save className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{savingPolicy ? '保存中…' : '保存策略'}</span>
+            </button>
+          </div>
+        </form>
       )}
 
       {error && (

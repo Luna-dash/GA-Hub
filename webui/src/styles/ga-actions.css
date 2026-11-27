@@ -461,6 +461,27 @@
   .ga-field-error {
     @apply mt-1 text-xs text-status-danger;
   }
+
+  .ga-input {
+    @apply w-full min-w-0 rounded-lg border border-line/85 bg-bg-card px-3 py-1.5 text-sm text-ink placeholder:text-ink-faint transition-[border-color,box-shadow];
+    @apply focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20;
+    @apply aria-[invalid=true]:border-status-danger aria-[invalid=true]:focus:ring-status-danger/25;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:cursor-not-allowed;
+  }
+
+  .ga-input-sm {
+    @apply min-w-0 rounded-md border border-line/85 bg-bg-card px-2 py-1 text-xs text-ink placeholder:text-ink-faint transition-[border-color,box-shadow];
+    @apply focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20;
+    @apply aria-[invalid=true]:border-status-danger aria-[invalid=true]:focus:ring-status-danger/25;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:cursor-not-allowed;
+  }
+
+  .ga-textarea {
+    @apply w-full min-w-0 rounded-lg border border-line/85 bg-bg-card px-3 py-2 text-sm leading-relaxed text-ink placeholder:text-ink-faint transition-[border-color,box-shadow];
+    @apply focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20;
+    @apply aria-[invalid=true]:border-status-danger aria-[invalid=true]:focus:ring-status-danger/25;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:cursor-not-allowed;
+  }
 }
 
 html[data-theme="dark-forest"] .ga-select,

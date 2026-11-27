@@ -573,3 +573,50 @@ it('validates title, model key, and instruction inline on submit in ThemeTaskSet
   expect(api.themeConfig).toHaveBeenCalledWith('one', { instruction: '有效指令', description: '' }, '有效标题')
   settingsClient.clear()
 })
+
+it('shows conditional clear button in picking search and resets search on clear or selection', async () => {
+  vi.mocked(api.sessions).mockResolvedValueOnce({
+    items: [
+      { id: 'one', title: '签到', llm_key: 'model', theme_task: { title: '签到', instruction: '检查签到' } },
+      { id: 'pick-a', title: 'Alpha 会话', llm_key: 'model', updated_at: '2026-11-20T00:00:00Z' },
+      { id: 'pick-b', title: 'Beta 会话', llm_key: 'model', updated_at: '2026-11-19T00:00:00Z' },
+    ],
+  } as never)
+  act(() => root.unmount())
+  client.clear()
+  root = createRoot(host)
+  await act(async () => {
+    root.render(<QueryClientProvider client={client}><MemoryRouter><ThemeTasks /></MemoryRouter></QueryClientProvider>)
+  })
+  await wait(60)
+
+  await click('从会话转入')
+  const searchInput = host.querySelector<HTMLInputElement>('input[aria-label="搜索会话"]')!
+  expect(host.querySelector('button[aria-label="清空搜索"]')).toBeNull()
+
+  const setInput = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  act(() => {
+    setInput.call(searchInput, 'Beta')
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(host.textContent).not.toContain('Alpha 会话')
+  expect(host.textContent).toContain('Beta 会话')
+
+  const clearBtn = host.querySelector<HTMLButtonElement>('button[aria-label="清空搜索"]')!
+  expect(clearBtn).not.toBeNull()
+  act(() => clearBtn.click())
+  expect(searchInput.value).toBe('')
+  expect(document.activeElement).toBe(searchInput)
+  expect(host.textContent).toContain('Alpha 会话')
+  expect(host.querySelector('button[aria-label="清空搜索"]')).toBeNull()
+
+  // Selecting a session resets search when picking modal is opened again
+  act(() => {
+    setInput.call(searchInput, 'Alpha')
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await click('Alpha 会话')
+  await click('取消')
+  await click('从会话转入')
+  expect(host.querySelector<HTMLInputElement>('input[aria-label="搜索会话"]')!.value).toBe('')
+})

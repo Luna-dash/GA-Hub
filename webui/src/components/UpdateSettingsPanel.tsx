@@ -165,7 +165,7 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
   const received = task?.received_bytes ?? 0
   const total = task?.total_bytes ?? 0
   const percent = total > 0 ? Math.min(100, Math.floor(received / total * 100)) : undefined
-  const inputClass = 'w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink'
+  const inputClass = 'ga-input py-2'
   const shaInvalid = Boolean(sha256.trim()) && !/^[a-fA-F0-9]{64}$/.test(sha256.trim())
 
   return (

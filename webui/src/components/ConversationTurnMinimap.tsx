@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Z_LAYERS } from '@/config/zLayers'
 import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
 import { hasHigherLayerOverlay } from '@/utils/overlayStack'
-import { X } from './ActionIcons'
+import { Search, X } from './ActionIcons'
 
 export interface MinimapTurnItem {
   id: string
@@ -432,15 +432,32 @@ export const ConversationTurnMinimap = memo(function ConversationTurnMinimap({
 
           {items.length >= 8 && (
             <div className="shrink-0 border-b border-line/40 px-2.5 py-1.5">
-              <input
-                ref={searchInputRef}
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                aria-label="筛选对话轮次"
-                placeholder="搜索关键词或轮次号…"
-                className="h-7 w-full rounded-md border border-line/80 bg-bg-soft/60 px-2 text-xs text-ink outline-none focus:border-accent"
-              />
+              <div className="relative flex items-center">
+                <Search className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-ink-faint" aria-hidden="true" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  aria-label="筛选对话轮次"
+                  placeholder="搜索关键词或轮次号…"
+                  className="ga-input-sm h-7 w-full pl-7 pr-6"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    aria-label="清空筛选"
+                    title="清空筛选"
+                    onClick={() => {
+                      setQuery('')
+                      searchInputRef.current?.focus()
+                    }}
+                    className="absolute right-1 inline-flex h-5 w-5 items-center justify-center rounded text-ink-faint transition-colors hover:bg-ink/10 hover:text-ink"
+                  >
+                    <X className="h-3 w-3" aria-hidden="true" />
+                  </button>
+                )}
+              </div>
             </div>
           )}
 

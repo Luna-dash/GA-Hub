@@ -27,6 +27,7 @@ import { createAndOpenSession, upsertSessionInList, type SessionListData } from 
 import { useSessionSelectionGuard } from '@/hooks/useSessionSelectionGuard'
 import { queryKeys } from '@/queries/queryKeys'
 import { errorMessageFromError } from '@/utils/sessionUi'
+import { Search, X } from '@/components/ActionIcons'
 import { resolveSessionLlmKey } from '@/utils/llm'
 
 interface Action {
@@ -328,14 +329,32 @@ export function CommandPalette() {
         className="ga-paper-popover w-full max-w-xl rounded-xl overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <input
-          ref={inputRef}
-          value={q}
-          onChange={(e) => { setQ(e.target.value); setCursor(0) }}
-          onKeyDown={onKey}
-          placeholder="跳转 · 切 LLM · 触发任务 · 搜索…"
-          className="w-full bg-transparent border-b border-line/80 px-4 py-3 text-base outline-none text-ink placeholder:text-ink-faint"
-        />
+        <div className="relative flex items-center border-b border-line/80">
+          <Search className="pointer-events-none absolute left-3.5 h-4 w-4 text-ink-faint" aria-hidden="true" />
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={(e) => { setQ(e.target.value); setCursor(0) }}
+            onKeyDown={onKey}
+            placeholder="跳转 · 切 LLM · 触发任务 · 搜索…"
+            className="w-full bg-transparent pl-10 pr-9 py-3 text-base outline-none text-ink placeholder:text-ink-faint"
+          />
+          {q.length > 0 && (
+            <button
+              type="button"
+              aria-label="清空搜索"
+              title="清空搜索"
+              onClick={() => {
+                setQ('')
+                setCursor(0)
+                inputRef.current?.focus()
+              }}
+              className="absolute right-2.5 inline-flex h-6 w-6 items-center justify-center rounded-md text-ink-faint transition-colors hover:bg-ink/10 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          )}
+        </div>
         <div ref={listRef} className="max-h-[60vh] overflow-y-auto py-1">
           {groups.length === 0 && (
             <div className="px-4 py-6 text-center text-sm text-ink-faint">没有匹配项</div>

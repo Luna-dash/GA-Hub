@@ -593,7 +593,7 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium leading-none ${cls}`}>{TASK_RUN_STATUS_LABELS[status] ?? status}</span>
 }
 
-const inp = 'w-full bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent text-ink'
+const inp = 'ga-input'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

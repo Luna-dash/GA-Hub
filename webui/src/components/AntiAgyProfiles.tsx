@@ -827,7 +827,7 @@ export function AntiAgyProfiles({
                       onChange={e => setAuthCode(e.target.value)}
                       placeholder="粘贴授权码或回调链接…"
                       aria-label="Google 授权码"
-                      className="h-7 min-w-0 flex-1 rounded-md border border-line bg-bg-card px-2 text-xs text-ink outline-none focus:border-accent"
+                      className="ga-input-sm h-7 flex-1"
                     />
                     <button type="submit" className="ga-btn-sm-primary shrink-0 text-[11px]" disabled={!authCode.trim() || codeLoginSubmit.isPending}>
                       {codeLoginSubmit.isPending ? '提交中…' : '提交授权码'}
@@ -910,7 +910,7 @@ export function AntiAgyProfiles({
                 disabled={disabled}
                 aria-label={`修改「${profile.name}」的备注`}
                 onChange={event => setRenameDraft(event.target.value)}
-                className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-bg-soft/60 px-2.5 text-xs text-ink outline-none focus:border-accent"
+                className="ga-input-sm h-8 flex-1 px-2.5"
               />
               <button
                 type="submit"
@@ -958,7 +958,7 @@ export function AntiAgyProfiles({
           aria-label="账号备注"
           aria-describedby="agy-add-help"
           placeholder="输入备注，如：工作账号"
-          className="h-8 w-full rounded-lg border border-line bg-bg-soft/50 px-2.5 text-xs text-ink outline-none focus:border-accent"
+          className="ga-input-sm h-8 w-full px-2.5"
         />
         <div className="flex items-center justify-end gap-1.5">
           <button

@@ -110,6 +110,8 @@ describe('ConversationTurnMinimap', () => {
 
     // Filter by keyword
     const searchInput = popover.querySelector<HTMLInputElement>('input[aria-label="筛选对话轮次"]')!
+    expect(searchInput.type).toBe('text')
+    expect(popover.querySelector('button[aria-label="清空筛选"]')).toBeNull()
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(searchInput, '缓存命中率')
       searchInput.dispatchEvent(new Event('input', { bubbles: true }))
@@ -118,8 +120,24 @@ describe('ConversationTurnMinimap', () => {
     expect(filteredButtons).toHaveLength(1)
     expect(filteredButtons[0].textContent).toContain('#15')
 
+    // Clear button resets query, restores all rows, and keeps focus in filter input
+    const clearBtn = popover.querySelector<HTMLButtonElement>('button[aria-label="清空筛选"]')!
+    expect(clearBtn).not.toBeNull()
+    act(() => clearBtn.click())
+    expect(searchInput.value).toBe('')
+    expect(document.activeElement).toBe(searchInput)
+    expect(popover.querySelectorAll('div[data-chat-wheel-independent] > button')).toHaveLength(40)
+    expect(popover.querySelector('button[aria-label="清空筛选"]')).toBeNull()
+
+    // Filter again before selecting
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(searchInput, '缓存命中率')
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const refilteredButtons = [...popover.querySelectorAll<HTMLButtonElement>('div[data-chat-wheel-independent] > button')]
+
     // Selecting row jumps to turn index 14 and closes popover
-    act(() => filteredButtons[0].click())
+    act(() => refilteredButtons[0].click())
     expect(onSelect).toHaveBeenCalledWith(14)
     expect(el.querySelector('[data-turn-directory-popover]')).toBeNull()
 

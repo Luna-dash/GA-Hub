@@ -81,7 +81,7 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
     : status.running && status.connected === false ? '连接器运行中 · 正在连接云端'
     : status.running ? '连接器运行中'
     : '连接器未运行'
-  const inputClass = 'mt-1.5 w-full min-w-0 rounded-lg border border-line/80 bg-bg-soft/75 px-3 py-2 text-sm text-ink outline-none focus:border-accent focus:bg-bg-card focus:ring-1 focus:ring-accent disabled:opacity-50'
+  const inputClass = 'mt-1.5 ga-input py-2'
   return <section className="ga-paper-card p-4 space-y-4" aria-label="Nova 远程连接">
     <header>
       <h2 className="text-sm font-semibold text-ink">远程连接 <span className="ml-1 text-xs font-normal text-ink-faint">Nova</span></h2>

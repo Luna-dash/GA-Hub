@@ -1030,7 +1030,7 @@ function summarizeGlobal(v: any): string {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────
-const inp = 'w-full bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent text-ink'
+const inp = 'ga-input'
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (

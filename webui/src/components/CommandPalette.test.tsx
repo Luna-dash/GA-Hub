@@ -261,4 +261,28 @@ describe('command palette new conversation', () => {
     })
     expect(host.querySelector('[role="dialog"]')).toBeNull()
   })
+
+  it('shows clear button only when query is non-empty and refocuses input on clear', async () => {
+    await act(async () => { window.dispatchEvent(new Event('gahub:command-palette')) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)) })
+
+    const dlg = host.querySelector<HTMLElement>('[role="dialog"]')!
+    const input = dlg.querySelector<HTMLInputElement>('input')!
+    expect(dlg.querySelector('button[aria-label="清空搜索"]')).toBeNull()
+
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'zzzz-nomatch')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(dlg.textContent).toContain('没有匹配项')
+
+    const clearBtn = dlg.querySelector<HTMLButtonElement>('button[aria-label="清空搜索"]')!
+    expect(clearBtn).not.toBeNull()
+    act(() => clearBtn.click())
+
+    expect(input.value).toBe('')
+    expect(document.activeElement).toBe(input)
+    expect(dlg.querySelector('button[aria-label="清空搜索"]')).toBeNull()
+    expect(dlg.textContent).toContain('新对话')
+  })
 })
