@@ -1086,7 +1086,7 @@ export function AntiAgyProfiles({
                     restoreFocusOnCloseRef.current = false
                     requestClose()
                   }}
-                  disabled={action.isPending}
+                  disabled={busy}
                   className="ga-btn-icon-ghost"
                 >
                   <X className="h-3.5 w-3.5" aria-hidden="true" />

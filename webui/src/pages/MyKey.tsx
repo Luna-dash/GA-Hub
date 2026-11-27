@@ -1020,6 +1020,10 @@ function stripUiOnly(fields: Record<string, any>): Record<string, any> {
 function fieldsEqual(a: Record<string, any>, b: Record<string, any>): boolean {
   const na = stripUiOnly(a)
   const nb = stripUiOnly(b)
+  if ((na.apikey ?? '') === '' && (nb.apikey ?? '') === '') {
+    delete na.apikey
+    delete nb.apikey
+  }
   const keysA = Object.keys(na).sort()
   const keysB = Object.keys(nb).sort()
   if (keysA.length !== keysB.length) return false

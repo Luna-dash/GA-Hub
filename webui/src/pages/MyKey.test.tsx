@@ -472,4 +472,33 @@ describe('MyKey upload button visibility', () => {
     confirmSpy.mockRestore()
   })
 
+  it('does not treat typing and clearing apikey in duplicate mode as a dirty change on cancel', async () => {
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValue(false)
+    await mountFixture()
+    act(() => host.querySelector<HTMLButtonElement>('.mykey-card__toggle')!.click())
+    click('复制')
+
+    const keyInput = host.querySelector<HTMLInputElement>('[role="dialog"] input[type="password"]')!
+    expect(keyInput.value).toBe('')
+
+    // Typing a non-empty key marks dirty
+    input(keyInput, 'sk-temp')
+    await act(async () => {
+      click('取消')
+      await Promise.resolve()
+    })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+
+    // Clearing apikey back to '' matches initial undefined and closes without dirty confirmation
+    input(keyInput, '')
+    await act(async () => {
+      click('取消')
+      await Promise.resolve()
+    })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    confirmSpy.mockRestore()
+  })
+
 })
