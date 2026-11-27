@@ -224,7 +224,14 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
   })
 
   const busy = clearList.isPending || clearDocs.isPending || adding
-  const close = () => { setOpen(false); setConfirmAction(null); trigger.current?.focus() }
+  const dismiss = useCallback(() => {
+    setOpen(false)
+    setConfirmAction(null)
+  }, [])
+  const close = useCallback(() => {
+    dismiss()
+    trigger.current?.focus()
+  }, [dismiss])
   const toggle = () => {
     if (open) {
       close()
@@ -234,6 +241,19 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
     }
   }
   useEffect(() => { if (open) panel.current?.focus() }, [open])
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (trigger.current?.contains(target) || panel.current?.contains(target)) return
+      dismiss()
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+    }
+  }, [open, dismiss])
 
   const registerPaths = useCallback(async (paths: string[]) => {
     if (!source?.sessionId || paths.length === 0) return

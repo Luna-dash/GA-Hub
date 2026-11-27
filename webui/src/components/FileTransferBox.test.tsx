@@ -99,6 +99,73 @@ it('inserts an available file into the active draft and supports clearing list a
   }
 })
 
+it('dismisses the open panel on outside click without stealing focus and keeps it open for internal clicks', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const file: TransferredFile = { id: 1, path: 'D:/project/final.md', name: 'final.md', size: 1, engine: 'chat', project: 'Alpha', available: true }
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => [file] })))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const host = document.createElement('div')
+  const outsideTextarea = document.createElement('textarea')
+  document.body.append(host, outsideTextarea)
+  const root = createRoot(host)
+  const settle = (assertion: () => void) => vi.waitFor(async () => {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    assertion()
+  })
+  const trigger = () => host.querySelector<HTMLButtonElement>('[aria-label="中转箱"]')!
+  try {
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <FileTransferBox canInsert onInsert={vi.fn()} source={{ engine: 'chat', sessionId: 's1', project: 'Alpha' }} />
+        </QueryClientProvider>,
+      )
+    })
+    await settle(() => expect(trigger().textContent).toBe('1'))
+
+    await act(async () => { trigger().click() })
+    await settle(() => expect(host.querySelector('[role="dialog"]')).not.toBeNull())
+    expect(trigger().getAttribute('aria-expanded')).toBe('true')
+
+    // Clicks inside the panel (e.g. opening confirm bar or pressing header) must not dismiss it.
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="清空列表"]')!.click()
+    })
+    const panel = host.querySelector<HTMLElement>('[role="dialog"]')!
+    await act(async () => {
+      panel.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    })
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(host.textContent).toContain('清空列表？')
+
+    // Pointerdown inside the trigger button also does not dismiss prematurely before click toggle runs.
+    await act(async () => {
+      trigger().dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    })
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+
+    // Clicking an outside control dismisses the panel, resets confirm state, and lets focus stay outside.
+    await act(async () => {
+      outsideTextarea.focus()
+      outsideTextarea.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    })
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(trigger().getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(outsideTextarea)
+
+    // Re-opening after outside dismiss resets pending confirm state and works normally.
+    await act(async () => { trigger().click() })
+    await settle(() => expect(host.querySelector('[role="dialog"]')).not.toBeNull())
+    expect(host.textContent).not.toContain('清空列表？')
+  } finally {
+    await act(async () => root.unmount())
+    client.clear()
+    host.remove()
+    outsideTextarea.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
 it('resolves MIME types across images, PDFs, audio, video, and binary artifacts', () => {
   expect(guessTransferMime('chart.png')).toBe('image/png')
   expect(guessTransferMime('photo.jpg')).toBe('image/jpeg')

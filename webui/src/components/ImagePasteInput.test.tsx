@@ -335,7 +335,10 @@ describe('ImagePasteInput attachment presentation', () => {
 
     const primaryBtn = container.querySelector<HTMLButtonElement>('button[aria-label="加入排队"]')
     expect(primaryBtn).not.toBeNull()
-    expect(primaryBtn?.querySelector('svg')?.getAttribute('class')).toContain('lucide-clock')
+    expect(primaryBtn?.querySelector('svg')?.getAttribute('class')).toContain('lucide-list-plus')
+    expect(primaryBtn?.querySelector('svg')?.getAttribute('class')).not.toContain('lucide-clock')
+    expect(primaryBtn?.className).not.toContain('ga-solid-primary')
+    expect(primaryBtn?.className).toContain('bg-bg-card/95')
     expect(container.querySelector('button[aria-label="选择发送或排队方式"]')).toBeNull()
     expect(container.querySelector('[role="menu"][aria-label="运行中发送方式"]')).toBeNull()
 

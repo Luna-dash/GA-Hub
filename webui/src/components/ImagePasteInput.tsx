@@ -7,8 +7,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { Clock, LoaderCircle } from 'lucide-react'
-import { CloseIconButton, Plus, RotateCw, SendHorizontal, X } from './ActionIcons'
+import { LoaderCircle } from 'lucide-react'
+import { CloseIconButton, ListPlus, Plus, RotateCw, SendHorizontal, X } from './ActionIcons'
 import { ScheduleClockFace, scheduleClockButtonClass } from './ScheduleClockFace'
 import { api } from '@/api/client'
 import { AttachmentImage, isImageAttachment } from './AttachmentImage'
@@ -701,7 +701,10 @@ export function ImagePasteInput({
                 && (text.trim() || attachmentsRef.current.length > 0)) onSchedule()
             }}
             disabled={disabled || scheduleDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)}
-            className={clsx(scheduleClockButtonClass, 'mb-1 h-9 w-9 text-ink-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-35')}
+            className={clsx(
+              scheduleClockButtonClass,
+              'mb-1 h-9 w-9 text-ink hover:bg-accent-soft/45 hover:text-accent disabled:cursor-not-allowed disabled:text-ink-muted disabled:opacity-60',
+            )}
             title="设置定时发送"
             aria-label="设置定时发送"
           >
@@ -710,17 +713,23 @@ export function ImagePasteInput({
         )}
         {submitAccessory}
         {stopActive && activeSubmit && (() => {
-          const PrimaryActiveIcon = (activeSubmit.icon ?? 'send') === 'queue' ? Clock : SendHorizontal
+          const PrimaryActiveIcon = (activeSubmit.icon ?? 'send') === 'queue' ? ListPlus : SendHorizontal
           return (
             <button
               type="button"
               onClick={submit}
               disabled={disabled || activeSubmit.disabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)}
-              className="ga-solid-primary mb-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+              className={clsx(
+                'mb-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all active:scale-[0.98]',
+                'border border-line/85 bg-bg-card/95 text-ink shadow-[inset_0_1px_0_var(--c-inset-highlight),0_1px_2px_rgba(28,25,23,0.06)]',
+                'hover:border-accent/65 hover:bg-bg-soft hover:text-accent',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40',
+                'disabled:cursor-not-allowed disabled:border-[var(--c-disabled-line)] disabled:bg-[var(--c-disabled-bg)] disabled:text-[var(--c-disabled-text)] disabled:opacity-65 disabled:shadow-none disabled:active:scale-100',
+              )}
               aria-label={activeSubmit.label}
               title={attachmentHint ?? activeSubmit.title ?? activeSubmit.label}
             >
-              <PrimaryActiveIcon className="h-4 w-4" aria-hidden="true" />
+              <PrimaryActiveIcon className="h-[18px] w-[18px]" strokeWidth={1.85} aria-hidden="true" />
             </button>
           )
         })()}
@@ -746,7 +755,8 @@ export function ImagePasteInput({
             <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
           ) : (
             <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] transition-transform group-hover:scale-105 group-disabled:scale-100" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" fill="currentColor" />
+              <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.75" fill="none" />
+              <circle cx="12" cy="12" r="3.2" fill="currentColor" />
             </svg>
           )
         ) : (
