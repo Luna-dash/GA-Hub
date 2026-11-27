@@ -229,13 +229,14 @@
         }
       }
     },
-    "/api/updates/preflight": {
+    "/api/updates/apply": {
       "post": {
         "tags": [
           "updates"
         ],
-        "summary": "Preflight Update",
-        "operationId": "preflight_update_api_updates_preflight_post",
+        "summary": "Apply Update",
+        "description": "One-click restart & update via the lightweight Rust helper.",
+        "operationId": "apply_update_api_updates_apply_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -252,9 +253,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Preflight Update Api Updates Preflight Post"
+                  "$ref": "#/components/schemas/UpdatePlanResp"
                 }
               }
             }
@@ -296,92 +295,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UpdatePlanResp"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/updates/request": {
-      "post": {
-        "tags": [
-          "updates"
-        ],
-        "summary": "Request Update",
-        "operationId": "request_update_api_updates_request_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateIdentity"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Request Update Api Updates Request Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/updates/approve": {
-      "post": {
-        "tags": [
-          "updates"
-        ],
-        "summary": "Approve Update",
-        "operationId": "approve_update_api_updates_approve_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateIdentity"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Approve Update Api Updates Approve Post"
                 }
               }
             }
@@ -821,6 +734,68 @@
         }
       }
     },
+    "/api/storage/summary": {
+      "get": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Storage Summary",
+        "operationId": "storage_summary_api_storage_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageSummaryResp"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/cleanup": {
+      "post": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Storage Cleanup",
+        "operationId": "storage_cleanup_api_storage_cleanup_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageCleanupReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageCleanupResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/agent/status": {
       "get": {
         "summary": "Status",
@@ -1122,221 +1097,17 @@
         }
       }
     },
-    "/api/feishu/status": {
+    "/api/im/status": {
       "get": {
         "summary": "Status",
-        "operationId": "status_api_feishu_status_get",
+        "operationId": "status_api_im_status_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FsStatusResp"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/feishu/check": {
-      "post": {
-        "summary": "Check",
-        "operationId": "check_api_feishu_check_post",
-        "parameters": [
-          {
-            "name": "init_agent",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": false,
-              "title": "Init Agent"
-            }
-          },
-          {
-            "name": "force",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": false,
-              "title": "Force"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FsCheckResp"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/feishu/keys": {
-      "put": {
-        "summary": "Save Keys",
-        "operationId": "save_keys_api_feishu_keys_put",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FsKeysReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FsKeysResp"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/feishu/start": {
-      "post": {
-        "summary": "Start",
-        "operationId": "start_api_feishu_start_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FsStartResp"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/feishu/stop": {
-      "post": {
-        "summary": "Stop",
-        "operationId": "stop_api_feishu_stop_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FsStopResp"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/feishu/logs": {
-      "get": {
-        "summary": "Logs",
-        "operationId": "logs_api_feishu_logs_get",
-        "parameters": [
-          {
-            "name": "tail",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 5000,
-              "minimum": 1,
-              "default": 300,
-              "title": "Tail"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LogLinesResp"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/feishu/send": {
-      "post": {
-        "summary": "Send",
-        "operationId": "send_api_feishu_send_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FsSendReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FsSendResp"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/IMStatusResp"
                 }
               }
             }
@@ -10955,10 +10726,10 @@
               }
             ]
           },
-          "feishu": {
+          "im": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/FeishuProcessStatus"
+                "$ref": "#/components/schemas/IMStatusResp"
               },
               {
                 "type": "null"
@@ -13404,90 +13175,6 @@
         ],
         "title": "EventRecentResp"
       },
-      "FeishuProcessStatus": {
-        "properties": {
-          "running": {
-            "type": "boolean",
-            "title": "Running"
-          },
-          "pid": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pid"
-          },
-          "returncode": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Returncode"
-          },
-          "external": {
-            "type": "boolean",
-            "title": "External"
-          },
-          "fsapp_path": {
-            "type": "string",
-            "title": "Fsapp Path"
-          },
-          "fsapp_exists": {
-            "type": "boolean",
-            "title": "Fsapp Exists"
-          },
-          "python": {
-            "type": "string",
-            "title": "Python"
-          },
-          "log_file": {
-            "type": "string",
-            "title": "Log File"
-          },
-          "log_exists": {
-            "type": "boolean",
-            "title": "Log Exists"
-          },
-          "last_check": {
-            "anyOf": [
-              {},
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Check"
-          },
-          "last_check_ts": {
-            "type": "number",
-            "title": "Last Check Ts"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "running",
-          "pid",
-          "returncode",
-          "external",
-          "fsapp_path",
-          "fsapp_exists",
-          "python",
-          "log_file",
-          "log_exists",
-          "last_check",
-          "last_check_ts"
-        ],
-        "title": "FeishuProcessStatus",
-        "description": "Feishu gateway status, or an initialization diagnostic.\n\nThe OpenAPI schema intentionally describes the complete healthy response;\ninitialization failures are represented by ``error`` in ``/api/status``."
-      },
       "FontDownloadResp": {
         "properties": {
           "pack_id": {
@@ -13747,442 +13434,6 @@
         ],
         "title": "FontSettingsResp"
       },
-      "FsCheckResp": {
-        "properties": {
-          "ready": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ready"
-          },
-          "ok": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ok"
-          },
-          "returncode": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Returncode"
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error"
-          },
-          "raw": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Raw"
-          },
-          "fsapp_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fsapp Path"
-          },
-          "allowed_users": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Allowed Users"
-          },
-          "public_access": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Public Access"
-          },
-          "agent_error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agent Error"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "title": "FsCheckResp"
-      },
-      "FsKeysReq": {
-        "properties": {
-          "app_id": {
-            "type": "string",
-            "minLength": 1,
-            "title": "App Id"
-          },
-          "app_secret": {
-            "type": "string",
-            "minLength": 1,
-            "title": "App Secret"
-          },
-          "allowed_users": {
-            "type": "string",
-            "title": "Allowed Users",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "required": [
-          "app_id",
-          "app_secret"
-        ],
-        "title": "FsKeysReq"
-      },
-      "FsKeysResp": {
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "title": "Ok"
-          },
-          "app_id_masked": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "App Id Masked"
-          },
-          "allowed_users_saved": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Allowed Users Saved"
-          }
-        },
-        "type": "object",
-        "required": [
-          "ok"
-        ],
-        "title": "FsKeysResp"
-      },
-      "FsSendReq": {
-        "properties": {
-          "receive_id": {
-            "type": "string",
-            "title": "Receive Id"
-          },
-          "text": {
-            "type": "string",
-            "title": "Text"
-          },
-          "receive_id_type": {
-            "type": "string",
-            "enum": [
-              "open_id",
-              "chat_id",
-              "user_id",
-              "union_id",
-              "email"
-            ],
-            "title": "Receive Id Type",
-            "default": "open_id"
-          },
-          "use_card": {
-            "type": "boolean",
-            "title": "Use Card",
-            "default": false
-          }
-        },
-        "type": "object",
-        "required": [
-          "receive_id",
-          "text"
-        ],
-        "title": "FsSendReq"
-      },
-      "FsSendResp": {
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "title": "Ok"
-          },
-          "returncode": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Returncode"
-          },
-          "raw": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Raw"
-          },
-          "message_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Message Id"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "ok"
-        ],
-        "title": "FsSendResp"
-      },
-      "FsStartResp": {
-        "properties": {
-          "started": {
-            "type": "boolean",
-            "title": "Started"
-          },
-          "running": {
-            "type": "boolean",
-            "title": "Running"
-          },
-          "pid": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pid"
-          },
-          "log_file": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Log File"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "started",
-          "running"
-        ],
-        "title": "FsStartResp"
-      },
-      "FsStatusResp": {
-        "properties": {
-          "running": {
-            "type": "boolean",
-            "title": "Running"
-          },
-          "pid": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pid"
-          },
-          "returncode": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Returncode"
-          },
-          "external": {
-            "type": "boolean",
-            "title": "External"
-          },
-          "fsapp_path": {
-            "type": "string",
-            "title": "Fsapp Path"
-          },
-          "fsapp_exists": {
-            "type": "boolean",
-            "title": "Fsapp Exists"
-          },
-          "python": {
-            "type": "string",
-            "title": "Python"
-          },
-          "log_file": {
-            "type": "string",
-            "title": "Log File"
-          },
-          "log_exists": {
-            "type": "boolean",
-            "title": "Log Exists"
-          },
-          "last_check": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/FsCheckResp"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "last_check_ts": {
-            "type": "number",
-            "title": "Last Check Ts",
-            "default": 0
-          },
-          "autostart_state": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Autostart State"
-          },
-          "autostart_remaining_seconds": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Autostart Remaining Seconds"
-          },
-          "autostart_error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Autostart Error"
-          }
-        },
-        "type": "object",
-        "required": [
-          "running",
-          "pid",
-          "returncode",
-          "external",
-          "fsapp_path",
-          "fsapp_exists",
-          "python",
-          "log_file",
-          "log_exists"
-        ],
-        "title": "FsStatusResp"
-      },
-      "FsStopResp": {
-        "properties": {
-          "stopped": {
-            "type": "boolean",
-            "title": "Stopped"
-          },
-          "running": {
-            "type": "boolean",
-            "title": "Running"
-          },
-          "pid": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pid"
-          }
-        },
-        "type": "object",
-        "required": [
-          "stopped",
-          "running"
-        ],
-        "title": "FsStopResp"
-      },
       "GlobalAgentStatus": {
         "properties": {
           "is_running": {
@@ -14358,6 +13609,75 @@
           "updated_at"
         ],
         "title": "HubSession"
+      },
+      "IMAdapterStatus": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running",
+            "default": false
+          },
+          "state": {
+            "type": "string",
+            "title": "State",
+            "default": "stopped"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "default": ""
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "details": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "IMAdapterStatus",
+        "description": "Status reported by a registered generic IM channel adapter."
+      },
+      "IMStatusResp": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured",
+            "default": false
+          },
+          "adapters": {
+            "items": {
+              "$ref": "#/components/schemas/IMAdapterStatus"
+            },
+            "type": "array",
+            "title": "Adapters"
+          }
+        },
+        "type": "object",
+        "title": "IMStatusResp",
+        "description": "Read-only status of the generic IM adapter registry."
       },
       "LLMInfoResp": {
         "properties": {
@@ -17099,6 +16419,115 @@
         ],
         "title": "SkillSearchResp"
       },
+      "StorageCategoryResp": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          },
+          "file_count": {
+            "type": "integer",
+            "title": "File Count"
+          },
+          "cleanable": {
+            "type": "boolean",
+            "title": "Cleanable"
+          },
+          "caution": {
+            "type": "boolean",
+            "title": "Caution",
+            "default": false
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "description",
+          "bytes",
+          "file_count",
+          "cleanable",
+          "path"
+        ],
+        "title": "StorageCategoryResp"
+      },
+      "StorageCleanupReq": {
+        "properties": {
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories"
+          }
+        },
+        "type": "object",
+        "title": "StorageCleanupReq"
+      },
+      "StorageCleanupResp": {
+        "properties": {
+          "reclaimed_bytes": {
+            "type": "integer",
+            "title": "Reclaimed Bytes"
+          },
+          "removed_entries": {
+            "type": "integer",
+            "title": "Removed Entries"
+          },
+          "failed_entries": {
+            "type": "integer",
+            "title": "Failed Entries"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/StorageSummaryResp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reclaimed_bytes",
+          "removed_entries",
+          "failed_entries",
+          "summary"
+        ],
+        "title": "StorageCleanupResp"
+      },
+      "StorageSummaryResp": {
+        "properties": {
+          "total_bytes": {
+            "type": "integer",
+            "title": "Total Bytes"
+          },
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/StorageCategoryResp"
+            },
+            "type": "array",
+            "title": "Categories"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_bytes",
+          "categories"
+        ],
+        "title": "StorageSummaryResp"
+      },
       "TaskMutationResp": {
         "properties": {
           "ok": {
@@ -17945,47 +17374,6 @@
         ],
         "title": "UpdateDownloadResp"
       },
-      "UpdateHandoffResp": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "state": {
-            "type": "string",
-            "title": "State"
-          },
-          "not_before": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Not Before"
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "id",
-          "state"
-        ],
-        "title": "UpdateHandoffResp"
-      },
       "UpdateIdentity": {
         "properties": {
           "id": {
@@ -18038,6 +17426,17 @@
               }
             ],
             "title": "Commit"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
           }
         },
         "additionalProperties": true,
@@ -18120,16 +17519,6 @@
           "data_epoch": {
             "type": "integer",
             "title": "Data Epoch"
-          },
-          "handoff": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/UpdateHandoffResp"
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "additionalProperties": true,

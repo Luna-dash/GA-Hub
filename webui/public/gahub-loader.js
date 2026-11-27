@@ -134,6 +134,11 @@
       burstStart = performance.now()
       root.style.pointerEvents = 'none'
       setTimeout(function () {
+        pauseLoop()
+        if (canvas) {
+          canvas.width = 0
+          canvas.height = 0
+        }
         root.style.opacity = '0'
         document.documentElement.removeAttribute('data-boot-splash')
       }, BURST_MS * 0.64)
@@ -408,7 +413,9 @@
   function resizeCanvas() {
     W = window.innerWidth
     H = window.innerHeight
-    var dpr = Math.min(window.devicePixelRatio || 1, 2)
+    // Cap boot splash canvas at 1x CSS resolution to avoid inflating Chromium's
+    // Skia GPU texture pool high-water mark before the main app mounts.
+    var dpr = 1
     canvas.width = Math.floor(W * dpr)
     canvas.height = Math.floor(H * dpr)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)

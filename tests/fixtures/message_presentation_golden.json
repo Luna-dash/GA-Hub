@@ -1,0 +1,177 @@
+{
+  "pages": [
+    {
+      "name": "user_and_plain_assistant",
+      "input": {
+        "session_id": "s-1",
+        "revision": "rev-1",
+        "total": 2,
+        "has_more": false,
+        "next_before": null,
+        "items": [
+          {
+            "id": "m1",
+            "role": "user",
+            "ordinal": 0,
+            "timestamp": "2026-11-27T10:00:00Z",
+            "content": "帮我检查一下配置文件"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "ordinal": 1,
+            "timestamp": "2026-11-27T10:00:05Z",
+            "outcome": "completed",
+            "content": "<thinking>internal reasoning</thinking><summary>检查配置完成</summary>配置一切正常。\n\n```json\n{\"ok\": true}\n```\n[Info] Final response to user."
+          }
+        ]
+      }
+    },
+    {
+      "name": "multi_turn_with_tools_glued_fence_and_fallback_summary",
+      "input": {
+        "session_id": "s-2",
+        "items": [
+          {
+            "id": "m1",
+            "role": "assistant",
+            "ordinal": 0,
+            "run_id": "run-2",
+            "content": "LLM Running (Turn 1) ...\n<summary>读取目标文件\n分析结构</summary>\n🛠️ Tool: `file_read` 📥 args:\n````json\n{\"path\": \"README.md\"}\n````\n````\nhello world````\n\nLLM Running (Turn 2) ...\n首先我们核对依赖清单，确认所有版本号对齐后再更新文档：\n🛠️ code_run(\"pytest -q\")\n````\n10 passed\n````\n\nLLM Running (Turn 3) ...\n<summary>输出最终总结</summary>\n已完成全部核对，结果通过。\n```\n[Info] Final response to user.\n```"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dangling_tool_turn_fallback",
+      "input": {
+        "session_id": "s-3",
+        "items": [
+          {
+            "id": "m1",
+            "role": "assistant",
+            "ordinal": 0,
+            "outcome": "cancelled",
+            "content": "**LLM Running (Turn 1) ...**\n<summary>阶段一结论</summary>\n先保留第一轮的有效结论。\n\n**LLM Running (Turn 2) ...**\n🛠️ Tool: `code_run` 📥 args:\n````\n{\"cmd\": \"sleep 60\"}\n````\n[Status] aborted by user"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ask_user_json_with_raw_newlines_and_candidates",
+      "input": {
+        "session_id": "s-4",
+        "items": [
+          {
+            "id": "m1",
+            "role": "assistant",
+            "ordinal": 0,
+            "content": "LLM Running (Turn 1) ...\n<summary>等待确认</summary>\n请确认后续方案：\n🛠️ Tool: `ask_user` 📥 args:\n````json\n{\"question\": \"第一行问题\n第二行补充\", \"candidates\": [\"方案 A\", \"方案 B\"]}\n````"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ask_user_compact_and_trusted_turn_segs",
+      "input": {
+        "session_id": "s-5",
+        "items": [
+          {
+            "id": "m1",
+            "role": "assistant",
+            "ordinal": 0,
+            "content": "LLM Running (Turn 1) ...\n<summary>第一步</summary>\n准备询问\nLLM Running (Turn 2) ...\n🛠️ ask_user(请选择部署环境\ncandidates:\n- 预发布环境\n- 生产环境)",
+            "turn_segs": [
+              "LLM Running (Turn 1) ...\n<summary>第一步</summary>\n准备询问\n",
+              "LLM Running (Turn 2) ...\n🛠️ ask_user(请选择部署环境\ncandidates:\n- 预发布环境\n- 生产环境)"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "streaming_pending_tail_and_long_fallback_summary",
+      "input": {
+        "session_id": "s-6",
+        "items": [
+          {
+            "id": "m1",
+            "role": "assistant",
+            "ordinal": 0,
+            "streaming": true,
+            "content": "LLM Running (Turn 1) ...\n这是一段超过八十个字符的较长前置说明文本，用来验证在没有 summary 标签时会按句号切分。后面还有更多细节内容，并且继续补充很多文字确保总长度远超八十字符限制。\n🛠️ Tool: `file_read`"
+          }
+        ]
+      }
+    }
+  ],
+  "progress": [
+    {
+      "name": "idle_empty_snapshot",
+      "input": {
+        "type": "snapshot",
+        "session_id": "sess-1",
+        "epoch": "ep-1",
+        "runtime": {
+          "session_id": "sess-1",
+          "status": "idle",
+          "run_id": null,
+          "stream_id": null,
+          "completed_run_id": "r-0",
+          "outcome": "completed"
+        },
+        "streams": []
+      }
+    },
+    {
+      "name": "running_with_retry_and_active_message",
+      "input": {
+        "type": "snapshot",
+        "session_id": "sess-2",
+        "epoch": "ep-2",
+        "runtime": {
+          "session_id": "sess-2",
+          "status": "running",
+          "run_id": "run-9",
+          "stream_id": "st-2"
+        },
+        "streams": [
+          {
+            "stream_id": "st-1",
+            "run_id": "run-9",
+            "logical_id": "log-9",
+            "source": "webui",
+            "query": "重构构建链",
+            "started_at": 1732700000,
+            "finished_at": 1732700005,
+            "content": "LLM Running (Turn 1) ...\n<summary>分析现状</summary>\n先读取现有脚本。",
+            "done": true
+          },
+          {
+            "stream_id": "st-2",
+            "run_id": "run-9",
+            "logical_id": "log-9",
+            "retry_of": "st-1",
+            "retry_attempt": 1,
+            "retry_max": 3,
+            "retry_reason": "truncated",
+            "source": "auto_continue",
+            "started_at": 1732700006,
+            "finished_at": 0,
+            "content": "LLM Running (Turn 2) ...\n继续输出剩余内容",
+            "done": false
+          }
+        ],
+        "active_message": {
+          "stream_id": "st-2",
+          "run_id": "run-9",
+          "logical_id": "log-9",
+          "retry_of": "st-1",
+          "source": "auto_continue",
+          "content": "LLM Running (Turn 2) ...\n继续输出剩余内容并补充完毕",
+          "done": false
+        }
+      }
+    }
+  ]
+}

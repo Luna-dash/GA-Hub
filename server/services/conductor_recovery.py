@@ -90,9 +90,24 @@ class ConductorRecovery:
         return {"ready": self.ready, "error": self.error, "boot_id": self.boot_id,
                 "applied_seq": self.store.cursor()["seq"], "last_reconcile_at": self.last_reconcile}
 
+    def _is_idle_ready(self) -> bool:
+        if not self.ready:
+            return False
+        try:
+            running, _ = self.kernel.pool.counts()
+            if running > 0:
+                return False
+            has_unfinished = getattr(self.store, "has_unfinished_work", None)
+            if callable(has_unfinished) and has_unfinished():
+                return False
+        except Exception:
+            return False
+        return True
+
     def _consume_loop(self) -> None:
         while not self.stop_event.is_set():
-            self.wake.wait(5)
+            wait_sec = 60.0 if self._is_idle_ready() else 5.0
+            self.wake.wait(wait_sec)
             self.wake.clear()
             if self.stop_event.is_set():
                 break
@@ -107,7 +122,8 @@ class ConductorRecovery:
 
     def _command_loop(self) -> None:
         while not self.stop_event.is_set():
-            self.command_wake.wait(5)
+            wait_sec = 60.0 if self._is_idle_ready() else 5.0
+            self.command_wake.wait(wait_sec)
             self.command_wake.clear()
             try:
                 if self.ready and not self.stop_event.is_set():

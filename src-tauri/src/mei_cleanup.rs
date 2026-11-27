@@ -284,7 +284,7 @@ fn collect_candidates(temp: &Path, report: &mut MeiSweepReport) -> Vec<Candidate
             .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
-        if !carries_our_fingerprint(&names) {
+        if !carries_our_fingerprint(&path, &names) {
             report.skipped_foreign += 1;
             continue;
         }
@@ -297,15 +297,26 @@ fn collect_candidates(temp: &Path, report: &mut MeiSweepReport) -> Vec<Candidate
     candidates
 }
 
-/// gahub's own bundle, by packaging metadata. Both variants occur in the wild:
-/// editable installs leave `generic_agent_admin.egg-info`, wheel builds leave a
-/// versioned `generic_agent_admin-<version>.dist-info`.
-fn carries_our_fingerprint(top_level: &[String]) -> bool {
-    top_level.iter().any(|name| {
+/// gahub's own bundle, by packaging metadata or legacy pre-sentinel layout.
+/// Current builds carry `gahub_sidecar_bundle.json`, editable/wheel builds
+/// carry `generic_agent_admin.egg-info` / `generic_agent_admin-*.dist-info`,
+/// and legacy pre-sentinel sidecars carry `server/` alongside `webui/` or
+/// `assets/remote_access/`.
+fn carries_our_fingerprint(bundle_dir: &Path, top_level: &[String]) -> bool {
+    if top_level.iter().any(|name| {
         name == "gahub_sidecar_bundle.json"
             || name == "generic_agent_admin.egg-info"
             || (name.starts_with("generic_agent_admin-") && name.ends_with(".dist-info"))
-    })
+    }) {
+        return true;
+    }
+    let has_server = top_level.iter().any(|name| name == "server") && bundle_dir.join("server").is_dir();
+    if !has_server {
+        return false;
+    }
+    let has_webui = top_level.iter().any(|name| name == "webui") && bundle_dir.join("webui").is_dir();
+    let has_remote_assets = bundle_dir.join("assets").join("remote_access").is_dir();
+    has_webui || has_remote_assets
 }
 
 /// A candidate is stale once it is older than [`STALE_AFTER`]. An unknown age
@@ -533,38 +544,47 @@ mod tests {
 
     #[test]
     fn gahub_bundles_are_recognised_in_both_packaging_shapes() {
-        assert!(carries_our_fingerprint(&names(&[
+        let dummy = Path::new(".");
+        assert!(carries_our_fingerprint(dummy, &names(&[
             "gahub_sidecar_bundle.json",
             "certifi",
         ])));
-        assert!(carries_our_fingerprint(&names(&[
+        assert!(carries_our_fingerprint(dummy, &names(&[
             "generic_agent_admin.egg-info",
             "certifi",
         ])));
-        assert!(carries_our_fingerprint(&names(&[
+        assert!(carries_our_fingerprint(dummy, &names(&[
             "generic_agent_admin-0.3.4.dist-info",
             "_ssl.pyd",
         ])));
+        // Legacy pre-sentinel sidecar layout: server/ + webui/ or assets/remote_access/
+        let legacy = env::temp_dir().join("gahub-mei-legacy-fp-test");
+        let _ = fs::remove_dir_all(&legacy);
+        fs::create_dir_all(legacy.join("server")).unwrap();
+        fs::create_dir_all(legacy.join("webui")).unwrap();
+        assert!(carries_our_fingerprint(&legacy, &names(&["server", "webui"])));
+        let _ = fs::remove_dir_all(&legacy);
     }
 
     #[test]
     fn another_onefile_application_is_left_alone() {
+        let dummy = Path::new(".");
         // `_MEI` is a PyInstaller convention, not a gahub one: an unrelated
         // app's bundle must never be a candidate.
-        assert!(!carries_our_fingerprint(&names(&[
+        assert!(!carries_our_fingerprint(dummy, &names(&[
             "PySide6",
             "some_other_app-1.0.dist-info",
         ])));
         // Same prefix, different project.
-        assert!(!carries_our_fingerprint(&names(&[
+        assert!(!carries_our_fingerprint(dummy, &names(&[
             "generic_agent_toolkit-1.0.dist-info",
         ])));
         // Right project, wrong metadata kind.
-        assert!(!carries_our_fingerprint(&names(&[
+        assert!(!carries_our_fingerprint(dummy, &names(&[
             "generic_agent_admin.exe",
             "generic_agent_admin.pyz",
         ])));
-        assert!(!carries_our_fingerprint(&[]));
+        assert!(!carries_our_fingerprint(dummy, &[]));
     }
 
     #[test]

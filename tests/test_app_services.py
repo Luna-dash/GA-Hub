@@ -24,20 +24,20 @@ class _Agent:
         self.shutdown_calls += 1
 
 
-class _Feishu:
+class _IMRegistry:
     def __init__(self, *, explode: bool = False) -> None:
         self.shutdown_calls = 0
         self._explode = explode
 
-    def status(self) -> dict:
+    def status_snapshot(self) -> dict:
         if self._explode:
-            raise RuntimeError("feishu status exploded")
-        return {"running": False}
+            raise RuntimeError("im status exploded")
+        return {"configured": False, "adapters": []}
 
-    def shutdown(self) -> None:
+    def shutdown_all(self) -> None:
         self.shutdown_calls += 1
         if self._explode:
-            raise RuntimeError("feishu shutdown exploded")
+            raise RuntimeError("im shutdown exploded")
 
 
 class _Conductor:
@@ -70,19 +70,19 @@ def test_status_snapshot_reads_only_owned_services() -> None:
     # could lazily construct a fresh service during partial startup.
     assert services.status_snapshot() == {}
 
-    owned = AppServices(agent=_Agent(), feishu=_Feishu(), scheduler_host=_SchedulerHost())
+    owned = AppServices(agent=_Agent(), im=_IMRegistry(), scheduler_host=_SchedulerHost())
     snap = owned.status_snapshot()
     assert snap["agent"] == {"running": True, "pid": 42}
-    assert snap["feishu"] == {"running": False}
+    assert snap["im"] == {"configured": False, "adapters": []}
     assert snap["autonomous"] == {"schedule_count": 2}
     assert snap["tasks"] == {"schedule_count": 3}
     assert snap["schedulers"]["autonomous"]["schedule_count"] == 2
 
 
-def test_status_snapshot_degrades_when_feishu_status_raises() -> None:
-    services = AppServices(agent=_Agent(), feishu=_Feishu(explode=True))
+def test_status_snapshot_degrades_when_im_status_raises() -> None:
+    services = AppServices(agent=_Agent(), im=_IMRegistry(explode=True))
     snap = services.status_snapshot()
-    assert "feishu" not in snap
+    assert "im" not in snap
     assert snap["agent"]["running"] is True
 
 
@@ -97,6 +97,9 @@ def test_shutdown_all_follows_dependency_order() -> None:
         def shutdown(self) -> None:
             order.append(self._name)
 
+        def shutdown_all(self) -> None:
+            order.append(self._name)
+
     class _Host(_Tracked):
         def shutdown_all(self) -> bool:
             order.append("scheduler_host")
@@ -105,12 +108,12 @@ def test_shutdown_all_follows_dependency_order() -> None:
     services = AppServices(
         agent=_Tracked("agent"),
         conductor=_Tracked("conductor"),
-        feishu=_Tracked("feishu"),
+        im=_Tracked("im"),
         goalhive=_Tracked("goalhive"),
         scheduler_host=_Host("unused-name"),
     )
     services.shutdown_all()
-    assert order == ["scheduler_host", "goalhive", "feishu", "conductor", "agent"]
+    assert order == ["scheduler_host", "goalhive", "im", "conductor", "agent"]
 
 
 def test_shutdown_all_isolates_goalhive_failure() -> None:
@@ -125,10 +128,10 @@ def test_shutdown_all_isolates_goalhive_failure() -> None:
 
 def test_shutdown_all_isolates_one_service_failure() -> None:
     agent = _Agent()
-    services = AppServices(agent=agent, feishu=_Feishu(explode=True),
+    services = AppServices(agent=agent, im=_IMRegistry(explode=True),
                            scheduler_host=_SchedulerHost())
     services.shutdown_all()
-    # feishu exploded, but the agent still got its shutdown.
+    # im exploded, but the agent still got its shutdown.
     assert agent.shutdown_calls == 1
 
 
@@ -145,7 +148,7 @@ def test_clear_releases_every_owner() -> None:
     services = AppServices(
         agent=_Agent(),
         conductor=_Conductor(),
-        feishu=_Feishu(),
+        im=_IMRegistry(),
         goalhive=object(),
         scheduler_host=_SchedulerHost(),
         mykey_sync=object(),
@@ -153,7 +156,7 @@ def test_clear_releases_every_owner() -> None:
     services.clear()
     assert services.agent is None
     assert services.conductor is None
-    assert services.feishu is None
+    assert services.im is None
     assert services.goalhive is None
     assert services.scheduler_host is None
     assert services.mykey_sync is None

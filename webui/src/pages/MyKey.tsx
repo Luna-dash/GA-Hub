@@ -105,7 +105,7 @@ export default function MyKey() {
   }
 
   const autoSync = useQuery({
-    queryKey: ['mykey', 'auto-sync'], queryFn: api.myKeyAutoSync, refetchInterval: 30_000,
+    queryKey: ['mykey', 'auto-sync'], queryFn: api.myKeyAutoSync, refetchInterval: 30_000, refetchIntervalInBackground: false,
   })
   const [autoSyncBusy, setAutoSyncBusy] = useState(false)
   const toggleAutoSync = async (enabled: boolean) => {

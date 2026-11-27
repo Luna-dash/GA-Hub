@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { X } from './ActionIcons'
 
 export interface MinimapTurnItem {
@@ -70,7 +70,7 @@ interface ConversationTurnMinimapProps {
  * - 短对话展示全部圆点；长对话等比采样为紧凑胶囊轨道并支持拖拽顺滑定位（scrubbing）；
  * - 下方附带 `当前/总计` 位置胶囊，点击弹出可搜索的全轮次目录面板，快速直达任意一轮。
  */
-export function ConversationTurnMinimap({
+export const ConversationTurnMinimap = memo(function ConversationTurnMinimap({
   items,
   activeIndex,
   onSelect,
@@ -261,7 +261,7 @@ export function ConversationTurnMinimap({
             window.removeEventListener('pointercancel', onWindowPointerCancel)
           }
         }}
-        className="flex w-7 flex-col items-center gap-[3px] rounded-full border border-line/65 bg-bg-card/90 px-1 py-2.5 shadow-[inset_0_1px_0_var(--c-inset-highlight),0_4px_14px_rgba(45,34,22,0.09)] backdrop-blur-md touch-none"
+        className="flex w-7 flex-col items-center gap-[3px] rounded-full border border-line/65 bg-bg-card px-1 py-2.5 shadow-[inset_0_1px_0_var(--c-inset-highlight),0_4px_14px_rgba(45,34,22,0.09)] touch-none"
       >
         {slots.map((turnIdx, slotIdx) => {
           const item = items[turnIdx]
@@ -329,10 +329,10 @@ export function ConversationTurnMinimap({
             return next
           })
         }}
-        className={`inline-flex h-5 min-w-9 max-w-full items-center justify-center rounded-full border px-1.5 text-[10px] font-medium leading-none tabular-nums shadow-[inset_0_1px_0_var(--c-inset-highlight),0_2px_8px_rgba(45,34,22,0.08)] backdrop-blur-md transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+        className={`inline-flex h-5 min-w-9 max-w-full items-center justify-center rounded-full border px-1.5 text-[10px] font-medium leading-none tabular-nums shadow-[inset_0_1px_0_var(--c-inset-highlight),0_2px_8px_rgba(45,34,22,0.08)] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
           directoryOpen
-            ? 'border-accent/65 bg-accent-soft/85 text-accent'
-            : 'border-line/70 bg-bg-card/90 text-ink-muted hover:border-accent/55 hover:text-ink'
+            ? 'border-accent/65 bg-accent-soft text-accent'
+            : 'border-line/70 bg-bg-card text-ink-muted hover:border-accent/55 hover:text-ink'
         }`}
       >
         {clampedActive + 1}/{items.length}
@@ -460,4 +460,4 @@ export function ConversationTurnMinimap({
       )}
     </div>
   )
-}
+})

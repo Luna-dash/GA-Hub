@@ -18,7 +18,6 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.ico"],
-    "externalBin": ["binaries/ga-hub-sidecar"],
     "windows": {
       "wix": { "language": "en-US" }
     }

@@ -36,10 +36,10 @@ EXIT_ARTIFACT_GUARD = 5
 
 # 交付产物；顺序即守卫与产物体检的报告顺序。值是守卫失败时的排查提示。
 ARTIFACT_HINTS = {
-    "sidecar 中间产物": "PyInstaller 没有产出新文件（build_sidecar.py 先 unlink 再打包）。",
-    "sidecar 交付副本": "便携 sidecar 复制失败——产物目录与应用不配套。",
+    "sidecar 中间产物": "PyInstaller 没有产出新目录（build_sidecar.py 先清理再打包 --onedir）。",
+    "sidecar 交付副本": "便携 sidecar 目录同步失败——产物目录与应用不配套。",
     "主程序产物": "Tauri/cargo 可能跳过了链接，或产物写到了别的 target 目录。",
-    "独立更新助手": "build_update_helper.py 未产出新文件，或更新助手交付复制失败。",
+    "独立更新助手": "cargo 未产出新的 Rust ga-hub-update.exe。",
 }
 
 
@@ -324,17 +324,38 @@ def tauri_stage_command(tauri: str, target: str) -> list[str]:
 
 
 def artifact_paths(target: str) -> dict[str, Path]:
-    """交付产物：label -> 路径（Windows 含独立更新助手）。"""
+    """交付产物：label -> 路径（--onedir sidecar + Rust 独立更新助手）。"""
     suffix = ".exe" if "windows" in target else ""
     release = ROOT / "src-tauri" / "target" / target / "release"
     paths = {
-        "sidecar 中间产物": ROOT / "src-tauri" / "binaries" / f"ga-hub-sidecar-{target}{suffix}",
-        "sidecar 交付副本": release / f"ga-hub-sidecar{suffix}",
+        "sidecar 中间产物": ROOT / "src-tauri" / "binaries" / f"sidecar-{target}" / f"ga-hub-sidecar{suffix}",
+        "sidecar 交付副本": release / "sidecar" / f"ga-hub-sidecar{suffix}",
         "主程序产物": release / f"ga-hub-desktop{suffix}",
     }
     if "windows" in target:
         paths["独立更新助手"] = release / "ga-hub-update.exe"
     return paths
+
+
+def sync_sidecar_dir(src_exe: Path, dst_exe: Path) -> None:
+    """将 PyInstaller --onedir 中间产物整目录同步到交付目录的 sidecar/。"""
+    src_dir = src_exe.parent
+    dst_dir = dst_exe.parent
+    staged = dst_dir.with_name(dst_dir.name + ".new")
+    backup = dst_dir.with_name(dst_dir.name + ".old")
+    shutil.rmtree(staged, ignore_errors=True)
+    shutil.rmtree(backup, ignore_errors=True)
+    try:
+        shutil.copytree(src_dir, staged)
+        if dst_dir.exists():
+            dst_dir.replace(backup)
+        staged.replace(dst_dir)
+        shutil.rmtree(backup, ignore_errors=True)
+    except BaseException:
+        if not dst_dir.exists() and backup.exists():
+            backup.replace(dst_dir)
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
 
 
 def artifact_blocker(path: Path) -> str:
@@ -609,21 +630,30 @@ def main(argv: list[str] | None = None) -> int:
             [sidecar_python, "desktop/build_sidecar.py", "--target", args.target],
         )
         run_stage("Tauri 桌面壳", tauri_stage_command(tauri, args.target))
-        # Portable --no-bundle builds must not depend on implicit externalBin copies.
-        # Always pair this build's frozen backend with this build's desktop executable.
+        # Portable --no-bundle builds explicitly sync this build's --onedir sidecar
+        # tree into release/sidecar/ so it always pairs with ga-hub-desktop.
         try:
-            shutil.copy2(paths["sidecar 中间产物"], paths["sidecar 交付副本"])
+            sync_sidecar_dir(paths["sidecar 中间产物"], paths["sidecar 交付副本"])
         except OSError as exc:
             _log(f"✗ sidecar 交付副本复制失败：{exc}")
             raise StageFailed("sidecar 交付副本") from exc
         if "独立更新助手" in paths:
-            helper_output = Path(tempfile.gettempdir()) / "gahub-update-helper-build"
-            run_stage("独立更新助手", [sidecar_python, "scripts/build_update_helper.py", "--output", str(helper_output)])
-            try:
-                shutil.copy2(helper_output / "dist" / "ga-hub-update.exe", paths["独立更新助手"])
-            except OSError as exc:
-                _log(f"✗ 独立更新助手交付副本复制失败：{exc}")
-                raise StageFailed("独立更新助手交付副本") from exc
+            # Remove previous binary so cargo always writes a fresh artifact for guard verification.
+            paths["独立更新助手"].unlink(missing_ok=True)
+            run_stage(
+                "独立更新助手",
+                [
+                    shutil.which("cargo") or "cargo",
+                    "build",
+                    "--manifest-path",
+                    "src-tauri/Cargo.toml",
+                    "--release",
+                    "--target",
+                    args.target,
+                    "--bin",
+                    "ga-hub-update",
+                ],
+            )
     except StageFailed:
         report_consistency(paths, before)
         return EXIT_STAGE_FAILED

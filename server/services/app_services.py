@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .agent_service import AgentService
     from .conductor_service import ConductorService
-    from .feishu_service import FeishuService
+    from .im_adapter import IMRegistry
     from .scheduler_host import SchedulerHost
 
 log = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 class AppServices:
     agent: AgentService | None = None
     conductor: ConductorService | None = None
-    feishu: FeishuService | None = None
+    im: IMRegistry | None = None
     scheduler_host: SchedulerHost | None = None
     mykey_sync: Any | None = None
     goalhive: Any | None = None
@@ -35,7 +35,7 @@ class AppServices:
         """Forget every owner before a new lifespan or after teardown."""
         self.agent = None
         self.conductor = None
-        self.feishu = None
+        self.im = None
         self.scheduler_host = None
         self.mykey_sync = None
         self.goalhive = None
@@ -46,11 +46,11 @@ class AppServices:
         out: dict[str, Any] = {}
         if self.agent is not None:
             out["agent"] = self.agent.status().__dict__
-        if self.feishu is not None:
+        if self.im is not None:
             try:
-                out["feishu"] = self.feishu.status()
+                out["im"] = self.im.status_snapshot()
             except Exception:
-                log.exception("feishu status read failed")
+                log.exception("im status read failed")
         if self.scheduler_host is not None:
             scheduler_status = self.scheduler_host.status()
             out["schedulers"] = scheduler_status
@@ -82,11 +82,11 @@ class AppServices:
                     log.warning("goalhive shutdown exceeded its graceful deadline")
         except Exception:
             log.exception("goalhive shutdown failed")
-        if self.feishu is not None:
+        if self.im is not None:
             try:
-                self.feishu.shutdown()
+                self.im.shutdown_all()
             except Exception:
-                log.exception("feishu shutdown failed")
+                log.exception("im shutdown failed")
         # The conductor engine may still reach hub HTTP APIs while it is
         # being stopped, so it closes before the agent that serves them.
         if self.conductor is not None:
@@ -101,6 +101,13 @@ class AppServices:
                     log.warning("agent shutdown missed its graceful deadline")
             except Exception:
                 log.exception("agent shutdown failed")
+        elif "server.services.agent_service" in sys.modules:
+            try:
+                peek = sys.modules["server.services.agent_service"].AgentService.peek_instance()
+                if peek is not None and peek.shutdown() is False:
+                    log.warning("lazy agent shutdown missed its graceful deadline")
+            except Exception:
+                log.exception("lazy agent shutdown failed")
         if self.agy_runtime is not None:
             try:
                 self.agy_runtime.shutdown()

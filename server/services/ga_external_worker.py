@@ -87,17 +87,52 @@ for line in sys.stdin:
 class _ExternalGaWebTools:
     """Stateful proxy for GA browser tools, running under the resolved Python."""
 
-    def __init__(self, python: str, ga_root: Path, timeout: float = 120.0) -> None:
+    def __init__(
+        self,
+        python: str,
+        ga_root: Path,
+        timeout: float = 120.0,
+        idle_timeout: float = 900.0,
+    ) -> None:
         self.python = python
         self.ga_root = ga_root
         self.timeout = timeout
+        self.idle_timeout = max(0.0, float(idle_timeout))
         self._proc: subprocess.Popen[str] | None = None
         self._responses: dict[str, dict[str, Any]] = {}
         self._cond = threading.Condition()
         self._lock = threading.Lock()
+        self._last_used: float = 0.0
+        self._idle_timer: threading.Timer | None = None
+
+    def _schedule_idle_reap_locked(self) -> None:
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+            self._idle_timer = None
+        if self.idle_timeout <= 0 or self._proc is None:
+            return
+        timer = threading.Timer(self.idle_timeout, self._reap_if_idle)
+        timer.daemon = True
+        timer.name = "ga-web-worker-idle"
+        timer.start()
+        self._idle_timer = timer
+
+    def _reap_if_idle(self) -> None:
+        with self._lock:
+            if self._proc is None:
+                return
+            if (time.monotonic() - self._last_used) >= self.idle_timeout:
+                log.info("reaping idle external GA web worker after %.0fs", self.idle_timeout)
+                self._stop_locked()
+            else:
+                self._schedule_idle_reap_locked()
 
     def call(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
+            self._last_used = time.monotonic()
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+                self._idle_timer = None
             req_id = uuid.uuid4().hex
             try:
                 self._start_locked()
@@ -122,6 +157,8 @@ class _ExternalGaWebTools:
                     self._cond.wait(min(remaining, 0.2))
                 response = self._responses.pop(req_id)
 
+            self._last_used = time.monotonic()
+            self._schedule_idle_reap_locked()
             if not response.get("ok"):
                 return self._error(str(response.get("error") or "external GA web worker failed"))
             result = response.get("result")
@@ -175,6 +212,9 @@ class _ExternalGaWebTools:
         threading.Thread(target=self._read_stderr, args=(self._proc,), daemon=True, name="ga-web-worker-err").start()
 
     def _stop_locked(self) -> None:
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+            self._idle_timer = None
         proc = self._proc
         self._proc = None
         if proc and proc.poll() is None:

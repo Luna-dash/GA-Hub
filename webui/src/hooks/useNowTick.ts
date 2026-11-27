@@ -8,8 +8,19 @@ export function useNowTick(intervalMs: number | null): number {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (intervalMs === null) return
-    const timer = window.setInterval(() => setNow(Date.now()), intervalMs)
-    return () => window.clearInterval(timer)
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      setNow(Date.now())
+    }
+    const timer = window.setInterval(tick, intervalMs)
+    const onVis = () => {
+      if (document.visibilityState !== 'hidden') setNow(Date.now())
+    }
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis)
+    return () => {
+      window.clearInterval(timer)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis)
+    }
   }, [intervalMs])
   return now
 }

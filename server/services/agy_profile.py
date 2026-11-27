@@ -1348,6 +1348,34 @@ def clean_agy_env(
     use_vault = bool(vault_only or headless_login)
     home = profile_vault_home(profile_id) if use_vault else workspace_home()
     gemini_dir = profile_vault_gemini_dir(profile_id) if use_vault else workspace_gemini_dir()
+    # Preserve host toolchain & package caches before redirecting HOME/USERPROFILE
+    # so tools run inside ACP sessions do not re-download GB-scale toolchains into
+    # agy-profiles (observed: 1.93 GB duplicate .rustup + .cargo).
+    host_home_raw = raw.get("USERPROFILE") or raw.get("HOME") if os.name == "nt" else raw.get("HOME")
+    host_home = Path(host_home_raw) if host_home_raw else Path.home()
+    toolchain_defaults = {
+        "RUSTUP_HOME": str(host_home / ".rustup"),
+        "CARGO_HOME": str(host_home / ".cargo"),
+        "GOMODCACHE": str(host_home / "go" / "pkg" / "mod"),
+        "PIP_CACHE_DIR": (
+            str(host_home / "AppData" / "Local" / "pip" / "Cache")
+            if os.name == "nt"
+            else str(host_home / ".cache" / "pip")
+        ),
+        "UV_CACHE_DIR": (
+            str(host_home / "AppData" / "Local" / "uv" / "cache")
+            if os.name == "nt"
+            else str(host_home / ".cache" / "uv")
+        ),
+        "NPM_CONFIG_CACHE": (
+            str(host_home / "AppData" / "Local" / "npm-cache")
+            if os.name == "nt"
+            else str(host_home / ".npm")
+        ),
+    }
+    for var_name, default_val in toolchain_defaults.items():
+        if not env.get(var_name):
+            env[var_name] = default_val
     env.update({
         "GEMINI_HOME": str(gemini_dir),
         "HOME": str(home),

@@ -34,7 +34,6 @@ ENV_SIDECAR_PYTHON = "GA_HUB_PYTHON"
 # Build-only MSVC override and private cmd subprocess path transfer.
 ENV_BUILD_VCVARSALL = "GA_HUB_VCVARSALL"
 ENV_BUILD_VCVARS_SCRIPT = "GA_HUB_VCVARS_SCRIPT"
-ENV_NODE_LICENSE = "GA_HUB_NODE_LICENSE"
 # Desktop shell: dev-mode sidecar override and debug bridge port
 # (src-tauri/src/main.rs).
 ENV_SIDECAR = "GA_HUB_SIDECAR"
@@ -79,13 +78,6 @@ ENV_GAHUB_ALLOWED_HOSTS = "GAHUB_ALLOWED_HOSTS"
 # and does not sweep the registry — so they outlive GA-Hub on purpose. Unset
 # (the default) means GA-Hub's exit takes its children with it, however it dies.
 ENV_GAHUB_KEEP_CHILDREN_ON_EXIT = "GAHUB_KEEP_CHILDREN_ON_EXIT"
-# services/hub_session_projection (plan §7.5): max attached phone peers and
-# the dev-instance name suffix "-dev"/"-t2" so a test run can coexist with a
-# live projection without hub-name contention; include-system opts the
-# system-* rows (e.g. scheduled tasks) into the attach scope.
-ENV_GAHUB_HUB_PROJECTION_MAX = "GAHUB_HUB_PROJECTION_MAX"
-ENV_GAHUB_HUB_PROJECTION_SUFFIX = "GAHUB_HUB_PROJECTION_SUFFIX"
-ENV_GAHUB_HUB_PROJECTION_INCLUDE_SYSTEM = "GAHUB_HUB_PROJECTION_INCLUDE_SYSTEM"
 # MEI cleanup test gates (src-tauri/src/mei_cleanup.rs): explicit opt-ins for
 # the ignored real-%TEMP% dry-run; these never enable cleanup by default.
 ENV_GAHUB_MEI_SWEEP_ALLOW_REAL_TEMP = "GAHUB_MEI_SWEEP_ALLOW_REAL_TEMP"

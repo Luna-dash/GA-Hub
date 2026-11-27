@@ -1027,6 +1027,50 @@ def test_soft_cancel_grace_timeout_auto_retires_dirty_worker(tmp_path, monkeypat
     mgr.shutdown()
 
 
+def test_get_worker_waits_for_retiring_session_before_raising_409(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    assert agy_runtime.CANCEL_GRACE_TIMEOUT <= 2.5
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda *args: "1.5.14")
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    db = tmp_path / "sessions.db"
+    old_worker = mgr.get_worker(str(db), "default", "s-retire-wait", tmp_path)
+    key = (str(db), "default", "s-retire-wait")
+    closed_ev = threading.Event()
+    with mgr._lock:
+        mgr._workers.pop(key, None)
+        old_worker._retired = True
+        old_worker._dirty = True
+        mgr._retiring[key] = (old_worker, closed_ev)
+
+    def _finish_retire():
+        time.sleep(0.06)
+        closed_ev.set()
+
+    threading.Thread(target=_finish_retire, daemon=True).start()
+    replacement = mgr.get_worker(str(db), "default", "s-retire-wait", tmp_path)
+    assert replacement is not old_worker
+
+    # If retiring genuinely hangs beyond _retire_wait_timeout, 409 is still raised.
+    mgr._retire_wait_timeout = 0.05
+    stuck_closed = threading.Event()
+    with mgr._lock:
+        mgr._workers.pop(key, None)
+        replacement._retired = True
+        replacement._dirty = True
+        mgr._retiring[key] = (replacement, stuck_closed)
+    with pytest.raises(agy_profile.AgyProfileError) as exc_info:
+        mgr.get_worker(str(db), "default", "s-retire-wait", tmp_path)
+    assert exc_info.value.status == 409
+    stuck_closed.set()
+    mgr.shutdown()
+
+
 def test_cancel_turn_aborts_hung_handshake_without_deadlock(tmp_path, monkeypatch):
     import threading
     import time

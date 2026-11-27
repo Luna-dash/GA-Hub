@@ -18,11 +18,22 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
   useEffect(() => {
     if (!active) return
     let alive = true
-    const refresh = () => novaApi.status().then(s => { if (alive) setStatus(s) })
-      .catch(() => { if (alive) setError('无法读取 Nova 本机状态') })
-    void refresh()
-    const timer = setInterval(() => { void refresh() }, 5000)
-    return () => { alive = false; clearInterval(timer) }
+    const refresh = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      void novaApi.status().then(s => { if (alive) setStatus(s) })
+        .catch(() => { if (alive) setError('无法读取 Nova 本机状态') })
+    }
+    refresh()
+    const timer = setInterval(refresh, 5000)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refresh()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      alive = false
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [active])
 
   const act = async (action: 'associate' | 'revoke' | 'reconnect' | 'pause' | 'resume') => {

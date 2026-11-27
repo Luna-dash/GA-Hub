@@ -191,6 +191,19 @@ class ScheduledChatService:
                     dispatched += 1
         return dispatched
 
+    def _next_wait_seconds(self) -> float | None:
+        with self._lock:
+            due_times = [
+                (t.retry_at if t.retry_at is not None else t.scheduled_for)
+                for t in self._tasks.values()
+                if t.status == "pending"
+            ]
+        if not due_times:
+            return None
+        earliest = min(due_times)
+        remaining = earliest - self._clock()
+        return min(self._poll_seconds, max(0.05, remaining))
+
     def _run(self) -> None:
         while not self._stop.is_set():
             # Clear BEFORE the sweep: a wake set during run_due_once must
@@ -200,7 +213,8 @@ class ScheduledChatService:
                 self.run_due_once()
             except Exception:
                 log.exception("scheduled chat worker iteration failed")
-            self._wake.wait(self._poll_seconds)
+            wait_sec = self._next_wait_seconds()
+            self._wake.wait(wait_sec)
 
     @staticmethod
     def _decode_task(row: dict) -> ScheduledChat:

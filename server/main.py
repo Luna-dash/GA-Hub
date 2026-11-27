@@ -46,8 +46,6 @@ from .runtime_guard import CoreContractGuard
 
 log = logging.getLogger(__name__)
 
-FEISHU_AUTO_START_DELAY_SECONDS = 180
-
 
 async def _cancel_background_task(task: asyncio.Task[Any] | None) -> None:
     """Cancel and reap an owned asyncio task during application shutdown."""
@@ -58,42 +56,6 @@ async def _cancel_background_task(task: asyncio.Task[Any] | None) -> None:
         await task
     except asyncio.CancelledError:
         pass
-
-
-async def _delayed_feishu_autostart(
-    service: Any,
-    delay_seconds: int = FEISHU_AUTO_START_DELAY_SECONDS,
-) -> None:
-    """Start the persistent Feishu gateway shortly after GA-Hub boots.
-
-    The Feishu process can take over stdio and initialize GA resources, so keep it
-    off the critical startup path and reuse FeishuService.start() for de-duplication
-    against an already-running/manual fsapp.py process.
-    """
-    wait = max(0, delay_seconds)
-    setter = getattr(service, "set_autostart_state", None)
-    if callable(setter):
-        setter("waiting", eta=time.time() + wait)
-    try:
-        await asyncio.sleep(wait)
-        if callable(setter):
-            setter("starting")
-        result = await asyncio.to_thread(service.start)
-        if callable(setter):
-            if isinstance(result, dict) and result.get("ok") is False:
-                reason = str(result.get("reason") or result.get("error") or "")
-                setter("skipped", error=reason or None)
-            else:
-                setter("completed")
-        log.info("feishu auto-start completed after %ss: %s", delay_seconds, result)
-    except asyncio.CancelledError:
-        if callable(setter):
-            setter(None)
-        raise
-    except Exception as e:
-        if callable(setter):
-            setter("failed", error=str(e))
-        log.warning("feishu auto-start skipped after %ss: %s", delay_seconds, e)
 
 
 # ── Host-header allow-list (anti DNS-rebinding) ──────────────────────────────
@@ -160,7 +122,7 @@ for _ext, _mime in (
 WEBUI_DIST = _paths.ADMIN_ROOT / "webui" / "dist"
 # Keep in sync with webui/src/config/pages.ts plus explicit legacy redirects.
 SPA_ROUTES = frozenset({
-    "chat", "dashboard", "theme-tasks", "feishu", "conversations",
+    "chat", "dashboard", "theme-tasks", "conversations",
     "memory", "goal-hive", "conductor", "mykey", "tasks",
     "autonomous", "tokens", "settings", "anti",
 })
@@ -272,12 +234,12 @@ def _mount_static(app: FastAPI) -> None:
 def _normal_routers() -> tuple[APIRouter, ...]:
     """Load the runtime routes atomically; diagnostics have no GA dependency."""
     from .routes import (
-        agent, feishu, conversations, memory, autonomous, conductor, upload,
+        agent, im, conversations, memory, autonomous, conductor, upload,
         logs, mykey, services, sessions, preferences, tasks,
         tokens, goalhive, anti, file_transfer,
     )
     return tuple(module.router for module in (
-        agent, feishu, conversations, memory, autonomous, conductor, upload,
+        agent, im, conversations, memory, autonomous, conductor, upload,
         logs, mykey, services, sessions, preferences, tasks,
         tokens, goalhive, anti, file_transfer,
     ))
@@ -286,17 +248,18 @@ def _normal_routers() -> tuple[APIRouter, ...]:
 def create_app() -> FastAPI:
     setup_mode = _paths.GA_ROOT is None
     runtime_initialized = False
-    feishu_autostart_task: asyncio.Task[Any] | None = None
     services = AppServices()
     # Bind the status registry to the lifespan-owned instances BEFORE startup
     # so /api/status, /api/health and /api/services/panel all read the exact
     # objects this app created (no cross-app singleton leakage, no lazy
     # construction from a status read).
     from .routes.nova import build_nova_router
+    from .services.im_adapter import IMRegistry
     from .services.nova_service import NovaService
     from .services.service_registry import ServiceRegistry
     from .services.session_lifecycle import SessionLifecycle
 
+    im_reg = IMRegistry()
     lifecycle = SessionLifecycle(
         ensure_runtime_available=lambda: require_core_contract(app.state.core_contract),
     )
@@ -305,7 +268,17 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
+        from concurrent.futures import ThreadPoolExecutor
+
         owner_loop = asyncio.get_running_loop()
+        io_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="gahub-io")
+        owner_loop.set_default_executor(io_executor)
+        try:
+            import anyio.to_thread
+
+            anyio.to_thread.current_default_thread_limiter().total_tokens = 12
+        except Exception:
+            pass
         try:
             await _startup()
             await nova.start()
@@ -323,6 +296,7 @@ def create_app() -> FastAPI:
             finally:
                 services.clear()
                 bus.detach_loop(owner_loop)
+                io_executor.shutdown(wait=False)
 
     app = FastAPI(
         title="GenericAgent Admin API" + (" (setup mode)" if setup_mode else ""),
@@ -331,6 +305,7 @@ def create_app() -> FastAPI:
     )
     app.state.setup_mode = setup_mode
     app.state.services = services
+    app.state.im_registry = im_reg
     app.state.service_registry = app_registry
     app.state.core_contract = None
     app.state.route_load_error = None
@@ -379,10 +354,10 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     async def _startup():
-        nonlocal feishu_autostart_task, runtime_initialized
+        nonlocal runtime_initialized
         services.clear()
+        services.im = im_reg
         runtime_initialized = False
-        feishu_autostart_task = None
         bus.attach_loop(asyncio.get_running_loop())
         # Collect long-lived children a previous GA-Hub left behind (crash or
         # taskkill /F — the graceful path reaps its own). Runs before any
@@ -404,9 +379,9 @@ def create_app() -> FastAPI:
             )
             return
 
-        # P0: probe the GA core contract *before* AgentService wires itself to
-        # it. Failure does NOT abort startup (per P0 spec: the service still
-        # boots to the diagnostic page); the report is stored so
+        # P0: probe the GA core contract *before* runtime services wire to it.
+        # Failure does NOT abort startup (per P0 spec: the service still boots
+        # to the diagnostic page); the report is stored so
         # /api/health/core-contract and the chat WS can surface a precise
         # 503 core_contract_failed instead of an opaque ImportError.
         try:
@@ -428,21 +403,15 @@ def create_app() -> FastAPI:
 
         # All runtime creation and host adaptation happen after compatibility
         # has been established. A failed probe never starts task producers.
-        from .services.agent_service import AgentService
         from .services.autonomous_scheduler import AutonomousScheduler
         from .services.scheduler_host import SchedulerHost
         from .services.task_scheduler import TaskScheduler
-        from .services.feishu_service import FeishuService
         from .routes.tokens import initialize_usage_tracking
 
         lifecycle.prepare()
         runtime_initialized = True
         initialize_usage_tracking()
         log.info("GA core contract probe passed (commit %s)", app.state.core_contract.core_commit)
-
-        agent_svc = AgentService.instance()
-        services.agent = agent_svc
-        agent_svc.start_run_thread()
 
         scheduler_host = SchedulerHost()
         services.scheduler_host = scheduler_host
@@ -489,18 +458,6 @@ def create_app() -> FastAPI:
         except Exception:
             log.debug("agy runtime unavailable during startup", exc_info=True)
 
-        try:
-            fs = FeishuService.instance()
-            services.feishu = fs
-            fs.start_log_watcher()
-            log.info("feishu log watcher started")
-            feishu_autostart_task = asyncio.create_task(
-                _delayed_feishu_autostart(fs), name="feishu-auto-start"
-            )
-            log.info("feishu auto-start scheduled in %s seconds", FEISHU_AUTO_START_DELAY_SECONDS)
-        except Exception as e:
-            log.warning("feishu log watcher/auto-start init skipped: %s", e)
-
         # One-shot legacy title migration: blocking catalogue walk + sidecar
         # unlink, so it belongs to startup (off the event loop) instead of the
         # first point-lookup request.
@@ -510,33 +467,12 @@ def create_app() -> FastAPI:
             lifecycle.store,
         )
 
-        # Phone projection: expose chat sessions as hub peers (plan §7.3).
-        # The composition root injects the accessors it owns — services/ must
-        # not import routes/ (import-direction test) — and the routes resolve
-        # this same domain from app.state.
-        try:
-            from .services.hub_session_projection import start_hub_session_projection
-
-            start_hub_session_projection(
-                store=lifecycle.store,
-                get_coordinator=lifecycle.coordinator,
-                peek_coordinator=lifecycle.peek_coordinator,
-            )
-        except Exception:
-            log.exception("hub session projection start failed")
-
     async def _shutdown():
         presentation = getattr(app.state, "message_presentation", None)
         if presentation is not None:
             await presentation.close()
         if not runtime_initialized:
             return
-        # Stop the phone projection first: no new puts should enter admission.
-        try:
-            from .services.hub_session_projection import stop_hub_session_projection
-            await asyncio.to_thread(stop_hub_session_projection)
-        except Exception:
-            log.exception("hub session projection stop failed")
         if not setup_mode:
             from .services.session_lifecycle import session_lifecycle_of
 
@@ -556,7 +492,6 @@ def create_app() -> FastAPI:
                     )
                 except Exception:
                     log.exception("session runtime abort failed")
-                await _cancel_background_task(feishu_autostart_task)
                 # Closes every lifespan-owned service (including lazily constructed
                 # Goal/Hive and the conductor engine), reaping spawned child
                 # processes cleanly. The desktop sidecar shares this exact lifespan.
@@ -573,10 +508,12 @@ def create_app() -> FastAPI:
     from .routes.updates import router as updates_router
     from .routes.appearance import router as appearance_router
     from .routes.system import router as system_router
+    from .routes.storage import router as storage_router
     app.include_router(updates_router)
     app.include_router(appearance_router)
     app.include_router(event_routes.router)
     app.include_router(system_router)
+    app.include_router(storage_router)
 
     if not setup_mode:
         try:

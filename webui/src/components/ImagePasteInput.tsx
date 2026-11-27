@@ -36,6 +36,7 @@ interface Props {
   stopActive?: boolean
   stopDisabled?: boolean
   stopTitle?: string
+  stopState?: 'idle' | 'stopping' | 'force'
   activeSubmit?: {
     label: string
     title?: string
@@ -92,7 +93,7 @@ interface PendingUpload {
 }
 
 export function ImagePasteInput({
-  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, stopDisabled, stopTitle, activeSubmit, submitLabel, submitAccessory, btwSessionId, onSlashCommand, slashAutocomplete,
+  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, stopDisabled, stopTitle, stopState = 'idle', activeSubmit, submitLabel, submitAccessory, btwSessionId, onSlashCommand, slashAutocomplete,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
   inputLabel, readOnly, maxLength, disabled, submitDisabled, scheduleDisabled = submitDisabled, acceptFiles = true, autoFocus = true,
 }: Props) {
@@ -727,18 +728,27 @@ export function ImagePasteInput({
           type="button"
           onClick={stopActive ? onStop : submit}
           disabled={disabled || (stopActive ? stopDisabled : submitDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0))}
+          data-stop-state={stopActive ? stopState : undefined}
           className={clsx(
             'mb-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
             stopActive
-              ? 'group border border-status-danger/40 bg-status-danger/10 text-status-danger transition-colors hover:border-status-danger/65 hover:bg-status-danger/15 hover:text-status-danger-strong disabled:cursor-not-allowed disabled:border-[var(--c-disabled-line)] disabled:bg-[var(--c-disabled-bg)] disabled:text-[var(--c-disabled-text)] disabled:opacity-100'
+              ? (stopState === 'force'
+                ? 'group border border-status-danger bg-status-danger/20 text-status-danger ring-1 ring-status-danger/35 transition-colors hover:bg-status-danger/25 hover:text-status-danger-strong disabled:cursor-not-allowed disabled:opacity-60'
+                : stopState === 'stopping'
+                  ? 'group border border-status-danger/35 bg-status-danger/10 text-status-danger transition-colors disabled:cursor-wait disabled:opacity-80'
+                  : 'group border border-status-danger/40 bg-status-danger/10 text-status-danger transition-colors hover:border-status-danger/65 hover:bg-status-danger/15 hover:text-status-danger-strong disabled:cursor-not-allowed disabled:border-[var(--c-disabled-line)] disabled:bg-[var(--c-disabled-bg)] disabled:text-[var(--c-disabled-text)] disabled:opacity-100')
               : 'ga-solid-primary',
           )}
           aria-label={stopActive ? '停止' : (submitLabel ?? '发送')}
           title={stopActive ? (stopTitle ?? (stopDisabled ? '正在停止当前任务…' : '停止当前会话任务')) : attachmentHint ?? submitLabel ?? '发送消息'}
         >{stopActive ? (
-          <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] transition-transform group-hover:scale-105 group-disabled:scale-100" aria-hidden="true">
-            <circle cx="12" cy="12" r="9" fill="currentColor" />
-          </svg>
+          stopState === 'stopping' ? (
+            <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] transition-transform group-hover:scale-105 group-disabled:scale-100" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" fill="currentColor" />
+            </svg>
+          )
         ) : (
           <SendHorizontal className="h-4 w-4" aria-hidden="true" />
         )}</button>

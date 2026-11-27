@@ -305,8 +305,13 @@ class EventBus:
                             self._pending_dispatch.clear()
 
     # ── producers ────────────────────────────────────────────────
-    def publish(self, topic: str, payload: dict | None = None) -> None:
-        """Thread-safe publish. Safe to call from any thread."""
+    def publish(self, topic: str, payload: dict | None = None, *, ephemeral: bool = False) -> None:
+        """Thread-safe publish. Safe to call from any thread.
+
+        ``ephemeral=True`` delivers to currently connected subscribers without
+        retaining the payload in the replay history ring (used for cumulative
+        streaming chunks such as ``chat:next``).
+        """
         safe_payload = _json_safe(payload or {})
         schedule = False
         loop: asyncio.AbstractEventLoop | None = None
@@ -319,15 +324,16 @@ class EventBus:
                 payload=safe_payload if isinstance(safe_payload, dict) else {"value": safe_payload},
                 event_id=event_id,
             )
-            if self._history.maxlen == 0:
-                self._evicted_topic_ids[evt.topic] = evt.event_id
-            elif (
-                self._history.maxlen is not None
-                and len(self._history) == self._history.maxlen
-            ):
-                evicted = self._history[0]
-                self._evicted_topic_ids[evicted.topic] = evicted.event_id
-            self._history.append(evt)
+            if not ephemeral:
+                if self._history.maxlen == 0:
+                    self._evicted_topic_ids[evt.topic] = evt.event_id
+                elif (
+                    self._history.maxlen is not None
+                    and len(self._history) == self._history.maxlen
+                ):
+                    evicted = self._history[0]
+                    self._evicted_topic_ids[evicted.topic] = evicted.event_id
+                self._history.append(evt)
             loop = self._loop
             if loop is None:
                 return

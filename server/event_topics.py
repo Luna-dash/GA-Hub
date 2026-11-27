@@ -37,13 +37,11 @@ SESSION_RUNTIME = "session:runtime"
 # ── anti (agy) runtime status ───────────────────────────────────
 ANTI_RUNTIME = "anti:runtime"
 
-# ── feishu channel ──────────────────────────────────────────────
-FEISHU_STARTED = "feishu:started"
-FEISHU_STOPPED = "feishu:stopped"
-FEISHU_CHAT = "feishu:chat"
-FEISHU_CHECK = "feishu:check"
-FEISHU_SEND = "feishu:send"
-FEISHU_KEYS_SAVED = "feishu:keys_saved"
+# ── IM adapter channel (generic extension point) ────────────────
+IM_STARTED = "im:started"
+IM_STOPPED = "im:stopped"
+IM_MESSAGE = "im:message"
+IM_STATUS = "im:status"
 
 # ── scheduled task domain ───────────────────────────────────────
 TASK_FIRED = "task:fired"

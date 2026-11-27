@@ -680,13 +680,42 @@ async def session_events(ws: WebSocket, session_id: str):
         )
 
         async def forward_events() -> None:
-            async for event in subscription.live():
-                frame = _session_event_frame(session_id, event)
-                if frame is not None:
-                    if compact:
-                        await send_snapshot()
-                    else:
-                        await ws.send_json(frame)
+            compact_flush_task: asyncio.Task[None] | None = None
+
+            async def _flush_compact_later() -> None:
+                nonlocal compact_flush_task
+                try:
+                    await asyncio.sleep(0.06)
+                    await send_snapshot()
+                finally:
+                    compact_flush_task = None
+
+            try:
+                async for event in subscription.live():
+                    frame = _session_event_frame(session_id, event)
+                    if frame is not None:
+                        if compact:
+                            if event.topic == "chat:next":
+                                if compact_flush_task is None:
+                                    compact_flush_task = asyncio.create_task(_flush_compact_later())
+                            else:
+                                if compact_flush_task is not None:
+                                    compact_flush_task.cancel()
+                                    try:
+                                        await compact_flush_task
+                                    except asyncio.CancelledError:
+                                        pass
+                                    compact_flush_task = None
+                                await send_snapshot()
+                        else:
+                            await ws.send_json(frame)
+            finally:
+                if compact_flush_task is not None:
+                    compact_flush_task.cancel()
+                    try:
+                        await compact_flush_task
+                    except asyncio.CancelledError:
+                        pass
             if subscription.live_resync_reason is not None:
                 log.warning(
                     "session_ws_resync session_id=%s ws_connection_id=%s "

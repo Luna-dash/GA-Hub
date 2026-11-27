@@ -140,7 +140,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/updates/preflight": {
+    "/api/updates/apply": {
         parameters: {
             query?: never;
             header?: never;
@@ -149,8 +149,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Preflight Update */
-        post: operations["preflight_update_api_updates_preflight_post"];
+        /**
+         * Apply Update
+         * @description One-click restart & update via the lightweight Rust helper.
+         */
+        post: operations["apply_update_api_updates_apply_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -168,40 +171,6 @@ export interface paths {
         put?: never;
         /** Cancel Update */
         post: operations["cancel_update_api_updates_cancel_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/updates/request": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Request Update */
-        post: operations["request_update_api_updates_request_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/updates/approve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Approve Update */
-        post: operations["approve_update_api_updates_approve_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -422,6 +391,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/storage/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Storage Summary */
+        get: operations["storage_summary_api_storage_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/storage/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Storage Cleanup */
+        post: operations["storage_cleanup_api_storage_cleanup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent/status": {
         parameters: {
             query?: never;
@@ -620,7 +623,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/feishu/status": {
+    "/api/im/status": {
         parameters: {
             query?: never;
             header?: never;
@@ -628,111 +631,9 @@ export interface paths {
             cookie?: never;
         };
         /** Status */
-        get: operations["status_api_feishu_status_get"];
+        get: operations["status_api_im_status_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/feishu/check": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Check */
-        post: operations["check_api_feishu_check_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/feishu/keys": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Save Keys */
-        put: operations["save_keys_api_feishu_keys_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/feishu/start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Start */
-        post: operations["start_api_feishu_start_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/feishu/stop": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Stop */
-        post: operations["stop_api_feishu_stop_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/feishu/logs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Logs */
-        get: operations["logs_api_feishu_logs_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/feishu/send": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Send */
-        post: operations["send_api_feishu_send_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4253,7 +4154,7 @@ export interface components {
             /** Mode */
             mode?: "setup" | null;
             agent?: components["schemas"]["GlobalAgentStatus"] | null;
-            feishu?: components["schemas"]["FeishuProcessStatus"] | null;
+            im?: components["schemas"]["IMStatusResp"] | null;
             autonomous?: components["schemas"]["SchedulerDomainCount"] | null;
             tasks?: components["schemas"]["SchedulerDomainCount"] | null;
             /** Schedulers */
@@ -5138,39 +5039,6 @@ export interface components {
             /** Events */
             events: components["schemas"]["EventBusEnvelope"][];
         };
-        /**
-         * FeishuProcessStatus
-         * @description Feishu gateway status, or an initialization diagnostic.
-         *
-         *     The OpenAPI schema intentionally describes the complete healthy response;
-         *     initialization failures are represented by ``error`` in ``/api/status``.
-         */
-        FeishuProcessStatus: {
-            /** Running */
-            running: boolean;
-            /** Pid */
-            pid: number | null;
-            /** Returncode */
-            returncode: number | null;
-            /** External */
-            external: boolean;
-            /** Fsapp Path */
-            fsapp_path: string;
-            /** Fsapp Exists */
-            fsapp_exists: boolean;
-            /** Python */
-            python: string;
-            /** Log File */
-            log_file: string;
-            /** Log Exists */
-            log_exists: boolean;
-            /** Last Check */
-            last_check: unknown | null;
-            /** Last Check Ts */
-            last_check_ts: number;
-        } & {
-            [key: string]: unknown;
-        };
         /** FontDownloadResp */
         FontDownloadResp: {
             /** Pack Id */
@@ -5258,136 +5126,6 @@ export interface components {
             packs: components["schemas"]["FontPackInfoResp"][];
             download?: components["schemas"]["FontDownloadResp"] | null;
         };
-        /** FsCheckResp */
-        FsCheckResp: {
-            /** Ready */
-            ready?: boolean | null;
-            /** Ok */
-            ok?: boolean | null;
-            /** Returncode */
-            returncode?: number | null;
-            /** Error */
-            error?: string | null;
-            /** Raw */
-            raw?: string | null;
-            /** Fsapp Path */
-            fsapp_path?: string | null;
-            /** Allowed Users */
-            allowed_users?: string[] | null;
-            /** Public Access */
-            public_access?: boolean | null;
-            /** Agent Error */
-            agent_error?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** FsKeysReq */
-        FsKeysReq: {
-            /** App Id */
-            app_id: string;
-            /** App Secret */
-            app_secret: string;
-            /**
-             * Allowed Users
-             * @default
-             */
-            allowed_users: string;
-        };
-        /** FsKeysResp */
-        FsKeysResp: {
-            /** Ok */
-            ok: boolean;
-            /** App Id Masked */
-            app_id_masked?: string | null;
-            /** Allowed Users Saved */
-            allowed_users_saved?: boolean | null;
-        };
-        /** FsSendReq */
-        FsSendReq: {
-            /** Receive Id */
-            receive_id: string;
-            /** Text */
-            text: string;
-            /**
-             * Receive Id Type
-             * @default open_id
-             * @enum {string}
-             */
-            receive_id_type: "open_id" | "chat_id" | "user_id" | "union_id" | "email";
-            /**
-             * Use Card
-             * @default false
-             */
-            use_card: boolean;
-        };
-        /** FsSendResp */
-        FsSendResp: {
-            /** Ok */
-            ok: boolean;
-            /** Returncode */
-            returncode?: number | null;
-            /** Raw */
-            raw?: string | null;
-            /** Message Id */
-            message_id?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** FsStartResp */
-        FsStartResp: {
-            /** Started */
-            started: boolean;
-            /** Running */
-            running: boolean;
-            /** Pid */
-            pid?: number | null;
-            /** Log File */
-            log_file?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** FsStatusResp */
-        FsStatusResp: {
-            /** Running */
-            running: boolean;
-            /** Pid */
-            pid: number | null;
-            /** Returncode */
-            returncode: number | null;
-            /** External */
-            external: boolean;
-            /** Fsapp Path */
-            fsapp_path: string;
-            /** Fsapp Exists */
-            fsapp_exists: boolean;
-            /** Python */
-            python: string;
-            /** Log File */
-            log_file: string;
-            /** Log Exists */
-            log_exists: boolean;
-            last_check?: components["schemas"]["FsCheckResp"] | null;
-            /**
-             * Last Check Ts
-             * @default 0
-             */
-            last_check_ts: number;
-            /** Autostart State */
-            autostart_state?: string | null;
-            /** Autostart Remaining Seconds */
-            autostart_remaining_seconds?: number | null;
-            /** Autostart Error */
-            autostart_error?: string | null;
-        };
-        /** FsStopResp */
-        FsStopResp: {
-            /** Stopped */
-            stopped: boolean;
-            /** Running */
-            running: boolean;
-            /** Pid */
-            pid?: number | null;
-        };
         /** GlobalAgentStatus */
         GlobalAgentStatus: {
             /** Is Running */
@@ -5444,6 +5182,50 @@ export interface components {
             created_at: string;
             /** Updated At */
             updated_at: string;
+        };
+        /**
+         * IMAdapterStatus
+         * @description Status reported by a registered generic IM channel adapter.
+         */
+        IMAdapterStatus: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Running
+             * @default false
+             */
+            running: boolean;
+            /**
+             * State
+             * @default stopped
+             */
+            state: string;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            /** Error */
+            error?: string | null;
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * IMStatusResp
+         * @description Read-only status of the generic IM adapter registry.
+         */
+        IMStatusResp: {
+            /**
+             * Configured
+             * @default false
+             */
+            configured: boolean;
+            /** Adapters */
+            adapters?: components["schemas"]["IMAdapterStatus"][];
         };
         /** LLMInfoResp */
         LLMInfoResp: {
@@ -6408,6 +6190,50 @@ export interface components {
             /** Query */
             query: string;
         };
+        /** StorageCategoryResp */
+        StorageCategoryResp: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Description */
+            description: string;
+            /** Bytes */
+            bytes: number;
+            /** File Count */
+            file_count: number;
+            /** Cleanable */
+            cleanable: boolean;
+            /**
+             * Caution
+             * @default false
+             */
+            caution: boolean;
+            /** Path */
+            path: string;
+        };
+        /** StorageCleanupReq */
+        StorageCleanupReq: {
+            /** Categories */
+            categories?: string[];
+        };
+        /** StorageCleanupResp */
+        StorageCleanupResp: {
+            /** Reclaimed Bytes */
+            reclaimed_bytes: number;
+            /** Removed Entries */
+            removed_entries: number;
+            /** Failed Entries */
+            failed_entries: number;
+            summary: components["schemas"]["StorageSummaryResp"];
+        };
+        /** StorageSummaryResp */
+        StorageSummaryResp: {
+            /** Total Bytes */
+            total_bytes: number;
+            /** Categories */
+            categories: components["schemas"]["StorageCategoryResp"][];
+        };
         /** TaskMutationResp */
         TaskMutationResp: {
             /** Ok */
@@ -6811,19 +6637,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** UpdateHandoffResp */
-        UpdateHandoffResp: {
-            /** Id */
-            id: string;
-            /** State */
-            state: string;
-            /** Not Before */
-            not_before?: number | null;
-            /** Error */
-            error?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
         /** UpdateIdentity */
         UpdateIdentity: {
             /** Id */
@@ -6839,6 +6652,8 @@ export interface components {
             version?: string | null;
             /** Commit */
             commit?: string | null;
+            /** Error */
+            error?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -6868,7 +6683,6 @@ export interface components {
             sources: string[];
             /** Data Epoch */
             data_epoch: number;
-            handoff?: components["schemas"]["UpdateHandoffResp"] | null;
         } & {
             [key: string]: unknown;
         };
@@ -7108,7 +6922,7 @@ export interface operations {
             };
         };
     };
-    preflight_update_api_updates_preflight_post: {
+    apply_update_api_updates_apply_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -7127,9 +6941,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UpdatePlanResp"];
                 };
             };
             /** @description Validation Error */
@@ -7163,76 +6975,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UpdatePlanResp"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    request_update_api_updates_request_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateIdentity"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    approve_update_api_updates_approve_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateIdentity"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
             /** @description Validation Error */
@@ -7584,6 +7326,59 @@ export interface operations {
             };
         };
     };
+    storage_summary_api_storage_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageSummaryResp"];
+                };
+            };
+        };
+    };
+    storage_cleanup_api_storage_cleanup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageCleanupReq"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageCleanupResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     status_api_agent_status_get: {
         parameters: {
             query?: never;
@@ -7887,7 +7682,7 @@ export interface operations {
             };
         };
     };
-    status_api_feishu_status_get: {
+    status_api_im_status_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -7902,176 +7697,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FsStatusResp"];
-                };
-            };
-        };
-    };
-    check_api_feishu_check_post: {
-        parameters: {
-            query?: {
-                init_agent?: boolean;
-                force?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FsCheckResp"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    save_keys_api_feishu_keys_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FsKeysReq"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FsKeysResp"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    start_api_feishu_start_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FsStartResp"];
-                };
-            };
-        };
-    };
-    stop_api_feishu_stop_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FsStopResp"];
-                };
-            };
-        };
-    };
-    logs_api_feishu_logs_get: {
-        parameters: {
-            query?: {
-                tail?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LogLinesResp"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    send_api_feishu_send_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FsSendReq"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FsSendResp"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["IMStatusResp"];
                 };
             };
         };

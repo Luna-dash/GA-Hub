@@ -4,8 +4,21 @@ import path from 'node:path'
 
 const BACKEND = process.env.VITE_BACKEND ?? 'http://127.0.0.1:8765'
 
+function stripLegacyKatexFonts() {
+  return {
+    name: 'strip-legacy-katex-fonts',
+    generateBundle(_options: unknown, bundle: Record<string, unknown>) {
+      for (const fileName of Object.keys(bundle)) {
+        if (/KaTeX_.*\.(?:woff|ttf)$/i.test(fileName)) {
+          delete bundle[fileName]
+        }
+      }
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), stripLegacyKatexFonts()],
   resolve: {
     alias: { '@': path.resolve(__dirname, 'src') },
   },

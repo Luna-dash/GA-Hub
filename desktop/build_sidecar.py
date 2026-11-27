@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Build the target-specific, self-contained Tauri production sidecar."""
+"""Build the target-specific, self-contained Tauri production sidecar (--onedir)."""
 from __future__ import annotations
+
 import argparse
 import os
 import shutil
@@ -16,7 +17,6 @@ if str(ROOT) not in sys.path:
 from desktop.runtime_dependencies import (
     hidden_import_args, conda_runtime_binary_args, runtime_binary_args,
 )
-from desktop.node_runtime import stage_node
 from desktop.sidecar_archive import EXCLUDED_MODULES, verify_sidecar_archive
 
 # Desktop Nova only needs the shared gateway core. Standalone deployment/UI,
@@ -29,10 +29,10 @@ MEI_BUNDLE_SENTINEL = "gahub_sidecar_bundle.json"
 
 
 def write_bundle_sentinel(staging_root: Path) -> Path:
-    """Write a marker file bundled into `_MEI*` root so cleanup identifies our unpack dir."""
+    """Write a marker file bundled into the sidecar root for diagnostics."""
     staging_root.mkdir(parents=True, exist_ok=True)
     sentinel = staging_root / MEI_BUNDLE_SENTINEL
-    sentinel.write_text('{"app":"ga-hub-sidecar"}\n', encoding="utf-8")
+    sentinel.write_text('{"app":"ga-hub-sidecar","layout":"onedir"}\n', encoding="utf-8")
     return sentinel
 
 
@@ -58,15 +58,15 @@ def _add_data_args(staged: dict[str, Path], sentinel: Path | None = None) -> lis
         args.extend(["--add-data", f"{path};assets/{name}"])
     if sentinel is not None:
         args.extend(["--add-data", f"{sentinel};."])
-    worker = ROOT / "server" / "services" / "message-presentation-worker.cjs"
-    if not worker.is_file():
-        raise RuntimeError("Build message presentation with node assets/remote_access/build-remote.cjs")
-    args.extend(["--add-data", f"{worker};server/services"])
     pricing_catalog = ROOT / "server" / "services" / "agy_pricing_catalog.json"
     if not pricing_catalog.is_file():
         raise RuntimeError(f"Missing pricing catalog: {pricing_catalog}")
     args.extend(["--add-data", f"{pricing_catalog};server/services"])
     return args
+
+
+def sidecar_dir_for_target(target: str) -> Path:
+    return BIN / f"sidecar-{target}"
 
 
 def main() -> int:
@@ -75,61 +75,69 @@ def main() -> int:
     parser.add_argument("--pyinstaller", default=sys.executable)
     args = parser.parse_args()
     suffix = ".exe" if "windows" in args.target else ""
-    destination = BIN / f"ga-hub-sidecar-{args.target}{suffix}"
-    # PyInstaller's workpath/distpath/specpath churn ~150MB per build; keep
-    # that out of the repo tree so temp/ holds no irreplaceable weight.
+    destination_dir = sidecar_dir_for_target(args.target)
+    destination_exe = destination_dir / f"ga-hub-sidecar{suffix}"
+
+    # Keep PyInstaller's build scratch out of the repository tree.
     workspace = Path(tempfile.gettempdir()) / "gahub-desktop-sidecar-build"
     workpath = workspace / "work"
     distpath = workspace / "dist"
     specpath = workspace / "spec"
-    command = [args.pyinstaller, "-m", "PyInstaller", "--clean", "--noconfirm", "--onefile",
-               "--name", "ga-hub-sidecar", "--paths", str(ROOT),
-               "--workpath", str(workpath), "--distpath", str(distpath),
-               "--specpath", str(specpath), "--collect-submodules", "server",
-               *(arg for name in EXCLUDED_MODULES for arg in ("--exclude-module", name)),
-               "--collect-all", "websockets",
-               "--collect-all", "aiohttp",
-               *hidden_import_args(sys.platform),
-               *(_add_data_args(stage_assets(workspace / "assets-stage"), write_bundle_sentinel(workspace))),
-               "--add-binary", f"{stage_node(workspace / 'node-stage', args.target) / ('node.exe' if suffix else 'node')};runtime/node",
-               "--add-data", f"{workspace / 'node-stage' / 'LICENSE'};runtime/node",
-               "--add-data", f"{workspace / 'node-stage' / 'runtime.json'};runtime/node",
-               "--noconsole",
-               "--add-data", f"{ROOT / 'webui' / 'dist'};webui/dist"]
+    command = [
+        args.pyinstaller, "-m", "PyInstaller", "--clean", "--noconfirm", "--onedir",
+        "--name", "ga-hub-sidecar", "--paths", str(ROOT),
+        "--workpath", str(workpath), "--distpath", str(distpath),
+        "--specpath", str(specpath), "--collect-submodules", "server",
+        *(arg for name in EXCLUDED_MODULES for arg in ("--exclude-module", name)),
+        "--collect-all", "websockets",
+        "--collect-all", "aiohttp",
+        *hidden_import_args(sys.platform),
+        *(_add_data_args(stage_assets(workspace / "assets-stage"), write_bundle_sentinel(workspace))),
+        "--noconsole",
+        "--add-data", f"{ROOT / 'webui' / 'dist'};webui/dist",
+    ]
     if suffix:
         command.extend(runtime_binary_args(Path(sys.prefix)))
     command.append(str(ROOT / "server" / "desktop_sidecar.py"))
-    built = distpath / f"ga-hub-sidecar{suffix}"
+
+    built_dir = distpath / "ga-hub-sidecar"
+    built_exe = built_dir / f"ga-hub-sidecar{suffix}"
     # Never let a previous successful build masquerade as this run's output.
-    built.unlink(missing_ok=True)
+    shutil.rmtree(built_dir, ignore_errors=True)
+
     env = os.environ.copy()
     for name in ("PYTHONPATH", "PYTHONHOME", "GA_ROOT"):
         env.pop(name, None)
     result = subprocess.run(command, cwd=ROOT, env=env)
     if result.returncode:
         return result.returncode
-    if not built.is_file():
-        print(f"expected PyInstaller output missing: {built}", file=sys.stderr)
-        return 2
-    if built.stat().st_size == 0:
-        print(f"PyInstaller output is empty: {built}", file=sys.stderr)
+    if not built_exe.is_file() or built_exe.stat().st_size == 0:
+        print(f"expected PyInstaller onedir output missing/empty: {built_exe}", file=sys.stderr)
         return 2
     try:
-        verify_sidecar_archive(built)
+        verify_sidecar_archive(built_exe)
     except ValueError as exc:
         print(exc, file=sys.stderr)
         return 2
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # Stage next to destination and atomically replace: a failed copy never
-    # truncates the last known-good sidecar; Windows also refuses replacement
-    # when a running process holds the image open.
-    staged = destination.with_name(destination.name + ".new")
+
+    destination_dir.parent.mkdir(parents=True, exist_ok=True)
+    staged = destination_dir.with_name(destination_dir.name + ".new")
+    backup = destination_dir.with_name(destination_dir.name + ".old")
+    shutil.rmtree(staged, ignore_errors=True)
+    shutil.rmtree(backup, ignore_errors=True)
     try:
-        shutil.copy2(built, staged)
-        staged.replace(destination)
-    finally:
-        staged.unlink(missing_ok=True)
-    print(destination)
+        shutil.copytree(built_dir, staged)
+        if destination_dir.exists():
+            destination_dir.replace(backup)
+        staged.replace(destination_dir)
+        shutil.rmtree(backup, ignore_errors=True)
+    except BaseException:
+        if not destination_dir.exists() and backup.exists():
+            backup.replace(destination_dir)
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
+
+    print(destination_exe)
     return 0
 
 

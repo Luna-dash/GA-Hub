@@ -5,6 +5,14 @@ description = "Tauri 2 shell for GA-Hub"
 edition = "2021"
 rust-version = "1.85"
 
+[[bin]]
+name = "ga-hub-desktop"
+path = "src/main.rs"
+
+[[bin]]
+name = "ga-hub-update"
+path = "src/bin/ga_hub_update.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 # 仅用于 feature 统一，不直接调用；**不要删**（删了会偶发编译失败，见下）。
@@ -56,6 +64,6 @@ windows-sys = { version = "0.59", features = [
 
 [profile.release]
 panic = "abort"
-codegen-units = 16
-lto = false
-strip = false
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

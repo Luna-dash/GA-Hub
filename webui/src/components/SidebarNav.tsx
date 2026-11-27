@@ -203,7 +203,17 @@ export function SidebarNav() {
             key={it.to}
             to={it.to}
             title={it.label}
-            onMouseEnter={() => preloadRoute(it.to)}
+            onMouseEnter={() => {
+              window.clearTimeout((window as unknown as { __gaNavPreloadTimer?: number }).__gaNavPreloadTimer)
+              ;(window as unknown as { __gaNavPreloadTimer?: number }).__gaNavPreloadTimer = window.setTimeout(
+                () => preloadRoute(it.to),
+                180,
+              )
+            }}
+            onMouseLeave={() => {
+              window.clearTimeout((window as unknown as { __gaNavPreloadTimer?: number }).__gaNavPreloadTimer)
+            }}
+            onPointerDown={() => preloadRoute(it.to)}
             onFocus={() => preloadRoute(it.to)}
             className={({ isActive }) =>
               clsx('ga-sidebar-item', collapsed && 'ga-sidebar-item-collapsed', isActive && 'active')

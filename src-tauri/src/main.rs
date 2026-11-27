@@ -47,7 +47,10 @@ use windows_sys::Win32::{
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         },
         Pipes::CreatePipe,
-        Threading::{OpenThread, ResumeThread, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME},
+        Threading::{
+            OpenProcess, OpenThread, ResumeThread, WaitForSingleObject, CREATE_SUSPENDED,
+            INFINITE, PROCESS_SYNCHRONIZE, THREAD_SUSPEND_RESUME,
+        },
     },
 };
 
@@ -66,11 +69,8 @@ const FORCE_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(unix)]
 const GROUP_TERM_TIMEOUT: Duration = Duration::from_secs(1);
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
-/// Post-readiness liveness cadence. The supervisor thread now stays alive for
-/// the whole sidecar lifetime (see [`watch_ready_sidecar`]), so this interval
-/// trades detection latency against wakeups: 250 ms notices a crash long before
-/// a user would.
-const LIVENESS_POLL_INTERVAL: Duration = Duration::from_millis(250);
+#[cfg(not(windows))]
+const LIVENESS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -613,6 +613,19 @@ impl OwnedSidecar {
         Ok(Some(exited))
     }
 
+    #[cfg(windows)]
+    fn child_wait_handle(&self) -> Option<OwnedHandle> {
+        let lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        let process = lifecycle.process.as_ref()?;
+        let pid = process.child.id();
+        let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        if raw.is_null() {
+            None
+        } else {
+            Some(unsafe { OwnedHandle::from_raw_handle(raw as _) })
+        }
+    }
+
     fn take_owner_stdin(&self) -> Option<Box<dyn Write + Send>> {
         self.lifecycle
             .lock()
@@ -843,16 +856,28 @@ fn sidecar_command() -> Result<Command, String> {
     }
     #[cfg(not(debug_assertions))]
     {
-        let mut path = env::current_exe().map_err(|e| format!("cannot locate executable: {e}"))?;
-        path.set_file_name(if cfg!(windows) {
+        let current = env::current_exe().map_err(|e| format!("cannot locate executable: {e}"))?;
+        let exe_dir = current
+            .parent()
+            .ok_or_else(|| "cannot resolve executable directory".to_string())?;
+        let bin_name = if cfg!(windows) {
             "ga-hub-sidecar.exe"
         } else {
             "ga-hub-sidecar"
-        });
-        if !path.is_file() {
-            return Err(format!("packaged sidecar missing: {}", path.display()));
+        };
+        let onedir_path = exe_dir.join("sidecar").join(bin_name);
+        if onedir_path.is_file() {
+            return Ok(Command::new(onedir_path));
         }
-        Ok(Command::new(path))
+        let legacy_path = exe_dir.join(bin_name);
+        if legacy_path.is_file() {
+            return Ok(Command::new(legacy_path));
+        }
+        Err(format!(
+            "packaged sidecar missing: {} (also checked {})",
+            onedir_path.display(),
+            legacy_path.display()
+        ))
     }
 }
 
@@ -1008,16 +1033,30 @@ fn request_owned_shutdown(sidecar: &OwnedSidecar) {
 fn watch_ready_sidecar(sidecar: &OwnedSidecar, exit: &ExitCoordinator) {
     let mut probe_error_logged = false;
     while exit.is_running() {
-        thread::sleep(LIVENESS_POLL_INTERVAL);
-        if !exit.is_running() {
-            return;
-        }
         match sidecar.child_root_has_exited() {
-            // Still running — keep watching.
-            Ok(Some(false)) => {}
+            // Still running — block until the child exits without polling.
+            Ok(Some(false)) => {
+                #[cfg(windows)]
+                {
+                    if let Some(handle) = sidecar.child_wait_handle() {
+                        unsafe {
+                            WaitForSingleObject(handle.as_raw_handle() as HANDLE, INFINITE);
+                        }
+                    } else {
+                        thread::sleep(Duration::from_millis(250));
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    thread::sleep(LIVENESS_POLL_INTERVAL);
+                }
+            }
             // Another owner took the process; it owns the next transition.
             Ok(None) => return,
             Ok(Some(true)) => {
+                if !exit.is_running() {
+                    return;
+                }
                 record_startup_diagnostic("sidecar exited after readiness");
                 let _ = sidecar.set_failed(
                     "GA-Hub 后端进程已退出（可能崩溃或被系统终止），请重启后端。".to_string(),
@@ -1026,14 +1065,11 @@ fn watch_ready_sidecar(sidecar: &OwnedSidecar, exit: &ExitCoordinator) {
                 return;
             }
             Err(error) => {
-                // A broken status probe is not evidence of death. Stay
-                // conservative — the same failure direction as the pid probes in
-                // server/process_utils.py — and keep watching rather than
-                // reporting a failure we cannot substantiate.
                 if !probe_error_logged {
                     probe_error_logged = true;
                     record_startup_diagnostic(&format!("sidecar liveness probe failed: {error}"));
                 }
+                thread::sleep(Duration::from_secs(1));
             }
         }
     }

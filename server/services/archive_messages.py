@@ -379,7 +379,16 @@ def _prompt_is_user(data: mmap.mmap, start: int, end: int) -> bool:
     return bool(_prompt_user_items(data, start, end))
 
 
-@lru_cache(maxsize=256)
+from collections import namedtuple as _namedtuple
+
+_CacheInfo = _namedtuple("CacheInfo", ["hits", "misses", "maxsize", "currsize"])
+_INDEX_CACHE_LOCK = threading.Lock()
+_INDEX_CACHE_LIMIT = 128
+_INDEX_CACHE: dict[str, tuple[tuple[int, int, int, int, int], _ArchiveIndex]] = {}
+_INDEX_CACHE_HITS = 0
+_INDEX_CACHE_MISSES = 0
+
+
 def _build_archive_index(
     path_text: str,
     device: int,
@@ -388,8 +397,45 @@ def _build_archive_index(
     ctime_ns: int,
     size: int,
 ) -> _ArchiveIndex:
-    """Build a compact group-offset index; signature fields form the cache key."""
-    del device, inode, mtime_ns, ctime_ns, size
+    """Build a compact group-offset index, overwriting stale versions in place per file."""
+    global _INDEX_CACHE_HITS, _INDEX_CACHE_MISSES
+    sig = (device, inode, mtime_ns, ctime_ns, size)
+    cache_key = os.path.normcase(path_text)
+    with _INDEX_CACHE_LOCK:
+        cached = _INDEX_CACHE.get(cache_key)
+        if cached is not None and cached[0] == sig:
+            _INDEX_CACHE_HITS += 1
+            _INDEX_CACHE.pop(cache_key)
+            _INDEX_CACHE[cache_key] = cached
+            return cached[1]
+        _INDEX_CACHE_MISSES += 1
+    idx = _compute_archive_index(path_text)
+    with _INDEX_CACHE_LOCK:
+        _INDEX_CACHE.pop(cache_key, None)
+        while len(_INDEX_CACHE) >= _INDEX_CACHE_LIMIT:
+            _INDEX_CACHE.pop(next(iter(_INDEX_CACHE)))
+        _INDEX_CACHE[cache_key] = (sig, idx)
+    return idx
+
+
+def _index_cache_clear() -> None:
+    global _INDEX_CACHE_HITS, _INDEX_CACHE_MISSES
+    with _INDEX_CACHE_LOCK:
+        _INDEX_CACHE.clear()
+        _INDEX_CACHE_HITS = 0
+        _INDEX_CACHE_MISSES = 0
+
+
+def _index_cache_info() -> _CacheInfo:
+    with _INDEX_CACHE_LOCK:
+        return _CacheInfo(_INDEX_CACHE_HITS, _INDEX_CACHE_MISSES, _INDEX_CACHE_LIMIT, len(_INDEX_CACHE))
+
+
+_build_archive_index.cache_clear = _index_cache_clear  # type: ignore[attr-defined]
+_build_archive_index.cache_info = _index_cache_info  # type: ignore[attr-defined]
+
+
+def _compute_archive_index(path_text: str) -> _ArchiveIndex:
     path = Path(path_text)
     try:
         with path.open("rb") as handle:

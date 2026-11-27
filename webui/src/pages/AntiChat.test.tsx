@@ -8,10 +8,12 @@ import AntiChat from './AntiChat'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
 import { AntiAccountUsageButton } from '@/components/AntiAccountUsageButton'
 import { resetPageState } from '@/utils/pageState'
+import { useToastStore } from '@/stores/toastStore'
 
 beforeEach(() => {
   localStorage.clear()
   resetPageState()
+  useToastStore.setState({ items: [] })
 })
 
 vi.mock('@/api/client', async (importOriginal) => {
@@ -1828,7 +1830,7 @@ it('escalates unresponsive soft stop into force stop recovery bar and supports f
     })
     expect(host.querySelector('[data-anti-force-stop-bar]')).toBeNull()
 
-    // Soft stop returns still-running -> escalates immediately to force stop bar & unlocked force reset
+    // Soft stop returns still-running -> escalates immediately to top recovery bar (above textarea, never bottom-lifting)
     const stopBtn = host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')!
     await act(async () => { stopBtn.click() })
     await vi.waitFor(async () => {
@@ -1836,7 +1838,12 @@ it('escalates unresponsive soft stop into force stop recovery bar and supports f
       expect(host.querySelector('[data-anti-force-stop-bar]')).not.toBeNull()
     })
     expect(calledPaths).toContain(`/api/anti/sessions/${session.id}/runs/${activeRun.id}/cancel`)
-    expect(host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')?.title).toBe('强制终止当前任务并重置 ACP 进程')
+    const escalatedStopBtn = host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')!
+    expect(escalatedStopBtn.title).toBe('强制终止当前任务并重置 ACP 进程')
+    expect(escalatedStopBtn.getAttribute('data-stop-state')).toBe('force')
+    const recoveryBar = host.querySelector<HTMLElement>('[data-anti-force-stop-bar]')!
+    const composerTextarea = host.querySelector<HTMLTextAreaElement>('textarea')!
+    expect(Boolean(recoveryBar.compareDocumentPosition(composerTextarea) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
     const recoveryForceResetBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-force-stop-bar] button')].find(
       b => b.textContent?.includes('强制重连 ACP'),
     )!
@@ -1854,11 +1861,35 @@ it('escalates unresponsive soft stop into force stop recovery bar and supports f
     expect(calledPaths).toContain(`/api/anti/sessions/${session.id}/runs/r-stuck/cancel?force=true`)
     expect(host.querySelector('[data-anti-force-stop-bar]')).toBeNull()
 
-    // Second active run: clicking "强制重连 ACP" calls /reset?force=true
+    // Second active run: recovery bar can be dismissed and "强制重连 ACP" calls /reset?force=true
     activeRun = {
       id: 'r-stuck-2',
       operation: 'op-stuck-2',
       prompt: 'Do another long task',
+      status: 'running',
+      mode: 'plan',
+      permission_mode: 'approval-required',
+    }
+    await act(async () => { await cache.invalidateQueries({ queryKey: ['anti-runs', session.id] }) })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('button[aria-label="停止"]')).not.toBeNull()
+    })
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')!.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-force-stop-bar]')).not.toBeNull()
+    })
+    const dismissBtn = host.querySelector<HTMLButtonElement>('[data-anti-force-stop-bar] button[aria-label="关闭提示"]')!
+    expect(dismissBtn).not.toBeNull()
+    await act(async () => { dismissBtn.click() })
+    expect(host.querySelector('[data-anti-force-stop-bar]')).toBeNull()
+
+    // Re-trigger via Stop button -> still escalates to force cancel or let's reset via a third run for force-reset check
+    activeRun = {
+      id: 'r-stuck-3',
+      operation: 'op-stuck-3',
+      prompt: 'Do third long task',
       status: 'running',
       mode: 'plan',
       permission_mode: 'approval-required',
@@ -1881,6 +1912,129 @@ it('escalates unresponsive soft stop into force stop recovery bar and supports f
       await flush()
       expect(calledPaths).toContain(`/api/anti/sessions/${session.id}/reset?force=true`)
     })
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('cancels an in-flight submit when Stop is clicked during pending and routes cancel failures to toast', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const session = { id: 's-early-stop', title: 'Early Stop', project: 'demo', workspace: 'D:/demo', acp_connected: true }
+  const called: { method: string; path: string }[] = []
+  let runsList: Record<string, unknown>[] = []
+  let resolveSubmit!: () => void
+  let failSoftCancel = false
+
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    const parsed = new URL(url, 'http://localhost')
+    const path = `${parsed.pathname}${parsed.search}`
+    const method = (init?.method ?? 'GET').toUpperCase()
+    called.push({ method, path })
+    const reply = (data: unknown, status = 200) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: async () => JSON.stringify(data),
+      json: async () => JSON.parse(JSON.stringify(data)),
+    })
+    if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
+    if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path === '/api/anti/sessions') return reply([session])
+    if (path === `/api/anti/sessions/${session.id}/runs` && method === 'GET') return reply(runsList)
+    if (path === `/api/anti/sessions/${session.id}/runs` && method === 'POST') {
+      const body = JSON.parse(String(init?.body ?? '{}'))
+      await new Promise<void>(resolve => { resolveSubmit = resolve })
+      const created = {
+        id: 'r-early',
+        operation: body.operation,
+        prompt: body.prompt,
+        status: 'running',
+        mode: 'plan',
+        permission_mode: 'approval-required',
+      }
+      runsList = [created]
+      return reply(created)
+    }
+    if (path === `/api/anti/sessions/${session.id}/runs/r-early/cancel`) {
+      if (failSoftCancel) {
+        return reply({ detail: '停止通道暂时不可用' }, 500)
+      }
+      runsList = runsList.map(r => (r.id === 'r-early' ? { ...r, status: 'cancelled' } : r))
+      return reply(runsList[0])
+    }
+    if (path === `/api/anti/sessions/${session.id}/runs/r-early`) return reply(runsList[0] ?? {})
+    if (path.endsWith('/events')) return reply([])
+    if (path.startsWith('/api/file-transfer')) return reply([])
+    return reply({})
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('textarea')).not.toBeNull()
+    })
+
+    const textarea = host.querySelector<HTMLTextAreaElement>('textarea')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Oops wrong prompt')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    // While POST /runs is still in-flight, Stop button is already shown and clickable
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('button[aria-label="停止"]')).not.toBeNull()
+    })
+    const pendingStopBtn = host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')!
+    await act(async () => { pendingStopBtn.click() })
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')?.getAttribute('data-stop-state')).toBe('stopping')
+
+    // Once POST /runs resolves, frontend automatically fires /cancel for r-early
+    await act(async () => { resolveSubmit() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(called.some(c => c.method === 'POST' && c.path === `/api/anti/sessions/${session.id}/runs/r-early/cancel`)).toBe(true)
+      expect(host.textContent).toContain('任务中止')
+    })
+
+    // Transient cancel error routes to toast.error instead of pinning a sticky <p role="alert"> block
+    failSoftCancel = true
+    runsList = [{
+      id: 'r-early',
+      operation: 'op-err',
+      prompt: 'Another run',
+      status: 'running',
+      mode: 'plan',
+      permission_mode: 'approval-required',
+    }]
+    await act(async () => { await cache.invalidateQueries({ queryKey: ['anti-runs', session.id] }) })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('button[aria-label="停止"]')).not.toBeNull()
+    })
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')!.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(useToastStore.getState().items.some(item => item.kind === 'error' && item.message.includes('停止通道暂时不可用'))).toBe(true)
+    })
+    expect(host.querySelector('p[role="alert"]')).toBeNull()
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')?.getAttribute('data-stop-state')).toBe('force')
   } finally {
     await act(async () => root.unmount())
     cache.clear()

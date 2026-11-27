@@ -1,10 +1,29 @@
 import { useEffect, useState } from 'react'
 import { updateApi, type UpdateRelease, type UpdateStatus } from '@/api/client'
-import { Download, Play, Power, RotateCw, Search, ShieldCheck, X } from './ActionIcons'
+import { Download, Power, RotateCw, Search, ShieldCheck, X } from './ActionIcons'
 
 const activePhases = new Set(['checking', 'checksums', 'downloading', 'verifying', 'preparing'])
-const phaseLabels: Record<string, string> = { checking: '正在查询正式版本', checksums: '正在获取校验信息', downloading: '正在下载安装包', verifying: '正在校验安装包', preparing: '正在解压并准备更新', succeeded: '下载完成，候选包已准备', failed: '下载未完成', interrupted: '下载已中断' }
-const stateLabels: Record<string, string> = { idle: '尚未准备更新', prepared: '候选包已准备', armed: '等待切换', switching: '正在切换', verifying: '正在验证', succeeded: '更新成功', failed: '更新失败', cancelled: '已取消', rolled_back: '已回退', ready: '已就绪，等待确认', countdown: '切换倒计时中' }
+const phaseLabels: Record<string, string> = {
+  checking: '正在查询正式版本',
+  checksums: '正在获取校验信息',
+  downloading: '正在下载安装包',
+  verifying: '正在校验安装包',
+  preparing: '正在解压并准备更新',
+  succeeded: '下载完成，候选包已准备',
+  failed: '下载未完成',
+  interrupted: '下载已中断',
+}
+const stateLabels: Record<string, string> = {
+  idle: '尚未准备更新',
+  prepared: '候选包已就绪',
+  switching: '正在重启切换',
+  verifying: '正在验证新版本',
+  succeeded: '更新成功',
+  failed: '更新失败',
+  cancelled: '已取消',
+  rolled_back: '新版本验证失败，已自动回退',
+}
+
 function readableError(error: unknown): { message: string; detail: string } {
   let detail = error instanceof Error ? error.message : String(error)
   try {
@@ -14,14 +33,17 @@ function readableError(error: unknown): { message: string; detail: string } {
     if (typeof value === 'string') detail = value
   } catch { /* Not all errors have a JSON body. */ }
   const lower = detail.toLowerCase()
-  const message = lower.includes('lock busy') ? '另一个更新操作正在进行，请稍候，勿重复下载。'
+  const message = lower.includes('lock busy') ? '另一个更新操作正在进行，请稍候，勿重复操作。'
     : /timeout|timed out|超时/.test(lower) ? '连接超时，请检查网络或代理后重试。'
     : /checksum|hash|badzip|metadata/.test(lower) ? '安装包校验未通过，未执行更新；请重新下载。'
     : /network|fetch|connection|proxy/.test(lower) ? '连接失败，请检查网络或系统代理后重试。'
     : '更新操作未完成，请重试；若仍失败，可展开技术详情排查。'
   return { message, detail }
 }
-function megabytes(bytes: number) { return `${(bytes / 1024 / 1024).toFixed(1)} MB` }
+
+function megabytes(bytes: number) {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
 
 export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}) {
   const [status, setStatus] = useState<UpdateStatus | null>(null)
@@ -32,18 +54,57 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<{ message: string; detail: string } | null>(null)
   const [statusError, setStatusError] = useState('')
+
+  const shouldPoll = Boolean(
+    active && (
+      busy
+      || (status?.download?.phase && activePhases.has(status.download.phase))
+      || (status?.plan?.state && ['switching', 'verifying'].includes(status.plan.state))
+    ),
+  )
+
   useEffect(() => {
     if (!active) return
     let alive = true
-    const refresh = () => { void updateApi.status().then(value => {
-      if (alive) { setStatus(value); if (value.release) setRelease(value.release); setStatusError('') }
-    }).catch(e => { if (alive) setStatusError(/404/.test(String(e))
-      ? '当前运行版本尚未提供更新接口，请先安装支持自更新的版本。'
-      : '暂时无法获取更新状态，正在自动重连；后台下载不会因切换页面而停止。') }) }
-    refresh()
+    void updateApi.status().then(value => {
+      if (alive) {
+        setStatus(value)
+        if (value.release) setRelease(value.release)
+        setStatusError('')
+      }
+    }).catch(e => {
+      if (alive) {
+        setStatusError(/404/.test(String(e))
+          ? '当前运行版本尚未提供更新接口，请先安装支持自更新的版本。'
+          : '暂时无法获取更新状态，正在自动重连；后台下载不会因切换页面而停止。')
+      }
+    })
+    return () => { alive = false }
+  }, [active])
+
+  useEffect(() => {
+    if (!active || !shouldPoll) return
+    let alive = true
+    const refresh = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      void updateApi.status().then(value => {
+        if (alive) {
+          setStatus(value)
+          if (value.release) setRelease(value.release)
+          setStatusError('')
+        }
+      }).catch(e => {
+        if (alive) {
+          setStatusError(/404/.test(String(e))
+            ? '当前运行版本尚未提供更新接口，请先安装支持自更新的版本。'
+            : '暂时无法获取更新状态，正在自动重连；后台下载不会因切换页面而停止。')
+        }
+      })
+    }
     const timer = window.setInterval(refresh, 2000)
     return () => { alive = false; window.clearInterval(timer) }
-  }, [active])
+  }, [active, shouldPoll])
+
   async function online(download = false) {
     setBusy(true); setError(null)
     try {
@@ -51,31 +112,42 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
         const task = await updateApi.download()
         setStatus(previous => previous ? { ...previous, download: task } : previous)
         setStatus(await updateApi.status())
-      } else setRelease(await updateApi.release())
-    } catch (e) { setError(readableError(e)) }
-    finally { setBusy(false) }
+      } else {
+        setRelease(await updateApi.release())
+      }
+    } catch (e) {
+      setError(readableError(e))
+    } finally {
+      setBusy(false)
+    }
   }
+
   async function act(cancel = false) {
     setBusy(true); setError(null)
     try {
       if (cancel) await updateApi.cancel(status!.plan.id!)
       else await updateApi.prepare(archive.trim(), sha256.trim(), trusted)
       setStatus(await updateApi.status())
-    } catch (e) { setError(readableError(e)) }
-    finally { setBusy(false) }
+    } catch (e) {
+      setError(readableError(e))
+    } finally {
+      setBusy(false)
+    }
   }
-  async function handoff(approve: boolean) {
+
+  async function applyNow() {
+    if (!status?.plan?.id) return
     setBusy(true); setError(null)
     try {
-      if (approve) await updateApi.approve(status!.plan.id!)
-      else {
-        await updateApi.preflight(status!.plan.id!)
-        await updateApi.request(status!.plan.id!)
-      }
+      await updateApi.apply(status.plan.id)
       setStatus(await updateApi.status())
-    } catch (e) { setError(readableError(e)) }
-    finally { setBusy(false) }
+    } catch (e) {
+      setError(readableError(e))
+    } finally {
+      setBusy(false)
+    }
   }
+
   const task = status?.download
   const downloading = !!task && activePhases.has(task.phase)
   const locked = busy || downloading || !!statusError
@@ -86,90 +158,149 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
   const total = task?.total_bytes ?? 0
   const percent = total > 0 ? Math.min(100, Math.floor(received / total * 100)) : undefined
   const inputClass = 'w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink'
-  return <section className="ga-paper-card p-4 space-y-3" aria-label="桌面程序更新">
-    <div className="flex flex-wrap items-baseline justify-between gap-2">
-      <h2 className="text-sm font-semibold text-ink">桌面程序更新</h2>
-      <span className="text-[11px] text-ink-faint">仅限可信 Windows 安装包</span>
-    </div>
-    <p className="text-sm text-ink">先在线准备更新包，就绪后确认升级；倒计时 60 秒后将自动重启切换。</p>
-    <div className="ga-paper-subcard space-y-2.5 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-ink-muted">更新源：Luna-dash/GA-Hub · GitHub 正式版</p>
-        <button type="button" className="ga-btn-primary" disabled={locked || !status} onClick={() => void online()}>
-          <Search className="h-3.5 w-3.5" aria-hidden="true" />
-          <span>检查正式版本</span>
-        </button>
+
+  return (
+    <section className="ga-paper-card p-4 space-y-3" aria-label="桌面程序更新">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold text-ink">桌面程序更新</h2>
+        <span className="text-[11px] text-ink-faint">便携绿色版 · 支持 GitHub 正式版与本地 ZIP</span>
       </div>
-      {release && <div className="text-sm" role="status">
-        当前 {release.current_version} · 最新 {release.version} · {release.available ? '有可用更新' : '已是最新版本'}
-        {release.notes && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-sans text-xs leading-5 text-ink-muted">{release.notes}</pre>}
-        {release.available && <button type="button" className="ga-btn mt-2" disabled={locked || status?.plan?.state === 'prepared'} onClick={() => void online(true)}>
-          <Download className="h-3.5 w-3.5" aria-hidden="true" />
-          <span>{onlinePrepared ? '此版本已准备完成' : downloading ? '正在后台下载并准备…' : '下载、校验并准备更新'}</span>
-        </button>}
-      </div>}
-      {busy && <p className="text-sm" role="status">正在处理，请勿重复操作。下载及预检可能需要数分钟。</p>}
-    </div>
-    {task && <div className="ga-paper-subcard space-y-2 p-3 text-sm text-ink" role="status" aria-live="polite">
-      <p>{phaseLabels[task.phase] ?? '正在处理更新'}{task.release && ` · v${task.release.version}`}</p>
-      {task.phase === 'downloading' && <>
-        <progress className="ga-progress" aria-label="安装包下载进度" max={100} value={percent} />
-        <p className="text-xs text-ink-muted">{megabytes(received)}{total > 0 && ` / ${megabytes(total)} · ${percent}%`}</p>
-      </>}
-      {downloading && <p className="text-xs text-ink-muted">后台下载中，可切换其他页面。</p>}
-      {downloading && task.updated_at && Date.now() / 1000 - task.updated_at > 15 && <p className="text-xs text-ink-muted">暂未收到新进度，正在等待网络或校验响应，请勿重复下载。</p>}
-      {taskError && !release && <button type="button" className="ga-btn" disabled={locked} onClick={() => void online(true)}>
-        <RotateCw className="h-3.5 w-3.5" aria-hidden="true" />
-        <span>重新下载并校验</span>
-      </button>}
-    </div>}
-    <details className="ga-paper-subcard px-3 py-2.5"><summary className="cursor-pointer text-xs font-medium text-ink-muted hover:text-ink">高级：导入本机可信发布包</summary>
-    <div className="mt-2.5 space-y-2.5">
-    <label className="block text-sm">本机 ZIP 完整路径
-      <input className={`${inputClass} mt-1`} value={archive} onChange={e => setArchive(e.target.value)} placeholder="D:\\Downloads\\GA-Hub-version-windows-x64.zip" disabled={locked} />
-    </label>
-    <label className="block text-sm">SHA-256（选填）
-      <input className={`${inputClass} mt-1 font-mono`} value={sha256} onChange={e => setSha256(e.target.value)} placeholder="64 位校验和，可留空" spellCheck={false} disabled={locked} />
-    </label>
-    <label className="flex items-start gap-2 text-xs text-ink">
-      <input type="checkbox" checked={trusted} onChange={e => setTrusted(e.target.checked)} disabled={locked} />
-      <span>我已核实安装包来源可信</span>
-    </label>
-    <button type="button" className="ga-btn-primary" disabled={locked || !status || !trusted || !archive.trim() || (!!sha256.trim() && !/^[a-fA-F0-9]{64}$/.test(sha256.trim()))} onClick={() => void act()}>
-      <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
-      <span>校验并准备</span>
-    </button>
-    </div>
-    </details>
-    {status?.plan && <div className="text-sm text-ink" role="status">状态：{stateLabels[status.plan.state] ?? '正在处理'}{status.plan.version && ` · ${status.plan.version}`}
-      {status.plan.commit && <span className="block break-all text-xs text-ink-muted">源码提交：{status.plan.commit}</span>}
-    </div>}
-    {status?.plan?.state === 'prepared' && <>
-      <p className="text-sm text-ink">更新包已就绪，点击下方按钮即可执行升级（当前应用暂不关闭）。</p>
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className="ga-btn-primary" disabled={locked} onClick={() => void handoff(false)}>
-          <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
-          <span>唤醒独立执行器</span>
-        </button>
-        <button type="button" className="ga-btn" disabled={locked} onClick={() => void act(true)}>
-          <X className="h-3.5 w-3.5" aria-hidden="true" />
-          <span>取消候选更新</span>
-        </button>
+      <p className="text-sm text-ink">准备更新包后点击一键重启切换；若新版本启动健康检查未通过，将自动回退至旧版本。</p>
+
+      <div className="ga-paper-subcard space-y-2.5 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-ink-muted">更新源：Luna-dash/GA-Hub · GitHub 正式版</p>
+          <button type="button" className="ga-btn-primary" disabled={locked || !status} onClick={() => void online()}>
+            <Search className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>检查正式版本</span>
+          </button>
+        </div>
+        {release && (
+          <div className="text-sm" role="status">
+            当前 {release.current_version} · 最新 {release.version} · {release.available ? '有可用更新' : '已是最新版本'}
+            {release.notes && (
+              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-sans text-xs leading-5 text-ink-muted">
+                {release.notes}
+              </pre>
+            )}
+            {release.available && (
+              <button
+                type="button"
+                className="ga-btn mt-2"
+                disabled={locked || status?.plan?.state === 'prepared'}
+                onClick={() => void online(true)}
+              >
+                <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>{onlinePrepared ? '此版本已准备完成' : downloading ? '正在后台下载并准备…' : '下载、校验并准备更新'}</span>
+              </button>
+            )}
+          </div>
+        )}
+        {busy && <p className="text-sm" role="status">正在处理，请勿重复操作。</p>}
       </div>
-    </>}
-    {status?.handoff?.id && status?.handoff?.id === status?.plan?.id && <div role="status" className="text-sm text-ink">
-      交接：{stateLabels[status.handoff.state] ?? '正在处理'}
-      {status.handoff.state === 'ready' && <button type="button" className="ga-btn-primary ml-3" disabled={locked} onClick={() => void handoff(true)}>
-        <Power className="h-3.5 w-3.5" aria-hidden="true" />
-        <span>确认切换（60秒后关闭）</span>
-      </button>}
-      {status.handoff.state === 'countdown' && <p>已放行；应用将正常关闭，当前轮次可能中断。切换过程中请勿重复启动。</p>}
-      {status.handoff.error && <div><p>{readableError(status.handoff.error).message}</p><details><summary>技术详情</summary><pre className="whitespace-pre-wrap break-all text-xs">{readableError(status.handoff.error).detail}</pre></details></div>}
-    </div>}
-    {statusError && <p role="alert" className="text-sm text-status-danger">{statusError}</p>}
-    {shownError && <div role="alert" className="text-sm text-status-danger break-words">
-      <p>{shownError.message}</p>
-      <details className="mt-1 text-ink-muted"><summary className="cursor-pointer">技术详情</summary><pre className="mt-1 whitespace-pre-wrap break-all text-xs">{shownError.detail}</pre></details>
-    </div>}
-  </section>
+
+      {task && (
+        <div className="ga-paper-subcard space-y-2 p-3 text-sm text-ink" role="status" aria-live="polite">
+          <p>{phaseLabels[task.phase] ?? '正在处理更新'}{task.release && ` · v${task.release.version}`}</p>
+          {task.phase === 'downloading' && (
+            <>
+              <progress className="ga-progress" aria-label="安装包下载进度" max={100} value={percent} />
+              <p className="text-xs text-ink-muted">
+                {megabytes(received)}{total > 0 && ` / ${megabytes(total)} · ${percent}%`}
+              </p>
+            </>
+          )}
+          {downloading && <p className="text-xs text-ink-muted">后台下载中，可切换其他页面。</p>}
+          {downloading && task.updated_at && Date.now() / 1000 - task.updated_at > 15 && (
+            <p className="text-xs text-ink-muted">暂未收到新进度，正在等待网络或校验响应，请勿重复下载。</p>
+          )}
+          {taskError && !release && (
+            <button type="button" className="ga-btn" disabled={locked} onClick={() => void online(true)}>
+              <RotateCw className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>重新下载并校验</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      <details className="ga-paper-subcard px-3 py-2.5">
+        <summary className="cursor-pointer text-xs font-medium text-ink-muted hover:text-ink">高级：导入本机可信发布包</summary>
+        <div className="mt-2.5 space-y-2.5">
+          <label className="block text-sm">
+            本机 ZIP 完整路径
+            <input
+              className={`${inputClass} mt-1`}
+              value={archive}
+              onChange={e => setArchive(e.target.value)}
+              placeholder="D:\Downloads\GA-Hub-version-windows-x64.zip"
+              disabled={locked}
+            />
+          </label>
+          <label className="block text-sm">
+            SHA-256（选填）
+            <input
+              className={`${inputClass} mt-1 font-mono`}
+              value={sha256}
+              onChange={e => setSha256(e.target.value)}
+              placeholder="64 位校验和，可留空"
+              spellCheck={false}
+              disabled={locked}
+            />
+          </label>
+          <label className="flex items-start gap-2 text-xs text-ink">
+            <input type="checkbox" checked={trusted} onChange={e => setTrusted(e.target.checked)} disabled={locked} />
+            <span>我已核实安装包来源可信</span>
+          </label>
+          <button
+            type="button"
+            className="ga-btn-primary"
+            disabled={locked || !status || !trusted || !archive.trim() || (!!sha256.trim() && !/^[a-fA-F0-9]{64}$/.test(sha256.trim()))}
+            onClick={() => void act()}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>校验并准备</span>
+          </button>
+        </div>
+      </details>
+
+      {status?.plan && (
+        <div className="text-sm text-ink" role="status">
+          状态：{stateLabels[status.plan.state] ?? '正在处理'}{status.plan.version && ` · ${status.plan.version}`}
+          {status.plan.commit && <span className="block break-all text-xs text-ink-muted">源码提交：{status.plan.commit}</span>}
+          {status.plan.error && <span className="block break-all text-xs text-status-danger mt-1">{status.plan.error}</span>}
+        </div>
+      )}
+
+      {status?.plan?.state === 'prepared' && (
+        <>
+          <p className="text-sm text-ink">更新包已通过 SHA-256 校验，点击下方按钮将立即关闭当前窗口并切换至新版本。</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className="ga-btn-primary" disabled={locked} onClick={() => void applyNow()}>
+              <Power className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>立即重启并更新</span>
+            </button>
+            <button type="button" className="ga-btn" disabled={locked} onClick={() => void act(true)}>
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>取消候选更新</span>
+            </button>
+          </div>
+        </>
+      )}
+
+      {status?.plan?.state === 'switching' && (
+        <p role="status" className="text-sm text-ink">正在重启并切换至新版本，请勿重复启动应用…</p>
+      )}
+
+      {statusError && <p role="alert" className="text-sm text-status-danger">{statusError}</p>}
+      {shownError && (
+        <div role="alert" className="text-sm text-status-danger">
+          <p>{shownError.message}</p>
+          <details className="mt-1 text-xs text-ink-muted">
+            <summary className="cursor-pointer">技术详情</summary>
+            <pre className="mt-1 whitespace-pre-wrap break-all">{shownError.detail}</pre>
+          </details>
+        </div>
+      )}
+    </section>
+  )
 }

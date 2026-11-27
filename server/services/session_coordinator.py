@@ -130,6 +130,10 @@ class RuntimeState:
     outcome: str | None = None
 
 
+MAX_IDLE_RUNTIMES = 5
+IDLE_RUNTIME_TTL = 1800.0
+
+
 class SessionCoordinator:
     """Own lazily-created runtimes and atomically enforce bounded capacity."""
 
@@ -140,6 +144,8 @@ class SessionCoordinator:
         capacity: int = 1,
         poll_interval: float = 0.05,
         abort_timeout: float = 10.0,
+        max_idle_runtimes: int = MAX_IDLE_RUNTIMES,
+        idle_runtime_ttl: float = IDLE_RUNTIME_TTL,
         on_state_change: Callable[[RuntimeState], None] | None = None,
         is_theme_task: Callable[[str], bool] | None = None,
     ) -> None:
@@ -149,12 +155,15 @@ class SessionCoordinator:
         self._capacity = capacity
         self._poll_interval = poll_interval
         self._abort_timeout = abort_timeout
+        self._max_idle_runtimes = max(0, int(max_idle_runtimes))
+        self._idle_runtime_ttl = max(0.0, float(idle_runtime_ttl))
         self._on_state_change = on_state_change
         self._is_theme_task = is_theme_task or (lambda session_id: False)
         self._lock = threading.RLock()
         self._lifecycle_state_lock = threading.Lock()
         self._shutdown_lock = threading.Lock()
         self._runtimes: dict[str, SessionRuntime] = {}
+        self._runtime_last_used: dict[str, float] = {}
         self._states: dict[str, RuntimeState] = {}
         # One entry per admitted session. Entries remain until the underlying
         # handle really finishes, including while aborting or timed out.
@@ -607,6 +616,7 @@ class SessionCoordinator:
         with self._lock:
             runtime = self._runtimes.get(session_id)
             if runtime is not None:
+                self._runtime_last_used[session_id] = time.monotonic()
                 return runtime
             epoch = self._runtime_epoch.get(session_id, 0)
             gate = self._creation_gates.get(session_id)
@@ -618,17 +628,24 @@ class SessionCoordinator:
             with self._lock:
                 runtime = self._runtimes.get(session_id)
                 if runtime is not None:
+                    self._runtime_last_used[session_id] = time.monotonic()
                     return runtime
 
             runtime = self._runtime_factory(session_id)
 
+            installed = False
             with self._lock:
                 if self._runtime_epoch.get(session_id, 0) == epoch and (
                     not self._shutdown_is_requested()
                 ):
                     self._runtimes[session_id] = runtime
-                    return runtime
+                    self._runtime_last_used[session_id] = time.monotonic()
+                    installed = True
                 stopping = self._shutdown_is_requested()
+
+            if installed:
+                self.reap_idle_runtimes(exclude={session_id})
+                return runtime
 
             # This session was released or replaced while we were building, or
             # the coordinator is shutting down: never install the runtime, and
@@ -639,6 +656,56 @@ class SessionCoordinator:
                     "session coordinator is shutting down"
                 )
             raise SessionControlBusyError(session_id, "release")
+
+    def reap_idle_runtimes(
+        self,
+        *,
+        now: float | None = None,
+        exclude: set[str] | None = None,
+    ) -> int:
+        """Evict idle session runtimes exceeding idle TTL or LRU capacity."""
+        current = time.monotonic() if now is None else now
+        protected = exclude or set()
+        evicted: list[SessionRuntime] = []
+        with self._lock:
+            idle_candidates: list[tuple[float, str]] = []
+            for sid in list(self._runtimes):
+                if (
+                    sid in protected
+                    or sid in self._active_by_session
+                    or sid in self._exclusive_controls
+                    or sid in self._watchers
+                    or self._side_questions.get(sid, 0) > 0
+                ):
+                    continue
+                last_used = self._runtime_last_used.get(sid, 0.0)
+                idle_candidates.append((last_used, sid))
+
+            to_evict: list[str] = []
+            remaining: list[tuple[float, str]] = []
+            for last_used, sid in idle_candidates:
+                if self._idle_runtime_ttl > 0 and (current - last_used) >= self._idle_runtime_ttl:
+                    to_evict.append(sid)
+                else:
+                    remaining.append((last_used, sid))
+
+            if len(remaining) > self._max_idle_runtimes:
+                remaining.sort(key=lambda item: item[0])
+                overflow = len(remaining) - self._max_idle_runtimes
+                to_evict.extend(sid for _, sid in remaining[:overflow])
+
+            for sid in to_evict:
+                rt = self._runtimes.pop(sid, None)
+                self._runtime_last_used.pop(sid, None)
+                if rt is not None:
+                    self._runtime_epoch[sid] = self._runtime_epoch.get(sid, 0) + 1
+                    evicted.append(rt)
+
+        for rt in evicted:
+            self._discard_created_runtime(rt)
+        if evicted:
+            log.info("evicted %d idle GA session runtime(s)", len(evicted))
+        return len(evicted)
 
     def _discard_created_runtime(self, runtime: SessionRuntime) -> None:
         """Dispose a runtime that must not become any session's runtime."""

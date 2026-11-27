@@ -606,10 +606,8 @@ export const updateApi = {
     http<UpdatePlan>('POST', '/api/updates/prepare', {
       archive, sha256, trusted_source_confirmed: trusted,
     }, { timeoutMs: 180000 }),
-  preflight: (id: string) => http('POST', '/api/updates/preflight', { id }, { timeoutMs: 240000 }),
+  apply: (id: string) => http<UpdatePlan>('POST', '/api/updates/apply', { id }),
   cancel: (id: string) => http<UpdatePlan>('POST', '/api/updates/cancel', { id }),
-  request: (id: string) => http('POST', '/api/updates/request', { id }),
-  approve: (id: string) => http('POST', '/api/updates/approve', { id }),
 }
 
 export type FontSettings = ApiComponents['schemas']['FontSettingsResp']
@@ -911,4 +909,34 @@ export const antiApi = {
     antiHttp<AgyCodeLoginState>('POST', `/api/anti/profiles/login/cancel/${encodeURIComponent(flowId)}`, undefined, {
       headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' },
     }),
+}
+
+export interface StorageCategory {
+  id: string
+  label: string
+  description: string
+  bytes: number
+  file_count: number
+  cleanable: boolean
+  caution: boolean
+  path: string
+}
+
+export interface StorageSummary {
+  total_bytes: number
+  categories: StorageCategory[]
+}
+
+export interface StorageCleanupResult {
+  reclaimed_bytes: number
+  removed_entries: number
+  failed_entries: number
+  summary: StorageSummary
+}
+
+export const storageApi = {
+  summary: (signal?: AbortSignal) =>
+    http<StorageSummary>('GET', '/api/storage/summary', undefined, { signal }),
+  cleanup: (categories: string[]) =>
+    http<StorageCleanupResult>('POST', '/api/storage/cleanup', { categories }),
 }

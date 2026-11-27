@@ -174,6 +174,46 @@ describe('ImagePasteInput slash command ownership', () => {
     expect(action?.querySelector('rect')).toBeNull()
     act(() => action?.click())
     expect(onStop).toHaveBeenCalledOnce()
+
+    act(() => {
+      root?.render(
+        <ImagePasteInput
+          text=""
+          onText={vi.fn()}
+          attachments={[]}
+          onAttachments={vi.fn()}
+          onSubmit={onSubmit}
+          onStop={onStop}
+          stopActive
+          stopDisabled
+          stopState="stopping"
+        />,
+      )
+    })
+    action = container.querySelector<HTMLButtonElement>('button[aria-label="停止"]')
+    expect(action?.getAttribute('data-stop-state')).toBe('stopping')
+    expect(action?.disabled).toBe(true)
+    expect(action?.querySelector('.animate-spin')).toBeTruthy()
+
+    act(() => {
+      root?.render(
+        <ImagePasteInput
+          text=""
+          onText={vi.fn()}
+          attachments={[]}
+          onAttachments={vi.fn()}
+          onSubmit={onSubmit}
+          onStop={onStop}
+          stopActive
+          stopState="force"
+        />,
+      )
+    })
+    action = container.querySelector<HTMLButtonElement>('button[aria-label="停止"]')
+    expect(action?.getAttribute('data-stop-state')).toBe('force')
+    expect(action?.className).not.toContain('ga-solid-danger')
+    expect(action?.className).toContain('text-status-danger')
+    expect(action?.querySelector('circle')).toBeTruthy()
   })
 })
 

@@ -15,7 +15,7 @@ import { APP_PAGES } from '@/config/pages'
 export const FileLinkContext = createContext<{ sessionId?: string; projectPath?: string; project?: string; engine?: 'chat' | 'anti' }>({})
 export const FileTransferConclusion = createContext<{ engine: 'chat' | 'anti'; sessionId?: string; project?: string } | null>(null)
 const APP_ROUTE = new RegExp(
-  `^/(?:${[...APP_PAGES.map((page) => page.id), 'feishu'].join('|')})(?:[/?#]|$)`,
+  `^/(?:${APP_PAGES.map((page) => page.id).join('|')})(?:[/?#]|$)`,
 )
 
 export function isLocalCitation(target: string): boolean {

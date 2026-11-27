@@ -3,7 +3,6 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
-import 'katex/dist/katex.min.css'
 import './styles/index.css'
 import { installExternalLinkInterceptor } from './utils/openExternal'
 import { DesktopRuntimeGate } from './runtime/DesktopRuntimeGate'
@@ -40,6 +39,18 @@ const qc = new QueryClient({
 // Prevents WebView2 from navigating away from the SPA with no back UI.
 installExternalLinkInterceptor()
 initThemeAppearance()
+
+if (typeof document !== 'undefined') {
+  const syncPageVisibility = () => {
+    if (document.visibilityState === 'hidden') {
+      document.documentElement.setAttribute('data-page-hidden', 'true')
+    } else {
+      document.documentElement.removeAttribute('data-page-hidden')
+    }
+  }
+  syncPageVisibility()
+  document.addEventListener('visibilitychange', syncPageVisibility)
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

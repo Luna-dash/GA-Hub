@@ -6,12 +6,18 @@ process it starts.
 """
 from __future__ import annotations
 
+import os
+
+# Cap BLAS/OpenMP worker thread pools before any third-party library imports
+# (prevents OpenBLAS/OMP from spawning 16-32 threads inside the sidecar).
+for _blas_var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_blas_var, "1")
+
 import hashlib
 
 import argparse
 import asyncio
 import json
-import os
 import secrets
 import signal
 import socket
@@ -190,22 +196,21 @@ def run_selftest() -> int:
             importlib.import_module(name)
         except Exception as exc:  # noqa: BLE001 - 自检要把任何失败都报出来
             failures.append(f"{name}: {type(exc).__name__}: {exc}")
-    if getattr(sys, 'frozen', False):
-        try:
-            from server.services.message_presentation import MessagePresentation
+    try:
+        from server.services.message_presentation import MessagePresentation
 
-            async def check_presentation():
-                presenter = MessagePresentation()
-                try:
-                    page = await presenter.page({'items': []})
-                    if page.get('items') != []:
-                        raise RuntimeError('Unexpected compact message result')
-                finally:
-                    await presenter.close()
+        async def check_presentation():
+            presenter = MessagePresentation()
+            try:
+                page = await presenter.page({'items': []})
+                if page.get('items') != []:
+                    raise RuntimeError('Unexpected compact message result')
+            finally:
+                await presenter.close()
 
-            asyncio.run(check_presentation())
-        except Exception as exc:  # noqa: BLE001
-            failures.append(f"message_presentation: {type(exc).__name__}: {exc}")
+        asyncio.run(check_presentation())
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"message_presentation: {type(exc).__name__}: {exc}")
     if failures:
         _diagnostic("selftest failed: " + " | ".join(failures))
         return 1

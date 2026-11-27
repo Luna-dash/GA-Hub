@@ -538,7 +538,6 @@ def test_every_long_lived_spawn_goes_through_child_job():
     package_root = Path(server.__file__).resolve().parent
     sites = {
         "services/conductor_client.py": "engine",
-        "services/feishu_service.py": "feishu",
         "services/ga_external_worker.py": "ga_worker",
     }
     for relative, kind in sites.items():

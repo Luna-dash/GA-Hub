@@ -144,9 +144,10 @@ export default function LiveChat() {
   )
 
   useEffect(() => {
+    if (scheduledChats.length === 0) return
     const timer = window.setInterval(() => setScheduleNow(Date.now()), 60_000)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [scheduledChats.length])
 
   useHubEvent('session:', (event) => {
     if (event.topic !== 'session:runtime') return
@@ -787,8 +788,13 @@ export default function LiveChat() {
     }])
   }
 
+  const fileLinkContextValue = useMemo(
+    () => ({ sessionId: session?.id, projectPath: activeProjectPath, ...(activeProjectLabel ? { project: activeProjectLabel } : {}) }),
+    [session?.id, activeProjectPath, activeProjectLabel],
+  )
+
   return (
-    <FileLinkContext.Provider value={{ sessionId: session?.id, projectPath: activeProjectPath, ...(activeProjectLabel ? { project: activeProjectLabel } : {}) }}>
+    <FileLinkContext.Provider value={fileLinkContextValue}>
       <PageShell
         wrapHeader
         title="实时聊天"

@@ -12,7 +12,6 @@ import pytest
 from server import _paths
 from server.services.agent_service import AgentService
 from server.services.autonomous_scheduler import AutonomousScheduler
-from server.services.feishu_service import FeishuService
 from server.services.task_scheduler import TaskScheduler
 
 
@@ -193,34 +192,6 @@ def test_autonomous_shutdown_timeout_keeps_live_singleton() -> None:
         AutonomousScheduler._instance = None
 
 
-def test_feishu_log_watcher_restarts_on_same_singleton() -> None:
-    service = FeishuService()
-    with mock.patch.object(service, "_publish_chat_events_from_log"):
-        assert service.start_log_watcher(interval=0.01)
-        first_thread = service._poll_thread
-        assert first_thread is not None and first_thread.is_alive()
-        service.shutdown()
-        assert not first_thread.is_alive()
-
-        assert service.start_log_watcher(interval=0.01)
-        second_thread = service._poll_thread
-        assert second_thread is not None and second_thread is not first_thread
-        service.shutdown()
-        assert not second_thread.is_alive()
-
-
-def test_delayed_feishu_autostart_uses_the_lifespan_owned_service() -> None:
-    import asyncio
-    from server.main import _delayed_feishu_autostart
-
-    service = mock.Mock()
-    service.start.return_value = {"started": True}
-
-    asyncio.run(_delayed_feishu_autostart(service, delay_seconds=0))
-
-    service.start.assert_called_once_with()
-
-
 def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
     from fastapi.testclient import TestClient
     from server import _paths, main
@@ -230,31 +201,6 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
     if _paths.GA_ROOT is None:
         pytest.skip("normal-mode app lifecycle needs an importable GA core")
 
-    agent = mock.Mock()
-    agent.status.return_value = SimpleNamespace(
-        is_running=False,
-        llm_no=0,
-        llm_name="test",
-        llm_model="test-model",
-        last_reply_time=0,
-        queued_tasks=0,
-        history_lines=0,
-        current_title="",
-    )
-    feishu = mock.Mock()
-    feishu.status.return_value = {
-        "running": False,
-        "pid": None,
-        "returncode": None,
-        "external": False,
-        "fsapp_path": "D:/study/GA/frontends/fsapp.py",
-        "fsapp_exists": True,
-        "python": "python",
-        "log_file": "feishu.log",
-        "log_exists": False,
-        "last_check": None,
-        "last_check_ts": 0.0,
-    }
     scheduler_status = {
         "runtime": {"running": True},
         "scheduled_chats": {"state": "running", "schedule_count": 0, "error": None},
@@ -263,14 +209,12 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
     }
     scheduler_host = mock.Mock()
     scheduler_host.status.return_value = scheduler_status
-    agent_factory = mock.Mock(return_value=agent)
-    feishu_factory = mock.Mock(return_value=feishu)
+    agent_factory = mock.Mock(side_effect=AssertionError("startup must not eagerly construct legacy AgentService"))
     conductor = mock.Mock()
 
     with (
         mock.patch.object(_paths, "GA_ROOT", _paths.GA_ROOT),
         mock.patch("server.services.agent_service.AgentService.instance", agent_factory),
-        mock.patch("server.services.feishu_service.FeishuService.instance", feishu_factory),
         mock.patch("server.services.conductor_service.ConductorService.instance",
                    mock.Mock(return_value=conductor)),
         mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
@@ -283,20 +227,20 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
         app = main.create_app()
         with TestClient(app, base_url="http://127.0.0.1") as client:
             response = client.get("/api/status")
-            # A passing startup probe opens normal APIs, not just diagnostics.
             assert client.get("/api/sessions").status_code == 200
+            im_resp = client.get("/api/im/status")
+            assert im_resp.status_code == 200
+            assert im_resp.json() == {"configured": False, "adapters": []}
 
     assert response.status_code == 200
     assert response.json()["autonomous"] == {"schedule_count": 2}
     assert response.json()["tasks"] == {"schedule_count": 3}
-    agent_factory.assert_called_once_with()
-    feishu_factory.assert_called_once_with()
+    assert response.json()["im"] == {"configured": False, "adapters": []}
+    agent_factory.assert_not_called()
     autonomous_factory.assert_not_called()
     task_factory.assert_not_called()
     scheduler_host.shutdown_all.assert_called_once_with()
-    feishu.shutdown.assert_called_once_with()
     conductor.shutdown.assert_called_once_with()
-    agent.shutdown.assert_called_once_with()
     assert app.state.session_lifecycle.admission_open is True
 
 
@@ -309,18 +253,13 @@ def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
     if _paths.GA_ROOT is None:
         pytest.skip("normal-mode app lifecycle needs an importable GA core")
 
-    agent = mock.Mock()
-    feishu = mock.Mock()
     scheduler_host = mock.Mock()
     conductor = mock.Mock()
-    agent_factory = mock.Mock(side_effect=[agent, RuntimeError("second startup boom")])
+    conductor_factory = mock.Mock(side_effect=[conductor, RuntimeError("second startup boom")])
 
     with (
-        mock.patch("server.services.agent_service.AgentService.instance", agent_factory),
-        mock.patch("server.services.feishu_service.FeishuService.instance", return_value=feishu),
-        mock.patch("server.services.conductor_service.ConductorService.instance",
-                   mock.Mock(return_value=conductor)),
-        mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
+        mock.patch("server.services.conductor_service.ConductorService.instance", conductor_factory),
+        mock.patch("server.services.scheduler_host.SchedulerHost", side_effect=[scheduler_host, mock.Mock()]),
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
         mock.patch.object(SessionLifecycle, "stop_runtimes"),
         mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
@@ -332,11 +271,9 @@ def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
             with TestClient(app, base_url="http://127.0.0.1"):
                 pass
 
-    assert agent_factory.call_count == 2
+    assert conductor_factory.call_count == 2
     scheduler_host.shutdown_all.assert_called_once_with()
-    feishu.shutdown.assert_called_once_with()
     conductor.shutdown.assert_called_once_with()
-    agent.shutdown.assert_called_once_with()
 
 
 def test_partial_startup_failure_reaps_already_owned_services() -> None:
@@ -348,16 +285,12 @@ def test_partial_startup_failure_reaps_already_owned_services() -> None:
     if _paths.GA_ROOT is None:
         pytest.skip("normal-mode app lifecycle needs an importable GA core")
 
-    agent = mock.Mock()
     scheduler_host = mock.Mock()
     scheduler_host.start_all.side_effect = RuntimeError("scheduler boom")
-    feishu_factory = mock.Mock(side_effect=AssertionError("startup must stop before Feishu"))
     conductor_factory = mock.Mock(
         side_effect=AssertionError("startup must stop before conductor"))
 
     with (
-        mock.patch("server.services.agent_service.AgentService.instance", return_value=agent),
-        mock.patch("server.services.feishu_service.FeishuService.instance", feishu_factory),
         mock.patch("server.services.conductor_service.ConductorService.instance",
                    conductor_factory),
         mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
@@ -371,6 +304,4 @@ def test_partial_startup_failure_reaps_already_owned_services() -> None:
                 pass
 
     scheduler_host.shutdown_all.assert_called_once_with()
-    agent.shutdown.assert_called_once_with()
-    feishu_factory.assert_not_called()
     conductor_factory.assert_not_called()

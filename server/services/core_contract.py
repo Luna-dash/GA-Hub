@@ -103,11 +103,6 @@ _REQUIRED_GA_SYMBOLS: dict[str, tuple[str, ...]] = {
         "model_snapshot",
         "switch_model",
     ),
-    "frontends.gahub.bridge.official_hub": (
-        "attach",
-        "detach",
-        "hub_client_class",
-    ),
     "frontends.gahub.bridge.rewind": (
         "apply_durable",
         "bind_store",

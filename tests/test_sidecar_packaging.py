@@ -87,35 +87,6 @@ class RuntimeGuardTests(unittest.TestCase):
         self.assertIn("check_sidecar_runtime", guard_block)
         self.assertIn("check_update_helper_runtime", guard_block)
 
-    def test_message_presentation_worker_matches_typescript_sources(self) -> None:
-        import shutil
-        import subprocess
-
-        node = shutil.which("node")
-        esbuild = ROOT / "webui" / "node_modules" / "esbuild"
-        if node is None or not esbuild.is_dir():
-            self.skipTest("node / esbuild not available in test environment")
-
-        script = (
-            "const path = require('node:path');"
-            "const fs = require('node:fs');"
-            "const root = process.cwd();"
-            "const esbuild = require(path.join(root, 'webui/node_modules/esbuild'));"
-            "const res = esbuild.buildSync({"
-            "  absWorkingDir: root,"
-            "  entryPoints: [path.join(root, 'server/services/message-presentation-worker.ts')],"
-            "  bundle: true, platform: 'node', format: 'cjs', target: ['node18'], write: false,"
-            "});"
-            "const expected = Buffer.from(res.outputFiles[0].contents).toString('utf8').replace(/\\r\\n/g, '\\n');"
-            "const actual = fs.readFileSync(path.join(root, 'server/services/message-presentation-worker.cjs'), 'utf8').replace(/\\r\\n/g, '\\n');"
-            "if (expected !== actual) {"
-            "  console.error('message-presentation-worker.cjs is out of date; run: node assets/remote_access/build-remote.cjs');"
-            "  process.exit(1);"
-            "}"
-        )
-        run = subprocess.run([node, "-e", script], cwd=ROOT, capture_output=True, text=True, timeout=30)
-        self.assertEqual(run.returncode, 0, run.stderr or run.stdout)
-
 
 class CondaRuntimeDllTests(unittest.TestCase):
     """A frozen onefile must carry the Conda DLLs its C extensions link against.

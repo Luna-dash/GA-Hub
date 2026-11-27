@@ -135,7 +135,7 @@ class BackendApiSmokeTests(unittest.TestCase):
                 "resolved_python_source",
                 "mode",
                 "agent",
-                "feishu",
+                "im",
                 "autonomous",
                 "tasks",
                 "schedulers",

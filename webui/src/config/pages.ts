@@ -30,7 +30,6 @@ export interface AppPageMeta {
  * Single declarative registry for standard SPA pages.
  *
  * Explicit exceptions stay out of this table by design:
- * - `/feishu` legacy redirect
  * - `/conversations/:id` deep-link route
  * - setup-mode shell (`<Settings initialMode="setup" />`)
  */

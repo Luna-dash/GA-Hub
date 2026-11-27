@@ -31,9 +31,13 @@ def version_tuple(value: str) -> tuple[int, int, int]:
 
 
 def installed_version() -> str:
-    # Frozen sidecar lives next to its own build-info, not the original install.
+    # Frozen onedir sidecar lives at <install>/sidecar/ga-hub-sidecar.exe;
+    # build-info.json lives at <install>/build-info.json (or legacy beside exe).
     if getattr(sys, "frozen", False):
-        return json.loads(Path(sys.executable).with_name("build-info.json").read_text(encoding="utf8"))["version"]
+        exe = Path(sys.executable).resolve()
+        for candidate in (exe.parent.parent / "build-info.json", exe.with_name("build-info.json")):
+            if candidate.is_file():
+                return json.loads(candidate.read_text(encoding="utf8"))["version"]
     import tomllib
     return tomllib.loads((Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(encoding="utf8"))["project"]["version"]
 

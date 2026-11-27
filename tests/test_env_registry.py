@@ -21,8 +21,6 @@ MARKERS = {
     "GA_HUB_MYKEY_PYTHON",  # stdout probe marker (routes/mykey.py)
     "GA_HUB_HIDE_LOADING",  # Tauri loading gate (main.rs)
     "GA_HUB_RUNTIME",       # window global injected by main.rs
-    "GAHUB_FEISHU_CHAT",    # DEPRECATED legacy chat marker (feishu_service, dual-marker window)
-    "GA_FRONTEND_EVENT",    # product-neutral fsapp stdout event marker (feishu_service)
     "GA_HUB_PERF",          # __GA_HUB_PERF__ webui window global (chatPerformance.ts)
     "GA_HUB_UPDATE", "GA_HUB_CORE",  # namespace prefixes stripped for child isolation
     "GA_HUB_MSVC_ENV",      # cmd stdout boundary in scripts/build_all.py
@@ -37,7 +35,6 @@ def _registered_names() -> set[str]:
         constants.ENV_SIDECAR_PYTHON,
         constants.ENV_BUILD_VCVARSALL,
         constants.ENV_BUILD_VCVARS_SCRIPT,
-        constants.ENV_NODE_LICENSE,
         constants.ENV_SIDECAR,
         constants.ENV_BRIDGE_PORT,
         constants.ENV_UPDATE_PREFLIGHT,
@@ -54,9 +51,6 @@ def _registered_names() -> set[str]:
         constants.ENV_GAHUB_MULTI_REQUEST_TURNS,
         constants.ENV_GAHUB_ALLOWED_HOSTS,
         constants.ENV_GAHUB_KEEP_CHILDREN_ON_EXIT,
-        constants.ENV_GAHUB_HUB_PROJECTION_MAX,
-        constants.ENV_GAHUB_HUB_PROJECTION_SUFFIX,
-        constants.ENV_GAHUB_HUB_PROJECTION_INCLUDE_SYSTEM,
         constants.ENV_GAHUB_MEI_SWEEP_ALLOW_REAL_TEMP,
         constants.ENV_GAHUB_MEI_SWEEP_DRY_RUN,
         constants.ENV_MYKEY_SYNC_URL,

@@ -169,9 +169,16 @@ class AutonomousScheduler(SchedulerDomainBase):
         lr = int(getattr(agent, "last_reply_time", 0)) or now
         return bool(getattr(agent, "is_running", False)), lr
 
+    def _has_enabled_idle_schedules(self) -> bool:
+        return any(s.type == "idle" and s.enabled for s in list(self.schedules.values()))
+
     def _idle_loop(self) -> None:
-        while not self._stop_event.wait(30):
-            self._run_idle_tick()
+        while not self._stop_event.is_set():
+            wait_sec = 30.0 if self._has_enabled_idle_schedules() else 300.0
+            if self._stop_event.wait(wait_sec):
+                return
+            if self._has_enabled_idle_schedules():
+                self._run_idle_tick()
 
     def _run_idle_tick(self, *, now: int | None = None) -> None:
         current = int(time.time()) if now is None else now

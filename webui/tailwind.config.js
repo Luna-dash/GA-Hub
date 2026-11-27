@@ -2,7 +2,7 @@
 // Custom palette references CSS variables in styles/index.css. The app is a
 // single forced paper-yellow theme — no dark-mode machinery anywhere.
 export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  content: ['./index.html', './src/**/*.{ts,tsx}', '!./src/**/*.test.{ts,tsx}'],
   theme: {
     extend: {
       colors: {

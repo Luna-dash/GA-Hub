@@ -134,7 +134,15 @@ export function DesktopRuntimeGate({ children }: { children: ReactNode }) {
     let cancelled = false
     let timer: number | undefined
 
+    const schedule = () => {
+      if (cancelled) return
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      if (timer !== undefined) window.clearTimeout(timer)
+      timer = window.setTimeout(tick, LIVENESS_POLL_MS)
+    }
+
     const tick = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       try {
         // `true` keeps everything as-is; `false` means the shell is moving the
         // backend (Stopping/Spawning/Running — a restart in progress, with its own
@@ -146,13 +154,31 @@ export function DesktopRuntimeGate({ children }: { children: ReactNode }) {
         setState({ phase: 'lost', error: errorMessage(error) })
         return
       }
-      if (!cancelled) timer = window.setTimeout(tick, LIVENESS_POLL_MS)
+      schedule()
     }
 
-    timer = window.setTimeout(tick, LIVENESS_POLL_MS)
+    const onVisibilityChange = () => {
+      if (cancelled) return
+      if (document.visibilityState === 'hidden') {
+        if (timer !== undefined) {
+          window.clearTimeout(timer)
+          timer = undefined
+        }
+      } else {
+        void tick()
+      }
+    }
+
+    schedule()
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibilityChange)
+    }
     return () => {
       cancelled = true
       if (timer !== undefined) window.clearTimeout(timer)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityChange)
+      }
     }
   }, [tauri, state.phase])
 

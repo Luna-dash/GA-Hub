@@ -39,6 +39,27 @@ export function elapsed(run: ThemeRun, now: number) {
   return `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`
 }
 
+function LiveThemeElapsed({ run, active }: { run: ThemeRun; active: boolean }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      setNow(Date.now())
+    }
+    const timer = window.setInterval(tick, 1000)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') setNow(Date.now())
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [active])
+  return <>{elapsed(run, now)}</>
+}
+
 export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubSession; onClose: () => void; onSaved: () => void }) {
   const config = session.theme_task ?? session.previous_theme_task
   const [title, setTitle] = useState(session.title)
@@ -99,7 +120,6 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
   const running = activeStatuses.includes(runtimeQuery.data?.status ?? '')
   const runQuery = useQuery({ queryKey: ['theme-run', session.id], queryFn: () => api.themeRun(session.id), staleTime: Infinity, refetchInterval: running ? 5000 : false, refetchIntervalInBackground: false })
   const llms = useQuery({ queryKey: queryKeys.llms, queryFn: api.llms })
-  const [now, setNow] = useState(Date.now())
   const [pending, setPending] = useState(false)
   const lock = useRef(false)
   const [error, setError] = useState('')
@@ -154,7 +174,6 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
   const report = themeReportConclusion(run?.report || '')
   const title = session.title
   const status = uncertain ? '状态未知' : active ? '运行中' : pending ? '提交中' : run ? outcomes[run.outcome ?? ''] ?? '执行结束' : '待执行'
-  useEffect(() => { if (!active) return; const t = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(t) }, [active])
   async function execute(text: string, customized = false, persistDefault = false) {
     if (lock.current) return
     lock.current = true; setPending(true); setError(''); setNotice('')
@@ -225,7 +244,7 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
           <p aria-label={`本次启动提示词：${title}`} className={`min-w-0 flex-1 whitespace-pre-wrap break-words text-sm line-clamp-3 ${draft.trim() ? '' : 'text-ink-faint'}`} title={draft}>{draft || '尚未填写提示词'}</p>
           <button type="button" aria-label={`编辑本次提示词：${title}`} title="编辑提示词" disabled={pending || active} className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => setEditDraft(draft)}><Pencil className="h-3.5 w-3.5" aria-hidden="true" /></button>
         </div>
-        <div className="mt-3 flex items-center justify-between gap-2 text-xs"><span role="status" aria-label={active && !uncertain ? runtime?.status === 'aborting' ? '正在停止' : '运行中' : status} className="flex items-center gap-1.5 text-ink-faint">{active && !uncertain ? <span aria-hidden="true" className="h-3.5 w-3.5 rounded-full border-2 border-accent border-t-transparent motion-safe:animate-spin" /> : <><span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${dotTone}`} />{status}</>}</span>{run && <span className="tabular-nums text-ink-faint">{active ? elapsed(run, now) : formatRelativeTime(run.finished_at ?? run.started_at)} · {run.turns} turn</span>}</div>
+        <div className="mt-3 flex items-center justify-between gap-2 text-xs"><span role="status" aria-label={active && !uncertain ? runtime?.status === 'aborting' ? '正在停止' : '运行中' : status} className="flex items-center gap-1.5 text-ink-faint">{active && !uncertain ? <span aria-hidden="true" className="h-3.5 w-3.5 rounded-full border-2 border-accent border-t-transparent motion-safe:animate-spin" /> : <><span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${dotTone}`} />{status}</>}</span>{run && <span className="tabular-nums text-ink-faint">{active ? <LiveThemeElapsed run={run} active={active} /> : formatRelativeTime(run.finished_at ?? run.started_at)} · {run.turns} turn</span>}</div>
       </>}
       {!expanded && notice && <p role="status" className="mt-3 text-xs text-ink-faint">{notice}</p>}
       {!expanded && error && <p role="alert" className="mt-3 text-sm text-status-danger">{error}</p>}
@@ -254,7 +273,7 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
         <div className="mt-5 space-y-3.5" aria-label="执行概况">
           <p className="flex items-start gap-2 text-sm font-medium leading-6">{active ? <span aria-hidden="true" className="mt-1.5 h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-accent/20 border-t-accent motion-reduce:animate-none" /> : <span className={`mt-2 h-1.5 w-1.5 shrink-0 rounded-full ${dotTone}`} />}<span>{status}</span></p>
           <dl className="grid grid-cols-2 gap-2.5">
-            <div className="ga-paper-subcard px-2.5 py-2"><dt className="text-[11px] text-ink-faint">{active ? '已运行' : '运行用时'}</dt><dd aria-label="已运行" className="mt-1 text-base font-semibold tabular-nums tracking-tight text-ink">{run ? elapsed(run, now) : '—'}</dd></div>
+            <div className="ga-paper-subcard px-2.5 py-2"><dt className="text-[11px] text-ink-faint">{active ? '已运行' : '运行用时'}</dt><dd aria-label="已运行" className="mt-1 text-base font-semibold tabular-nums tracking-tight text-ink">{run ? <LiveThemeElapsed run={run} active={active} /> : '—'}</dd></div>
             <div className="ga-paper-subcard px-2.5 py-2"><dt className="text-[11px] text-ink-faint">执行轮次</dt><dd aria-label="执行轮次" className="mt-1 text-base font-semibold tabular-nums tracking-tight text-ink">{run?.turns ?? '—'}<span className="ml-1 text-xs font-normal text-ink-faint">turn</span></dd></div>
           </dl>
           {run && <p title="最近运行时间" className="text-xs leading-5 text-ink-faint">{new Date(run.started_at * 1000).toLocaleString()}</p>}

@@ -221,31 +221,23 @@ def test_conductor_panel_skips_http_probe_when_never_started() -> None:
     lifecycle_status.assert_not_called()
 
 
-def test_agent_and_feishu_status_readers_never_construct_services(tmp_path) -> None:
+def test_agent_status_reader_never_constructs_service(tmp_path) -> None:
     from server import _paths
     from server.services.agent_service import AgentService
-    from server.services.feishu_service import FeishuService
 
     agent_factory = mock.Mock(side_effect=AssertionError("status must not construct Agent"))
-    feishu_factory = mock.Mock(side_effect=AssertionError("status must not construct Feishu"))
 
     with (
         mock.patch.object(_paths, "GA_ROOT", tmp_path),
         mock.patch.object(AgentService, "_instance", None),
         mock.patch.object(AgentService, "instance", agent_factory),
-        mock.patch.object(FeishuService, "_instance", None),
-        mock.patch.object(FeishuService, "instance", feishu_factory),
     ):
         agent = ServiceRegistry()._agent()
-        feishu = ServiceRegistry()._feishu()
 
     assert (agent.state, agent.health, agent.summary) == (
         "stopped", "attention", "服务尚未初始化",
     )
-    assert (feishu.state, feishu.summary) == ("stopped", "服务脚本未配置")
-    assert feishu.href == "/dashboard"
     agent_factory.assert_not_called()
-    feishu_factory.assert_not_called()
 
 
 def test_app_bound_registry_prefers_owned_services_over_singletons(tmp_path) -> None:
@@ -363,49 +355,39 @@ def test_services_panel_route_reads_the_app_bound_registry() -> None:
     assert response.json()["services"][0]["id"] == "marker"
 
 
-def test_feishu_autostart_states_surface_in_registry_panel() -> None:
+def test_im_registry_panel_omits_empty_and_surfaces_registered_adapters() -> None:
     from server.services.app_services import AppServices
+    from server.services.im_adapter import IMRegistry
 
-    feishu = mock.Mock()
-    bound = ServiceRegistry(AppServices(feishu=feishu))
+    reg = IMRegistry()
+    bound = ServiceRegistry(AppServices(im=reg))
+    assert bound._im_items() == []
 
-    feishu.status.return_value = {
-        "running": False,
-        "fsapp_exists": True,
-        "pid": None,
-        "external": False,
-        "autostart_state": "waiting",
-        "autostart_remaining_seconds": 120,
-        "autostart_error": None,
-    }
-    item = bound._feishu()
-    assert (item.state, item.health) == ("ready", "healthy")
-    assert item.summary == "等待自动启动（约 120s 后）"
+    class _StubAdapter:
+        id = "telegram"
+        name = "Telegram Bot"
 
-    feishu.status.return_value = {
-        "running": False,
-        "fsapp_exists": True,
-        "pid": None,
-        "external": False,
-        "autostart_state": "starting",
-        "autostart_remaining_seconds": None,
-        "autostart_error": None,
-    }
-    item = bound._feishu()
-    assert (item.state, item.summary, item.health) == ("ready", "正在自动启动…", "healthy")
+        def status(self) -> dict:
+            return {"running": True, "summary": "已连接"}
 
-    feishu.status.return_value = {
-        "running": False,
-        "fsapp_exists": True,
-        "pid": None,
-        "external": False,
-        "autostart_state": "failed",
-        "autostart_remaining_seconds": None,
-        "autostart_error": "missing app_secret",
-    }
-    item = bound._feishu()
-    assert (item.state, item.health, item.error) == ("error", "attention", "missing app_secret")
-    assert item.summary == "自动启动失败：missing app_secret"
+        def start(self) -> dict:
+            return {"running": True}
+
+        def stop(self) -> dict:
+            return {"running": False}
+
+        def send_text(self, target_id: str, text: str, **kwargs) -> dict:
+            return {"ok": True}
+
+        def shutdown(self) -> None:
+            pass
+
+    reg.register(_StubAdapter())
+    items = bound._im_items()
+    assert len(items) == 1
+    assert (items[0].id, items[0].name, items[0].state, items[0].summary) == (
+        "im:telegram", "Telegram Bot", "running", "已连接",
+    )
 
 
 def test_goalhive_panel_read_never_constructs_service() -> None:

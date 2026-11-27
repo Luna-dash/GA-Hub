@@ -198,11 +198,32 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
     setStreamConnected(false)
     if (!active || !streamUrl || typeof EventSource === 'undefined') return
     const source = new EventSource(streamUrl)
+    const pending: AntiEvent[] = []
+    let flushTimer: number | null = null
+    let lastFlushAt = 0
+
+    const flush = () => {
+      if (flushTimer !== null) {
+        window.clearTimeout(flushTimer)
+        flushTimer = null
+      }
+      if (pending.length === 0) return
+      const batch = pending.splice(0, pending.length)
+      lastFlushAt = performance.now()
+      setStreamEvents(old => (old.length === 0 ? batch : [...old, ...batch]))
+    }
+
     const onPayload = (raw: string) => {
       try {
         const parsed = JSON.parse(raw) as AntiEvent | { type?: string }
         if (parsed && (parsed.type === 'message.delta' || parsed.type === 'step.update')) {
-          setStreamEvents(old => [...old, parsed as AntiEvent])
+          pending.push(parsed as AntiEvent)
+          const elapsed = performance.now() - lastFlushAt
+          if (elapsed >= 80 && flushTimer === null) {
+            flush()
+          } else if (flushTimer === null) {
+            flushTimer = window.setTimeout(flush, Math.max(16, 80 - elapsed))
+          }
         }
       } catch {
         // Ignore malformed or keepalive SSE frames; polling fallback recovers full state.
@@ -213,13 +234,18 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
     source.onmessage = handleEvent
     source.addEventListener('message.delta', handleEvent as EventListener)
     source.addEventListener('step.update', handleEvent as EventListener)
-    source.addEventListener('approval.requested', (() => onApprovalRequestedRef.current?.()) as EventListener)
+    source.addEventListener('approval.requested', (() => {
+      flush()
+      onApprovalRequestedRef.current?.()
+    }) as EventListener)
     source.onerror = () => {
+      flush()
       setStreamConnected(false)
       source.close()
       onStreamEndedRef.current?.()
     }
     return () => {
+      if (flushTimer !== null) window.clearTimeout(flushTimer)
       setStreamConnected(false)
       source.close()
     }
@@ -250,7 +276,7 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
         {steps.length > 0 && <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums text-ink-faint">共 {steps.length} 步</span>}
         {active && <span aria-label="正在输出" className={clsx('h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent', steps.length === 0 && 'ml-auto')} />}
       </summary>
-      <div className="mt-1.5 space-y-2 px-1 py-1">
+      {(open || startedLive) && <div className="mt-1.5 space-y-2 px-1 py-1">
         {isError && <p role="alert">过程记录加载失败。<button type="button" className="ga-btn-link ml-2" onClick={() => void refetch()}>重试</button></p>}
         {steps.length > 0 ? <ol className="space-y-2" aria-label="任务步骤">
           {steps.map(step => {
@@ -342,7 +368,7 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
             </li>
           })}
         </ol> : !isError && <p>{isPending ? '正在加载过程…' : active ? '等待步骤事件…' : '此轮没有步骤记录。'}</p>}
-      </div>
+      </div>}
     </details>
     {!conversationManaged && open && <CollapseToLatestButton onClick={collapseProcess} />}
     <div ref={latestRef} data-transcript-latest />

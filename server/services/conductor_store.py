@@ -39,7 +39,7 @@ class ConductorStore:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA busy_timeout=5000")
         self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.execute("PRAGMA synchronous=FULL")
+        self.db.execute("PRAGMA synchronous=NORMAL")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         if version not in (0, 1, 2, 3, 4):
             self.db.close()

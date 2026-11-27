@@ -4,11 +4,12 @@
 // In normal mode, it's reachable at /settings via the sidebar.
 
 import { useEffect, useRef, useState } from 'react'
-import { ALargeSmall, Bell, Download, Globe, KeyRound, MessagesSquare, PanelLeft, Settings2, Type } from 'lucide-react'
+import { ALargeSmall, Bell, Download, Globe, HardDrive, KeyRound, MessagesSquare, PanelLeft, Settings2, Type } from 'lucide-react'
 import { ArrowDown, ArrowUp, BellOff, Eye, EyeOff, FolderOpen, RefreshIcon, RotateCcw, Save, SendHorizontal } from '@/components/ActionIcons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { NovaSettingsPanel } from '@/components/NovaSettingsPanel'
+import { StorageSettingsPanel } from '@/components/StorageSettingsPanel'
 import { UpdateSettingsPanel } from '@/components/UpdateSettingsPanel'
 import { FontAppearancePanel } from '@/components/FontAppearancePanel'
 import { ThemeAppearancePanel } from '@/components/ThemeAppearancePanel'
@@ -45,6 +46,7 @@ const SETTINGS_TABS = [
   { id: 'chat', label: '自动重试', description: '配置实时会话与定时任务的网络异常重试策略', icon: MessagesSquare },
   { id: 'remote', label: '远程连接', description: '关联 Nova 账号与查看本机设备码', icon: Globe },
   { id: 'updates', label: '程序更新', description: '检查版本、校验安装包并安全切换升级', icon: Download },
+  { id: 'storage', label: '存储与缓存', description: '查看本机缓存占用并按需手动清理临时文件', icon: HardDrive },
   { id: 'sync', label: '密钥同步', description: '控制 LLM 管理页中上传 mykey 的显示开关', icon: KeyRound },
   { id: 'notifications', label: '桌面通知', description: '管理后台完成或需要互动时的桌面消息提醒', icon: Bell },
 ] as const
@@ -318,6 +320,9 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
             </div>
             <div id="settings-panel-updates" role="tabpanel" aria-labelledby="settings-tab-updates" tabIndex={0} hidden={activeTab !== 'updates'}>
               <UpdateSettingsPanel active={!inSetup && activeTab === 'updates'} />
+            </div>
+            <div id="settings-panel-storage" role="tabpanel" aria-labelledby="settings-tab-storage" tabIndex={0} hidden={activeTab !== 'storage'}>
+              <StorageSettingsPanel active={!inSetup && activeTab === 'storage'} />
             </div>
             <div id="settings-panel-sync" role="tabpanel" aria-labelledby="settings-tab-sync" tabIndex={0} hidden={activeTab !== 'sync'}>
               <MyKeySyncPanel />

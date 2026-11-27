@@ -43,6 +43,7 @@ export function AttachmentImage({ attachment: a, className, linked = false }: {
     </span>
   }
   const image = <img src={current.src} alt={a.name} className={className}
+    loading="lazy" decoding="async"
     onError={() => setState({ key, failed: true })} />
   return linked
     ? <a href={current.src} target="_blank" rel="noreferrer" title={a.name} className="block">{image}</a>

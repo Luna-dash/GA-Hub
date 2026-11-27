@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { useInRouterContext, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { guessTransferMime, type TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
-import { Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, X } from 'lucide-react'
 import { RotateCw, Square } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, FinalConclusionDivider, TranscriptUtilityRail, chatTranscriptClass } from '@/components/ChatLayout'
 import { ConversationCollapseControl, ConversationCollapseProvider } from '@/components/ConversationCollapse'
@@ -307,7 +307,7 @@ export default function AntiChat() {
   const daemon = useAntiDaemonStatus()
   const profiles = useAgyProfiles()
   const projects = useQuery({ queryKey: queryKeys.projects, queryFn: api.projects })
-  const sessions = useQuery({ queryKey: sessionsKey, queryFn: ({ signal }) => antiApi.sessions(signal), refetchInterval: 5000 })
+  const sessions = useQuery({ queryKey: sessionsKey, queryFn: ({ signal }) => antiApi.sessions(signal), refetchInterval: 5000, refetchIntervalInBackground: false })
   const updateList = async (update: (rows: Session[]) => Session[]) => {
     await cache.cancelQueries({ queryKey: sessionsKey, exact: true })
     cache.setQueryData<Session[]>(sessionsKey, old => update(old ?? []))
@@ -477,6 +477,24 @@ export default function AntiChat() {
   </PageShell>
 }
 
+const LiveRunElapsed = memo(function LiveRunElapsed({ startedMs }: { startedMs: number }) {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      setNow(Date.now())
+    }
+    const timer = window.setInterval(tick, 1000)
+    const onVis = () => { if (document.visibilityState !== 'hidden') setNow(Date.now()) }
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis)
+    return () => {
+      window.clearInterval(timer)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis)
+    }
+  }, [])
+  return <>已运行 {formatDuration(Math.max(0, now - startedMs))}</>
+})
+
 function Conversation({ session, headerActions, profileId, profilesData, supportsSteering, onOpenProfiles, onOpenOrchestratorSettings }: {
   session: Session; headerActions: HTMLDivElement | null; profileId?: string; profilesData?: AgyProfiles; supportsSteering?: boolean | null; onOpenProfiles: () => void; onOpenOrchestratorSettings: () => void
 }) {
@@ -488,11 +506,15 @@ function Conversation({ session, headerActions, profileId, profilesData, support
   const setPrompt = useCallback((value: string) => useDraftStore.getState().setText(draftKey, value), [draftKey])
   const setAttachments = useCallback((value: PasteAttachment[]) => useDraftStore.getState().setAttachments(draftKey, value), [draftKey])
   const [pending, setPending] = useState<Submission>()
+  const [pendingCancelling, setPendingCancelling] = useState(false)
+  const pendingCancelRequestedRef = useRef(false)
   const [lastRateLimitedInput, setLastRateLimitedInput] = useState<Submission | null>(null)
+  const [recoveryDismissed, setRecoveryDismissed] = useState(false)
+  const [rateLimitDismissed, setRateLimitDismissed] = useState(false)
+  const [dismissedQueryError, setDismissedQueryError] = useState<string | null>(null)
   const [queueCollapsed, setQueueCollapsed] = useState(false)
   const [pendingEditItem, setPendingEditItem] = useState<AntiQueuedPromptItem | null>(null)
   const effectiveProfileId = profileId ?? 'default'
-  const [clock, setClock] = useState(Date.now)
   const [stoppingRunId, setStoppingRunId] = useState<string | null>(null)
   const [forceStopEligible, setForceStopEligible] = useState(false)
   const [lastActivityAt, setLastActivityAt] = useState(() => Date.now())
@@ -613,7 +635,8 @@ function Conversation({ session, headerActions, profileId, profilesData, support
   const queueKey = ['anti-queue', sid]
   const history = useQuery({
     queryKey: key, queryFn: ({ signal }) => antiApi.runs(sid, signal),
-    refetchInterval: query => query.state.data?.some(active) || pending ? 1500 : false
+    refetchInterval: query => query.state.data?.some(active) || pending ? 2500 : false,
+    refetchIntervalInBackground: false,
   })
   const current = history.data?.find(active)
   const queueQuery = useQuery({
@@ -621,8 +644,9 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     queryFn: ({ signal }) => antiApi.queue(sid, signal),
     refetchInterval: query => {
       const count = Array.isArray(query.state.data?.items) ? query.state.data.items.length : 0
-      return Boolean(current || pending) || count > 0 || (session.queued_count ?? 0) > 0 ? 1500 : false
+      return Boolean(current || pending) || count > 0 || (session.queued_count ?? 0) > 0 ? 2500 : false
     },
+    refetchIntervalInBackground: false,
   })
   const queueItems = Array.isArray(queueQuery.data?.items) ? queueQuery.data.items : EMPTY_QUEUED_ITEMS
   const queuePaused = !current && queueItems.length > 0
@@ -633,7 +657,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     }
   }, [pendingEditItem, queueItems])
   const live = useQuery({
-    queryKey: ['anti-live', sid, current?.id], enabled: Boolean(current), refetchInterval: 900,
+    queryKey: ['anti-live', sid, current?.id], enabled: Boolean(current), refetchInterval: 2500, refetchIntervalInBackground: false,
     queryFn: async ({ signal }) => {
       const run = await antiApi.run(sid, current!.id, signal)
       if (!active(run)) {
@@ -645,31 +669,49 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     },
   })
   useEffect(() => {
-    if (!current) return
-    setClock(Date.now())
-    const timer = window.setInterval(() => setClock(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [current])
-  useEffect(() => {
-    if (pending && history.data?.some(run => run.operation === pending.operation)) {
-      setPending(undefined)
-      useDraftStore.getState().clearDraft(draftKey)
+    if (!pending) return
+    const matched = history.data?.find(run => run.operation === pending.operation)
+    if (!matched) return
+    setPending(undefined)
+    send.reset()
+    useDraftStore.getState().clearDraft(draftKey)
+    if (pendingCancelRequestedRef.current) {
+      pendingCancelRequestedRef.current = false
+      setPendingCancelling(false)
+      if (active(matched)) {
+        cancel.mutate({ rid: matched.id, force: false })
+      }
     }
   }, [draftKey, history.data, pending])
   const send = useMutation({
     mutationFn: (body: Submission) => antiApi.submitRun(sid, body),
     onSuccess: run => {
       setLastRateLimitedInput(null)
+      setRateLimitDismissed(false)
       cache.setQueryData<Run[]>(key, old => [...(old ?? []).filter(row => row.id !== run.id), run])
       setPending(undefined)
       useDraftStore.getState().clearDraft(draftKey)
+      if (pendingCancelRequestedRef.current) {
+        pendingCancelRequestedRef.current = false
+        setPendingCancelling(false)
+        if (active(run)) {
+          cancel.mutate({ rid: run.id, force: false })
+        }
+      }
     },
     onError: (error, variables) => {
+      pendingCancelRequestedRef.current = false
+      setPendingCancelling(false)
       if (error instanceof HttpError && error.status === 429) {
         setLastRateLimitedInput(variables)
+        setRateLimitDismissed(false)
       }
       if (error instanceof HttpError && (error.status === 422 || error.status === 429 || error.status === 409 || error.status === 503)) {
         setPending(undefined)
+        if (error.status !== 429) {
+          toast.error(error.message || '发送失败，请稍后重试')
+          send.reset()
+        }
       }
     },
     onSettled: () => {
@@ -682,9 +724,11 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     const now = Date.now()
     lastActivityAtRef.current = now
     setLastActivityAt(now)
+    setRecoveryDismissed(false)
     if (!activeRunId) {
       setStoppingRunId(null)
       setForceStopEligible(false)
+      cancel.reset()
     } else {
       setStoppingRunId(prev => (prev === activeRunId ? prev : null))
       setForceStopEligible(false)
@@ -692,7 +736,10 @@ function Conversation({ session, headerActions, profileId, profilesData, support
   }, [activeRunId])
   useEffect(() => {
     if (!stoppingRunId || stoppingRunId !== activeRunId) return
-    const timer = window.setTimeout(() => setForceStopEligible(true), SOFT_STOP_ESCALATION_MS)
+    const timer = window.setTimeout(() => {
+      setForceStopEligible(true)
+      setRecoveryDismissed(false)
+    }, SOFT_STOP_ESCALATION_MS)
     return () => window.clearTimeout(timer)
   }, [stoppingRunId, activeRunId])
   const cancel = useMutation({
@@ -705,12 +752,22 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       if (!active(run)) {
         setStoppingRunId(null)
         setForceStopEligible(false)
+        setRecoveryDismissed(false)
         void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] })
         void cache.invalidateQueries({ queryKey: key })
         void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
       } else if (!vars.force) {
         setForceStopEligible(true)
+        setRecoveryDismissed(false)
       }
+    },
+    onError: (error, vars) => {
+      if (!vars.force) {
+        setForceStopEligible(true)
+        setRecoveryDismissed(false)
+      }
+      toast.error(error.message || (vars.force ? '强制终止失败，请稍后重试' : '停止任务失败，可直接尝试强制终止'))
+      cancel.reset()
     },
   })
   const approve = useMutation({
@@ -721,15 +778,24 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === run.id ? run : row))
       void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] })
     },
+    onError: error => {
+      toast.error(error.message || '审批提交失败，请重试')
+      approve.reset()
+    },
   })
   const resetAcp = useMutation({
     mutationFn: (force: boolean = false) => antiApi.resetSession(sid, force),
     onSuccess: updated => {
       setStoppingRunId(null)
       setForceStopEligible(false)
+      setRecoveryDismissed(false)
       cache.setQueryData<Session[]>(sessionsKey, old => old?.map(row => row.id === updated.id ? { ...row, ...updated } : row))
       void cache.invalidateQueries({ queryKey: key })
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+    },
+    onError: error => {
+      toast.error(error.message || '重连 ACP 失败，请稍后重试')
+      resetAcp.reset()
     },
   })
   const slashMatch = /^\/(\S*)$/.exec(prompt.trimStart())
@@ -1033,7 +1099,14 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     observer.observe(dock)
     return () => observer.disconnect()
   }, [activeApprovalId])
-  const silentSeconds = current && !activeApprovalId ? Math.max(0, Math.floor((clock - lastActivityAt) / 1000)) : 0
+  const [silentNow, setSilentNow] = useState(Date.now)
+  useEffect(() => {
+    if (!current || activeApprovalId) return
+    setSilentNow(Date.now())
+    const timer = window.setInterval(() => setSilentNow(Date.now()), 5000)
+    return () => window.clearInterval(timer)
+  }, [current, activeApprovalId])
+  const silentSeconds = current && !activeApprovalId ? Math.max(0, Math.floor((silentNow - lastActivityAt) / 1000)) : 0
   const isSilentStuck = silentSeconds >= SILENT_STUCK_SECONDS
   const canForceStop = Boolean(current && forceStopEligible && stoppingRunId === current.id)
   const showRecoveryBar = Boolean(current && (canForceStop || isSilentStuck))
@@ -1071,6 +1144,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     },
     onSuccess: (run, targetProfileId) => {
       setLastRateLimitedInput(null)
+      setRateLimitDismissed(false)
       send.reset()
       if (run) {
         cache.setQueryData<Run[]>(key, old => [...(old ?? []).filter(row => row.id !== run.id), run])
@@ -1086,6 +1160,10 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       const targetName = profilesData?.profiles.find(p => p.id === targetProfileId)?.name ?? targetProfileId
       toast.success(`已切换至「${targetName}」并沿用当前上下文重试`)
     },
+    onError: error => {
+      toast.error(error.message || '切换账号重试失败，请稍后重试')
+      switchAndRetry.reset()
+    },
   })
   const clearGrants = useMutation({
     mutationFn: (kind?: string) => antiApi.clearSessionGrants(sid, kind),
@@ -1094,15 +1172,30 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
       toast.success(kind ? `已收回本会话「${grantLabels[kind] ?? kind}」授权` : '已收回本会话全部常驻授权')
     },
+    onError: error => {
+      toast.error(error.message || '收回授权失败')
+      clearGrants.reset()
+    },
   })
+  const lastRun = runs.at(-1)
+  const lastRunId = lastRun?.id ?? null
+  useEffect(() => {
+    if (lastRun?.status === 'rate_limited') setRateLimitDismissed(false)
+  }, [lastRunId, lastRun?.status])
   const isRateLimited = (send.error instanceof HttpError && send.error.status === 429)
-    || (!current && runs.at(-1)?.status === 'rate_limited')
+    || (!current && lastRun?.status === 'rate_limited')
   const fallbackProfile = isRateLimited ? pickBestFallbackProfile(profilesData, effectiveProfileId) : null
   const grants = session.grants ?? []
   const submit = () => {
     const trimmedPrompt = prompt.trim()
     if (current || send.isPending || !history.isSuccess || (!trimmedPrompt && !attachments.length)) return
     const body = pending ?? createSubmission(prompt, attachments)
+    pendingCancelRequestedRef.current = false
+    setPendingCancelling(false)
+    setRateLimitDismissed(false)
+    send.reset()
+    cancel.reset()
+    resetAcp.reset()
     followTranscript.current = true
     setPending(body)
     send.mutate(body)
@@ -1126,12 +1219,22 @@ function Conversation({ session, headerActions, profileId, profilesData, support
         toast.info('已加入待发队列，本轮完成后自动发送')
       }
     },
+    onError: error => {
+      toast.error(error.message || '加入待发队列失败')
+      enqueue.reset()
+    },
   })
   const removeQueued = useMutation({
     mutationFn: (qid: string) => antiApi.removeQueuedPrompt(sid, qid),
     onSuccess: updated => {
       cache.setQueryData<AntiQueueState>(queueKey, updated)
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+    },
+    onError: error => {
+      if (!(error instanceof HttpError && error.status === 404)) {
+        toast.error(error.message || '移除排队消息失败')
+      }
+      removeQueued.reset()
     },
   })
   const clearQueue = useMutation({
@@ -1141,12 +1244,20 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       cache.setQueryData<AntiQueueState>(queueKey, updated)
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
     },
+    onError: error => {
+      toast.error(error.message || '清空队列失败')
+      clearQueue.reset()
+    },
   })
   const moveQueued = useMutation({
     mutationFn: ({ qid, direction }: { qid: string; direction: 'up' | 'down' | 'top' }) =>
       antiApi.moveQueuedPrompt(sid, qid, direction),
     onSuccess: updated => {
       cache.setQueryData<AntiQueueState>(queueKey, updated)
+    },
+    onError: error => {
+      toast.error(error.message || '调整队列顺序失败')
+      moveQueued.reset()
     },
   })
   const steerQueued = useMutation({
@@ -1161,6 +1272,10 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
       toast.success('已将该排队消息作为插话发出')
     },
+    onError: error => {
+      toast.error(error.message || '排队消息插话失败')
+      steerQueued.reset()
+    },
   })
   const dispatchQueued = useMutation({
     mutationFn: (qid?: string) => antiApi.dispatchQueuedPrompt(sid, qid),
@@ -1172,6 +1287,10 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       cache.setQueryData<AntiQueueState>(queueKey, res.queue)
       void cache.invalidateQueries({ queryKey: key })
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+    },
+    onError: error => {
+      toast.error(error.message || '立即发送排队消息失败')
+      dispatchQueued.reset()
     },
   })
   const steer = useMutation({
@@ -1207,7 +1326,10 @@ function Conversation({ session, headerActions, profileId, profilesData, support
         } else {
           toast.info('当前任务暂无法实时插话，已加入待发队列')
         }
+      } else {
+        toast.error(error.message || '插话纠偏失败')
       }
+      steer.reset()
     },
   })
   const queueCurrentInput = () => {
@@ -1272,6 +1394,28 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     if (prevId === undefined || prevId === activeRunId) return
     void cache.invalidateQueries({ queryKey: queueKey })
   }, [activeRunId, cache, sid])
+  const queryError = history.error ?? live.error ?? null
+  const queryErrorMessage = queryError?.message || null
+  const showUncertainSendNotice = Boolean(pending && send.isError && !current)
+  const showRecoveryNotice = !showUncertainSendNotice && Boolean(showRecoveryBar && current && !recoveryDismissed)
+  const showRateLimitNotice = !showUncertainSendNotice && !showRecoveryNotice && Boolean(isRateLimited && !rateLimitDismissed)
+  const showQueryErrorNotice = !showUncertainSendNotice && !showRecoveryNotice && !showRateLimitNotice
+    && Boolean(queryErrorMessage && dismissedQueryError !== queryErrorMessage)
+  const isStoppingPending = Boolean(pending && send.isPending && !current)
+  const composerStopActive = Boolean(current) || isStoppingPending
+  const composerStopState: 'idle' | 'stopping' | 'force' = canForceStop
+    ? 'force'
+    : (cancel.isPending || pendingCancelling || (Boolean(current) && stoppingRunId === current?.id))
+      ? 'stopping'
+      : 'idle'
+  const antiFileLinkContext = useMemo(
+    () => ({ sessionId: sid, projectPath: workspace, project, engine: 'anti' as const }),
+    [sid, workspace, project],
+  )
+  const antiTransferContext = useMemo(
+    () => ({ engine: 'anti' as const, sessionId: sid, project }),
+    [sid, project],
+  )
   return <>
     {headerActions && createPortal(<>
       <AntiModelSelector
@@ -1349,8 +1493,12 @@ function Conversation({ session, headerActions, profileId, profilesData, support
             const finishedMs = parseIsoMs(displayRun.finished_at)
             const userTimeLabel = formatRunTime(startedMs)
             const assistantTimeLabel = formatRunTime(finishedMs ?? startedMs)
-            const durationText = startedMs !== null
-              ? `${isRunActive ? '已运行' : '用时'} ${formatDuration(Math.max(0, (isRunActive ? clock : (finishedMs ?? clock)) - startedMs))}`
+            const durationNode = startedMs !== null
+              ? (isRunActive
+                ? <LiveRunElapsed startedMs={startedMs} />
+                : finishedMs !== null
+                  ? `用时 ${formatDuration(Math.max(0, finishedMs - startedMs))}`
+                  : null)
               : null
             const policyLabel = displayRun.mode === 'accept-edits'
               ? `Edit · ${permissionLabels[displayRun.permission_mode] ?? displayRun.permission_mode}`
@@ -1360,8 +1508,11 @@ function Conversation({ session, headerActions, profileId, profilesData, support
               ? (models.data?.items.find(item => item.id === rawRunModel)?.display_name ?? rawRunModel)
               : null
             const usageInfo = formatRunUsage(displayRun.usage)
+            const timeAndDurationNode = (assistantTimeLabel || durationNode)
+              ? <>{assistantTimeLabel}{assistantTimeLabel && durationNode ? ' · ' : ''}{durationNode}</>
+              : null
             const metaParts = [
-              [assistantTimeLabel, durationText].filter(Boolean).join(' · '),
+              timeAndDurationNode,
               runModelLabel,
               policyLabel,
             ].filter(Boolean)
@@ -1385,7 +1536,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
               </div>
               <div className="flex justify-start">
                 <div className={clsx('max-w-full min-w-0 flex flex-col items-start gap-1.5', isRunActive && 'w-full')}>
-                  <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, project, engine: 'anti' }}>
+                  <FileLinkContext.Provider value={antiFileLinkContext}>
                     <div
                       data-chat-box
                       className={clsx(
@@ -1417,7 +1568,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
                         </p>
                       )}
                       <div style={messageFontStyle}>
-                        <FileTransferConclusion.Provider value={!isRunActive && displayRun.status === 'success' ? { engine: 'anti', sessionId: sid, project } : null}>
+                        <FileTransferConclusion.Provider value={!isRunActive && displayRun.status === 'success' ? antiTransferContext : null}>
                           <AntiTaskProgress
                             active={isRunActive}
                             loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
@@ -1530,7 +1681,13 @@ function Conversation({ session, headerActions, profileId, profilesData, support
                   </FileLinkContext.Provider>
                   {(metaParts.length > 0 || usageInfo) && (
                     <div className="flex select-none flex-wrap items-center gap-x-1.5 gap-y-0.5 px-0.5 text-[10px] leading-4 tabular-nums text-ink-faint">
-                      {metaParts.length > 0 && <span>{metaParts.join(' · ')}</span>}
+                      {metaParts.length > 0 && (
+                        <span>
+                          {metaParts.map((part, idx) => (
+                            <Fragment key={idx}>{idx > 0 ? ' · ' : null}{part}</Fragment>
+                          ))}
+                        </span>
+                      )}
                       {metaParts.length > 0 && usageInfo && <span aria-hidden="true">·</span>}
                       {usageInfo && (
                         <span data-anti-run-usage title={usageInfo.title} className="cursor-help">
@@ -1543,45 +1700,6 @@ function Conversation({ session, headerActions, profileId, profilesData, support
               </div>
             </article>
           })}
-          <Errors items={[
-            history.error,
-            live.error,
-            send.error,
-            steer.error instanceof HttpError && steer.error.status === 409 ? null : steer.error,
-            enqueue.error,
-            removeQueued.error instanceof HttpError && removeQueued.error.status === 404 ? null : removeQueued.error,
-            clearQueue.error,
-            moveQueued.error,
-            steerQueued.error,
-            dispatchQueued.error,
-            switchAndRetry.error,
-            clearGrants.error,
-            cancel.error,
-            approve.error,
-            resetAcp.error,
-          ]} />
-          {isRateLimited && (
-            <div data-anti-rate-limit-switch className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-status-warning-line bg-status-warning-soft px-3 py-2 text-xs text-status-warning">
-              <span>当前账号处于风控冷却或配额保护中，可切换至其他有额度的账号继续当前上下文。</span>
-              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                {fallbackProfile && (
-                  <button
-                    type="button"
-                    className="ga-btn-sm-primary shrink-0"
-                    disabled={switchAndRetry.isPending || Boolean(current)}
-                    onClick={() => switchAndRetry.mutate(fallbackProfile.profile.id)}
-                  >
-                    {switchAndRetry.isPending
-                      ? '切换重试中…'
-                      : `一键切换到「${fallbackProfile.profile.name}」${typeof fallbackProfile.pct === 'number' ? `（剩余 ${fallbackProfile.pct}%）` : ''}并重试`}
-                  </button>
-                )}
-                <button type="button" className="ga-btn-warning-sm shrink-0" onClick={onOpenProfiles}>
-                  切换可用账号
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -1632,6 +1750,149 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     )}
     <div ref={composerWrapRef}>
       <ChatComposerFrame>
+        {showUncertainSendNotice && (
+          <div
+            data-anti-uncertain-send-bar
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-t-xl border-b border-status-warning-line/55 bg-status-warning-soft/50 px-3 py-1.5 text-xs text-ink"
+          >
+            <span className="inline-flex min-w-0 flex-1 items-center gap-1.5 text-status-warning">
+              <AlertTriangle size={14} className="shrink-0" aria-hidden="true" />
+              <span className="min-w-0">无法确认请求是否已送达，重试将沿用同一请求</span>
+            </span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                className="ga-btn-sm-primary"
+                disabled={send.isPending}
+                onClick={submit}
+              >
+                重试
+              </button>
+              <button
+                type="button"
+                className="ga-btn-link px-1.5 py-0.5 text-[11px] text-ink-muted hover:text-ink"
+                onClick={() => { setPending(undefined); send.reset() }}
+              >
+                继续编辑
+              </button>
+            </div>
+          </div>
+        )}
+        {showRecoveryNotice && current && (
+          <div
+            data-anti-force-stop-bar
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-t-xl border-b border-status-warning-line/55 bg-status-warning-soft/50 px-3 py-1.5 text-xs text-ink"
+          >
+            <span className="inline-flex min-w-0 flex-1 items-center gap-1.5 text-status-warning">
+              <AlertTriangle size={14} className="shrink-0" aria-hidden="true" />
+              <span className="min-w-0">
+                {canForceStop
+                  ? '任务暂未响应停止，可强制终止（保留上下文）'
+                  : `已 ${silentSeconds}s 无新输出，可能已卡住（保留上下文）`}
+              </span>
+            </span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                className="ga-btn-sm-danger"
+                disabled={cancel.isPending && Boolean(cancel.variables?.force)}
+                onClick={() => cancel.mutate({ rid: current.id, force: true })}
+              >
+                {cancel.isPending && cancel.variables?.force ? '强制终止中…' : '强制终止'}
+              </button>
+              <button
+                type="button"
+                className="ga-btn-link px-1.5 py-0.5 text-[11px] text-ink-muted hover:text-ink disabled:opacity-45"
+                disabled={resetAcp.isPending}
+                onClick={() => resetAcp.mutate(true)}
+              >
+                {resetAcp.isPending ? '重连中…' : '强制重连 ACP'}
+              </button>
+              <button
+                type="button"
+                aria-label="关闭提示"
+                title="暂时隐藏提示"
+                onClick={() => setRecoveryDismissed(true)}
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-bg-soft/80 hover:text-ink"
+              >
+                <X size={13} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        )}
+        {showRateLimitNotice && (
+          <div
+            data-anti-rate-limit-switch
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-t-xl border-b border-status-warning-line/55 bg-status-warning-soft/50 px-3 py-1.5 text-xs text-ink"
+          >
+            <span className="inline-flex min-w-0 flex-1 items-center gap-1.5 text-status-warning">
+              <AlertTriangle size={14} className="shrink-0" aria-hidden="true" />
+              <span className="min-w-0">当前账号额度受限，可切换账号继续当前上下文</span>
+            </span>
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              {fallbackProfile && (
+                <button
+                  type="button"
+                  className="ga-btn-sm-primary shrink-0"
+                  disabled={switchAndRetry.isPending || Boolean(current)}
+                  onClick={() => switchAndRetry.mutate(fallbackProfile.profile.id)}
+                >
+                  {switchAndRetry.isPending
+                    ? '切换重试中…'
+                    : `一键切换到「${fallbackProfile.profile.name}」${typeof fallbackProfile.pct === 'number' ? `（剩余 ${fallbackProfile.pct}%）` : ''}并重试`}
+                </button>
+              )}
+              <button type="button" className="ga-btn-warning-sm shrink-0" onClick={onOpenProfiles}>
+                切换可用账号
+              </button>
+              <button
+                type="button"
+                aria-label="关闭提示"
+                title="关闭提示"
+                onClick={() => { setRateLimitDismissed(true); send.reset() }}
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-bg-soft/80 hover:text-ink"
+              >
+                <X size={13} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        )}
+        {showQueryErrorNotice && queryErrorMessage && (
+          <div
+            data-anti-query-error-bar
+            role="alert"
+            className="flex items-center justify-between gap-2 rounded-t-xl border-b border-status-danger-line/55 bg-status-danger-soft/50 px-3 py-1.5 text-xs text-status-danger"
+          >
+            <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
+              <AlertCircle size={14} className="shrink-0" aria-hidden="true" />
+              <span className="min-w-0 truncate" title={queryErrorMessage}>{queryErrorMessage}</span>
+            </span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                className="ga-btn-sm"
+                onClick={() => {
+                  void history.refetch()
+                  if (current) void live.refetch()
+                }}
+              >
+                重试
+              </button>
+              <button
+                type="button"
+                aria-label="关闭提示"
+                title="关闭提示"
+                onClick={() => setDismissedQueryError(queryErrorMessage)}
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-bg-soft/80 hover:text-ink"
+              >
+                <X size={13} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        )}
         {grants.length > 0 && (
           <div data-anti-session-grants className="flex flex-wrap items-center justify-end gap-1 px-3.5 pt-2 text-[11px] text-ink-muted">
             <span>已常驻授权：</span>
@@ -1787,59 +2048,27 @@ function Conversation({ session, headerActions, profileId, profilesData, support
             </div>
           }
           submitLabel={pending && send.isError ? '查询或重试同一请求' : '发送'}
-          stopActive={Boolean(current)}
-          stopDisabled={cancel.isPending && (!canForceStop || Boolean(cancel.variables?.force))}
+          stopActive={composerStopActive}
+          stopState={composerStopState}
+          stopDisabled={isStoppingPending
+            ? pendingCancelling
+            : (cancel.isPending && (!canForceStop || Boolean(cancel.variables?.force)))}
           stopTitle={canForceStop
             ? '强制终止当前任务并重置 ACP 进程'
-            : (cancel.isPending ? '正在停止当前任务…' : '停止当前会话任务')}
+            : (composerStopState === 'stopping'
+              ? '正在停止当前任务…'
+              : (isStoppingPending ? '取消本次发送' : '停止当前会话任务'))}
           onStop={() => {
-            if (!current) return
-            cancel.mutate({ rid: current.id, force: canForceStop })
+            if (current) {
+              cancel.mutate({ rid: current.id, force: canForceStop })
+              return
+            }
+            if (isStoppingPending && !pendingCancelRequestedRef.current) {
+              pendingCancelRequestedRef.current = true
+              setPendingCancelling(true)
+            }
           }}
         />
-        {showRecoveryBar && current && (
-          <div
-            data-anti-force-stop-bar
-            role="status"
-            className="flex flex-wrap items-center justify-between gap-2 border-t border-status-warning-line/60 bg-status-warning-soft/55 px-3 py-2 text-xs text-ink"
-          >
-            <span className="min-w-0 text-status-warning">
-              {canForceStop
-                ? '任务尚未响应停止信号，可能卡在工具执行或上游连接；强制终止会重建进程并保留多轮上下文。'
-                : `已超过 ${silentSeconds} 秒未收到新输出，任务可能已卡死；可尝试强制终止或重连（保留上下文）。`}
-            </span>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <button
-                type="button"
-                className="ga-btn-sm-danger"
-                disabled={cancel.isPending && Boolean(cancel.variables?.force)}
-                onClick={() => cancel.mutate({ rid: current.id, force: true })}
-              >
-                {cancel.isPending && cancel.variables?.force ? '强制终止中…' : '强制终止'}
-              </button>
-              <button
-                type="button"
-                className="ga-btn-sm"
-                disabled={resetAcp.isPending}
-                onClick={() => resetAcp.mutate(true)}
-              >
-                {resetAcp.isPending ? '重连中…' : '强制重连 ACP'}
-              </button>
-            </div>
-          </div>
-        )}
-        {pending && send.isError && !current && (
-          <div role="status" className="flex flex-wrap items-center gap-2 px-3 pb-2 text-xs text-ink-muted">
-            <span>无法确认请求是否已送达。重试会沿用同一请求；放弃重试不会撤回已送达的请求。</span>
-            <button
-              type="button"
-              className="shrink-0 text-accent hover:underline"
-              onClick={() => { setPending(undefined); send.reset() }}
-            >
-              放弃重试并继续编辑
-            </button>
-          </div>
-        )}
       </ChatComposerFrame>
     </div>
   </>

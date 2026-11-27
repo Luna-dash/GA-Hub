@@ -39,9 +39,11 @@ def checkout(tmp_path):
 
 def artifacts(root):
     directory = root / "src-tauri/target/x86_64-pc-windows-msvc/release"
-    directory.mkdir(parents=True)
-    for name in ("ga-hub-desktop.exe", "ga-hub-sidecar.exe", "ga-hub-update.exe"):
-        (directory / name).write_bytes(name.encode())
+    (directory / "sidecar" / "_internal").mkdir(parents=True)
+    (directory / "ga-hub-desktop.exe").write_bytes(b"ga-hub-desktop.exe")
+    (directory / "ga-hub-update.exe").write_bytes(b"ga-hub-update.exe")
+    (directory / "sidecar" / "ga-hub-sidecar.exe").write_bytes(b"ga-hub-sidecar.exe")
+    (directory / "sidecar" / "_internal" / "python312.dll").write_bytes(b"python312.dll")
 
 
 def test_package_contains_both_exes_and_traceable_metadata(checkout, monkeypatch):
@@ -53,8 +55,21 @@ def test_package_contains_both_exes_and_traceable_metadata(checkout, monkeypatch
     assert [path.name for path in checked] == ["ga-hub-sidecar.exe"]
     assert archive.name == "GA-Hub-1.0.0-windows-x64.zip"
     with zipfile.ZipFile(archive) as z:
-        assert set(z.namelist()) == {"ga-hub-desktop.exe", "ga-hub-sidecar.exe", "ga-hub-update.exe", "README.txt", "build-info.json", "update-manifest.json"}
-        assert json.loads(z.read("update-manifest.json")) == {"schema": 1, "data_epoch": 1, "platform": "windows-x64"}
+        assert set(z.namelist()) == {
+            "ga-hub-desktop.exe",
+            "ga-hub-update.exe",
+            "sidecar/ga-hub-sidecar.exe",
+            "sidecar/_internal/python312.dll",
+            "README.txt",
+            "build-info.json",
+            "update-manifest.json",
+        }
+        assert json.loads(z.read("update-manifest.json")) == {
+            "schema": 2,
+            "data_epoch": 2,
+            "platform": "windows-x64",
+            "layout": "onedir",
+        }
         info = json.loads(z.read("build-info.json"))
         assert info["version"] == "1.0.0" and info["channel"] == "stable" and not info["dirty"]
         for name, digest in info["sha256"].items():
@@ -69,7 +84,7 @@ def test_package_rejects_wrong_tag(checkout):
 
 def test_package_rejects_missing_or_empty_exe(checkout):
     artifacts(checkout)
-    side = checkout / "src-tauri/target/x86_64-pc-windows-msvc/release/ga-hub-sidecar.exe"
+    side = checkout / "src-tauri/target/x86_64-pc-windows-msvc/release/sidecar/ga-hub-sidecar.exe"
     side.write_bytes(b"")
     with pytest.raises(ValueError, match="Missing/empty"):
         load("package_release").package(checkout, checkout / "output", "v1.0.0")
@@ -116,7 +131,9 @@ def test_preview_is_distinguishable(checkout, monkeypatch):
 
 def test_portable_packaging_rejects_unverifiable_sidecar(checkout):
     artifacts(checkout)
+    # Plant a forbidden module inside sidecar/_internal/ to verify packaging rejects it
+    (checkout / "src-tauri/target/x86_64-pc-windows-msvc/release/sidecar/_internal/numpy.py").write_text("", encoding="utf-8")
     out = checkout / "output"
-    with pytest.raises(ValueError, match="Cannot verify sidecar archive"):
+    with pytest.raises(ValueError, match="excluded modules"):
         load("package_release").package(checkout, out, "v1.0.0")
     assert not list(out.glob("*.zip"))

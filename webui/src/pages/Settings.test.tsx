@@ -72,15 +72,15 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); client.clear(); host.remove() })
 
 describe('Settings functional tabs', () => {
-  it('uses nine separated vertical tabs with one visible associated panel', async () => {
+  it('uses ten separated vertical tabs with one visible associated panel', async () => {
     await mount()
     expect(host.querySelector('h1')?.textContent).toBe('设置')
     expect(host.querySelector('[role="tablist"]')?.getAttribute('aria-orientation')).toBe('vertical')
-    expect(host.querySelectorAll('[role="tab"]')).toHaveLength(9)
+    expect(host.querySelectorAll('[role="tab"]')).toHaveLength(10)
     for (const [id, text] of [
       ['general', '选择目录与执行环境'], ['display', '会话显示'], ['fonts', '字体方案'],
       ['navigation', '导航栏'], ['chat', '实时聊天自动重试'], ['remote', 'Nova'],
-      ['updates', '桌面程序更新'], ['sync', 'mykey 同步'], ['notifications', '桌面通知'],
+      ['updates', '桌面程序更新'], ['storage', '本地缓存与运行数据'], ['sync', 'mykey 同步'], ['notifications', '桌面通知'],
     ]) {
       await click(id)
       expect(host.querySelectorAll('[role="tabpanel"]:not([hidden])')).toHaveLength(1)

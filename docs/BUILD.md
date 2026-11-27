@@ -24,13 +24,13 @@ build_all.bat
 
 ### 2. 另一台电脑本地构建（有基础工具链）
 
-前置：Node.js 20+、Rust（rustup，Windows 需 MSVC Build Tools）、Python 3.11+。
+前置：Node.js 20+（仅构建前端）、Rust（rustup，Windows 需 MSVC Build Tools）、Python 3.11+。
 
-sidecar 会将构建机 PATH 中的 Node 运行时连同 LICENSE、版本/架构及 SHA-256
-清单一起打包；Node 平台/架构必须匹配目标，不支持跨平台暂存。默认从 Node 官方
-仓库对应版本标签下载完整 LICENSE；离线或网络受限时，设置 `GA_HUB_NODE_LICENSE`
-指向该版本的官方 LICENSE 文件（可先通过代理下载）。下载或校验失败会中止构建。
-冻结运行只使用包内 Node，不回退到用户机器的 PATH；开发模式仍使用 PATH。
+sidecar 采用 PyInstaller `--onedir` 交付（`sidecar/ga-hub-sidecar.exe` + `sidecar/_internal/`），
+彻底消除旧版 `--onefile` 每次启动向 `%TEMP%\_MEI*` 解包 ~85 MB 的磁盘与冷启动开销；
+消息投影已改为纯 Python 实现（由跨语言黄金测试锁语义），不再打包 `node.exe`。
+独立更新助手 `ga-hub-update.exe` 为 `src-tauri` 内的纯 Rust 原生二进制（~500 KB），
+无需 PyInstaller、无需注册 Windows 计划任务、支持一键重启更新与健康检查失败自动回滚。
 
 Windows MSVC 目标在统一 Python 入口的预检阶段自动加载 VS2017+ 的
 `vcvarsall.bat`；BAT 和直接运行 Python 均适用，无需手工打开开发者终端。
@@ -106,14 +106,14 @@ build_all.bat
     独立连接器的启动/安装脚本、测试、文档、构建脚本和缓存留在源码或独立交付中。
     `server` 仅收集模块，并显式加入 `message-presentation-worker.cjs` 等运行数据，
     不再将整棵 Python 源码作为数据重复打包。
-  - **消息展示运行期守卫**：冻结 `--selftest` 会使用包内 Node 实际执行一次
-    compact 消息转换并回收 worker；Node 或 worker 缺失、转换失败均使自检失败。
+  - **消息展示运行期守卫**：`--selftest` 会执行纯 Python `MessagePresentation` 的
+    compact 消息转换校验，确保无外部 Node.js 依赖即可工作。
 - **发布前验证**：`python scripts\build_all.py --full` 会先跑后端 pytest（限定 `tests/`，
-  自动注入 `GA_ROOT`/`PYTHONPATH`）与前端 vitest，再进入构建阶段；缺 GA 仓库或
+  自动注入 `GA_ROOT`/`PYTHONPATH`）与前端 vitest 及 Rust `cargo test`，再进入构建阶段；缺 GA 仓库或
   `webui/node_modules` 会在预检阶段（exit 2）就说清楚。
-- 正式产物同目录交付：`src-tauri\target\x86_64-pc-windows-msvc\release\`
-  下的 `ga-hub-desktop.exe`、`ga-hub-sidecar.exe` 与 `ga-hub-update.exe`。Tauri 阶段**恒传 `--no-bundle`**：
-  交付物仅为便携版可执行文件，安装包不在本链职责内。同目录下的 `ga_hub_desktop.pdb`
+- 正式产物便携绿色目录交付：`src-tauri\target\x86_64-pc-windows-msvc\release\`
+  下的 `ga-hub-desktop.exe`、`sidecar/` 目录与 Rust `ga-hub-update.exe`。Tauri 阶段**恒传 `--no-bundle`**：
+  交付物仅为便携绿色目录，安装包不在本链职责内。同目录下的 `ga_hub_desktop.pdb`
   是构建副产物，不是交付内容。
 - **平台与 CI 口径**：只有 `x86_64-pc-windows-msvc` 端到端验证过（`--target` 与
   `build_all.command` 的其它平台分支未实测）。Actions 有两个 workflow：

@@ -15,7 +15,7 @@ interface Props {
 export function PageShell({ title, titleExtra, middleArea, actions, children, layout = 'panel', wrapHeader = false, className = '' }: Props) {
   return (
     <div className={`ga-page-shell flex min-w-0 flex-col h-full relative overflow-hidden ${layout === 'panel' ? 'p-3' : ''} ${className}`}>
-      <section className={`ga-page-surface ga-paper-canvas relative z-10 flex flex-col flex-1 min-h-0 overflow-hidden bg-bg ${layout === 'panel' ? 'rounded-2xl border border-line shadow-[0_6px_18px_rgba(28,25,23,0.10)]' : ''}`}>
+      <section className={`ga-page-surface relative z-10 flex flex-col flex-1 min-h-0 overflow-hidden bg-transparent ${layout === 'panel' ? 'rounded-2xl border border-line shadow-[0_6px_18px_rgba(28,25,23,0.10)]' : ''}`}>
         {/* `relative` so a page can anchor a middle-area element to the header
             box itself (e.g. Conductor's centred history trigger), instead of to
             the leftover space between the title and the actions. `z-20` above
@@ -32,7 +32,7 @@ export function PageShell({ title, titleExtra, middleArea, actions, children, la
           {middleArea && <div className={`min-w-0 flex-1 flex items-center justify-start ${layout === 'panel' ? 'pl-0 lg:pl-10 xl:pl-24' : ''} ${wrapHeader ? 'basis-full md:basis-56' : ''}`}>{middleArea}</div>}
           <div className={`flex items-center gap-2 flex-wrap justify-end shrink-0 ml-auto ${wrapHeader ? 'max-w-full' : ''}`}>{actions}</div>
         </header>
-        <div className="ga-paper-canvas flex-1 min-h-0 overflow-y-auto bg-bg">{children}</div>
+        <div className="flex-1 min-h-0 overflow-y-auto bg-transparent">{children}</div>
       </section>
     </div>
   )

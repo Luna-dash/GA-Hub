@@ -72,17 +72,19 @@ class PathTests(unittest.TestCase):
             build_all.ROOT
             / "src-tauri"
             / "binaries"
-            / "ga-hub-sidecar-x86_64-pc-windows-msvc.exe",
+            / "sidecar-x86_64-pc-windows-msvc"
+            / "ga-hub-sidecar.exe",
         )
-        # 交付副本与独立更新助手必须与主程序同目录
-        self.assertEqual(paths["sidecar 交付副本"].parent, paths["主程序产物"].parent)
+        # 交付副本位于主程序同目录的 sidecar/ 子目录，独立更新助手与主程序同目录
+        self.assertEqual(paths["sidecar 交付副本"], paths["主程序产物"].parent / "sidecar" / "ga-hub-sidecar.exe")
         self.assertEqual(paths["独立更新助手"], paths["主程序产物"].parent / "ga-hub-update.exe")
 
     def test_non_windows_target_drops_the_exe_suffix(self):
         paths = build_all.artifact_paths("aarch64-apple-darwin")
         self.assertNotIn("独立更新助手", paths)
         self.assertEqual(paths["主程序产物"].name, "ga-hub-desktop")
-        self.assertEqual(paths["sidecar 中间产物"].name, "ga-hub-sidecar-aarch64-apple-darwin")
+        self.assertEqual(paths["sidecar 中间产物"].name, "ga-hub-sidecar")
+        self.assertEqual(paths["sidecar 中间产物"].parent.name, "sidecar-aarch64-apple-darwin")
 
     def test_tauri_stage_command_wraps_cmd_shim_on_windows(self):
         shim = os.path.join("x", "tauri.cmd")
@@ -381,9 +383,9 @@ class LockTests(unittest.TestCase):
 
 class MainFlowTests(unittest.TestCase):
     def setUp(self):
-        copier = mock.patch.object(build_all.shutil, "copy2")
-        self.copy_helper = copier.start()
-        self.addCleanup(copier.stop)
+        syncer = mock.patch.object(build_all, "sync_sidecar_dir")
+        self.sync_sidecar = syncer.start()
+        self.addCleanup(syncer.stop)
         archive = mock.patch.object(build_all, "check_delivery_archive", return_value=0)
         self.check_archive = archive.start()
         self.addCleanup(archive.stop)
@@ -429,7 +431,7 @@ class MainFlowTests(unittest.TestCase):
     def test_portable_sidecar_is_copied_after_tauri_and_before_guards(self):
         patches = self._patched()
         events = []
-        self.copy_helper.side_effect = lambda src, dst: events.append(("copy", src, dst))
+        self.sync_sidecar.side_effect = lambda src, dst: events.append(("sync", src, dst))
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              mock.patch.object(build_all, "run_stage", side_effect=lambda title, *a: events.append(("stage", title))), \
              mock.patch.object(build_all, "check_artifact", side_effect=lambda *a: events.append(("guard",)) or 0), \
@@ -438,13 +440,13 @@ class MainFlowTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(build_all.main([]), 0)
         paths = build_all.artifact_paths(build_all.DEFAULT_TARGET)
-        copied = ("copy", paths["sidecar 中间产物"], paths["sidecar 交付副本"])
-        self.assertLess(events.index(("stage", "Tauri 桌面壳")), events.index(copied))
-        self.assertLess(events.index(copied), events.index(("guard",)))
+        synced = ("sync", paths["sidecar 中间产物"], paths["sidecar 交付副本"])
+        self.assertLess(events.index(("stage", "Tauri 桌面壳")), events.index(synced))
+        self.assertLess(events.index(synced), events.index(("guard",)))
 
     def test_sidecar_copy_failure_reports_consistency_and_fails_stage(self):
         patches = self._patched()
-        self.copy_helper.side_effect = PermissionError("locked")
+        self.sync_sidecar.side_effect = PermissionError("locked")
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              mock.patch.object(build_all, "run_stage"), \
              mock.patch.object(build_all, "report_consistency") as report, \
@@ -465,30 +467,22 @@ class MainFlowTests(unittest.TestCase):
             with redirect_stdout(stream):
                 code = build_all.main([])
         self.assertEqual(code, 0)
-        self.assertEqual(stage.call_count, 4)  # 前端 / sidecar / tauri / helper
+        self.assertEqual(stage.call_count, 4)  # 前端 / sidecar / tauri / Rust helper
         paths = build_all.artifact_paths(build_all.DEFAULT_TARGET)
-        helper_built = Path(tempfile.gettempdir()) / "gahub-update-helper-build" / "dist" / "ga-hub-update.exe"
-        self.copy_helper.assert_has_calls([
-            mock.call(paths["sidecar 中间产物"], paths["sidecar 交付副本"]),
-            mock.call(helper_built, paths["独立更新助手"]),
-        ])
-        self.assertEqual(self.copy_helper.call_count, 2)
+        self.sync_sidecar.assert_called_once_with(paths["sidecar 中间产物"], paths["sidecar 交付副本"])
         self.assertEqual(guard.call_count, 4)
         self.check_archive.assert_called_once_with(paths["sidecar 交付副本"], "python")
         runtime.assert_called_once()
         helper_runtime.assert_called_once_with(paths["独立更新助手"])
         self.assertIn("构建链全部通过", stream.getvalue())
 
-    def test_helper_copy_failure_reports_consistency_and_fails_stage(self):
+    def test_helper_stage_failure_reports_consistency_and_fails_stage(self):
         patches = self._patched()
-        calls = {"n": 0}
-        def fail_second_copy(src, dst):
-            calls["n"] += 1
-            if calls["n"] == 2:
-                raise PermissionError("helper locked")
-        self.copy_helper.side_effect = fail_second_copy
+        def fail_helper(title, *_a, **_kw):
+            if title == "独立更新助手":
+                raise build_all.StageFailed(title)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
-             mock.patch.object(build_all, "run_stage"), \
+             mock.patch.object(build_all, "run_stage", side_effect=fail_helper), \
              mock.patch.object(build_all, "report_consistency") as report, \
              mock.patch.object(build_all, "check_artifact") as guard:
             with redirect_stdout(io.StringIO()):

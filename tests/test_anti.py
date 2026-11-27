@@ -1257,5 +1257,45 @@ def test_session_queued_prompts_auto_dispatch_reorder_steer_pause_and_cleanup(tm
         assert remaining == 0
 
 
+def test_pre_cancel_before_register_turn_aborts_without_running_worker(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+
+    get_worker_entered = threading.Event()
+    release_get_worker = threading.Event()
+    turn_invoked = threading.Event()
+
+    class SlowStartRuntime(FakeRuntime):
+        def get_worker(self, db_key, profile_id, sid, ws):
+            get_worker_entered.set()
+            release_get_worker.wait(5.0)
+            return super().get_worker(db_key, profile_id, sid, ws)
+
+    def fail_if_called(self, **kwargs):
+        turn_invoked.set()
+        return {"status": "success", "answer": "should not run", "usage": {}}
+
+    runtime = SlowStartRuntime()
+    monkeypatch.setattr(FakeWorker, "run_turn", fail_if_called)
+    sessions = engine.AntiSessions(tmp_path / "anti_precancel.sqlite", runtime)
+    sid = sessions.create("project")["id"]
+    run = sessions.submit(sid, "op-precancel", "cancel right after send")
+    rid = run["id"]
+
+    assert get_worker_entered.wait(2.0)
+
+    def _release_shortly():
+        time.sleep(0.05)
+        release_get_worker.set()
+
+    threading.Thread(target=_release_shortly, daemon=True).start()
+    cancelled = sessions.cancel(sid, rid)
+    assert cancelled["status"] == "cancelled"
+    assert not turn_invoked.is_set()
+    assert (sessions._db_key, rid) not in sessions._cancel_requested
+
+
+
 
 

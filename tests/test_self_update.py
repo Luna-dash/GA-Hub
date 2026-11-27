@@ -12,12 +12,17 @@ from server.services.self_update import DATA_EPOCH, EXECUTABLES, UpdateStore, di
 
 
 def release(tmp_path, *, extra=None, epoch=DATA_EPOCH, hashes=None):
-    files = {name: b"MZ-fake-" + name.encode() for name in EXECUTABLES}
-    info = {"version": "0.1.0", "commit": "abc123", "sha256": hashes or {
+    files = {
+        "ga-hub-desktop.exe": b"MZ-fake-desktop",
+        "ga-hub-update.exe": b"MZ-fake-update",
+        "sidecar/ga-hub-sidecar.exe": b"MZ-fake-sidecar",
+        "sidecar/_internal/python312.dll": b"MZ-fake-pydll",
+    }
+    info = {"version": "0.1.0", "commit": "abc123", "layout": "onedir", "sha256": hashes or {
         name: hashlib.sha256(data).hexdigest() for name, data in files.items()
     }}
     files.update({"build-info.json": json.dumps(info), "update-manifest.json": json.dumps({
-        "schema": 1, "platform": "windows-x64", "data_epoch": epoch,
+        "schema": 2, "platform": "windows-x64", "data_epoch": epoch, "layout": "onedir",
     })})
     files.update(extra or {})
     archive = tmp_path / "release.zip"
@@ -79,7 +84,12 @@ def test_invalid_optional_checksum_rejected(tmp_path):
 
 def test_without_external_checksum_still_rejects_tampered_executable(tmp_path):
     store = UpdateStore(tmp_path / "updates")
-    archive = release(tmp_path, hashes={name: "0" * 64 for name in EXECUTABLES})
+    archive = release(tmp_path, hashes={
+        "ga-hub-desktop.exe": "0" * 64,
+        "ga-hub-update.exe": "0" * 64,
+        "sidecar/ga-hub-sidecar.exe": "0" * 64,
+        "sidecar/_internal/python312.dll": "0" * 64,
+    })
     with pytest.raises(ValueError, match="integrity"):
         store.prepare(archive, trusted=True)
     assert store.read()["state"] == "idle"
@@ -87,13 +97,18 @@ def test_without_external_checksum_still_rejects_tampered_executable(tmp_path):
 
 def test_incompatible_data_epoch(tmp_path):
     with pytest.raises(ValueError, match="compatibility"):
-        prepare(UpdateStore(tmp_path / "updates"), release(tmp_path, epoch=2))
+        prepare(UpdateStore(tmp_path / "updates"), release(tmp_path, epoch=1))
 
 
 def test_tampered_executable_never_prepared(tmp_path):
     store = UpdateStore(tmp_path / "updates")
     with pytest.raises(ValueError, match="integrity"):
-        prepare(store, release(tmp_path, hashes={name: "0" * 64 for name in EXECUTABLES}))
+        prepare(store, release(tmp_path, hashes={
+            "ga-hub-desktop.exe": "0" * 64,
+            "ga-hub-update.exe": "0" * 64,
+            "sidecar/ga-hub-sidecar.exe": "0" * 64,
+            "sidecar/_internal/python312.dll": "0" * 64,
+        }))
     assert store.read()["state"] == "idle"
     assert list((store.root / "versions").iterdir()) == []
 
@@ -112,11 +127,35 @@ def test_stale_cancel_and_active_update_rejected(tmp_path):
     plan = prepare(store, archive)
     with pytest.raises(ValueError):
         store.cancel("a" * 32)
-    store.transition(plan["id"], {"prepared"}, "armed")
+    store.transition(plan["id"], {"prepared"}, "switching")
     with pytest.raises(ValueError):
         store.cancel(plan["id"])
     with pytest.raises(ValueError, match="already"):
         prepare(store, archive)
+
+
+def test_apply_launches_detached_rust_updater(tmp_path):
+    store = UpdateStore(tmp_path / "updates")
+    archive = release(tmp_path)
+    plan = prepare(store, archive)
+    old_dir = tmp_path / "current-install"
+    old_dir.mkdir()
+    old_exe = old_dir / "ga-hub-desktop.exe"
+    old_exe.write_bytes(b"old-desktop")
+    (old_dir / "ga-hub-update.exe").write_bytes(b"old-helper")
+    launched = []
+
+    def fake_spawn(cmd, **kwargs):
+        launched.append((cmd, kwargs))
+
+    result = store.apply(plan["id"], tmp_path / "admin", old_pid=4242, old_exe=old_exe, spawn=fake_spawn)
+    assert result["state"] == "switching"
+    assert len(launched) == 1
+    cmd = launched[0][0]
+    assert cmd[0].endswith("ga-hub-update.exe")
+    assert "switch" in cmd
+    assert "--plan" in cmd and plan["id"] in cmd
+    assert "--wait-pid" in cmd and "4242" in cmd
 
 
 def test_instances_share_lock(tmp_path):
@@ -159,7 +198,7 @@ def test_api_optional_checksum(tmp_path, monkeypatch, checksum):
     assert result.json()["archive_sha256"] == digest(archive)
 
 
-@pytest.mark.parametrize("state", ["prepared", "armed", "switching", "verifying", "failed"])
+@pytest.mark.parametrize("state", ["prepared", "switching", "verifying", "failed"])
 def test_unresolved_plan_cannot_be_replaced(tmp_path, state):
     store = UpdateStore(tmp_path / "updates")
     archive = release(tmp_path)

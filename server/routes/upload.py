@@ -28,9 +28,9 @@ from ..schemas import RevealFileReq, RevealFileResp, ResolveFileReq, ResolveFile
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-# Admission is bounded independently of the shared FastAPI worker pool.
+# Admission is bounded independently of the shared FastAPI worker pool (1 worker per kind).
 # Release only when the real job finishes, including after client cancellation.
-_FILE_POOLS = {kind: (ThreadPoolExecutor(max_workers=2, thread_name_prefix=f"files-{kind}"),
+_FILE_POOLS = {kind: (ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"files-{kind}"),
                       BoundedSemaphore(4)) for kind in ("resolve", "reveal")}
 
 

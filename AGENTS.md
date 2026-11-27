@@ -14,10 +14,11 @@
    不要在占用状态下反复重试。并发构建由 `src-tauri\target\.build_all.lock` 挡下。
 3. 成功判定 = 退出码 + 守卫输出：`0` 成功；`2` 预检失败；`3` 阶段失败；
    `5` 产物守卫失败。不要用「命令没报错」「文件存在」当成功依据。
-   守卫语义：Windows 下四件产物（主 exe `ga-hub-desktop.exe` / sidecar 中间产物 /
-   sidecar 交付副本 `ga-hub-sidecar.exe` / 独立更新助手 `ga-hub-update.exe`）必须存在、
-   非空、且被**本次构建重写**；随后还会跑 sidecar 运行期自检
-   （`--selftest`，导入 pyexpat/ctypes/sqlite3 等）及独立更新助手运行期自检（`--help`），
+   守卫语义：Windows 下四件产物（主 exe `ga-hub-desktop.exe` / sidecar `--onedir` 中间产物
+   `sidecar-<target>/ga-hub-sidecar.exe` / sidecar 交付副本 `sidecar/ga-hub-sidecar.exe` /
+   Rust 独立更新助手 `ga-hub-update.exe`）必须存在、非空、且被**本次构建重写**；
+   随后还会跑 sidecar 运行期自检（`--selftest`，导入 pyexpat/ctypes/sqlite3 与纯 Python
+   `MessagePresentation` 等）及 Rust 独立更新助手运行期自检（`--help`），
    失败同样 `5`——因为 PyInstaller 漏收依赖 DLL 时只打 WARNING，产物「已刷新」但一启动就崩。
    `3` 时脚本会补一次产物体检，看到「产物集不配套」
    的警告就不要把那几件当交付物。
@@ -28,7 +29,7 @@
 - 后端测试：`python -m pytest tests -q`（pyproject 已限定 testpaths=tests/）
 - 前端测试：`npm --prefix webui test -- --run`
 - 发布前全量验证 + 构建：`python scripts\build_all.py --full`（依次跑前端构建、后端 `pytest`、前端 `vitest` 与 Rust `cargo test`）
-- 交付物 = 便携版 exe（Windows 下为 `ga-hub-desktop.exe`、`ga-hub-sidecar.exe` 与 `ga-hub-update.exe`，本链不产出 MSI/NSIS 安装包）
+- 交付物 = 便携绿色目录（Windows 下为 `ga-hub-desktop.exe`、`sidecar/` 目录与 Rust `ga-hub-update.exe`，本链不产出 MSI/NSIS 安装包）
 
 ## 过程产物去哪（仓根不许堆东西）
 
@@ -61,12 +62,12 @@
 - 并发锁 `.build_all.lock` 与占用预检
 - Windows MSVC 环境在 Python 统一入口预检自动加载、校验架构及 SDK；失败 exit 2，
   仅当前进程及子进程生效，不修改全局 PATH；非标准 VS 可用 `GA_HUB_VCVARSALL`
-- 跨平台 sidecar 命名 `ga-hub-sidecar-<target>[.exe]`
+- 跨平台 sidecar 目录命名 `sidecar-<target>/ga-hub-sidecar[.exe]`（交付为 `sidecar/ga-hub-sidecar[.exe]`）
 - `src-tauri/Cargo.toml` 里那两处 `indexmap = { version = "1", features = ["std"] }`
   看起来没人调用，但**不能删**（原因见事故记录第 10 条）
 
 改动前先读 docs/BUILD.md「构建纪律与验收」。
 
-便携 `--no-bundle` 链在 Tauri 成功后显式复制本次 sidecar 中间产物到交付目录；
-不依赖 Tauri 的隐式 externalBin 副本。复制失败按阶段失败处理，仍执行产物体检；
+便携 `--no-bundle` 链在 Tauri 成功后显式同步本次 `--onedir` sidecar 目录到交付目录 `sidecar/`；
+不依赖 Tauri 的隐式 externalBin 副本。同步失败按阶段失败处理，仍执行产物体检；
 原有刷新守卫和运行期 `--selftest` 保持不变。

@@ -6,8 +6,8 @@ interface CacheEntry {
   characters: number
 }
 
-const MAX_ENTRIES = 48
-const MAX_SOURCE_CHARACTERS = 1_500_000
+const MAX_ENTRIES = 20
+const MAX_SOURCE_CHARACTERS = 350_000
 const MAX_SINGLE_ENTRY_CHARACTERS = 180_000
 const cache = new Map<string, CacheEntry>()
 let cachedCharacters = 0

@@ -22,7 +22,67 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeHighlight from 'rehype-highlight'
 import katex from 'katex'
+import langBash from 'highlight.js/lib/languages/bash'
+import langC from 'highlight.js/lib/languages/c'
+import langCpp from 'highlight.js/lib/languages/cpp'
+import langCss from 'highlight.js/lib/languages/css'
+import langDiff from 'highlight.js/lib/languages/diff'
+import langGo from 'highlight.js/lib/languages/go'
+import langIni from 'highlight.js/lib/languages/ini'
+import langJava from 'highlight.js/lib/languages/java'
+import langJavascript from 'highlight.js/lib/languages/javascript'
+import langJson from 'highlight.js/lib/languages/json'
+import langMarkdown from 'highlight.js/lib/languages/markdown'
+import langPowershell from 'highlight.js/lib/languages/powershell'
+import langPython from 'highlight.js/lib/languages/python'
+import langRust from 'highlight.js/lib/languages/rust'
+import langSql from 'highlight.js/lib/languages/sql'
+import langTypescript from 'highlight.js/lib/languages/typescript'
+import langXml from 'highlight.js/lib/languages/xml'
+import langYaml from 'highlight.js/lib/languages/yaml'
 import { memo, ReactNode, useContext, useMemo, useState } from 'react'
+
+const HLJS_LANGUAGES = {
+  bash: langBash,
+  sh: langBash,
+  shell: langBash,
+  c: langC,
+  cpp: langCpp,
+  css: langCss,
+  diff: langDiff,
+  go: langGo,
+  ini: langIni,
+  toml: langIni,
+  java: langJava,
+  javascript: langJavascript,
+  js: langJavascript,
+  jsx: langJavascript,
+  json: langJson,
+  markdown: langMarkdown,
+  md: langMarkdown,
+  powershell: langPowershell,
+  ps1: langPowershell,
+  pwsh: langPowershell,
+  python: langPython,
+  py: langPython,
+  rust: langRust,
+  rs: langRust,
+  sql: langSql,
+  typescript: langTypescript,
+  ts: langTypescript,
+  tsx: langTypescript,
+  xml: langXml,
+  html: langXml,
+  yaml: langYaml,
+  yml: langYaml,
+}
+
+let katexCssRequested = false
+function ensureKatexCss(): void {
+  if (katexCssRequested) return
+  katexCssRequested = true
+  void import('katex/dist/katex.min.css')
+}
 import { useCopy } from '@/utils/clipboard'
 import { looksLikeToolTrace } from '@/utils/toolTrace'
 import { renderMarkdownTree } from '@/utils/markdownRenderCache'
@@ -149,8 +209,8 @@ function MarkdownTransferImage({ src, alt, title }: { src: string; alt: string; 
 }
 
 const BASE_MD_COMPONENTS = {
-  // Wide GFM tables: scroll container (styles in .md-table-wrap)
-  table: ({ children, ...props }: any) => (
+  // Wide GFM tables: scroll container (styles in .md-table-wrap). Strip HAST `node` so cached React trees do not pin AST objects.
+  table: ({ children, node: _node, ...props }: any) => (
     <div className="md-table-wrap">
       <table {...props}>{children}</table>
     </div>
@@ -175,7 +235,7 @@ const BASE_MD_COMPONENTS = {
   },
   // Linkify paths in flowing prose
   p: ({ children }: any) => <p>{linkifyChildren(children)}</p>,
-  li: ({ children, className, ...props }: any) => (
+  li: ({ children, className, node: _node, ...props }: any) => (
     <li className={className} {...props}>{linkifyChildren(children)}</li>
   ),
   td: ({ children }: any) => <td>{linkifyChildren(children)}</td>,
@@ -229,11 +289,13 @@ const MD_COMPONENTS_CHAT = {
 const MD_REMARK_CHAT: any[] = [[remarkMath, { singleDollarTextMath: false }], remarkGfm]
 const MD_REMARK_PLAIN: any[] = [remarkGfm]
 // detect:false (rehype-highlight default): only fenced ```lang blocks colorize.
+// Subset languages to avoid bundling all 37 lowlight common grammars.
 // Exclude `math` so ```math fenced blocks pass clean TeX to KaTeX.
-const MD_REHYPE_CHAT: any[] = [[rehypeHighlight, { detect: false, plainText: ['math'] }]]
+const MD_REHYPE_CHAT: any[] = [[rehypeHighlight, { languages: HLJS_LANGUAGES, detect: false, plainText: ['math'] }]]
 const MD_REHYPE_PLAIN: any[] = []
 
 function renderKatexHtml(tex: string, displayMode: boolean): string | null {
+  ensureKatexCss()
   try {
     return katex.renderToString(tex, {
       displayMode,

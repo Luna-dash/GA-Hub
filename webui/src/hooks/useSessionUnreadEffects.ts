@@ -138,10 +138,12 @@ export function useSessionUnreadEffects() {
       if (!payload || typeof payload.session_id !== 'string' || !payload.session_id) return
       const sid = payload.session_id
 
+      let matched = false
       qc.setQueryData<AntiSession[]>(queryKeys.antiSessions, (current) => {
         if (!Array.isArray(current)) return current
         return current.map((row) => {
           if (row.id !== sid) return row
+          matched = true
           return {
             ...row,
             ...(payload.title ? { title: payload.title } : {}),
@@ -153,7 +155,9 @@ export function useSessionUnreadEffects() {
           }
         })
       })
-      void qc.invalidateQueries({ queryKey: queryKeys.antiSessions, exact: true })
+      if (!matched) {
+        void qc.invalidateQueries({ queryKey: queryKeys.antiSessions, exact: true })
+      }
 
       if (payload.status === 'running') {
         markSessionActive('anti', sid)

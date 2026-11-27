@@ -242,7 +242,6 @@ body {
   /* 接近模板：低饱和旧纸底，避免黄光滤镜 */
   background-color: var(--c-bg);
   background-image: none;
-  background-attachment: fixed;
   transition: background-color 150ms ease, color 150ms ease;
 }
 
@@ -1158,24 +1157,47 @@ html[data-theme="dark-forest"] .ga-select {
   outline: none;
 }
 
-/* 会话管理栏运行中圆点呼吸光环：保持实心琥珀橙核心常亮，仅柔和呼吸外环 */
+/* 会话管理栏运行中圆点呼吸光环：保持实心琥珀橙核心常亮，仅柔和呼吸外环。
+   使用 ::after + transform/opacity 纯 GPU 合成动画，替代触发每帧 CPU 重绘与 IPC 传帧的 box-shadow 动画。 */
 @keyframes ga-session-dot-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.28);
+    transform: scale(1.25);
+    opacity: 0.45;
   }
   50% {
-    box-shadow: 0 0 0 5px rgba(217, 119, 6, 0.06);
+    transform: scale(2.15);
+    opacity: 0.08;
   }
 }
 
 .ga-session-dot-running {
+  position: relative;
+}
+
+.ga-session-dot-running::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 9999px;
+  background: rgba(217, 119, 6, 0.48);
+  pointer-events: none;
   animation: ga-session-dot-pulse 1.8s ease-in-out infinite;
 }
 
+/* 窗口最小化或切到后台时暂停所有纯装饰无限动画，避免合成器与 GPU 进程持续唤醒 */
+html[data-page-hidden="true"] .ga-session-dot-running::after,
+html[data-page-hidden="true"] .ga-account-pill--ultra::after,
+html[data-page-hidden="true"] .cursor-blink::after,
+html[data-page-hidden="true"] .animate-pulse,
+html[data-page-hidden="true"] .animate-spin {
+  animation-play-state: paused !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .ga-session-dot-running {
+  .ga-session-dot-running::after {
     animation: none;
-    box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.24);
+    transform: scale(1.55);
+    opacity: 0.28;
   }
 }
 

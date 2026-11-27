@@ -11,55 +11,292 @@
  *   4. guarded `$...$`  → inline `$$...$$` (Pandoc + shell/currency guards)
  */
 
-import remarkGfm from 'remark-gfm'
-import remarkMath from 'remark-math'
-import remarkParse from 'remark-parse'
-import { unified } from 'unified'
-
-const markdownParser = unified().use(remarkParse).use(remarkGfm)
-  .use(remarkMath, { singleDollarTextMath: false }).freeze()
-
 type SourceRange = { start: number; end: number }
 
+const TABLE_DELIMITER_ROW_RE = /^(?=.*\|)[ \t]*\|?[ \t]*:?-+:?(?:[ \t]*\|[ \t]*:?-+:?)*[ \t]*\|?[ \t]*$/
+const REF_DEF_LINE_RE = /^[ ]{0,3}\[([^\]\r\n]+)\]:[ \t]*\S/
+
+function normalizeRefLabel(raw: string): string {
+  return raw.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+/**
+ * Lightweight linear scanner replacing a full unified/remark AST pre-pass.
+ * Identifies literal ranges (fenced code blocks, inline code spans, link
+ * destinations/titles, reference definitions, images, HTML tags) and GFM
+ * table ranges in O(n) without constructing a Markdown AST.
+ */
 function getMarkdownRanges(src: string) {
   const literals: SourceRange[] = []
   const tables: SourceRange[] = []
-  type Node = {
-    type: string
-    position?: { start: { offset?: number }; end: { offset?: number } }
-    children?: Node[]
-    referenceType?: string
+  const refDefs = new Set<string>()
+  const len = src.length
+
+  // Pass 1: line-level structures (fenced code blocks, ref definitions, GFM tables)
+  const lineStarts: number[] = []
+  const lineEnds: number[] = []
+  let pos = 0
+  while (pos <= len) {
+    lineStarts.push(pos)
+    const nl = src.indexOf('\n', pos)
+    if (nl < 0) {
+      lineEnds.push(len)
+      break
+    }
+    lineEnds.push(nl > pos && src[nl - 1] === '\r' ? nl - 1 : nl)
+    pos = nl + 1
   }
-  const pending: Node[] = [markdownParser.parse(src)]
 
-  // For links, protect the destination/title but let
-  // explicit link labels continue to participate in inline math.
-  while (pending.length) {
-    const node = pending.pop()!
-    const start = node.position?.start.offset
-    const end = node.position?.end.offset
-    if (start === undefined || end === undefined) continue
+  const fenceLineMask = new Uint8Array(lineStarts.length)
+  let inFenceChar = ''
+  let inFenceLen = 0
+  let fenceStartOffset = 0
+  let prevWasBlankOrCode = true
 
-    if (node.type === 'code' || node.type === 'inlineCode' || node.type === 'definition'
-      || node.type === 'image' || node.type === 'imageReference' || node.type === 'html') {
-      literals.push({ start, end })
+  for (let lineIdx = 0; lineIdx < lineStarts.length; lineIdx++) {
+    const start = lineStarts[lineIdx]
+    const end = lineEnds[lineIdx]
+    const line = src.slice(start, end)
+    const quotePrefix = extractBlockquotePrefix(line)
+    const body = line.slice(quotePrefix.length)
+
+    if (inFenceChar) {
+      fenceLineMask[lineIdx] = 1
+      const closeMatch = new RegExp(`^[ ]{0,3}${inFenceChar}{${inFenceLen},}[ \\t]*$`).exec(body)
+      if (closeMatch) {
+        const blockEnd = lineIdx + 1 < lineStarts.length ? lineStarts[lineIdx + 1] : len
+        literals.push({ start: fenceStartOffset, end: blockEnd })
+        inFenceChar = ''
+        inFenceLen = 0
+        prevWasBlankOrCode = true
+      }
       continue
     }
-    if (node.type === 'link' || node.type === 'linkReference') {
-      // Shortcut/collapsed references use the label itself as the lookup key.
-      if ((node.type === 'linkReference' && node.referenceType !== 'full')
-        || src[start] !== '[' || !node.children?.length) {
-        literals.push({ start, end })
+
+    const openMatch = /^[ ]{0,3}(`{3,}|~{3,})/.exec(body)
+    if (openMatch) {
+      const marker = openMatch[1]
+      const rest = body.slice(openMatch[0].length)
+      // Backtick info strings cannot contain backticks per CommonMark.
+      if (marker[0] !== '`' || !rest.includes('`')) {
+        inFenceChar = marker[0]
+        inFenceLen = marker.length
+        fenceStartOffset = start
+        fenceLineMask[lineIdx] = 1
+        prevWasBlankOrCode = false
         continue
       }
-      const labelEnd = node.children.at(-1)?.position?.end.offset ?? start
-      literals.push({ start: labelEnd, end })
     }
-    if (node.type === 'table') tables.push({ start, end })
-    if (node.children) {
-      for (let i = node.children.length - 1; i >= 0; i--) pending.push(node.children[i])
+
+    if (!body.trim()) {
+      prevWasBlankOrCode = true
+      continue
+    }
+
+    // CommonMark indented code block: >=4 leading spaces or tab after blank/code line
+    if (prevWasBlankOrCode && /^(?: {4}|\t)/.test(body)) {
+      const blockEnd = lineIdx + 1 < lineStarts.length ? lineStarts[lineIdx + 1] : len
+      literals.push({ start, end: blockEnd })
+      fenceLineMask[lineIdx] = 1
+      prevWasBlankOrCode = true
+      continue
+    }
+
+    prevWasBlankOrCode = false
+
+    const refMatch = REF_DEF_LINE_RE.exec(body)
+    if (refMatch) {
+      refDefs.add(normalizeRefLabel(refMatch[1]))
+      const defEnd = lineIdx + 1 < lineStarts.length ? lineStarts[lineIdx + 1] : len
+      literals.push({ start, end: defEnd })
     }
   }
+  if (inFenceChar) {
+    literals.push({ start: fenceStartOffset, end: len })
+  }
+
+  // Detect GFM tables on non-fenced lines
+  let lineIdx = 1
+  while (lineIdx < lineStarts.length) {
+    if (fenceLineMask[lineIdx] || fenceLineMask[lineIdx - 1]) {
+      lineIdx += 1
+      continue
+    }
+    const delimLine = src.slice(lineStarts[lineIdx], lineEnds[lineIdx])
+    const delimPrefix = extractBlockquotePrefix(delimLine)
+    const delimBody = delimLine.slice(delimPrefix.length)
+    if (TABLE_DELIMITER_ROW_RE.test(delimBody)) {
+      const headerLine = src.slice(lineStarts[lineIdx - 1], lineEnds[lineIdx - 1])
+      const headerPrefix = extractBlockquotePrefix(headerLine)
+      if (headerPrefix.split('>').length === delimPrefix.split('>').length && headerLine.includes('|')) {
+        const tableStart = lineStarts[lineIdx - 1]
+        let endIdx = lineIdx
+        while (endIdx + 1 < lineStarts.length && !fenceLineMask[endIdx + 1]) {
+          const nextLine = src.slice(lineStarts[endIdx + 1], lineEnds[endIdx + 1])
+          const nextPrefix = extractBlockquotePrefix(nextLine)
+          const nextBody = nextLine.slice(nextPrefix.length)
+          if (!nextBody.trim() || nextPrefix.split('>').length !== delimPrefix.split('>').length || !nextBody.includes('|')) {
+            break
+          }
+          endIdx += 1
+        }
+        tables.push({ start: tableStart, end: lineEnds[endIdx] })
+        lineIdx = endIdx + 2
+        continue
+      }
+    }
+    lineIdx += 1
+  }
+
+  // Pass 2: inline literals (code spans, images, link destinations/refs, HTML tags)
+  literals.sort((a, b) => a.start - b.start)
+  const blockLiterals = literals.slice()
+  let blkIdx = 0
+  let i = 0
+  while (i < len) {
+    while (blkIdx < blockLiterals.length && blockLiterals[blkIdx].end <= i) blkIdx += 1
+    if (blkIdx < blockLiterals.length && i >= blockLiterals[blkIdx].start) {
+      i = blockLiterals[blkIdx].end
+      continue
+    }
+    const limit = blkIdx < blockLiterals.length ? blockLiterals[blkIdx].start : len
+    const ch = src[i]
+
+    if (ch === '\\' && i + 1 < limit) {
+      i += 2
+      continue
+    }
+
+    // Inline code span: exact matching run of backticks
+    if (ch === '`') {
+      let tickEnd = i + 1
+      while (tickEnd < limit && src[tickEnd] === '`') tickEnd += 1
+      const tickCount = tickEnd - i
+      let scan = tickEnd
+      let closeEnd = -1
+      while (scan < limit) {
+        if (src[scan] === '`') {
+          let runEnd = scan + 1
+          while (runEnd < limit && src[runEnd] === '`') runEnd += 1
+          if (runEnd - scan === tickCount) {
+            closeEnd = runEnd
+            break
+          }
+          scan = runEnd
+          continue
+        }
+        scan += 1
+      }
+      if (closeEnd > 0) {
+        literals.push({ start: i, end: closeEnd })
+        i = closeEnd
+        continue
+      }
+      i = tickEnd
+      continue
+    }
+
+    // Image or Link: ![alt](dest) / [label](dest) / [label][ref] / [label][] / [label]
+    if ((ch === '!' && src[i + 1] === '[') || ch === '[') {
+      const isImage = ch === '!'
+      const openBracket = isImage ? i + 1 : i
+      let scan = openBracket + 1
+      let depth = 1
+      while (scan < limit && depth > 0) {
+        if (src[scan] === '\\' && scan + 1 < limit) {
+          scan += 2
+          continue
+        }
+        if (src[scan] === '[') depth += 1
+        else if (src[scan] === ']') depth -= 1
+        if (depth > 0) scan += 1
+      }
+      if (depth === 0 && scan < limit) {
+        const closeBracket = scan
+        const afterBracket = closeBracket + 1
+        if (afterBracket < limit && src[afterBracket] === '(') {
+          // Inline link/image destination (handle nested parens & quotes)
+          let dScan = afterBracket + 1
+          let pDepth = 1
+          let quote = ''
+          while (dScan < limit && pDepth > 0) {
+            const dc = src[dScan]
+            if (dc === '\\' && dScan + 1 < limit) {
+              dScan += 2
+              continue
+            }
+            if (quote) {
+              if (dc === quote) quote = ''
+            } else if (dc === '"' || dc === "'") {
+              quote = dc
+            } else if (dc === '(') {
+              pDepth += 1
+            } else if (dc === ')') {
+              pDepth -= 1
+            }
+            if (pDepth > 0) dScan += 1
+          }
+          if (pDepth === 0) {
+            const destEnd = dScan + 1
+            if (isImage) {
+              literals.push({ start: i, end: destEnd })
+              i = destEnd
+            } else {
+              literals.push({ start: closeBracket, end: destEnd })
+              i = openBracket + 1
+            }
+            continue
+          }
+        } else if (afterBracket < limit && src[afterBracket] === '[') {
+          const refClose = src.indexOf(']', afterBracket + 1)
+          if (refClose >= 0 && refClose < limit) {
+            const refText = src.slice(afterBracket + 1, refClose)
+            const refEnd = refClose + 1
+            if (isImage) {
+              literals.push({ start: i, end: refEnd })
+              i = refEnd
+              continue
+            }
+            if (!refText) {
+              // Collapsed reference: [label][]
+              const labelKey = normalizeRefLabel(src.slice(openBracket + 1, closeBracket))
+              if (refDefs.has(labelKey)) {
+                literals.push({ start: i, end: refEnd })
+                i = refEnd
+                continue
+              }
+            } else {
+              // Full reference: [label][ref]
+              literals.push({ start: closeBracket, end: refEnd })
+              i = openBracket + 1
+              continue
+            }
+          }
+        } else if (!isImage) {
+          // Shortcut reference: [label] matching a known definition
+          const labelKey = normalizeRefLabel(src.slice(openBracket + 1, closeBracket))
+          if (refDefs.has(labelKey)) {
+            literals.push({ start: i, end: afterBracket })
+            i = afterBracket
+            continue
+          }
+        }
+      }
+    }
+
+    // Inline HTML tag / autolink: <tag ...> or <https://...>
+    if (ch === '<' && i + 2 < limit && /[A-Za-z/!]/.test(src[i + 1])) {
+      const gt = src.indexOf('>', i + 2)
+      if (gt > i && gt < limit && !src.slice(i, gt).includes('\n')) {
+        literals.push({ start: i, end: gt + 1 })
+        i = gt + 1
+        continue
+      }
+    }
+
+    i += 1
+  }
+
   literals.sort((a, b) => a.start - b.start)
   return { literals, tables }
 }

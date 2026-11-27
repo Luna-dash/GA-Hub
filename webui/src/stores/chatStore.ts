@@ -31,6 +31,7 @@ import type {
 import { api, ChatSocket } from '@/api/client'
 import type { PasteAttachment } from '@/api/types'
 import { type ViewportResumePolicy } from '@/utils/conversationViewport'
+import { clearMarkdownRenderCache } from '@/utils/markdownRenderCache'
 
 interface SessionView {
   readingOlderHistory: boolean
@@ -185,11 +186,22 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
 const HISTORY_PAGE_LIMIT = 40
 const HISTORY_PAGE_MAX_CHARS = 1_600_000
 const HISTORY_PAGE_TURNS = 20
-const MAX_CACHED_SESSION_VIEWS = 3
-const MAX_CACHED_SESSION_CHARS = 6_000_000
+const MAX_CACHED_SESSION_VIEWS = 2
+const MAX_CACHED_SESSION_CHARS = 2_000_000
 export const MAX_ACTIVE_SESSION_MSGS = 300
-export const MAX_ACTIVE_SESSION_CHARS = 4_000_000
+export const MAX_ACTIVE_SESSION_CHARS = 1_500_000
 const MAX_LOAD_ALL_CHARS = 5_000_000
+
+function messageCharCount(message: ChatMsg): number {
+  let chars = message.content.length
+  if (message.turnSegments) {
+    for (const seg of message.turnSegments) chars += seg.length
+  }
+  if (message.segments) {
+    for (const seg of message.segments) chars += seg.content.length
+  }
+  return chars
+}
 
 /**
  * Bound active-session `msgs` to prevent unbounded growth in long-running chats
@@ -204,7 +216,7 @@ export function pruneActiveMessagesWindow(
 ): { msgs: ChatMsg[]; historyHasMore: boolean; historyBefore: number | null } {
   const maxMsgs = limits.maxMsgs ?? MAX_ACTIVE_SESSION_MSGS
   const maxChars = limits.maxChars ?? MAX_ACTIVE_SESSION_CHARS
-  let totalChars = msgs.reduce((sum, message) => sum + message.content.length, 0)
+  let totalChars = msgs.reduce((sum, message) => sum + messageCharCount(message), 0)
   if (msgs.length <= maxMsgs && totalChars <= maxChars) {
     return { msgs, historyHasMore, historyBefore }
   }
@@ -220,7 +232,7 @@ export function pruneActiveMessagesWindow(
     if (typeof evicted.ordinal === 'number') {
       lastEvictedHistoryOrdinal = evicted.ordinal
     }
-    totalChars -= evicted.content.length
+    totalChars -= messageCharCount(evicted)
     dropCount += 1
   }
 
@@ -246,7 +258,7 @@ export function pruneActiveMessagesWindow(
 }
 
 function sessionViewChars(view: SessionView): number {
-  return view.msgs.reduce((total, message) => total + message.content.length, 0)
+  return view.msgs.reduce((total, message) => total + messageCharCount(message), 0)
 }
 
 function pruneSessionViews(views: Record<string, SessionView>): Record<string, SessionView> {
@@ -333,7 +345,10 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     runtime.olderHistoryAbort = null
 
     const switching = current.sessionId !== sessionId
-    if (switching) runtime.allHistoryOwner = null
+    if (switching) {
+      runtime.allHistoryOwner = null
+      clearMarkdownRenderCache()
+    }
     const sessionViews = { ...current.sessionViews }
     if (current.sessionId && switching) {
       const previousView: SessionView = {

@@ -117,7 +117,7 @@ export default function TokenStats() {
   // page persisted its default natural-week selection in sessionStorage.
   const [range, setRange] = usePageState<DailyUsageRange>('tokenStats.range.v2', '7d')
   const [activeDate, setActiveDate] = useState<string | null>(null)
-  const stats = useQuery({ queryKey: queryKeys.tokenStats, queryFn: api.tokenStats, refetchInterval: 5000 })
+  const stats = useQuery({ queryKey: queryKeys.tokenStats, queryFn: api.tokenStats, refetchInterval: 10000, refetchIntervalInBackground: false })
   const data = stats.data
   const shown = data ? usageRangeDays(data.days, range, data.current_week, data.timestamp) : []
   const totals = sumUsage(shown)

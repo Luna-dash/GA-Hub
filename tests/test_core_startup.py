@@ -37,7 +37,6 @@ def test_failed_core_keeps_diagnostics_and_rejects_work(monkeypatch, tmp_path, f
         mock.patch("server.services.agent_service.AgentService.instance") as agent,
         mock.patch("server.services.scheduler_host.SchedulerHost") as scheduler,
         mock.patch("server.services.conductor_service.ConductorService.instance") as conductor,
-        mock.patch("server.services.feishu_service.FeishuService.instance") as feishu,
         mock.patch("server.routes.tokens.initialize_usage_tracking") as usage,
     ):
         app = main.create_app()
@@ -88,7 +87,7 @@ def test_failed_core_keeps_diagnostics_and_rejects_work(monkeypatch, tmp_path, f
             assert lifecycle.peek_coordinator() is None
             assert lifecycle.runtime_states() == ()
 
-        for factory in (agent, scheduler, conductor, feishu, usage):
+        for factory in (agent, scheduler, conductor, usage):
             factory.assert_not_called()
 
 

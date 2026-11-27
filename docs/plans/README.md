@@ -34,7 +34,7 @@
 | `PLAN_REMAINING_AUDIT_20260918.md` | 📌 历史分析记录 | 保留盘点过程与证据；其中旧边界批次已被 2026-09-20 方案取代，不再执行 |
 | `gahub-frontend-implementation-plan.md` | 📌 权威方案 | **GA/GA-Hub 关系治理唯一架构与实施依据**：特殊 frontend + 双连接面 + Memory 授权编辑 |
 | `next-phase-roadmap-20261123.md` | 📌 活文档 | **2026-11-23 四方向演进细化方案**（基线 `e4fd708` / 上次包 `0874252`）：桌面图标收尾与重建、`Autonomous`/`AntiChat`/`Conductor` UI 收口、Agy 隔离与 Nova ACP 协议对齐、DB/内存技术债实况 |
-| `resource-optimization-plan-20261127.md` | 📌 已定稿（暂缓执行） | **2026-11-27 全栈资源占用优化与绿色更新体系重构方案**（基线 `62fcf82`）：四波次落地（W1 去飞书改抽象 IM 接口 / 去官方 Hub 投影 / ACP 均衡池 / 流式 I/O；W2 前端 GPU 无损优化 / AntiChat 节流 / 内存瘦身 / 设置页清理；W3 纯 Python 移植去 `node.exe` / PyInstaller 裁剪；W4 `--onedir` 交付 + 极简 Rust 绿色一键更新器） |
+| `resource-optimization-plan-20261127.md` | ✅ 代码全部落地 | **2026-11-27 全栈资源占用优化与绿色更新体系重构方案**（基线 `62fcf82`）：四波次代码全部完成并通过 `pytest`（1556 passed）、`vitest`（1220 passed）、`tsc`/`api:check`/`vite build` 与 Rust `cargo test`（40 passed），待退出当前运行的 GA-Hub 后执行 `build_all.bat` 重建新便携包 |
 | `TODO_REMAINING.md` | 📌 活文档 | **唯一待办入口**（波次顺序 + 决策区 + 已收口清单）。原 W0（key 轮换）/ W1（重建与验收）已于 2026-09-18 按用户决定移出，故波次从 W2 起 |
 
 ### 2.2 docs/architecture/

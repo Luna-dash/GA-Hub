@@ -638,7 +638,7 @@ describe('chatStore lifecycle', () => {
     }
 
     const cachedIds = Object.keys(useChatStore.getState().sessionViews)
-    expect(cachedIds).toHaveLength(3)
+    expect(cachedIds).toHaveLength(2)
     expect(cachedIds).not.toContain('session-e')
     expect(cachedIds).not.toContain('session-a')
   })
@@ -1052,7 +1052,7 @@ describe('chatStore viewport resume handoff', () => {
     }
 
     const viewsBeforeSettle = useChatStore.getState().sessionViews
-    expect(Object.keys(viewsBeforeSettle)).toEqual(['s4', 's3', 's2'])
+    expect(Object.keys(viewsBeforeSettle)).toEqual(['s4', 's3'])
     expect(viewsBeforeSettle.s4.streaming).toBe(true)
 
     const runtime = { type: 'session_runtime', session_id: 's4' } as const

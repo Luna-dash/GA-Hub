@@ -17,6 +17,7 @@ export function useAntiDaemonStatus() {
     queryFn: ({ signal }) => antiApi.daemonStatus(signal),
     retry: false,
     refetchInterval: ({ state }) => state.data?.state === 'starting' || state.data?.auth_state === 'checking' ? 1_000 : 10_000,
+    refetchIntervalInBackground: false,
   })
   useEffect(() => {
     if (status.data?.active_count === 0 || status.data?.state === 'stopped') {

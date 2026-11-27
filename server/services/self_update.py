@@ -1,7 +1,16 @@
-"""Portable update storage. Only explicitly trusted local release archives are accepted.
+"""Portable green-folder update storage and Rust updater launcher (DATA_EPOCH = 2).
 
-No URLs, shell commands or executable names are supplied by a release manifest.
-The desktop shell owns the restart; HTTP endpoints only prepare/cancel a plan.
+Supports both GitHub Release archives and explicitly trusted local ZIP archives
+in the --onedir layout:
+- ga-hub-desktop.exe
+- ga-hub-update.exe (~500 KB pure-Rust switcher)
+- sidecar/ga-hub-sidecar.exe + sidecar/_internal/...
+- build-info.json / update-manifest.json / README.txt
+
+No Windows Scheduled Tasks, no 60-second countdown, and no multi-step approval
+ceremony: once verified, a single `apply()` spawns detached `ga-hub-update.exe`
+which waits for the desktop to close, switches `current.json`, verifies startup
+health, and rolls back automatically on failure.
 """
 from __future__ import annotations
 
@@ -10,6 +19,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import threading
 import uuid
 import zipfile
@@ -18,18 +28,24 @@ from typing import Any
 
 from .update_lock import FileMutex
 
-EXECUTABLES = ("ga-hub-desktop.exe", "ga-hub-sidecar.exe")
+EXECUTABLES = ("ga-hub-desktop.exe", "sidecar/ga-hub-sidecar.exe")
 HELPER = "ga-hub-update.exe"
-ALLOWED_MEMBERS = {HELPER, *EXECUTABLES, "build-info.json", "README.txt", "update-manifest.json"}
+ALLOWED_TOP_LEVEL = {
+    "ga-hub-desktop.exe",
+    HELPER,
+    "build-info.json",
+    "README.txt",
+    "update-manifest.json",
+}
 MAX_ARCHIVE_BYTES = 2 * 1024**3
-DATA_EPOCH = 1  # Changes require an explicit migration/backup strategy, not a blind rollback.
-STATES = {"prepared", "armed", "switching", "verifying", "succeeded", "rolled_back", "failed", "cancelled"}
+DATA_EPOCH = 2  # v2: --onedir sidecar + pure-Rust green updater.
+STATES = {"prepared", "switching", "verifying", "succeeded", "rolled_back", "failed", "cancelled"}
 
 
 def is_unresolved_update(plan: dict[str, Any]) -> bool:
     """True only when a switch may be in progress or ended in an uncertain state."""
     state = plan.get("state")
-    if state in {"armed", "switching", "verifying"}:
+    if state in {"switching", "verifying"}:
         return True
     return state == "failed" and plan.get("switch_started") is not False
 
@@ -53,6 +69,17 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _is_safe_archive_member(name: str) -> bool:
+    if not name or "\\" in name or name.startswith("/") or name.endswith("/"):
+        return False
+    parts = name.split("/")
+    if any(part in ("", ".", "..") or ":" in part for part in parts):
+        return False
+    if len(parts) == 1:
+        return name in ALLOWED_TOP_LEVEL
+    return parts[0] == "sidecar"
 
 
 _LOCKS: dict[str, FileMutex] = {}
@@ -95,14 +122,18 @@ class UpdateStore:
         if plan.get("data_epoch") != DATA_EPOCH:
             raise ValueError("Update requires an unsupported data migration")
         hashes = plan.get("sha256", {})
-        for name in (*EXECUTABLES, *((HELPER,) if HELPER in hashes else ())):
-            path = directory / name
-            if path.is_symlink() or not path.is_file() or digest(path) != hashes.get(name):
-                raise ValueError(f"Candidate integrity check failed: {name}")
+        if not isinstance(hashes, dict) or not set(EXECUTABLES) <= set(hashes):
+            raise ValueError("Candidate integrity metadata is incomplete")
+        for rel, expected in hashes.items():
+            if not _is_safe_archive_member(rel):
+                raise ValueError(f"Candidate integrity check failed: {rel}")
+            path = directory / rel
+            if path.is_symlink() or not path.is_file() or digest(path) != expected:
+                raise ValueError(f"Candidate integrity check failed: {rel}")
         return directory
 
     def prepare(self, archive: Path, expected_sha256: str = "", *, trusted: bool) -> dict[str, Any]:
-        """Require a trusted archive; optionally compare a separately sourced checksum."""
+        """Verify and extract a trusted --onedir release ZIP into versions/<id>/."""
         with self.lock:
             current = self.read()
             if current["state"] == "prepared" or is_unresolved_update(current):
@@ -114,63 +145,131 @@ class UpdateStore:
             archive = archive.resolve(strict=True)
             if not archive.is_file() or archive.stat().st_size > MAX_ARCHIVE_BYTES:
                 raise ValueError("Archive is missing or exceeds the size limit")
-            # Hash and parse the same open file, not a path that can be swapped.
             with archive.open("rb") as stream:
                 h = hashlib.file_digest(stream, "sha256").hexdigest()
                 if expected_sha256 and h != expected_sha256.lower():
                     raise ValueError("Archive SHA-256 does not match")
                 stream.seek(0)
                 with zipfile.ZipFile(stream) as package:
-                    entries = package.infolist()
+                    entries = [e for e in package.infolist() if not e.is_dir()]
                     names = [entry.filename for entry in entries]
-                    if len(names) != len(set(names)) or not set(names) <= ALLOWED_MEMBERS:
+                    if len(names) != len(set(names)) or not all(_is_safe_archive_member(n) for n in names):
                         raise ValueError("Archive contains duplicate or unexpected paths")
                     if not {*EXECUTABLES, "build-info.json", "update-manifest.json"} <= set(names):
                         raise ValueError("Archive lacks a paired update manifest")
                     if sum(entry.file_size for entry in entries) > MAX_ARCHIVE_BYTES:
                         raise ValueError("Expanded archive exceeds the size limit")
                     for entry in entries:
-                        if entry.is_dir() or (entry.external_attr >> 16) & 0o170000 == 0o120000:
-                            raise ValueError("Archive links and directories are not allowed")
-                        if entry.filename.endswith(".json") and entry.file_size > 65536:
+                        if (entry.external_attr >> 16) & 0o170000 == 0o120000:
+                            raise ValueError("Archive symlinks are not allowed")
+                        if entry.filename in ("build-info.json", "update-manifest.json") and entry.file_size > 2 * 1024 * 1024:
                             raise ValueError("Manifest is too large")
                     manifest = json.loads(package.read("update-manifest.json"))
                     info = json.loads(package.read("build-info.json"))
                     if not isinstance(manifest, dict) or not isinstance(info, dict):
                         raise ValueError("Invalid manifest object")
-                    if manifest.get("schema") != 1 or manifest.get("data_epoch") != DATA_EPOCH:
+                    if manifest.get("schema") != 2 or manifest.get("data_epoch") != DATA_EPOCH:
                         raise ValueError("Unsupported update protocol or data compatibility")
                     if manifest.get("platform") != "windows-x64":
                         raise ValueError("Unsupported update platform")
                     if not isinstance(info.get("version"), str) or not info["version"]:
                         raise ValueError("Missing build version")
+
+                    expected_hashed = {
+                        n for n in names
+                        if n not in ("build-info.json", "update-manifest.json", "README.txt")
+                    }
                     hashes = info.get("sha256", {})
-                    if not isinstance(hashes, dict) or set(hashes) != (set(EXECUTABLES) | ({HELPER} if HELPER in names else set())) or any(
-                        not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value)
-                        for value in hashes.values()
+                    if (
+                        not isinstance(hashes, dict)
+                        or set(hashes) != expected_hashed
+                        or any(
+                            not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value)
+                            for value in hashes.values()
+                        )
                     ):
-                        raise ValueError("Build metadata does not describe the executable pair")
-                    plan = {"id": uuid.uuid4().hex, "state": "prepared", "version": info["version"],
-                            "commit": info.get("commit"), "archive_sha256": h,
-                            "data_epoch": DATA_EPOCH, "sha256": hashes}
+                        raise ValueError("Build metadata does not match the archive contents")
+
+                    plan = {
+                        "id": uuid.uuid4().hex,
+                        "state": "prepared",
+                        "version": info["version"],
+                        "commit": info.get("commit"),
+                        "archive_sha256": h,
+                        "data_epoch": DATA_EPOCH,
+                        "sha256": hashes,
+                    }
                     directory = self.candidate(plan)
                     directory.mkdir(parents=True, exist_ok=False)
                     try:
                         for entry in entries:
-                            with package.open(entry) as source, (directory / entry.filename).open("xb") as target:
-                                shutil.copyfileobj(source, target, 1024 * 1024)
+                            target = directory / entry.filename
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            with package.open(entry) as source, target.open("xb") as dst:
+                                shutil.copyfileobj(source, dst, 1024 * 1024)
                         self.verify(plan)
                         atomic_json(self.state_file, plan)
                     except BaseException:
-                        shutil.rmtree(directory)
+                        shutil.rmtree(directory, ignore_errors=True)
                         raise
             return plan
 
     def cancel(self, plan_id: str) -> dict[str, Any]:
-        # Once armed or mid-switch, only the independently running executor can conclude it.
         with self.lock:
             current = self.read()
             allowed = {"prepared"}
             if current.get("state") == "failed" and current.get("switch_started") is False:
                 allowed = {"prepared", "failed"}
-            return self.transition(plan_id, allowed, "cancelled")
+            result = self.transition(plan_id, allowed, "cancelled")
+            candidate_dir = self.root / "versions" / plan_id
+            shutil.rmtree(candidate_dir, ignore_errors=True)
+            return result
+
+    def apply(
+        self,
+        plan_id: str,
+        admin_data: Path,
+        *,
+        old_pid: int,
+        old_exe: Path,
+        spawn=subprocess.Popen,
+    ) -> dict[str, Any]:
+        """Launch detached Rust `ga-hub-update.exe` to perform atomic switch & health check."""
+        with self.lock:
+            plan = self.read()
+            if plan.get("id") != plan_id or plan.get("state") != "prepared":
+                raise ValueError("Update is not prepared")
+            candidate_dir = self.verify(plan)
+            helper = old_exe.resolve().with_name(HELPER)
+            if not helper.is_file():
+                candidate_helper = candidate_dir / HELPER
+                if candidate_helper.is_file():
+                    helper = candidate_helper
+                else:
+                    raise ValueError("Bundled ga-hub-update.exe is missing")
+            cmd = [
+                str(helper),
+                "--admin-data", str(admin_data.resolve()),
+                "switch",
+                "--plan", plan_id,
+                "--wait-pid", str(old_pid),
+                "--old-exe", str(old_exe.resolve()),
+            ]
+            kwargs: dict[str, Any] = {
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+                "close_fds": True,
+            }
+            if os.name == "nt":
+                detached = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+                breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+                kwargs["creationflags"] = detached | breakaway
+                try:
+                    spawn(cmd, **kwargs)
+                except PermissionError:
+                    kwargs["creationflags"] = detached
+                    spawn(cmd, **kwargs)
+            else:
+                spawn(cmd, **kwargs)
+            return self.transition(plan_id, {"prepared"}, "switching", switch_started=False)

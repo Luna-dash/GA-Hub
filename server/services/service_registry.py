@@ -60,7 +60,7 @@ class ServiceRegistry:
         self._sessions = sessions
         self._nova_component = nova
         self._readers: list[Callable[[], ServicePanelItem | None]] = [
-            self._agent, self._feishu, self._conductor,
+            self._agent, self._conductor,
             self._goalhive, self._anti, self._autonomous, self._tasks,
         ]
         if nova is not None:
@@ -108,6 +108,7 @@ class ServiceRegistry:
             except Exception as exc:
                 name = reader.__name__.lstrip("_").replace("goalhive", "Goal / Hive")
                 items.append(ServicePanelItem(name, name, "error", "状态读取失败", "/dashboard", error=str(exc)))
+        items.extend(self._im_items())
         return {"services": [asdict(item) for item in items], "timestamp": int(time.time())}
 
     def health_summary(self) -> dict[str, Any]:
@@ -181,63 +182,28 @@ class ServiceRegistry:
             health="attention" if errors else "healthy", expected_running=True,
         )
 
-    def _feishu(self) -> ServicePanelItem:
-        from .. import _paths
-        from .feishu_service import FeishuService
-        service = getattr(self._owned_services(), "feishu", None) or FeishuService.peek_instance()
-        if service is None:
-            script = (
-                _paths.ga_fsapp_path()
-                if _paths.GA_ROOT is not None else None
-            )
-            exists = bool(script is not None and script.is_file())
-            return ServicePanelItem(
-                "feishu", "飞书 Bot", "ready" if exists else "stopped",
-                "已配置，当前未运行" if exists else "服务脚本未配置", "/dashboard",
-            )
-        status = service.status()
-        exists = bool(status.get("fsapp_exists"))
-        running = bool(status.get("running"))
-        autostart_state = status.get("autostart_state")
-        autostart_error = status.get("autostart_error")
-        autostart_remaining = status.get("autostart_remaining_seconds")
-
-        if running:
-            state = "running"
-            summary = "Bot 进程运行中"
-            health = "healthy"
-            err = None
-        elif autostart_state == "starting":
-            state = "ready"
-            summary = "正在自动启动…"
-            health = "healthy"
-            err = None
-        elif autostart_state == "waiting" and exists:
-            state = "ready"
-            summary = (
-                f"等待自动启动（约 {autostart_remaining}s 后）"
-                if isinstance(autostart_remaining, int) and autostart_remaining > 0
-                else "等待自动启动…"
-            )
-            health = "healthy"
-            err = None
-        elif autostart_state == "failed" and autostart_error:
-            state = "error"
-            err = str(autostart_error)
-            summary = f"自动启动失败：{err}"
-            health = "attention"
-        else:
-            state = "ready" if exists else "stopped"
-            summary = "已配置，当前未运行" if exists else "服务脚本未配置"
-            health = "healthy"
-            err = None
-
-        return ServicePanelItem(
-            "feishu", "飞书 Bot", state, summary, "/dashboard",
-            {"PID": status.get("pid") or "—", "模式": "外部" if status.get("external") else "内建"},
-            error=err,
-            health=health,
-        )
+    def _im_items(self) -> list[ServicePanelItem]:
+        """Emit panel entries only for registered IM adapters (empty when unused)."""
+        owned = self._owned_services()
+        registry_obj = getattr(owned, "im", None) if owned is not None else None
+        if registry_obj is None or not registry_obj.has_adapters():
+            return []
+        snap = registry_obj.status_snapshot()
+        items: list[ServicePanelItem] = []
+        for entry in snap.get("adapters") or []:
+            state = str(entry.get("state") or ("running" if entry.get("running") else "stopped"))
+            err = entry.get("error")
+            health = "attention" if state == "error" or err else "healthy"
+            items.append(ServicePanelItem(
+                f"im:{entry['id']}",
+                str(entry.get("name") or entry["id"]),
+                state,
+                str(entry.get("summary") or ""),
+                "/dashboard",
+                error=str(err) if err else None,
+                health=health,
+            ))
+        return items
 
     def _conductor(self) -> ServicePanelItem:
         from .conductor_service import ConductorService

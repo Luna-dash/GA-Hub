@@ -113,16 +113,25 @@ class _RunEventBus:
 
 
 _EVENT_BUS = _RunEventBus()
+_PERF_COUNTER = time.perf_counter
 
 
 class AntiSessions:
     _local_runs: set[tuple[Path, str]] = set()
+    _cancel_requested: set[tuple[Path, str]] = set()
+    _live_events: dict[tuple[Path, str], list[dict[str, Any]]] = {}
     _extra_staging_dirs: dict[tuple[Path, str], list[Path]] = {}
     _steering_queued_ids: set[tuple[Path, str]] = set()
     _terminal_states: dict[tuple[Path, str], dict[str, Any]] = {}
     _local_lock = threading.RLock()
     _schema_lock = threading.Lock()
     _initialized_dbs: dict[Path, int] = {}
+    _EVENT_FLUSH_INTERVAL = 0.10
+    _EVENT_FLUSH_BATCH_SIZE = 64
+
+    def _is_cancel_requested(self, key: tuple[Path, str]) -> bool:
+        with self._local_lock:
+            return key in self._cancel_requested
 
     def __init__(self, db: Path | None = None, runtime: AgyRuntimeManager | None = None):
         self.db = db or (_paths.ADMIN_DATA / "anti_sessions.sqlite3")
@@ -631,26 +640,51 @@ class AntiSessions:
         events_db: sqlite3.Connection | None = None
         events_closed = False
         write_failure_logged = False
+        pending_rows: list[tuple[str, int, str]] = []
+        last_flush_at = _PERF_COUNTER()
+        with self._local_lock:
+            self._live_events[key] = []
+
+        def _flush_pending_locked() -> None:
+            nonlocal events_db, write_failure_logged, last_flush_at
+            if not pending_rows:
+                return
+            try:
+                if events_db is None:
+                    events_db = sqlite3.connect(self.db, timeout=15.0, check_same_thread=False)
+                    events_db.execute("PRAGMA synchronous=NORMAL")
+                    events_db.execute("PRAGMA busy_timeout=15000")
+                with events_db:
+                    events_db.executemany(
+                        "INSERT OR REPLACE INTO run_events (run_id, seq, payload_json) VALUES (?,?,?)",
+                        pending_rows,
+                    )
+                pending_rows.clear()
+                last_flush_at = _PERF_COUNTER()
+            except (OSError, sqlite3.Error):
+                pending_rows.clear()
+                if not write_failure_logged:
+                    log.warning("Could not persist an Agy stream event batch for run %s", rid, exc_info=True)
+                    write_failure_logged = True
 
         def on_event(evt: dict[str, Any]) -> None:
-            nonlocal events_db, write_failure_logged
             with event_lock:
                 if events_closed:
                     return
                 etype = evt.get("type")
                 if etype in ("message.delta", "step.update") and isinstance(evt.get("seq"), int) and evt["seq"] > 0:
-                    try:
-                        if events_db is None:
-                            events_db = sqlite3.connect(self.db, timeout=15.0, check_same_thread=False)
-                        with events_db:
-                            events_db.execute(
-                                "INSERT OR REPLACE INTO run_events (run_id, seq, payload_json) VALUES (?,?,?)",
-                                (rid, evt["seq"], json.dumps(evt, ensure_ascii=False)),
-                            )
-                    except (OSError, sqlite3.Error):
-                        if not write_failure_logged:
-                            log.warning("Could not persist an Agy stream event for run %s", rid, exc_info=True)
-                            write_failure_logged = True
+                    with self._local_lock:
+                        live_buf = self._live_events.get(key)
+                        if live_buf is not None:
+                            live_buf.append(evt)
+                    pending_rows.append((rid, evt["seq"], json.dumps(evt, ensure_ascii=False)))
+                    if (
+                        len(pending_rows) >= self._EVENT_FLUSH_BATCH_SIZE
+                        or (_PERF_COUNTER() - last_flush_at) >= self._EVENT_FLUSH_INTERVAL
+                    ):
+                        _flush_pending_locked()
+                elif etype == "approval.requested":
+                    _flush_pending_locked()
                 _EVENT_BUS.notify(key, ephemeral=evt if etype == "approval.requested" else None)
                 if etype == "approval.requested":
                     approval_obj = evt.get("approval") if isinstance(evt.get("approval"), dict) else {}
@@ -671,53 +705,97 @@ class AntiSessions:
         eff_planner = orchestrator_planner
         eff_executor = orchestrator_executor
         try:
-            if agy_models.is_orchestrator_model(model) and (
-                orchestrator_planner is not None or orchestrator_executor is not None
-            ):
-                if hasattr(self.runtime, "ensure_orchestrator_roles"):
-                    self.runtime.ensure_orchestrator_roles(
-                        str(self._db_key),
-                        profile_id,
-                        sid,
-                        planner=orchestrator_planner,
-                        executor=orchestrator_executor,
-                    )
-            worker = self.runtime.get_worker(str(self._db_key), profile_id, sid, workspace)
-            self.runtime.register_turn(self._db_key, rid, worker)
-            registered = True
-            turn_kwargs: dict[str, Any] = {
-                "run_id": rid,
-                "prompt_text": prompt_text,
-                "model": model,
-                "effort": effort,
-                "mode": mode,
-                "permission_mode": permission_mode,
-                "resume_conversation": conversation,
-                "add_dirs": add_dirs,
-                "staged_paths": staged,
-                "attachments": attachments,
-                "allowed_roots": allowed_roots,
-                "on_event": on_event,
-            }
-            if agy_models.is_orchestrator_model(model) and eff_planner is None and eff_executor is None:
-                try:
-                    orch_cfg = agy_profile.get_orchestrator_settings(profile_id)
-                    eff_planner = orch_cfg.get("planner")
-                    eff_executor = orch_cfg.get("executor")
-                except Exception:
-                    pass
-            try:
-                params = inspect.signature(worker.run_turn).parameters
-                accepts_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-                if fallback_handoff_context is not None and ("fallback_handoff_context" in params or accepts_var_kw):
-                    turn_kwargs["fallback_handoff_context"] = fallback_handoff_context
-                if eff_planner is not None and ("orchestrator_planner" in params or accepts_var_kw):
-                    turn_kwargs["orchestrator_planner"] = eff_planner
-                if eff_executor is not None and ("orchestrator_executor" in params or accepts_var_kw):
-                    turn_kwargs["orchestrator_executor"] = eff_executor
-            except (ValueError, TypeError):
-                pass
-            result = worker.run_turn(**turn_kwargs)
+            if self._is_cancel_requested(key):
+                result = {
+                    "status": "cancelled",
+                    "conversation_id": conversation,
+                    "answer": None,
+                    "progress_messages": [],
+                    "effective_model": model,
+                    "fallback_notice": None,
+                    "usage": {},
+                }
+            else:
+                if agy_models.is_orchestrator_model(model) and (
+                    orchestrator_planner is not None or orchestrator_executor is not None
+                ):
+                    if hasattr(self.runtime, "ensure_orchestrator_roles"):
+                        self.runtime.ensure_orchestrator_roles(
+                            str(self._db_key),
+                            profile_id,
+                            sid,
+                            planner=orchestrator_planner,
+                            executor=orchestrator_executor,
+                        )
+                if self._is_cancel_requested(key):
+                    result = {
+                        "status": "cancelled",
+                        "conversation_id": conversation,
+                        "answer": None,
+                        "progress_messages": [],
+                        "effective_model": model,
+                        "fallback_notice": None,
+                        "usage": {},
+                    }
+                else:
+                    worker = self.runtime.get_worker(str(self._db_key), profile_id, sid, workspace)
+                    if self._is_cancel_requested(key):
+                        result = {
+                            "status": "cancelled",
+                            "conversation_id": conversation,
+                            "answer": None,
+                            "progress_messages": [],
+                            "effective_model": model,
+                            "fallback_notice": None,
+                            "usage": {},
+                        }
+                    else:
+                        self.runtime.register_turn(self._db_key, rid, worker)
+                        registered = True
+                        if self._is_cancel_requested(key):
+                            result = {
+                                "status": "cancelled",
+                                "conversation_id": conversation,
+                                "answer": None,
+                                "progress_messages": [],
+                                "effective_model": model,
+                                "fallback_notice": None,
+                                "usage": {},
+                            }
+                        else:
+                            turn_kwargs: dict[str, Any] = {
+                                "run_id": rid,
+                                "prompt_text": prompt_text,
+                                "model": model,
+                                "effort": effort,
+                                "mode": mode,
+                                "permission_mode": permission_mode,
+                                "resume_conversation": conversation,
+                                "add_dirs": add_dirs,
+                                "staged_paths": staged,
+                                "attachments": attachments,
+                                "allowed_roots": allowed_roots,
+                                "on_event": on_event,
+                            }
+                            if agy_models.is_orchestrator_model(model) and eff_planner is None and eff_executor is None:
+                                try:
+                                    orch_cfg = agy_profile.get_orchestrator_settings(profile_id)
+                                    eff_planner = orch_cfg.get("planner")
+                                    eff_executor = orch_cfg.get("executor")
+                                except Exception:
+                                    pass
+                            try:
+                                params = inspect.signature(worker.run_turn).parameters
+                                accepts_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+                                if fallback_handoff_context is not None and ("fallback_handoff_context" in params or accepts_var_kw):
+                                    turn_kwargs["fallback_handoff_context"] = fallback_handoff_context
+                                if eff_planner is not None and ("orchestrator_planner" in params or accepts_var_kw):
+                                    turn_kwargs["orchestrator_planner"] = eff_planner
+                                if eff_executor is not None and ("orchestrator_executor" in params or accepts_var_kw):
+                                    turn_kwargs["orchestrator_executor"] = eff_executor
+                            except (ValueError, TypeError):
+                                pass
+                            result = worker.run_turn(**turn_kwargs)
         except AntiError as exc:
             result = {"status": "cli_error", "error": str(exc), "usage": {}}
         except Exception as exc:
@@ -725,6 +803,7 @@ class AntiSessions:
             result = {"status": "cli_error", "error": f"Agy 运行异常: {exc}", "usage": {}}
         finally:
             with event_lock:
+                _flush_pending_locked()
                 events_closed = True
                 if events_db is not None:
                     try:
@@ -810,6 +889,8 @@ class AntiSessions:
         finally:
             with self._local_lock:
                 self._local_runs.discard(key)
+                self._cancel_requested.discard(key)
+                self._live_events.pop(key, None)
             _EVENT_BUS.notify(key, finished=True)
 
         if updated:
@@ -1095,6 +1176,11 @@ class AntiSessions:
         return self.run(sid, rid)
 
     def events(self, sid: str, rid: str, after: int = 0) -> list[dict]:
+        key = (self._db_key, rid)
+        with self._local_lock:
+            live_buf = self._live_events.get(key)
+            if live_buf is not None:
+                return [evt for evt in live_buf if int(evt.get("seq", 0)) > after]
         self.run(sid, rid)
         with self.connect() as db:
             rows = db.execute(
@@ -1127,6 +1213,10 @@ class AntiSessions:
         eph_cursor, ephemerals = _EVENT_BUS.ephemeral_after(key, eph_cursor)
         for eph in ephemerals:
             chunks.append(self._sse(eph))
+        with self._local_lock:
+            is_local_running = key in self._local_runs
+        if is_local_running:
+            return cursor, eph_cursor, chunks, False
         current = self.run(sid, rid)
         done = current["status"] in TERMINAL
         if done:
@@ -1252,6 +1342,7 @@ class AntiSessions:
                 session_title = str(title_row[0] or "") if title_row else ""
         with self._local_lock:
             self._local_runs.discard(key)
+            self._cancel_requested.discard(key)
             if updated and sid:
                 self._terminal_states[(self._db_key, sid)] = {
                     "completed_run_id": rid,
@@ -1289,11 +1380,16 @@ class AntiSessions:
         run = self.run(sid, rid)
         if run["status"] in TERMINAL:
             return run
+        key = (self._db_key, rid)
+        with self._local_lock:
+            self._cancel_requested.add(key)
         deadline = time.monotonic() + (5.0 if force else 3.0)
         sent = False
         while True:
             current = self.run(sid, rid)
             if current["status"] in TERMINAL:
+                with self._local_lock:
+                    self._cancel_requested.discard(key)
                 return current
             if not sent:
                 if force:
@@ -1304,7 +1400,7 @@ class AntiSessions:
                         self._close_session_runtime(sid, force=True)
                     if not sent:
                         with self._local_lock:
-                            alive = (self._db_key, rid) in self._local_runs
+                            alive = key in self._local_runs
                         if not alive:
                             self._close_session_runtime(sid, force=True)
                             self._force_finalize_cancelled(rid)

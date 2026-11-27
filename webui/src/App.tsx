@@ -131,7 +131,6 @@ export default function App() {
               {PAGE_ROUTES.map(({ id, to, Component }) => (
                 <Route key={id} path={to} element={<Component />} />
               ))}
-              <Route path="/feishu" element={<Navigate to="/dashboard" replace />} />
               <Route path="/conversations/:id" element={<ConversationsPage />} />
               <Route path="*" element={<Navigate to="/chat" replace />} />
             </Routes>

@@ -11,15 +11,20 @@ from server.services.self_update import DATA_EPOCH, EXECUTABLES, UpdateStore
 
 def fake_feed(monkeypatch, tmp_path, *, version="1.2.0", prerelease=False):
     name = f"GA-Hub-{version}-windows-x64.zip"
-    files = {n: b"MZ-test-" + n.encode() for n in (*EXECUTABLES, "ga-hub-update.exe")}
-    info = {"version": version, "tag": "v" + version, "channel": "stable", "dirty": False,
+    files = {
+        "ga-hub-desktop.exe": b"MZ-test-desktop",
+        "ga-hub-update.exe": b"MZ-test-update",
+        "sidecar/ga-hub-sidecar.exe": b"MZ-test-sidecar",
+        "sidecar/_internal/dep.dll": b"MZ-test-dep",
+    }
+    info = {"version": version, "tag": "v" + version, "channel": "stable", "dirty": False, "layout": "onedir",
             "sha256": {n: hashlib.sha256(b).hexdigest() for n, b in files.items()}}
     archive = tmp_path / "source.zip"
     with zipfile.ZipFile(archive, "w") as z:
         for n, b in files.items():
             z.writestr(n, b)
         z.writestr("build-info.json", json.dumps(info))
-        z.writestr("update-manifest.json", json.dumps({"schema": 1, "platform": "windows-x64", "data_epoch": DATA_EPOCH}))
+        z.writestr("update-manifest.json", json.dumps({"schema": 2, "platform": "windows-x64", "data_epoch": DATA_EPOCH, "layout": "onedir"}))
     data = archive.read_bytes()
     metadata = {"tag_name": "v" + version, "draft": False, "prerelease": prerelease,
                 "assets": [{"name": name, "size": len(data)}, {"name": "SHA256SUMS.txt", "size": 150}], "body": "Notes"}

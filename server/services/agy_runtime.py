@@ -68,8 +68,9 @@ POST_SETTLE_REPLY_QUIET_LIMIT = 120.0
 POST_SETTLE_COMMAND_HOLD_TIMEOUT = 1800.0
 APPROVAL_TIMEOUT = 900.0
 INIT_TIMEOUT = 120.0
-IDLE_SESSION_TTL = 1800.0
-CANCEL_GRACE_TIMEOUT = 8.0
+IDLE_SESSION_TTL = 600.0
+MAX_IDLE_WORKERS = 2
+CANCEL_GRACE_TIMEOUT = 2.0
 INACTIVITY_SLICE = 60.0
 HOST_SLEEP_TOLERANCE = 30.0
 
@@ -625,6 +626,9 @@ class AgySessionWorker:
             self._profile_lock_held = True
             try:
                 agy_profile.prepare_workspace(self.profile_id)
+                if self._abort_event.is_set():
+                    self._dirty = True
+                    raise AgyProfileError(499, "Agy 任务已取消")
                 try:
                     orch = agy_profile.get_orchestrator_settings(self.profile_id)
                     self.loaded_orchestrator = (orch.get("planner"), orch.get("executor"))
@@ -1611,10 +1615,22 @@ class AgySessionWorker:
             self.active_turn = None
             turn.done_event.set()
             self.last_used = time.monotonic()
-            try:
-                agy_profile.sync_workspace_credentials_to_vault(self.profile_id)
-            except Exception:
-                log.debug("Failed syncing workspace credentials after turn", exc_info=True)
+            cancelled_or_aborted = turn.cancelled or self._abort_event.is_set()
+            if cancelled_or_aborted:
+                profile_id = self.profile_id
+
+                def _sync_creds_bg() -> None:
+                    try:
+                        agy_profile.sync_workspace_credentials_to_vault(profile_id)
+                    except Exception:
+                        log.debug("Failed syncing workspace credentials after cancelled turn", exc_info=True)
+
+                threading.Thread(target=_sync_creds_bg, name="agy-cred-sync", daemon=True).start()
+            else:
+                try:
+                    agy_profile.sync_workspace_credentials_to_vault(self.profile_id)
+                except Exception:
+                    log.debug("Failed syncing workspace credentials after turn", exc_info=True)
             if self._dirty or self._abort_event.is_set():
                 self._retire(force=True)
 
@@ -1808,6 +1824,7 @@ class AgyRuntimeManager:
         self,
         *,
         idle_ttl: float = IDLE_SESSION_TTL,
+        max_idle_workers: int = MAX_IDLE_WORKERS,
         reaper_interval: float | None = None,
     ) -> None:
         self._lock = threading.RLock()
@@ -1830,6 +1847,7 @@ class AgyRuntimeManager:
         self._login_profile: str | None = None
         self._code_login: CodeLoginFlow | None = None
         self._idle_ttl = max(0.0, float(idle_ttl))
+        self._max_idle_workers = max(0, int(max_idle_workers))
         self._reaper_interval = (
             float(reaper_interval)
             if reaper_interval is not None
@@ -2038,19 +2056,47 @@ class AgyRuntimeManager:
         if first_error is not None:
             raise first_error
 
+    def _evict_excess_idle_keys_locked(
+        self,
+        *,
+        exclude: set[tuple[str, str, str]] | None = None,
+    ) -> list[tuple[str, str, str]]:
+        protected = exclude or set()
+        registered = set(self._active_turns.values())
+        idle = [
+            (worker.last_used, key)
+            for key, worker in self._workers.items()
+            if key not in protected
+            and worker not in registered
+            and worker.active_turn is None
+            and not worker._closed
+        ]
+        if len(idle) <= self._max_idle_workers:
+            return []
+        idle.sort(key=lambda item: item[0])
+        overflow = len(idle) - self._max_idle_workers
+        return [key for _, key in idle[:overflow]]
+
     def reap_idle_workers(self, *, now: float | None = None) -> int:
-        """Close idle ACP child workers exceeding IDLE_SESSION_TTL while keeping SQLite resume IDs."""
-        if self._idle_ttl <= 0:
-            return 0
+        """Close idle ACP child workers exceeding IDLE_SESSION_TTL or MAX_IDLE_WORKERS."""
         current = time.monotonic() if now is None else now
         with self._lock:
             self._prune_retiring_locked()
             registered = set(self._active_turns.values())
-            stale = self._detach_workers_locked([
-                key for key, worker in self._workers.items()
-                if worker not in registered and worker.active_turn is None
-                and (worker._closed or (current - worker.last_used) >= self._idle_ttl)
-            ])
+            stale_keys: list[tuple[str, str, str]] = []
+            remaining_idle: list[tuple[float, tuple[str, str, str]]] = []
+            for key, worker in self._workers.items():
+                if worker in registered or worker.active_turn is not None:
+                    continue
+                if worker._closed or (self._idle_ttl > 0 and (current - worker.last_used) >= self._idle_ttl):
+                    stale_keys.append(key)
+                else:
+                    remaining_idle.append((worker.last_used, key))
+            if len(remaining_idle) > self._max_idle_workers:
+                remaining_idle.sort(key=lambda item: item[0])
+                overflow = len(remaining_idle) - self._max_idle_workers
+                stale_keys.extend(key for _, key in remaining_idle[:overflow])
+            stale = self._detach_workers_locked(stale_keys)
         self._close_detached(stale)
         if stale:
             _append_log(f"Reaped {len(stale)} idle Agy ACP worker(s)")
@@ -2225,6 +2271,46 @@ class AgyRuntimeManager:
             agy_profile.agy_executable()
             yield target
 
+    _retire_wait_timeout: float = 1.2
+
+    def _wait_session_retiring(self, db_key: str, profile_id: str, session_id: str) -> None:
+        timeout = max(0.0, float(self._retire_wait_timeout))
+        deadline = time.monotonic() + timeout
+        while True:
+            with self._lock:
+                if (
+                    self._stopped_manually
+                    or self._draining_workers
+                    or self._switching_profile
+                    or profile_id in self._changing_profiles
+                ):
+                    return
+                self._prune_retiring_locked()
+                pending = [
+                    (worker, closed)
+                    for key, (worker, closed) in self._retiring.items()
+                    if key[0] == db_key
+                    and key[2] == session_id
+                    and (worker._dirty or worker._abort_event.is_set())
+                ]
+            if not pending:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            for worker, closed in pending:
+                rem = deadline - time.monotonic()
+                if rem <= 0:
+                    return
+                if not closed.is_set():
+                    closed.wait(min(0.05, rem))
+                exited = worker._exit_pending
+                if exited is not None and not exited.is_set():
+                    rem = deadline - time.monotonic()
+                    if rem <= 0:
+                        return
+                    exited.wait(min(0.05, rem))
+
     def _require_session_available_locked(self, db_key: str, profile_id: str, session_id: str) -> None:
         self._require_login_closed(profile_id)
         if self._stopped_manually:
@@ -2235,15 +2321,24 @@ class AgyRuntimeManager:
 
     def get_worker(self, db_key: str, profile_id: str, session_id: str, workspace: Path) -> AgySessionWorker:
         key = (db_key, profile_id, session_id)
+        self._wait_session_retiring(db_key, profile_id, session_id)
         with self._lock:
             self._require_session_available_locked(*key)
             grants = self._session_grants.setdefault((db_key, session_id), RuntimeGrants())
             worker = self._workers.get(key)
-            if worker is not None and worker.workspace == workspace and not worker._closed:
+            if (
+                worker is not None
+                and worker.workspace == workspace
+                and not worker._closed
+                and not worker._dirty
+                and not worker._retired
+                and not worker._abort_event.is_set()
+            ):
                 return worker
         executable = agy_profile.agy_executable()
         version = self._probe_version_once(executable)
         while True:
+            self._wait_session_retiring(db_key, profile_id, session_id)
             with self._lock:
                 self._require_session_available_locked(*key)
                 grants = self._session_grants.setdefault((db_key, session_id), RuntimeGrants())
@@ -2262,13 +2357,29 @@ class AgyRuntimeManager:
                     )
                     self._workers[key] = worker
                     self._ensure_reaper_locked()
-                    return worker
-                if worker.workspace == workspace and not worker._closed:
+                    evict_keys = self._evict_excess_idle_keys_locked(exclude={key})
+                    evicted = self._detach_workers_locked(evict_keys) if evict_keys else []
+                    break
+                if (
+                    worker.workspace == workspace
+                    and not worker._closed
+                    and not worker._dirty
+                    and not worker._retired
+                    and not worker._abort_event.is_set()
+                ):
+                    worker.last_used = time.monotonic()
                     return worker
                 if worker in self._active_turns.values():
                     raise AgyProfileError(409, "Agy 会话仍有任务运行，请稍后重试")
                 detached = self._detach_workers_locked([key])
             self._close_detached(detached)
+        if evicted:
+            try:
+                self._close_detached(evicted)
+                _append_log(f"Evicted {len(evicted)} excess idle Agy ACP worker(s)")
+            except Exception:
+                log.debug("Failed closing evicted idle Agy ACP worker(s)", exc_info=True)
+        return worker
 
     def _record_models(self, profile_id: str, items: list[dict[str, Any]]) -> None:
         if not items:

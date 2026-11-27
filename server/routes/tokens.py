@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -49,6 +50,8 @@ class _LazySessionMetadataProxy:
 _DEFAULT_SESSION_METADATA = _LazySessionMetadataProxy()
 _SESSION_METADATA: Any = _DEFAULT_SESSION_METADATA
 _TOTAL_KEYS = ("requests", "input", "output", "cache_create", "cache_read", "total")
+_LEDGER_CACHE_LOCK = threading.Lock()
+_LEDGER_CACHE: tuple[tuple[int, str, int, int], dict[str, Any]] | None = None
 
 
 def _resolve_session_metadata(request: Request | None = None) -> Any:
@@ -125,15 +128,35 @@ def _add_totals(left: dict[str, Any], right: dict[str, Any]) -> dict[str, int]:
     return {key: a[key] + b[key] for key in _TOTAL_KEYS}
 
 
-def _native_ledger_usage(metadata: Any = None) -> dict[str, Any]:
-    """Read GA's official ledger and adapt it to the existing WebUI schema."""
-    now = int(time.time())
+def _ledger_cache_key() -> tuple[int, str, int, int] | None:
     if usage_bridge is None:
-        empty = _normalise_totals({})
-        usage = {"days": {}, "all_time": empty, "sessions": {}}
-        result = {"available": False, "totals": _with_rate(empty), "timestamp": now}
-        result.update(_weekly_response(usage, now, metadata=metadata))
-        return result
+        return None
+    read_fn = getattr(usage_bridge, "read_usage_ledger", None)
+    if read_fn is None:
+        return None
+    path_fn = getattr(usage_bridge, "usage_ledger_path", None)
+    ledger_path = None
+    if callable(path_fn):
+        try:
+            ledger_path = path_fn()
+        except Exception:
+            ledger_path = None
+    if not ledger_path:
+        return None
+    try:
+        st = Path(ledger_path).stat()
+        return (id(read_fn), str(ledger_path), int(st.st_mtime_ns), int(st.st_size))
+    except OSError:
+        return None
+
+
+def _aggregate_ledger() -> dict[str, Any]:
+    global _LEDGER_CACHE
+    cache_key = _ledger_cache_key()
+    if cache_key is not None:
+        with _LEDGER_CACHE_LOCK:
+            if _LEDGER_CACHE is not None and _LEDGER_CACHE[0] == cache_key:
+                return _LEDGER_CACHE[1]
 
     days: dict[str, dict[str, int]] = {}
     sessions: dict[str, dict[str, Any]] = {}
@@ -160,6 +183,24 @@ def _native_ledger_usage(metadata: Any = None) -> dict[str, Any]:
         }
 
     usage = {"days": days, "all_time": all_time, "sessions": sessions}
+    if cache_key is not None:
+        with _LEDGER_CACHE_LOCK:
+            _LEDGER_CACHE = (cache_key, usage)
+    return usage
+
+
+def _native_ledger_usage(metadata: Any = None) -> dict[str, Any]:
+    """Read GA's official ledger and adapt it to the existing WebUI schema."""
+    now = int(time.time())
+    if usage_bridge is None:
+        empty = _normalise_totals({})
+        usage = {"days": {}, "all_time": empty, "sessions": {}}
+        result = {"available": False, "totals": _with_rate(empty), "timestamp": now}
+        result.update(_weekly_response(usage, now, metadata=metadata))
+        return result
+
+    usage = _aggregate_ledger()
+    all_time = usage["all_time"]
     result = {"available": True, "totals": _with_rate(all_time), "timestamp": now}
     result.update(_weekly_response(usage, now, metadata=metadata))
     return result

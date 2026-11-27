@@ -83,26 +83,23 @@ class SchedulerDomainStatus(BaseModel):
     error: str | None
 
 
-class FeishuProcessStatus(BaseModel):
-    """Feishu gateway status, or an initialization diagnostic.
+class IMAdapterStatus(BaseModel):
+    """Status reported by a registered generic IM channel adapter."""
 
-    The OpenAPI schema intentionally describes the complete healthy response;
-    initialization failures are represented by ``error`` in ``/api/status``.
-    """
+    id: str
+    name: str
+    running: bool = False
+    state: str = "stopped"
+    summary: str = ""
+    error: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
 
-    model_config = {"extra": "allow"}
 
-    running: bool
-    pid: int | None
-    returncode: int | None
-    external: bool
-    fsapp_path: str
-    fsapp_exists: bool
-    python: str
-    log_file: str
-    log_exists: bool
-    last_check: Any | None
-    last_check_ts: float
+class IMStatusResp(BaseModel):
+    """Read-only status of the generic IM adapter registry."""
+
+    configured: bool = False
+    adapters: list[IMAdapterStatus] = Field(default_factory=list)
 
 
 class SchedulerDomainCount(BaseModel):
@@ -125,7 +122,7 @@ class AppStatusResp(BaseModel):
     resolved_python_source: str | None
     mode: Literal["setup"] | None = None
     agent: GlobalAgentStatus | None = None
-    feishu: FeishuProcessStatus | None = None
+    im: IMStatusResp | None = None
     autonomous: SchedulerDomainCount | None = None
     tasks: SchedulerDomainCount | None = None
     schedulers: dict[str, SchedulerRuntimeStatus | SchedulerDomainStatus] | None = None
@@ -1132,81 +1129,6 @@ class UploadResp(BaseModel):
 class RevealFileResp(BaseModel):
     ok: bool
     path: str
-
-
-# ── feishu bot ───────────────────────────────────────────────────
-class FsSendReq(BaseModel):
-    receive_id: str
-    text: str
-    receive_id_type: Literal["open_id", "chat_id", "user_id", "union_id", "email"] = "open_id"
-    use_card: bool = False
-
-
-class FsKeysReq(BaseModel):
-    app_id: str = Field(min_length=1)
-    app_secret: str = Field(min_length=1)
-    allowed_users: str = ""
-
-
-class FsCheckResp(BaseModel):
-    model_config = {"extra": "allow"}
-
-    ready: bool | None = None
-    ok: bool | None = None
-    returncode: int | None = None
-    error: str | None = None
-    raw: str | None = None
-    fsapp_path: str | None = None
-    allowed_users: list[str] | None = None
-    public_access: bool | None = None
-    agent_error: str | None = None
-
-
-class FsStatusResp(BaseModel):
-    running: bool
-    pid: int | None
-    returncode: int | None
-    external: bool
-    fsapp_path: str
-    fsapp_exists: bool
-    python: str
-    log_file: str
-    log_exists: bool
-    last_check: FsCheckResp | None = None
-    last_check_ts: float = 0
-    autostart_state: str | None = None
-    autostart_remaining_seconds: int | None = None
-    autostart_error: str | None = None
-
-
-class FsKeysResp(BaseModel):
-    ok: bool
-    app_id_masked: str | None = None
-    allowed_users_saved: bool | None = None
-
-
-class FsStartResp(BaseModel):
-    model_config = {"extra": "allow"}
-
-    started: bool
-    running: bool
-    pid: int | None = None
-    log_file: str | None = None
-
-
-class FsStopResp(BaseModel):
-    stopped: bool
-    running: bool
-    pid: int | None = None
-
-
-class FsSendResp(BaseModel):
-    model_config = {"extra": "allow"}
-
-    ok: bool
-    returncode: int | None = None
-    raw: str | None = None
-    message_id: str | None = None
 
 
 # ── mykey raw editor ─────────────────────────────────────────────
