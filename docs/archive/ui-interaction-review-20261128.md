@@ -1,7 +1,7 @@
 # GA-Hub 系统性 UI 交互 Review 与修复报告（2026-11-28）
 
 > **审查基线**：`602fd7b`（`ui(quota): soften account quota progress bar tone and track styling`）  
-> **最终交付 HEAD**：`2c4905b`（`main` 分支）  
+> **最终代码交付 HEAD**：`2c4905b`（`main` 分支；本报告另以 `docs(archive)` 提交归档与事实校准，不计入下方代码提交统计）  
 > **审查范围**：`webui/src/` 全部前端交互面、组件原语、表单校验、浮层栈、导航守卫、键盘无障碍与 `dark-forest` 主题一致性  
 > **提交规模**：32 个独立 UI 审查/修复提交 + 1 个外部协作者并行提交（`f76870e`），共 33 个提交；`git diff --shortstat 602fd7b..2c4905b` 计 **116 files changed, +9624 / -1790**
 
@@ -286,7 +286,7 @@
    - 新增 `webui/src/stores/navigationGuardStore.ts`（`useDirtyRouteGuard` / `hasDirtyGuard` / `confirmLeaveIfDirty`）集中管理 `beforeunload` 与 SPA 离开确认，并接入 `VersionedMemoryEditor`、`MyKeyRawView` 及之前漏守卫的 `MyKey` `GlobalsSection`。
    - 新增 `GuardedLink` / `GuardedNavLink` 与 `useGuardedNavigate` 覆盖 `SidebarNav`、`CommandPalette`（先关面板再弹确认避免双叠框）、`Dashboard`、`CitationLink`、`useDesktopNotifyEffects`、`Conversations`、`ThemeTasks`、`LiveChat`。
    - `Settings.tsx` 通过 `useInRouterContext()` 拆分路由感知包装层，支持 `?tab=` 双向同步且不破坏无 Router 的 `Settings.test.tsx`；`AntiChat.tsx` 保留并同步 `?session=` 参数（更新 `AntiChat.test.tsx` 契约）；`ErrorBoundary.tsx` 增加主按钮「重试」原地清除错误边界状态，次按钮「返回首页」优先走 SPA 路由跳转。
-   - **Iter 2 深度修复（`ed047d2`）**：M5 对抗员发现当 `Memory` 或 `MyKey` 的脏标签切换触发 `dialog.confirm` 且用户选「取消」时，卸载中的确认弹窗 `ModalOverlay` 的 `useEffect` cleanup 会在弹窗退出后把焦点强行拉回关闭前保存的 `openerRef`，从而把刚被切回去或保持原位的 tablist 焦点抢走。通过在 `ModalOverlay` 与 `overlayStack` 中引入有条件恢复标记（仅当未被主动程序移交焦点且非取消切回场景时恢复），根治了焦点窃取。
+   - **Iter 2 深度修复（`ed047d2`）**：M5 对抗员发现当 `Memory` 或 `MyKey` 的脏标签切换触发 `dialog.confirm` 且用户点击 **`Confirm`（「放弃修改」）确认切换标签**时（选「取消」保持并回焦原标签本来正常），`dialog.confirm(...)` 微任务会先执行 `focusTarget()` 把焦点移到新激活的标签，随后卸载中的确认弹窗 `ModalOverlay` 的 `useEffect` cleanup 调用 `restoreOverlayFocus(opener)`，把焦点强行拉回已失活的旧标签（`tabIndex="-1"`）。`ed047d2` 在 `overlayStack.ts` 新增 `hasActiveTrappedOverlay()`，并在 `ModalOverlay.tsx` cleanup 中校验 `focusMovedOutside && (!hasActiveTrappedOverlay() || isInsideTrappedOverlay(active))`——当焦点已主动移至外部存活可用控件且不再处于任何残留焦点陷阱外层（或位于当前有效外层焦点陷阱内部）时跳过 `restoreOverlayFocus(opener)`，根治了焦点窃取。
 2. **全站 `role="tablist"` 键盘无障碍收口（`97ac438`）**：
    - 新增 `webui/src/utils/tabListA11y.ts` 抽象 `handleTabListKeyDown`（支持水平/垂直方向键、`Home`/`End` 环绕与异步切换后聚焦回调），统一覆盖 `Memory`、`MyKey`、`Conductor`（两套 tablist）、`Settings` 与 `ThemeTaskHistory`。
 3. **跨引擎输入护栏、回底控制与中转箱反馈（`19f6fcb`）**：
@@ -316,7 +316,7 @@
 | `19f6fcb` | `feat(webui): unify 80ms composer IME guard, add TaskConversation/GoalHive jump-to-bottom, and surface transfer cap feedback` | 新增 `useImeCompositionGuard` 统一主框/`BtwDialog`/`TaskConversation`/`GoalHive`；`TaskConversation`/`GoalHive` 加回底浮钮；新增 `toast.warning` 与中转箱禁用原因提示 | `FileTransferBox.tsx`, `FileTransferBox.test.tsx`, `ImagePasteInput.tsx`, `ImagePasteInput.test.tsx`, `ToastHost.tsx`, `TaskConversation.tsx`, `useImeCompositionGuard.ts`, `AntiChat.tsx`, `Conductor.test.tsx`, `GoalHive.tsx`, `GoalHive.test.tsx`, `LiveChat.tsx`, `toastStore.ts`（13 文件） |
 | `fbaedc4` | `feat(webui): add keyboard rename in SessionRail, accessible PathLink menu in FileCitation, and dark-forest token parity` | `SessionRail` 按钮+`F2` 改名与焦点回落；`FileCitation` 键盘右键菜单与动态视口钳位；`dark-forest` 全套颜色/圆点/图表/遮罩 Token 对齐 | `CommandPalette.tsx`, `ConversationIndexRail.tsx`, `FileCitation.tsx`, `MarkdownView.test.tsx`, `MessageBubble.tsx`, `ModalOverlay.tsx`, `SessionRail.tsx`, `SessionRail.test.tsx`, `ActivityTimeline.tsx`, `presentation.ts`, `AntiChat.tsx`, `Conversations.tsx`, `TokenStats.tsx`, `ga-actions.css`, `index.css`, `token-stats.css`, `antiUsage.ts`, `antiUsage.test.ts`, `tailwind.config.js`（19 文件） |
 | `86d167f` | `fix(webui): polish extractErrorMessage empty-envelope fallback and MyKey thinking_type revert dirtiness` | （M3/M4 遗留微瑕收尾）修复 `extractErrorMessage` 空信封与 `MyKey` `thinking_type` 来回切换脏态误报 | `MyKey.tsx`, `MyKey.test.tsx`, `errors.ts`, `errors.test.ts`（4 文件） |
-| `ed047d2` | `fix(webui): prevent ModalOverlay unmount cleanup from stealing focus after dirty tablist confirm` | （Iter 1 对抗整改）修复 `Memory`/`MyKey` 脏标签确认弹窗取消后卸载 `ModalOverlay` 窃取 tablist 焦点 | `ModalOverlay.tsx`, `ModalOverlay.test.tsx`, `Memory.dirty.test.tsx`, `MyKey.test.tsx`, `overlayStack.ts`（5 文件） |
+| `ed047d2` | `fix(webui): prevent ModalOverlay unmount cleanup from stealing focus after dirty tablist confirm` | （Iter 1 对抗整改）修复 `Memory`/`MyKey` 脏标签确认切换（「放弃修改」）后卸载 `ModalOverlay` 窃取新激活标签焦点 | `ModalOverlay.tsx`, `ModalOverlay.test.tsx`, `Memory.dirty.test.tsx`, `MyKey.test.tsx`, `overlayStack.ts`（5 文件） |
 | `61865a5` | `fix(webui): clear stale PathLink menu info and avoid trapping focus on disabled menuitem` | （Iter 1 对抗整改）修复 `FileCitation` `PathLink` 打开菜单闪现旧 `info` 及向 `disabled` 项移交焦点 | `FileCitation.tsx`, `MarkdownView.test.tsx`（2 文件） |
 | `2c4905b` | `fix(webui): prevent nested empty error envelopes from leaking JSON in extractErrorMessage` | （Iter 1 对抗整改）修复多层嵌套空信封（如 `{ detail: { detail: {} } }`）在 `extractErrorMessage` 中漏出原始 JSON | `errors.ts`, `errors.test.ts`（2 文件） |
 
@@ -392,7 +392,7 @@
 | **M2 (Theme 2)** | **FAIL** | Challenger 探针实测复现 4 个真实 Bug：(1) `ModalOverlay` 内打开传送门 `AntiModelSelector` 时 `Tab` 穿透至背景页；(2) `DesktopRuntimeGate` (`lost`) 激活状态下卸载底层 `ModalOverlay` 时焦点被偷走；(3) `BtwDialog` 拖拽后缩小窗口会停留在视口之外；(4) `MyKey` 复制模式输入并清空 `apikey` 误触发脏保存提示。 | `0ad9ff3`、`f7e3cea`；二轮 Reviewer `APPROVE` + Challenger `CONFIRMED 13/13` + Auditor `CLEAN` → **PASS** |
 | **M3 (Theme 3)** | **FAIL（INTEGRITY VIOLATION）** | Auditor (`efa58d8b`) 否决 `fb7dc49` 覆写 `FontAppearancePanel.test.tsx` 删掉了 2 条 M1/M2 回归测试；同时 Challenger 实测复现 `ToastHost` hover+focus 抢占、422/null/`{}` 错误解包漏洞、`AntiAgyProfiles` 切视图残错与 `NovaSettingsPanel` 状态/操作错混淆；Reviewer 指出 `chatStore.historyError` 未清洗。 | `d453bad`、`5c11e18`；二轮 Reviewer `APPROVE` + Challenger `CONFIRMED 14/14` + Auditor `CLEAN` → **PASS** |
 | **M4 (Theme 4)** | **FAIL** | Reviewer 指出 `AntiModelSelector` `Shift+Tab` 顺序与 `MyKey` 切回 `enabled` 时 `budgetDraft` 同步问题；Challenger 实测复现 7 项边界缺陷（`AntiModelSelector` 模态回环与方向键未清键入缓冲、`MyKey` 与 `Tasks`/`Autonomous` 小数通过整数校验、`ThemeTasks` 纯空格搜索词），另指出 `toastStore` 卸载边界。 | `2d7a438`、`3898197`、`1ae8172`；二轮 Reviewer `APPROVE` + Challenger `CONFIRMED 14/14` + Auditor `CLEAN` → **PASS** |
-| **M5 (Theme 5)** | **FAIL** | Challenger 25 项探针复现 3 个真实 Bug：(1) `Memory`/`MyKey` 脏标签切换取消后，卸载的 `ModalOverlay` 会从 `tablist` 偷走焦点；(2) `FileCitation` `PathLink` 重开菜单时闪现上次路径详情，且方向键可跳上禁用菜单项或锁死；(3) `extractErrorMessage` 对多层嵌套空信封（如 `{ detail: { detail: {} } }`）仍泄漏 JSON。 | `ed047d2`、`61865a5`、`2c4905b`；二轮 Reviewer `APPROVE` + Challenger `CONFIRMED 14/14` + Auditor `CLEAN` → **PASS** |
+| **M5 (Theme 5)** | **FAIL** | Challenger 25 项探针复现 3 个真实 Bug：(1) `Memory`/`MyKey` 脏标签确认切换（「放弃修改」）后，卸载的 `ModalOverlay` 会把焦点从新激活标签偷回已失活的旧标签（`tabIndex="-1"`）；(2) 已解析过的 `FileCitation` `PathLink` 在文件变为歧义/未解析后重开菜单时，首帧闪现旧 `info`（在 `resolve()` 禁用前聚焦 `'定位文件'`），且 `useEffect` 未检查 `active.disabled`，导致焦点被锁死在已禁用的 `'定位文件'` 按钮上而未移至首个可用项；(3) `extractErrorMessage` 对多层嵌套空信封（如 `{ detail: { detail: {} } }`）仍泄漏 JSON。 | `ed047d2`、`61865a5`、`2c4905b`；二轮 Reviewer `APPROVE` + Challenger `CONFIRMED 14/14` + Auditor `CLEAN` → **PASS** |
 
 ---
 
@@ -431,5 +431,5 @@
     1. `Settings.tsx` `SettingsWithRouter` 的 `useEffect` 依赖 `[initialMode, urlTab, activeTab]`：目前 React 18 同步批处理下全绿，未来若引入异步并发 Transition 可能出现一次短暂回弹，且导航回无参 `/settings` 时保留上次 tab 而非重置为 `'general'`；
     2. `AntiChat.tsx` `remove.onSuccess` 中 `if (sid === id)` 读取闭包 `sid`：仅当用户在删除请求在途时立即切换另一会话才可能误清；
     3. `FileCitation.tsx` `PathLink` 菜单内按 `Tab` 会关闭菜单但未显式先回焦 `triggerRef.current`；
-    4. *(M4 评审记录)* `MyKey.tsx` `SessionDialog` 从 `adaptive -> enabled -> adaptive` 切换时，`enabled` 态会视觉预填 `32768`（切回 `adaptive` 已确保不误报脏态）。
+    4. *(M4 评审记录)* `MyKey.tsx` `SessionDialog` 的 `adaptive -> enabled -> adaptive` 脏态泄漏已由 `86d167f` 彻底消除（实测 `isDirty === false`），当前仅保留在选中 `'enabled'` 态时于草稿输入框视觉预填 `'32768'` 的预期 UI 行为。
   - **外部协作者提交 `f76870e`**：已确认其在 M1 期间合入且与本次全部 32 个 UI 修复提交和谐共存；M1 的 `ef274c1`、M2 的 `7ac9252`/`a98cd58`/`f54cbdf`、M3 的 `eea4164`/`5c11e18` 均已将 `f76870e` 新增的顶栏下拉态 `AntiAgyProfiles` 与 `AntiDaemonControl` 纳入一致规范。
