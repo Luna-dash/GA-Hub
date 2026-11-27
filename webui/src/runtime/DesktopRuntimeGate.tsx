@@ -4,6 +4,7 @@ import { isTauriRuntime } from './runtimeConfig'
 import { waitForDesktopRestart } from '@/utils/backendRestart'
 import { restartDesktopBackend } from '@/utils/desktop'
 import { Z_LAYERS } from '@/config/zLayers'
+import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
 
 /** Boot cadence: the loader overlay is up while the sidecar is still extracting. */
 export const BOOT_POLL_MS = 150
@@ -72,6 +73,7 @@ export function DesktopRuntimeGate({ children }: { children: ReactNode }) {
     tauri ? { phase: 'starting' } : { phase: 'ready' },
   )
   const [restarting, setRestarting] = useState(false)
+  const gateRef = useRef<HTMLDivElement>(null)
   const hideLoaderRef = useRef(() => {
     // The overlay lives outside React (index.html + gahub-loader.js).
     try { window.__GA_HUB_HIDE_LOADING__?.() } catch { /* loader absent */ }
@@ -182,6 +184,21 @@ export function DesktopRuntimeGate({ children }: { children: ReactNode }) {
     }
   }, [tauri, state.phase])
 
+  useOverlayRegistration({
+    active: state.phase === 'lost',
+    zIndex: Z_LAYERS.gate,
+    getPanel: () => gateRef.current,
+    onEscape: () => {},
+    lockScroll: true,
+    trapFocus: true,
+  })
+
+  useEffect(() => {
+    if (state.phase === 'lost') {
+      gateRef.current?.focus()
+    }
+  }, [state.phase])
+
   if (state.phase === 'starting') return null
 
   if (state.phase === 'failed') {
@@ -203,9 +220,11 @@ export function DesktopRuntimeGate({ children }: { children: ReactNode }) {
       {children}
       {state.phase === 'lost' && (
         <div
+          ref={gateRef}
+          tabIndex={-1}
           role="alertdialog"
           aria-modal="true"
-          className="fixed inset-0 flex items-center justify-center bg-bg"
+          className="fixed inset-0 flex items-center justify-center bg-bg focus:outline-none"
           style={{ zIndex: Z_LAYERS.gate }}
         >
           <GatePanel

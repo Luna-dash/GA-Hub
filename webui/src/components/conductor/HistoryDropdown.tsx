@@ -8,6 +8,9 @@
 // selection because stepping through tasks is the whole point.
 import { useEffect, useRef, useState } from 'react'
 import { History } from 'lucide-react'
+import { Z_LAYERS } from '@/config/zLayers'
+import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
+import { hasHigherLayerOverlay } from '@/utils/overlayStack'
 import type { HistoryRow } from './presentation'
 import { HistoryPanel } from './HistoryPanel'
 
@@ -23,21 +26,26 @@ export function HistoryDropdown({ rows, selectedId, onSelect, onDelete, deleting
   const triggerRef = useRef<HTMLButtonElement>(null)
   const attention = rows.filter((row) => row.needsAttention).length
 
-  useEffect(() => {
-    if (!open) return
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
+  useOverlayRegistration({
+    active: open,
+    zIndex: Z_LAYERS.popover,
+    getPanel: () => popAreaRef.current,
+    onEscape: () => {
       setOpen(false)
       triggerRef.current?.focus()
-    }
+    },
+    trapFocus: false,
+  })
+
+  useEffect(() => {
+    if (!open) return
     const onDown = (event: PointerEvent) => {
+      if (hasHigherLayerOverlay(Z_LAYERS.popover)) return
       const area = popAreaRef.current
       if (area && !area.contains(event.target as Node)) setOpen(false)
     }
-    window.addEventListener('keydown', onKey)
     window.addEventListener('pointerdown', onDown)
     return () => {
-      window.removeEventListener('keydown', onKey)
       window.removeEventListener('pointerdown', onDown)
     }
   }, [open])
@@ -69,6 +77,7 @@ export function HistoryDropdown({ rows, selectedId, onSelect, onDelete, deleting
           id="conductor-history-dropdown"
           role="dialog"
           aria-labelledby="conductor-history-title"
+          style={{ zIndex: Z_LAYERS.popover }}
           className="conductor-history-pop"
         >
           <HistoryPanel

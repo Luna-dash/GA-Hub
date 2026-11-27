@@ -5,21 +5,23 @@
  dialog host made the winner depend on DOM order while the command palette
  became unreachable under any open modal. Consume via style={{ zIndex }}:
 
- - modal  — ModalOverlay shells (page-level modals/drawers)
- - palette — command palette (keyboard-first: stays reachable above modals)
- - dialog — global DialogHost confirm/alert (must top any modal/palette)
- - tooltip — transient hover tooltips (never stack-fight an open modal)
- - contextMenu — portal context menus (above tooltips, below toasts)
- - toast  — transient notifications (always on top)
- - gate   — desktop runtime failure fallback; full-screen and must cover
-            every other registry consumer (was a stray z-[10001])
+ - tooltip     — transient hover tooltips (never stack-fight an open modal)
+ - popover     — non-modal dropdowns/popovers/floating helpers (below modals)
+ - modal       — ModalOverlay shells (page-level modals/drawers)
+ - contextMenu — portal context/select menus (above modals so in-modal selects work, below palette/dialog)
+ - palette     — command palette (keyboard-first: stays reachable above modals)
+ - dialog      — global DialogHost confirm/alert (must top any modal/palette)
+ - toast       — transient notifications (always on top)
+ - gate        — desktop runtime failure fallback; full-screen and must cover
+                 every other registry consumer (was a stray z-[10001])
 */
 export const Z_LAYERS = {
+  tooltip: 40,
+  popover: 45,
   modal: 50,
+  contextMenu: 52,
   palette: 55,
   dialog: 60,
-  tooltip: 62,
-  contextMenu: 65,
   toast: 70,
   gate: 80,
   // Native controls remain available above the early boot loader (z-index 9999).

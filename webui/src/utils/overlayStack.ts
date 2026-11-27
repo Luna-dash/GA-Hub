@@ -15,6 +15,7 @@ export interface OverlayOptions {
   getPanel: () => HTMLElement | null
   onEscape: () => void
   lockScroll?: boolean
+  trapFocus?: boolean
 }
 
 interface OverlayEntry {
@@ -24,6 +25,7 @@ interface OverlayEntry {
   getPanel: () => HTMLElement | null
   onEscape: () => void
   lockScroll: boolean
+  trapFocus: boolean
 }
 
 let nextId = 0
@@ -58,7 +60,7 @@ function onWindowKeyDown(event: KeyboardEvent): void {
     return
   }
 
-  if (event.key !== 'Tab') return
+  if (event.key !== 'Tab' || !top.trapFocus) return
   const panel = top.getPanel()
   if (!panel) return
 
@@ -108,6 +110,11 @@ export function hasActiveOverlay(): boolean {
   return stack.length > 0
 }
 
+/** Whether any registered overlay sits strictly above `zIndex` (e.g. a modal/dialog over a popover). */
+export function hasHigherLayerOverlay(zIndex: number): boolean {
+  return stack.some((entry) => entry.zIndex > zIndex)
+}
+
 export function restoreOverlayFocus(opener: HTMLElement | null): void {
   if (opener?.isConnected && !(opener as HTMLButtonElement).disabled) {
     opener.focus()
@@ -120,6 +127,7 @@ export function registerOverlay(options: OverlayOptions): { id: number; unregist
   const id = ++nextId
   const order = ++nextOrder
   const lockScroll = options.lockScroll ?? true
+  const trapFocus = options.trapFocus ?? true
   const entry: OverlayEntry = {
     id,
     zIndex: options.zIndex,
@@ -127,6 +135,7 @@ export function registerOverlay(options: OverlayOptions): { id: number; unregist
     getPanel: options.getPanel,
     onEscape: options.onEscape,
     lockScroll,
+    trapFocus,
   }
   stack.push(entry)
   if (lockScroll) {

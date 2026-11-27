@@ -7,6 +7,8 @@ import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
 import { antiApi, type AgyCodeLoginState } from '@/api/client'
 import { Z_LAYERS } from '@/config/zLayers'
+import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
+import { hasHigherLayerOverlay } from '@/utils/overlayStack'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import {
   fiveHourRemainingPct,
@@ -364,6 +366,17 @@ export function AntiAgyProfiles({
   const closeRef = useRef(close)
   closeRef.current = close
 
+  useOverlayRegistration({
+    active: open,
+    zIndex: Z_LAYERS.popover,
+    getPanel: () => panelRef.current,
+    onEscape: () => {
+      closeRef.current()
+      triggerRef.current?.focus()
+    },
+    trapFocus: false,
+  })
+
   useLayoutEffect(() => {
     if (!open) return
     const update = () => {
@@ -387,26 +400,19 @@ export function AntiAgyProfiles({
       ))
     }
     const outside = (event: PointerEvent) => {
+      if (hasHigherLayerOverlay(Z_LAYERS.popover)) return
       if (event.target instanceof Node && !triggerRef.current?.contains(event.target) && !panelRef.current?.contains(event.target)) {
         closeRef.current()
       }
-    }
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      event.preventDefault()
-      closeRef.current()
-      triggerRef.current?.focus()
     }
     update()
     window.addEventListener('resize', update)
     window.addEventListener('scroll', update, true)
     document.addEventListener('pointerdown', outside, true)
-    document.addEventListener('keydown', escape)
     return () => {
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
       document.removeEventListener('pointerdown', outside, true)
-      document.removeEventListener('keydown', escape)
     }
   }, [open])
 
@@ -960,7 +966,7 @@ export function AntiAgyProfiles({
       <div
         ref={panelRef}
         className="fixed pt-2"
-        style={{ top: position.top, left: position.left, width: position.width, zIndex: Z_LAYERS.tooltip }}
+        style={{ top: position.top, left: position.left, width: position.width, zIndex: Z_LAYERS.popover }}
       >
         <div
           id={popoverId}

@@ -1,4 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { Z_LAYERS } from '@/config/zLayers'
+import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
+import { hasHigherLayerOverlay } from '@/utils/overlayStack'
 import { X } from './ActionIcons'
 
 export interface MinimapTurnItem {
@@ -77,6 +80,9 @@ export const ConversationTurnMinimap = memo(function ConversationTurnMinimap({
 }: ConversationTurnMinimapProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const navRef = useRef<HTMLElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const dirListRef = useRef<HTMLDivElement>(null)
   const scrubStartYRef = useRef<number | null>(null)
   const scrubbingRef = useRef(false)
@@ -112,25 +118,40 @@ export const ConversationTurnMinimap = memo(function ConversationTurnMinimap({
     ))
   }, [items, normalizedQuery])
 
+  const closeDirectory = (restoreFocus: boolean) => {
+    setDirectoryOpen(false)
+    setQuery('')
+    if (restoreFocus) triggerRef.current?.focus()
+  }
+
+  useOverlayRegistration({
+    active: directoryOpen,
+    zIndex: Z_LAYERS.popover,
+    getPanel: () => popoverRef.current,
+    onEscape: () => closeDirectory(true),
+    trapFocus: false,
+  })
+
   useEffect(() => {
     if (!directoryOpen) return
     const onPointerDown = (event: PointerEvent) => {
+      if (hasHigherLayerOverlay(Z_LAYERS.popover)) return
       if (!wrapperRef.current?.contains(event.target as Node)) {
-        setDirectoryOpen(false)
-        setQuery('')
-      }
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setDirectoryOpen(false)
-        setQuery('')
+        closeDirectory(false)
       }
     }
     document.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [directoryOpen])
+
+  useEffect(() => {
+    if (!directoryOpen) return
+    if (searchInputRef.current) {
+      searchInputRef.current.focus()
+    } else {
+      popoverRef.current?.focus()
     }
   }, [directoryOpen])
 
@@ -315,6 +336,7 @@ export const ConversationTurnMinimap = memo(function ConversationTurnMinimap({
       </nav>
 
       <button
+        ref={triggerRef}
         type="button"
         data-turn-directory-trigger
         aria-label={`打开对话目录（当前第 ${clampedActive + 1} 轮，共 ${items.length} 轮）`}
@@ -358,11 +380,14 @@ export const ConversationTurnMinimap = memo(function ConversationTurnMinimap({
 
       {directoryOpen && (
         <div
+          ref={popoverRef}
+          tabIndex={-1}
           role="dialog"
           aria-label="对话轮次目录"
           data-turn-directory-popover
           data-chat-wheel-independent
-          className="ga-paper-popover absolute right-full top-1/2 z-20 mr-2.5 flex max-h-[min(24rem,70vh)] w-72 -translate-y-1/2 flex-col overflow-hidden rounded-xl text-left"
+          style={{ zIndex: Z_LAYERS.popover }}
+          className="ga-paper-popover absolute right-full top-1/2 mr-2.5 flex max-h-[min(24rem,70vh)] w-72 -translate-y-1/2 flex-col overflow-hidden rounded-xl text-left focus:outline-none"
         >
           <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 px-3 py-2 text-xs">
             <div className="flex items-center gap-1.5">
@@ -398,10 +423,7 @@ export const ConversationTurnMinimap = memo(function ConversationTurnMinimap({
                 type="button"
                 aria-label="关闭对话目录"
                 className="inline-flex h-5 w-5 items-center justify-center rounded text-ink-muted transition-colors hover:bg-bg-soft hover:text-ink"
-                onClick={() => {
-                  setQuery('')
-                  setDirectoryOpen(false)
-                }}
+                onClick={() => closeDirectory(true)}
               >
                 <X className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
@@ -411,6 +433,7 @@ export const ConversationTurnMinimap = memo(function ConversationTurnMinimap({
           {items.length >= 8 && (
             <div className="shrink-0 border-b border-line/40 px-2.5 py-1.5">
               <input
+                ref={searchInputRef}
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}

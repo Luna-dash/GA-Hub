@@ -11,6 +11,7 @@ import { errorMessageFromError } from '@/utils/sessionUi'
 import { isAppInternalUrl, isHttpUrl, openExternalIfNeeded } from '@/utils/openExternal'
 import { Z_LAYERS } from '@/config/zLayers'
 import { APP_PAGES } from '@/config/pages'
+import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
 
 export const FileLinkContext = createContext<{ sessionId?: string; projectPath?: string; project?: string; engine?: 'chat' | 'anti' }>({})
 export const FileTransferConclusion = createContext<{ engine: 'chat' | 'anti'; sessionId?: string; project?: string } | null>(null)
@@ -76,10 +77,22 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
   const [info, setInfo] = useState<PathInfo | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [busy, setBusy] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const gate = useRef(false)
   const binding = useRef('')
   binding.current = JSON.stringify([sessionId, projectPath, engine, path])
   useEffect(() => { setInfo(null); setMenu(null) }, [path, sessionId, projectPath, engine])
+  useOverlayRegistration({
+    active: Boolean(menu),
+    zIndex: Z_LAYERS.contextMenu,
+    getPanel: () => menuRef.current,
+    onEscape: () => {
+      setMenu(null)
+      triggerRef.current?.focus()
+    },
+    trapFocus: false,
+  })
   const resolved = info?.resolved || null
   const parent = resolved ? (info?.is_dir ? resolved : resolved.replace(/[/\\][^/\\]+[/\\]?$/, '')) : null
 
@@ -132,7 +145,7 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
     className="block w-full break-all px-3 py-1.5 text-left text-sm hover:bg-bg-soft disabled:opacity-40">{label}</button>
 
   return <>
-    <button type="button" className="path-link" disabled={busy}
+    <button ref={triggerRef} type="button" className="path-link" disabled={busy}
       title={resolved || path}
       onClick={() => { void reveal() }}
       onContextMenu={event => {
@@ -141,8 +154,8 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
       }}>{busy ? '处理中…' : display}</button>
     {menu && createPortal(<>
       <div className="fixed inset-0" style={{ zIndex: Z_LAYERS.contextMenu }} onClick={() => setMenu(null)} />
-      <div className="ga-paper-popover fixed max-h-[70vh] min-w-48 max-w-[90vw] overflow-auto rounded-lg py-1 text-ink"
-        style={{ left: Math.min(menu.x, Math.max(8, window.innerWidth - 440)), top: Math.min(menu.y, Math.max(8, window.innerHeight - 260)), zIndex: Z_LAYERS.contextMenu + 1 }}>
+      <div ref={menuRef} role="menu" tabIndex={-1} className="ga-paper-popover fixed max-h-[70vh] min-w-48 max-w-[90vw] overflow-auto rounded-lg py-1 text-ink focus:outline-none"
+        style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 440)), top: Math.max(8, Math.min(menu.y, window.innerHeight - 260)), zIndex: Z_LAYERS.contextMenu + 1 }}>
         <div className="px-3 py-1 text-xs break-all">匹配范围：{info?.scope || projectPath || '未绑定项目'}</div>
         {info && !resolved && <div className="px-3 py-1 text-sm">{info.incomplete ? '搜索达到预算或部分目录不可读，结果未完整；请选择明确路径' : info.ambiguous ? '存在多个匹配，请选择' : '未找到文件，请使用完整路径'}</div>}
         {!resolved && info?.candidates?.map(candidate => item(candidate, () => { void reveal('open', candidate) }, busy))}

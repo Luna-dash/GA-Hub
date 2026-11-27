@@ -2,6 +2,8 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Z_LAYERS } from '@/config/zLayers'
+import { registerOverlay } from '@/utils/overlayStack'
 import {
   buildMinimapSlots,
   ConversationTurnMinimap,
@@ -143,13 +145,30 @@ describe('ConversationTurnMinimap', () => {
     act(() => lastBtn.click())
     expect(onSelect).toHaveBeenCalledWith(39)
 
-    // Escape closes popover
+    // Escape closes popover and restores focus to trigger; focus starts in search input on open
     act(() => dirTrigger.click())
-    expect(el.querySelector('[data-turn-directory-popover]')).not.toBeNull()
+    const popover4 = el.querySelector<HTMLElement>('[data-turn-directory-popover]')!
+    expect(popover4).not.toBeNull()
+    expect(document.activeElement).toBe(popover4.querySelector('input[aria-label="筛选对话轮次"]'))
+
+    // Higher overlay takes Escape first without closing directory
+    const modalEsc = vi.fn()
+    const modalReg = registerOverlay({ zIndex: Z_LAYERS.dialog, getPanel: () => null, onEscape: modalEsc })
+    try {
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      })
+      expect(modalEsc).toHaveBeenCalledTimes(1)
+      expect(el.querySelector('[data-turn-directory-popover]')).not.toBeNull()
+    } finally {
+      modalReg.unregister()
+    }
+
     act(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     })
     expect(el.querySelector('[data-turn-directory-popover]')).toBeNull()
+    expect(document.activeElement).toBe(dirTrigger)
   })
 
   it('reuses slot button DOM nodes smoothly instead of remounting when activeIndex crosses ends', () => {

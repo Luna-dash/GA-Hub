@@ -486,4 +486,91 @@ describe('ImagePasteInput attachment presentation', () => {
       externalInput.remove()
     }
   })
+
+  it('registers BtwDialog in overlayStack for Escape even when focus leaves and clamps drag within viewport bounds', () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    const externalButton = document.createElement('button')
+    document.body.appendChild(externalButton)
+
+    const origWidth = window.innerWidth
+    const origHeight = window.innerHeight
+    Object.defineProperty(window, 'innerWidth', { value: 1000, configurable: true })
+    Object.defineProperty(window, 'innerHeight', { value: 700, configurable: true })
+
+    try {
+      act(() => {
+        root?.render(
+          <ImagePasteInput
+            text="/btw"
+            onText={vi.fn()}
+            attachments={[]}
+            onAttachments={vi.fn()}
+            onSubmit={vi.fn()}
+            btwSessionId="s1"
+            onSlashCommand={vi.fn()}
+          />,
+        )
+      })
+
+      const option = container.querySelector<HTMLButtonElement>('[role="option"]')!
+      act(() => option.click())
+
+      const dialog = container.querySelector<HTMLElement>('[role="dialog"][aria-label="BTW 旁路提问"]')!
+      expect(dialog).not.toBeNull()
+
+      vi.spyOn(dialog, 'getBoundingClientRect').mockImplementation(() => {
+        const m = dialog.style.transform.match(/translate\((-?\d+(?:\.\d+)?)px,\s*(-?\d+(?:\.\d+)?)px\)/)
+        const tx = m ? Number(m[1]) : 0
+        const ty = m ? Number(m[2]) : 0
+        return {
+          left: 400 + tx, top: 300 + ty, right: 800 + tx, bottom: 550 + ty, width: 400, height: 250, x: 400 + tx, y: 300 + ty, toJSON: () => ({}),
+        }
+      })
+
+      // Drag far top-left -> clamped to 8px margin (400 + x >= 8 => x >= -392, 300 + y >= 8 => y >= -292)
+      act(() => {
+        dialog.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 500, clientY: 320 }))
+      })
+      act(() => {
+        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: -1000, clientY: -1000 }))
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      })
+      expect(dialog.style.transform).toBe('translate(-392px, -292px)')
+
+      // Drag far bottom-right -> clamped to (1000 - 400 - 8 - 400 = 192, 700 - 250 - 8 - 300 = 142)
+      act(() => {
+        dialog.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 500, clientY: 320 }))
+      })
+      act(() => {
+        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 5000, clientY: 5000 }))
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      })
+      expect(dialog.style.transform).toBe('translate(192px, 142px)')
+
+      // Escape still closes even when focus is outside BtwDialog, and yields to higher overlays
+      externalButton.focus()
+      const higherEsc = vi.fn()
+      const higher = registerOverlay({ zIndex: Z_LAYERS.dialog, getPanel: () => null, onEscape: higherEsc })
+      try {
+        act(() => {
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+        })
+        expect(higherEsc).toHaveBeenCalledTimes(1)
+        expect(container.querySelector('[aria-label="BTW 旁路提问"]')).not.toBeNull()
+      } finally {
+        higher.unregister()
+      }
+
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      })
+      expect(container.querySelector('[aria-label="BTW 旁路提问"]')).toBeNull()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: origWidth, configurable: true })
+      Object.defineProperty(window, 'innerHeight', { value: origHeight, configurable: true })
+      externalButton.remove()
+    }
+  })
 })

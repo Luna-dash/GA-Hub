@@ -4,9 +4,12 @@ import { CloseIconButton, RefreshIcon } from '@/components/ActionIcons'
 import { File, FileArchive, FileCode2, FileText, Film, FolderOpen, Image, Music, Plus, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
 import { api } from '@/api/client'
+import { Z_LAYERS } from '@/config/zLayers'
+import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import { toast } from '@/stores/toastStore'
 import { canReferenceLocalFiles, selectAttachmentPaths } from '@/utils/desktop'
+import { hasHigherLayerOverlay } from '@/utils/overlayStack'
 import { errorMessageFromError } from '@/utils/sessionUi'
 
 export interface TransferredFile {
@@ -240,10 +243,18 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
       void files.refetch({ cancelRefetch: false })
     }
   }
+  useOverlayRegistration({
+    active: open,
+    zIndex: Z_LAYERS.popover,
+    getPanel: () => panel.current,
+    onEscape: close,
+    trapFocus: false,
+  })
   useEffect(() => { if (open) panel.current?.focus() }, [open])
   useEffect(() => {
     if (!open) return
     const onPointerDown = (event: PointerEvent) => {
+      if (hasHigherLayerOverlay(Z_LAYERS.popover)) return
       const target = event.target
       if (!(target instanceof Node)) return
       if (trigger.current?.contains(target) || panel.current?.contains(target)) return
@@ -350,7 +361,7 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
           tabIndex={-1}
           role="dialog"
           aria-label="共享中转箱"
-          onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); close() } }}
+          style={{ zIndex: Z_LAYERS.popover }}
           onDragOver={event => {
             if (!source?.sessionId || event.dataTransfer.types.includes('Files') === false) return
             event.preventDefault()
@@ -359,7 +370,7 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
           className={clsx(
-            'pointer-events-auto absolute right-0 top-full z-40 mt-2 w-72 max-w-[20rem] rounded-xl border bg-bg-card p-2.5 text-sm text-ink shadow-lg transition-colors',
+            'pointer-events-auto absolute right-0 top-full mt-2 w-72 max-w-[20rem] rounded-xl border bg-bg-card p-2.5 text-sm text-ink shadow-lg transition-colors',
             dragging ? 'border-accent bg-accent-soft/20' : 'border-line',
           )}
         >

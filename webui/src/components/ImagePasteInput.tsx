@@ -14,6 +14,8 @@ import { api } from '@/api/client'
 import { AttachmentImage, isImageAttachment } from './AttachmentImage'
 import type { PasteAttachment, UploadResult } from '@/api/types'
 import { canReferenceLocalFiles, selectAttachmentPaths, clipboardAttachmentPaths, referenceAttachments } from '@/utils/desktop'
+import { Z_LAYERS } from '@/config/zLayers'
+import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
 import { hasActiveOverlay } from '@/utils/overlayStack'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import {
@@ -788,6 +790,8 @@ interface BtwTurn {
   error?: string
 }
 
+const BTW_VIEWPORT_MARGIN = 8
+
 function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const [text, setText] = useState('')
   const [turns, setTurns] = useState<BtwTurn[]>([])
@@ -795,8 +799,25 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [dragging, setDragging] = useState(false)
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+  const dragOriginRef = useRef<{
+    clientX: number
+    clientY: number
+    posX: number
+    posY: number
+    baseLeft: number
+    baseTop: number
+    width: number
+    height: number
+  } | null>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
+
+  useOverlayRegistration({
+    active: true,
+    zIndex: Z_LAYERS.popover,
+    getPanel: () => dialogRef.current,
+    onEscape: onClose,
+    trapFocus: false,
+  })
 
   useEffect(() => {
     const t = window.setTimeout(() => inputRef.current?.focus(), 0)
@@ -812,23 +833,49 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, textarea')) return
+    const rect = dialogRef.current?.getBoundingClientRect()
+    dragOriginRef.current = {
+      clientX: e.clientX,
+      clientY: e.clientY,
+      posX: position.x,
+      posY: position.y,
+      baseLeft: (rect?.left ?? 0) - position.x,
+      baseTop: (rect?.top ?? 0) - position.y,
+      width: rect?.width ?? 0,
+      height: rect?.height ?? 0,
+    }
     setDragging(true)
-    setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y })
   }
 
   useEffect(() => {
     if (!dragging) return
     const handleMouseMove = (e: MouseEvent) => {
-      setPosition({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y })
+      const origin = dragOriginRef.current
+      if (!origin) return
+      const rawX = origin.posX + (e.clientX - origin.clientX)
+      const rawY = origin.posY + (e.clientY - origin.clientY)
+      const vw = window.innerWidth
+      const vh = window.innerHeight
+      const minX = BTW_VIEWPORT_MARGIN - origin.baseLeft
+      const maxX = Math.max(minX, vw - origin.width - BTW_VIEWPORT_MARGIN - origin.baseLeft)
+      const minY = BTW_VIEWPORT_MARGIN - origin.baseTop
+      const maxY = Math.max(minY, vh - origin.height - BTW_VIEWPORT_MARGIN - origin.baseTop)
+      setPosition({
+        x: Math.max(minX, Math.min(maxX, rawX)),
+        y: Math.max(minY, Math.min(maxY, rawY)),
+      })
     }
-    const handleMouseUp = () => setDragging(false)
+    const handleMouseUp = () => {
+      dragOriginRef.current = null
+      setDragging(false)
+    }
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
     return () => {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [dragging, dragStart])
+  }, [dragging])
 
   const ask = async () => {
     const q = text.trim()
@@ -854,18 +901,12 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
       role="dialog"
       aria-label="BTW 旁路提问"
       onMouseDown={handleMouseDown}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') {
-          e.preventDefault()
-          e.stopPropagation()
-          onClose()
-        }
-      }}
       style={{
         transform: `translate(${position.x}px, ${position.y}px)`,
-        cursor: dragging ? 'grabbing' : 'grab'
+        cursor: dragging ? 'grabbing' : 'grab',
+        zIndex: Z_LAYERS.popover,
       }}
-      className="absolute bottom-full right-2 z-30 mb-2 w-[min(520px,calc(100vw-2rem))] rounded-2xl border border-status-warning-line bg-status-warning-soft backdrop-blur-sm shadow-2xl shadow-black/40 overflow-hidden">
+      className="absolute bottom-full right-2 mb-2 w-[min(520px,calc(100vw-2rem))] rounded-2xl border border-status-warning-line bg-status-warning-soft backdrop-blur-sm shadow-2xl shadow-black/40 overflow-hidden">
       <div className="flex items-center justify-between border-b border-status-warning-line px-3 py-2 bg-status-warning-soft">
         <div>
           <div className="text-sm font-medium text-status-warning">BTW 旁路提问</div>
@@ -907,7 +948,7 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
           placeholder="输入旁路问题…"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
               e.preventDefault()
               ask()
             }

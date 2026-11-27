@@ -3,6 +3,8 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { expect, it, vi } from 'vitest'
+import { Z_LAYERS } from '@/config/zLayers'
+import { registerOverlay } from '@/utils/overlayStack'
 import { FileTransferBox, fileTransferQueryKey, guessTransferMime, type TransferredFile } from './FileTransferBox'
 
 vi.mock('@/runtime/runtimeConfig', () => ({ resolveApiUrl: (path: string) => path }))
@@ -157,6 +159,26 @@ it('dismisses the open panel on outside click without stealing focus and keeps i
     await act(async () => { trigger().click() })
     await settle(() => expect(host.querySelector('[role="dialog"]')).not.toBeNull())
     expect(host.textContent).not.toContain('清空列表？')
+
+    // Escape closes via overlayStack even when focus is outside the panel, and yields to higher overlays.
+    outsideTextarea.focus()
+    const modalEsc = vi.fn()
+    const modalReg = registerOverlay({ zIndex: Z_LAYERS.dialog, getPanel: () => null, onEscape: modalEsc })
+    try {
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      })
+      expect(modalEsc).toHaveBeenCalledTimes(1)
+      expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+    } finally {
+      modalReg.unregister()
+    }
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(trigger())
   } finally {
     await act(async () => root.unmount())
     client.clear()

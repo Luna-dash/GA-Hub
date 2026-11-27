@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronUp, Gauge, LoaderCircle, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
 import { Z_LAYERS } from '@/config/zLayers'
+import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
+import { hasHigherLayerOverlay } from '@/utils/overlayStack'
 import {
   antiApi,
   HttpError,
@@ -104,8 +106,6 @@ export function AntiAccountUsageButton({
   const [hovered, setHovered] = useState(false)
   const [showBreakdown, setShowBreakdown] = useState(false)
   const open = pinned || hovered
-  const hoveredRef = useRef(hovered)
-  hoveredRef.current = hovered
   const hoverCloseTimerRef = useRef<number | null>(null)
   const cancelHoverClose = useCallback(() => {
     if (hoverCloseTimerRef.current !== null) {
@@ -148,6 +148,22 @@ export function AntiAccountUsageButton({
   const button = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState<{ top: number; left: number; maxHeight: number }>()
+  useOverlayRegistration({
+    active: open,
+    zIndex: Z_LAYERS.popover,
+    getPanel: () => panel.current,
+    onEscape: () => {
+      const focusInside = Boolean(
+        button.current?.contains(document.activeElement)
+        || panel.current?.contains(document.activeElement),
+      )
+      cancelHoverClose()
+      setPinned(false)
+      setHovered(false)
+      if (focusInside) button.current?.focus()
+    },
+    trapFocus: false,
+  })
   useLayoutEffect(() => {
     if (!open) return
     const update = () => {
@@ -161,35 +177,21 @@ export function AntiAccountUsageButton({
       })
     }
     const outside = (event: PointerEvent) => {
+      if (hasHigherLayerOverlay(Z_LAYERS.popover)) return
       if (event.target instanceof Node && !button.current?.contains(event.target) && !panel.current?.contains(event.target)) {
         cancelHoverClose()
         setPinned(false)
         setHovered(false)
       }
     }
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      const focusInside = Boolean(
-        button.current?.contains(document.activeElement)
-        || panel.current?.contains(document.activeElement),
-      )
-      if (!hoveredRef.current && !focusInside) return
-      event.preventDefault()
-      cancelHoverClose()
-      setPinned(false)
-      setHovered(false)
-      if (focusInside) button.current?.focus()
-    }
     update()
     window.addEventListener('resize', update)
     window.addEventListener('scroll', update, true)
     document.addEventListener('pointerdown', outside)
-    document.addEventListener('keydown', escape)
     return () => {
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
       document.removeEventListener('pointerdown', outside)
-      document.removeEventListener('keydown', escape)
     }
   }, [open, cancelHoverClose])
   useLayoutEffect(() => {
@@ -264,7 +266,7 @@ export function AntiAccountUsageButton({
         <div
           ref={panel}
           className="fixed w-[min(21rem,calc(100vw-16px))] pt-2"
-          style={{ top: position.top, left: position.left, zIndex: Z_LAYERS.tooltip }}
+          style={{ top: position.top, left: position.left, zIndex: Z_LAYERS.popover }}
           onMouseEnter={handlePointerEnter}
           onMouseLeave={handlePointerLeave}
         >

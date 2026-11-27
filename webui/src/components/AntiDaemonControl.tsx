@@ -5,7 +5,9 @@ import { LoaderCircle, Power, RotateCw, ShieldCheck, ShieldMinus, ShieldX } from
 import clsx from 'clsx'
 import { antiApi, HttpError } from '@/api/client'
 import { Z_LAYERS } from '@/config/zLayers'
+import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
 import { toast } from '@/stores/toastStore'
+import { hasHigherLayerOverlay } from '@/utils/overlayStack'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { RefreshIcon, StatusIconGlyph, statusBadgeToneClass, X, type StatusBadgeKind } from './ActionIcons'
 
@@ -208,6 +210,17 @@ export function AntiDaemonControl({
   const closeDiagRef = useRef(closeDiag)
   closeDiagRef.current = closeDiag
 
+  useOverlayRegistration({
+    active: diagOpen,
+    zIndex: Z_LAYERS.popover,
+    getPanel: () => panelRef.current,
+    onEscape: () => {
+      closeDiagRef.current()
+      badgeRef.current?.focus()
+    },
+    trapFocus: false,
+  })
+
   useLayoutEffect(() => {
     if (!diagOpen) return
     const update = () => {
@@ -231,26 +244,19 @@ export function AntiDaemonControl({
       ))
     }
     const outside = (event: PointerEvent) => {
+      if (hasHigherLayerOverlay(Z_LAYERS.popover)) return
       if (event.target instanceof Node && !badgeRef.current?.contains(event.target) && !panelRef.current?.contains(event.target)) {
         closeDiagRef.current()
       }
-    }
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      event.preventDefault()
-      closeDiagRef.current()
-      badgeRef.current?.focus()
     }
     update()
     window.addEventListener('resize', update)
     window.addEventListener('scroll', update, true)
     document.addEventListener('pointerdown', outside, true)
-    document.addEventListener('keydown', escape)
     return () => {
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
       document.removeEventListener('pointerdown', outside, true)
-      document.removeEventListener('keydown', escape)
     }
   }, [diagOpen])
 
@@ -362,7 +368,7 @@ export function AntiDaemonControl({
         <div
           ref={panelRef}
           className="fixed pt-2"
-          style={{ top: position.top, left: position.left, width: position.width, zIndex: Z_LAYERS.tooltip }}
+          style={{ top: position.top, left: position.left, width: position.width, zIndex: Z_LAYERS.popover }}
         >
           <div
             id={popoverId}

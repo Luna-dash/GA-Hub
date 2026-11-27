@@ -23,6 +23,7 @@ import {
 import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { usePageState } from '@/utils/pageState'
 import { RAIL_TITLE_SCALE_EVENT, railTitlePercent, getRailTitleScale } from '@/utils/railAppearance'
+import { hasActiveOverlay } from '@/utils/overlayStack'
 import { storageKeys } from '@/config/storageKeys'
 import {
   ChevronDown,
@@ -331,6 +332,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
   useEffect(() => {
     if (!confirmDeleteId || deletingId) return
     const dismiss = (event: Event) => {
+      if (hasActiveOverlay()) return
       if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Escape') return
       const target = event.target
       if (event.type !== 'keydown' && target instanceof Node && deleteConfirmRef.current?.contains(target)) return

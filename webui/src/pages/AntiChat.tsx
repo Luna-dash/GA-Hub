@@ -44,6 +44,8 @@ import { SessionRail } from '@/components/SessionRail'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import type { HubSession, PasteAttachment, SessionRuntime } from '@/api/types'
 import { useTranscriptViewport } from '@/hooks/useTranscriptViewport'
+import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
+import { hasHigherLayerOverlay } from '@/utils/overlayStack'
 import { usePageState } from '@/utils/pageState'
 import { getFirstVisibleDomItemIndex, scrollDomItemIntoView } from '@/utils/transcriptViewport'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
@@ -521,24 +523,33 @@ function Conversation({ session, headerActions, profileId, profilesData, support
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null)
   const [policyOpen, setPolicyOpen] = useState(false)
   const policyAnchorRef = useRef<HTMLDivElement>(null)
+  const policyTriggerRef = useRef<HTMLButtonElement>(null)
+  const policyMenuRef = useRef<HTMLDivElement>(null)
   const composerWrapRef = useRef<HTMLDivElement>(null)
   const activePolicy = mode === 'plan'
     ? EXECUTION_POLICIES[0]
     : (EXECUTION_POLICIES.find(p => p.mode === 'accept-edits' && p.permissionMode === permissionMode) ?? EXECUTION_POLICIES[1])
 
+  useOverlayRegistration({
+    active: policyOpen,
+    zIndex: Z_LAYERS.contextMenu,
+    getPanel: () => policyMenuRef.current,
+    onEscape: () => {
+      setPolicyOpen(false)
+      policyTriggerRef.current?.focus()
+    },
+    trapFocus: false,
+  })
+
   useEffect(() => {
     if (!policyOpen) return
     const onPointerDown = (event: PointerEvent) => {
+      if (hasHigherLayerOverlay(Z_LAYERS.contextMenu)) return
       if (!policyAnchorRef.current?.contains(event.target as Node)) setPolicyOpen(false)
     }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPolicyOpen(false)
-    }
     document.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown)
     }
   }, [policyOpen])
   const [fontScale, setFontScale] = useState(getChatFontScale)
@@ -1792,6 +1803,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
             <div className="mb-0.5 flex shrink-0 items-center gap-1.5">
               <div ref={policyAnchorRef} className="relative shrink-0">
                 <button
+                  ref={policyTriggerRef}
                   type="button"
                   disabled={Boolean(current || pending)}
                   aria-label="执行与审批模式"
@@ -1809,6 +1821,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
                 </button>
                 {policyOpen && (
                   <div
+                    ref={policyMenuRef}
                     role="listbox"
                     aria-label="执行与审批模式选项"
                     style={{ zIndex: Z_LAYERS.contextMenu }}

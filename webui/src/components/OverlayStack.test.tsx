@@ -11,6 +11,8 @@ import { CommandPalette } from './CommandPalette'
 import { dialog, useDialogStore } from '@/stores/dialogStore'
 import { useChatStore } from '@/stores/chatStore'
 import { Z_LAYERS } from '@/config/zLayers'
+import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
+import { registerOverlay } from '@/utils/overlayStack'
 import { api } from '@/api/client'
 
 vi.mock('@/api/client', () => ({
@@ -197,5 +199,71 @@ describe('Overlay stack arbitration across ModalOverlay, CommandPalette, and Dia
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     })
     expect(document.getElementById('message-dialog-title')).toBeNull()
+  })
+
+  it('orders Z_LAYERS monotonically so tooltips/popovers stay under modals and modals under palette/dialog/gate', () => {
+    expect(Z_LAYERS.tooltip).toBeLessThan(Z_LAYERS.popover)
+    expect(Z_LAYERS.popover).toBeLessThan(Z_LAYERS.modal)
+    expect(Z_LAYERS.modal).toBeLessThan(Z_LAYERS.contextMenu)
+    expect(Z_LAYERS.contextMenu).toBeLessThan(Z_LAYERS.palette)
+    expect(Z_LAYERS.palette).toBeLessThan(Z_LAYERS.dialog)
+    expect(Z_LAYERS.dialog).toBeLessThan(Z_LAYERS.toast)
+    expect(Z_LAYERS.toast).toBeLessThan(Z_LAYERS.gate)
+    expect(Z_LAYERS.gate).toBeLessThan(Z_LAYERS.chrome)
+  })
+
+  it('lets trapFocus=false popovers arbitrate Escape without trapping Tab and ignores callback churn', () => {
+    function PopoverHarness() {
+      const [open, setOpen] = useState(true)
+      const [tick, setTick] = useState(0)
+      useOverlayRegistration({
+        active: open,
+        zIndex: Z_LAYERS.popover,
+        getPanel: () => document.getElementById('pop-panel'),
+        onEscape: () => {
+          void tick
+          setOpen(false)
+        },
+        trapFocus: false,
+      })
+      return (
+        <>
+          <button id="pop-re-render" type="button" onClick={() => setTick((v) => v + 1)}>Rerender</button>
+          {open && (
+            <div id="pop-panel" role="dialog">
+              <button id="pop-inner" type="button">Inner</button>
+            </div>
+          )}
+        </>
+      )
+    }
+
+    act(() => root.render(<PopoverHarness />))
+    const inner = document.getElementById('pop-inner') as HTMLButtonElement
+    inner.focus()
+
+    // Tab is NOT defaultPrevented when trapFocus=false
+    let tabEvent!: KeyboardEvent
+    act(() => {
+      tabEvent = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+      window.dispatchEvent(tabEvent)
+    })
+    expect(tabEvent.defaultPrevented).toBe(false)
+
+    // Stack a higher overlay (modal), trigger callback identity churn, and verify Escape hits modal first
+    const modalEsc = vi.fn()
+    const modalReg = registerOverlay({ zIndex: Z_LAYERS.modal, getPanel: () => null, onEscape: modalEsc })
+    try {
+      act(() => { (document.getElementById('pop-re-render') as HTMLButtonElement).click() })
+      pressWindowKey('Escape')
+      expect(modalEsc).toHaveBeenCalledTimes(1)
+      expect(document.getElementById('pop-panel')).not.toBeNull()
+    } finally {
+      modalReg.unregister()
+    }
+
+    // Now popover is top and handles Escape
+    pressWindowKey('Escape')
+    expect(document.getElementById('pop-panel')).toBeNull()
   })
 })

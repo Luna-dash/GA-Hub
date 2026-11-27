@@ -9,6 +9,8 @@ import { useToastStore } from '@/stores/toastStore'
 import Conductor from './Conductor'
 import { resetPageState } from '@/utils/pageState'
 import { queryKeys } from '@/queries/queryKeys'
+import { Z_LAYERS } from '@/config/zLayers'
+import { registerOverlay } from '@/utils/overlayStack'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -1967,5 +1969,34 @@ describe('Conductor chat scroll restoration', () => {
     act(() => button('新开任务').click())
     await waitFor(() => expect(mocks.conductorSendChat).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(host.querySelector('.conductor-current-title')?.textContent).toBe('最新进行中任务'))
+  })
+
+  it('arbitrates HistoryDropdown Escape below higher dialog overlays so Escape closes only the top overlay', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1', status: 'completed', stage: 'completed',
+        subagents: {}, created_at: 1, completed_at: 2, title: '历史任务一',
+      }],
+    })
+    renderPage()
+    await openHistory()
+    expect(host.querySelector('#conductor-history-dropdown')).not.toBeNull()
+
+    const dialogEsc = vi.fn()
+    const dialogReg = registerOverlay({ zIndex: Z_LAYERS.dialog, getPanel: () => null, onEscape: dialogEsc })
+    try {
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      })
+      expect(dialogEsc).toHaveBeenCalledTimes(1)
+      expect(host.querySelector('#conductor-history-dropdown')).not.toBeNull()
+    } finally {
+      dialogReg.unregister()
+    }
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(host.querySelector('#conductor-history-dropdown')).toBeNull()
   })
 })

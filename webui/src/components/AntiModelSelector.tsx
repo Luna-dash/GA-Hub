@@ -4,6 +4,8 @@ import { Check, ChevronDown, Settings2 } from 'lucide-react'
 import clsx from 'clsx'
 import type { AntiModels, AntiOrchestratorPreset } from '@/api/client'
 import { Z_LAYERS } from '@/config/zLayers'
+import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
+import { hasHigherLayerOverlay } from '@/utils/overlayStack'
 
 export const DEFAULT_FAMILY = 'gemini-4-hydrogen'
 export const DEFAULT_MODEL = { id: `${DEFAULT_FAMILY}-high`, display_name: 'Gemini 4 Hydrogen (High)' }
@@ -360,6 +362,17 @@ export function AntiModelSelector({
     }
   }, [open, families.length])
 
+  useOverlayRegistration({
+    active: open && !disabledNow,
+    zIndex: Z_LAYERS.contextMenu,
+    getPanel: () => menuRef.current,
+    onEscape: () => {
+      setOpen(false)
+      triggerRef.current?.focus()
+    },
+    trapFocus: false,
+  })
+
   useEffect(() => {
     if (!open) return
     if (disabledNow) {
@@ -367,23 +380,15 @@ export function AntiModelSelector({
       return
     }
     const onPointerDown = (event: PointerEvent) => {
+      if (hasHigherLayerOverlay(Z_LAYERS.contextMenu)) return
       const target = event.target as Node
       if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) {
         setOpen(false)
       }
     }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setOpen(false)
-        triggerRef.current?.focus()
-      }
-    }
     document.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown)
     }
   }, [open, disabledNow])
 

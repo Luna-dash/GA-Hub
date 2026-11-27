@@ -4,6 +4,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DesktopRuntimeGate, LIVENESS_POLL_MS } from './DesktopRuntimeGate'
+import { Z_LAYERS } from '@/config/zLayers'
+import { registerOverlay } from '@/utils/overlayStack'
 
 vi.mock('./desktopBootstrap', () => ({
   queryDesktopBackendReadiness: vi.fn(),
@@ -175,6 +177,31 @@ describe('DesktopRuntimeGate', () => {
       expect(mockWaitForRestart).toHaveBeenCalledOnce()
       expect(host.textContent).toContain('正在重启后端…')
     } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('registers the lost alertdialog at Z_LAYERS.gate to block Escape and Tab from leaking underneath', async () => {
+    vi.useFakeTimers()
+    const underlyingEsc = vi.fn()
+    const underlying = registerOverlay({ zIndex: Z_LAYERS.modal, getPanel: () => null, onEscape: underlyingEsc })
+    try {
+      window.__TAURI_INTERNALS__ = {}
+      mockReadiness.mockResolvedValueOnce(true)
+      mockReadiness.mockRejectedValue('GA-Hub 后端进程已退出')
+
+      await renderReadyGate(root)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LIVENESS_POLL_MS + 10)
+      })
+
+      expect(host.querySelector('[role="alertdialog"]')).not.toBeNull()
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      })
+      expect(underlyingEsc).not.toHaveBeenCalled()
+    } finally {
+      underlying.unregister()
       vi.useRealTimers()
     }
   })
