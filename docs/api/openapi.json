@@ -14988,7 +14988,7 @@
             "maxLength": 80,
             "minLength": 1,
             "title": "Name",
-            "default": "GA-Hub"
+            "default": "Gyra"
           },
           "invite": {
             "anyOf": [

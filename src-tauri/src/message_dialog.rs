@@ -113,7 +113,7 @@ fn start_next(app: &AppHandle, notification: bool) {
         if lane.active.is_some() { return; }
         let Some(request) = lane.pending.pop_front() else { return; };
         let label = request.label.clone();
-        let title = request.config["title"].as_str().unwrap_or("GA-Hub").to_string();
+        let title = request.config["title"].as_str().unwrap_or("Gyra").to_string();
         lane.active = Some(request);
         (label, title)
     };

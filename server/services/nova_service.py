@@ -298,7 +298,7 @@ class NovaService:
         *,
         username: str,
         password: str,
-        name: str = "GA-Hub",
+        name: str = "Gyra",
         invite: str | None = None,
         confirm: bool = False,
         unlink: bool = False,

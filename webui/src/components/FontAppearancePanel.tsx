@@ -291,7 +291,7 @@ export function FontAppearancePanel() {
       <div className="rounded-lg border border-line/70 bg-bg-soft/65 px-3 py-1.5 text-xs text-ink flex flex-wrap items-center justify-between gap-2">
         <span className="text-[11px] text-ink-faint">效果预览</span>
         <div className="truncate">
-          正文 GA-Hub · <span className="font-medium">Medium</span> · <strong>Bold 粗体</strong> · <code className="font-mono text-[11px] px-1 rounded bg-bg-card border border-line/70">123.45</code>
+          正文 Gyra · <span className="font-medium">Medium</span> · <strong>Bold 粗体</strong> · <code className="font-mono text-[11px] px-1 rounded bg-bg-card border border-line/70">123.45</code>
         </div>
       </div>
     </div>

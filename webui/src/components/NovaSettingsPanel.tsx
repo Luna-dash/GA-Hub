@@ -12,7 +12,7 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [invite, setInvite] = useState('')
-  const [name, setName] = useState('GA-Hub')
+  const [name, setName] = useState('Gyra')
   const [confirmed, setConfirmed] = useState(false)
 
   useEffect(() => {
@@ -50,7 +50,7 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
       )
       setStatus(result); setRevoking(false); setConfirmed(false)
       setMessage(action === 'revoke' ? '云端授权已撤销，本机绑定已清除；固定设备码保留。'
-        : action === 'associate' ? '账号关联完成。以后 Nova 将随 GA-Hub 自动启动。'
+        : action === 'associate' ? '账号关联完成。以后 Nova 将随 Gyra 自动启动。'
         : action === 'pause' ? '已暂停远程连接。'
         : action === 'resume' ? '已恢复远程连接。'
         : '已请求重连。')
@@ -123,7 +123,7 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
       <details className="border-t border-line/40 pt-3 text-xs text-ink-faint">
         <summary className="w-fit cursor-pointer text-ink-muted hover:text-ink">连接与安全说明</summary>
         <ul className="mt-2 list-disc space-y-1.5 pl-4 leading-relaxed">
-          <li>关联后将随 GA-Hub 自动启动。</li>
+          <li>关联后将随 Gyra 自动启动。</li>
           <li>关联凭据保存在 Windows 凭据管理器中。</li>
           <li>设备码为本机标识，升级软件不会改变。</li>
         </ul>

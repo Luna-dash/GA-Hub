@@ -1,6 +1,6 @@
-# GenericAgent Admin
+# Gyra
 
-**独立**的 Web 管理控制台，专门管理 [GenericAgent](https://github.com/lsdefine/GenericAgent) 项目。
+**独立**的现代化桌面管理控制台，面向 [GenericAgent](https://github.com/lsdefine/GenericAgent) 与多引擎 AI 协作工作流。
 
 > 🔒 **源码工程独立，管理写入透明**：本项目不修改 GenericAgent Core 源码；作为正式管理前端，
 > 会在用户操作下修改 GA 的 Memory、配置和运行状态文件。Memory 保存带版本冲突检测、
@@ -95,7 +95,7 @@ cd GA-Hub
 ## 常见问题
 
 **Q: 我的 GenericAgent 用 git 同步，会被覆盖吗？**
-GA-Hub 不修改 GA Core 源码，但你在管理界面保存 Memory 或配置时会产生真实文件改动。
+Gyra 不修改 GA Core 源码，但你在管理界面保存 Memory 或配置时会产生真实文件改动。
 Memory 保存会检测版本冲突并先备份；执行 `git pull` 前仍应先检查 `git status`，提交或暂存本地改动。
 
 **Q: 我可以同时管理多个 GenericAgent 项目吗？**
@@ -164,7 +164,7 @@ python -m pytest -q          # 需要 GA：GA_ROOT 或 ../GA；且需要上面�
 
 ## 实时聊天的恢复协议
 
-实时聊天以 **GA 原始 archive 为唯一持久消息正文真源**。GA-Hub 的 session
+实时聊天以 **GA 原始 archive 为唯一持久消息正文真源**。Gyra 的 session
 sidecar 只保存标题、模型、状态和 archive 定位信息，不复制或持久化聊天正文。
 
 LiveChat 使用以下 session-scoped 链路：

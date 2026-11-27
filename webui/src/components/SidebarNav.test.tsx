@@ -105,8 +105,8 @@ describe('SidebarNav', () => {
     const aside = host.querySelector('aside') as HTMLElement
     expect(aside.getAttribute('data-collapsed')).toBe('false')
     expect(host.textContent).toContain('实时聊天')
-    expect(host.querySelector('.ga-brand-mark')?.getAttribute('aria-label')).toBe('GAHUB')
-    expect(host.querySelector('.ga-brand-hub')?.textContent).toBe('GAHUB')
+    expect(host.querySelector('.ga-brand-mark')?.getAttribute('aria-label')).toBe('Gyra')
+    expect(host.querySelector('.ga-brand-hub')?.textContent).toBe('Gyra')
     const toggle = host.querySelector<HTMLButtonElement>('[aria-label="折叠/展开导航栏"]')!
     const settings = () => host.querySelector('a[href="/settings"]')
     const expectFooterSettings = () => {
@@ -125,8 +125,8 @@ describe('SidebarNav', () => {
     expect(localStorage.getItem('gahub.sidebar.collapsed')).toBe('1')
     expect(host.textContent).not.toContain('实时聊天')
     expect(host.querySelector('.ga-brand-hub')).toBeNull()
+    expect(host.textContent).not.toContain('Gyra')
     expect(host.textContent).not.toContain('GAHUB')
-    expect(host.textContent).not.toContain('HUB')
     expectFooterSettings()
     expect(settings()).toBe(settingsLink)
     const navLinks = aside.querySelectorAll('nav a')
@@ -141,7 +141,7 @@ describe('SidebarNav', () => {
     expect(aside.getAttribute('data-collapsed')).toBe('false')
     expect(localStorage.getItem('gahub.sidebar.collapsed')).toBe('0')
     expect(host.textContent).toContain('实时聊天')
-    expect(host.querySelector('.ga-brand-hub')?.textContent).toBe('GAHUB')
+    expect(host.querySelector('.ga-brand-hub')?.textContent).toBe('Gyra')
     expectFooterSettings()
     expect(settings()).toBe(settingsLink)
   })
@@ -178,7 +178,7 @@ describe('SidebarNav', () => {
     expect(artwork.getAttribute('alt')).toBe('')
     expect(artwork.draggable).toBe(false)
     expect(logo.querySelector('.ga-brand-ga')).toBeNull()
-    expect(logo.querySelector('.ga-brand-hub')?.textContent).toBe('GAHUB')
+    expect(logo.querySelector('.ga-brand-hub')?.textContent).toBe('Gyra')
 
     act(() => logo.click())
     expect(aside.getAttribute('data-collapsed')).toBe('true')
@@ -189,6 +189,6 @@ describe('SidebarNav', () => {
     act(() => logo.click())
     expect(aside.getAttribute('data-collapsed')).toBe('false')
     expect(localStorage.getItem('gahub.sidebar.collapsed')).toBe('0')
-    expect(logo.querySelector('.ga-brand-hub')?.textContent).toBe('GAHUB')
+    expect(logo.querySelector('.ga-brand-hub')?.textContent).toBe('Gyra')
   })
 })

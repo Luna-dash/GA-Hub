@@ -54,7 +54,7 @@ export function MessageDialog({ config, onResult, desktop = false }: Props) {
       <div className="message-dialog-body">
         <div className={`message-dialog-icon ${danger ? 'message-dialog-danger' : ''}`}><Icon size={24} strokeWidth={1.7} /></div>
         <div className="message-dialog-content">
-          <div className="message-dialog-eyebrow">GA-HUB · {config.kind === 'notification' ? '提醒' : danger ? '操作确认' : isPrompt ? '编辑' : config.kind === 'alert' ? '消息' : '确认'}</div>
+          <div className="message-dialog-eyebrow">Gyra · {config.kind === 'notification' ? '提醒' : danger ? '操作确认' : isPrompt ? '编辑' : config.kind === 'alert' ? '消息' : '确认'}</div>
           <h2 id="message-dialog-title">{config.title}</h2>
           {config.message && <p className="message-dialog-text">{config.message}</p>}
           {isPrompt && (config.multiline

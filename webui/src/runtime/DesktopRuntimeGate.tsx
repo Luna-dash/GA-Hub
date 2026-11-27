@@ -190,7 +190,7 @@ export function DesktopRuntimeGate({ children }: { children: ReactNode }) {
         <GatePanel
           title="桌面后端启动失败"
           message={state.error}
-          hint="也可以关闭并重新启动 GA-Hub。"
+          hint="也可以关闭并重新启动 Gyra。"
           restarting={restarting}
           onRestart={() => void restart()}
         />

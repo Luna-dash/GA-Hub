@@ -56,7 +56,7 @@
   root.innerHTML =
     '<canvas></canvas>' +
     '<div class="boot-vignette"></div>' +
-    '<div class="boot-word">GA·HUB</div>' +
+    '<div class="boot-word">Gyra</div>' +
     '<div class="boot-caption">正在唤醒本地服务</div>'
   ;(document.body || document.documentElement).appendChild(root)
 

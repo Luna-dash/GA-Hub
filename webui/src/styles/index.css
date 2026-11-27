@@ -920,14 +920,13 @@ html[data-paper-texture="none"] :is(.app-aurora, .ga-paper-canvas, .ga-paper-car
   object-fit: contain;
 }
 .ga-brand-hub {
-  font-size: 1.04rem;
+  font-size: 1.06rem;
   font-weight: 600;
   line-height: 1;
-  letter-spacing: 0.08em;
-  margin-right: -0.08em;
+  letter-spacing: 0.04em;
+  margin-right: -0.04em;
   white-space: nowrap;
   color: rgba(238, 229, 202, 0.92);
-  text-transform: uppercase;
 }
 /* Collapsed sidebar (icon rail) — 折叠态有自己的设计语言，不沿用展开态 */
 .ga-sidebar[data-collapsed='true'] .ga-sidebar-brand-row {

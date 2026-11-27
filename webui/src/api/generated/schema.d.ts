@@ -5706,7 +5706,7 @@ export interface components {
             password: string;
             /**
              * Name
-             * @default GA-Hub
+             * @default Gyra
              */
             name: string;
             /** Invite */

@@ -30,10 +30,10 @@ async function checkUsage(profileId?: string): Promise<AntiAccountUsage> {
     }
     if (error instanceof HttpError) {
       if (error.status === 404 || error.status === 405) {
-        throw new Error('当前 GA-Hub 后端版本不支持额度检测，请更新后端后重试。')
+        throw new Error('当前 Gyra 后端版本不支持额度检测，请更新后端后重试。')
       }
       if (error.status === 403) {
-        throw new Error('当前页面无权发起额度检测，请从 GA-Hub 页面重试。')
+        throw new Error('当前页面无权发起额度检测，请从 Gyra 页面重试。')
       }
       const detail = typeof error.body?.detail === 'string' ? error.body.detail : error.message
       throw new Error(detail || '检测失败，请重试。')

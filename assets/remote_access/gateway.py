@@ -15,7 +15,7 @@ CRED='GA-Hub/remote-access/password'
 COOKIE='__Host-gahub_session'
 SAFE=re.compile(r'^/api/(?:session-runtimes|sessions(?:/[A-Za-z0-9_-]+(?:/(?:messages|runtime|progress|live))?)?)$')
 HOP={'connection','keep-alive','proxy-authenticate','proxy-authorization','te','trailer','transfer-encoding','upgrade','content-length','content-encoding','set-cookie','access-control-allow-origin','access-control-allow-credentials'}
-LOGIN='''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>GA-Hub Login</title><style>body{font:18px system-ui;background:#101827;color:#eee;max-width:420px;margin:15vh auto;padding:24px}input,button{font:inherit;padding:12px;box-sizing:border-box;width:100%;margin-top:16px}</style><h1>GA-Hub</h1><p>远程会话 · 可发送指令</p><form method="post" action="/_gateway/login" autocomplete="on"><label for="username">用户名</label><input id="username" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required><label for="password">密码</label><input id="password" type="password" name="password" autocomplete="current-password" required><button type="submit">登录</button></form>'''
+LOGIN='''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Gyra Login</title><style>body{font:18px system-ui;background:#101827;color:#eee;max-width:420px;margin:15vh auto;padding:24px}input,button{font:inherit;padding:12px;box-sizing:border-box;width:100%;margin-top:16px}</style><h1>Gyra</h1><p>远程会话 · 可发送指令</p><form method="post" action="/_gateway/login" autocomplete="on"><label for="username">用户名</label><input id="username" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required><label for="password">密码</label><input id="password" type="password" name="password" autocomplete="current-password" required><button type="submit">登录</button></form>'''
 
 class Gateway:
     def __init__(self):
@@ -63,7 +63,7 @@ class Gateway:
                         self.target=f'http://127.0.0.1:{port}';return self.target
             except Exception:pass
         self.target=None
-        raise web.HTTPServiceUnavailable(text='Open GA-Hub on the host computer, then retry.')
+        raise web.HTTPServiceUnavailable(text='Open Gyra on the host computer, then retry.')
     def origin_ok(self,r):return r.headers.get('Origin') in (None,'https://'+PUBLIC,'https://gahub.lunadash.cc.cd')
     async def model_catalog(self):
         base=await self.backend()
@@ -143,7 +143,7 @@ class Gateway:
                     form.add_field('file',spool,filename=name,content_type='application/octet-stream')
                     base=await self.backend()
                     async with self.http.post(base+'/api/upload',data=form,headers={'Origin':base},allow_redirects=False,timeout=aiohttp.ClientTimeout(total=120)) as up:
-                        if up.status!=200:return web.Response(status=up.status,text='Upload rejected by GA-Hub')
+                        if up.status!=200:return web.Response(status=up.status,text='Upload rejected by Gyra')
                         data=await up.json()
                 ref={'path':data['path'],'name':data['name'],'size':data['size'],'source':'managed_upload'}
                 uid=secrets.token_urlsafe(24)
@@ -203,7 +203,7 @@ class Gateway:
                     async with self.http.post(base+'/api/sessions',json={'title':''},headers={'Origin':base},allow_redirects=False) as up:
                         if up.status in (400,403,422,429):
                             self.creations.pop(key)
-                            return web.json_response({'code':'creation_rejected','message':'GA-Hub 拒绝创建会话。'},status=up.status)
+                            return web.json_response({'code':'creation_rejected','message':'Gyra 拒绝创建会话。'},status=up.status)
                         if up.status!=201:
                             raise ValueError('Unconfirmed upstream create result')
                         session=await up.json()
@@ -370,7 +370,7 @@ class Gateway:
                         return web.Response(status=up.status,body=await up.read(),content_type=up.content_type)
                     projected=await up.json()
                 if projected.get('presentation_version') != 1 or projected.get('session_id') != r.path.split('/')[3]:
-                    raise web.HTTPBadGateway(text='Hub message presentation unavailable; update GA-Hub.')
+                    raise web.HTTPBadGateway(text='Hub message presentation unavailable; update Gyra.')
                 self.artifacts.decorate(projected,r.path.split('/')[3],r.cookies.get(COOKIE))
                 # File references depend on the local filesystem and can yield expiring capabilities.
                 # Validate only pages whose representation is independent of those capabilities.
@@ -419,7 +419,7 @@ class Gateway:
     async def admin(self,r):
         if r.host not in ('127.0.0.1:'+str(ADMIN_PORT),'localhost:'+str(ADMIN_PORT)) or r.remote!='127.0.0.1':raise web.HTTPForbidden()
         if r.headers.get('Origin') not in (None,'http://'+r.host):raise web.HTTPForbidden()
-        return web.Response(text='<!doctype html><meta charset="utf-8"><title>GA-Hub Remote Access</title><h1>GA-Hub 远程入口</h1><p><a href="https://'+PUBLIC+'">https://'+PUBLIC+'</a></p><p>访问口令（仅本机可见，请保存到密码管理器）：</p><code style="font-size:24px">'+html.escape(self.password)+'</code><p>支持向已有会话发送文本指令；12小时登录有效期。本机和桌面 GA-Hub 需要保持运行。</p>',content_type='text/html',headers={'Cache-Control':'no-store','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'"})
+        return web.Response(text='<!doctype html><meta charset="utf-8"><title>Gyra Remote Access</title><h1>Gyra 远程入口</h1><p><a href="https://'+PUBLIC+'">https://'+PUBLIC+'</a></p><p>访问口令（仅本机可见，请保存到密码管理器）：</p><code style="font-size:24px">'+html.escape(self.password)+'</code><p>支持向已有会话发送文本指令；12小时登录有效期。本机和桌面 Gyra 需要保持运行。</p>',content_type='text/html',headers={'Cache-Control':'no-store','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'"})
 
 @web.middleware
 async def security(r,handler):

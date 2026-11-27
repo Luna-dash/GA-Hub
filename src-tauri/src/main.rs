@@ -1059,7 +1059,7 @@ fn watch_ready_sidecar(sidecar: &OwnedSidecar, exit: &ExitCoordinator) {
                 }
                 record_startup_diagnostic("sidecar exited after readiness");
                 let _ = sidecar.set_failed(
-                    "GA-Hub 后端进程已退出（可能崩溃或被系统终止），请重启后端。".to_string(),
+                    "Gyra 后端进程已退出（可能崩溃或被系统终止），请重启后端。".to_string(),
                     exit,
                 );
                 return;
@@ -1654,9 +1654,9 @@ fn show_startup_block_dialog(error: &str) {
         return;
     }
     let body = format!(
-        "GA-Hub 检测到上次应用更新尚未完成切换，为保护数据已阻止启动。\n\n详情：{error}\n\n请检查用户数据目录下的 updates 状态后重试。"
+        "Gyra 检测到上次应用更新尚未完成切换，为保护数据已阻止启动。\n\n详情：{error}\n\n请检查用户数据目录下的 updates 状态后重试。"
     );
-    let title: Vec<u16> = "GA-Hub 启动受阻".encode_utf16().chain(std::iter::once(0)).collect();
+    let title: Vec<u16> = "Gyra 启动受阻".encode_utf16().chain(std::iter::once(0)).collect();
     let text: Vec<u16> = body.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxW(
@@ -1740,7 +1740,7 @@ fn main() {
             let main_window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .initialization_script(runtime_script)
                 .on_navigation(is_allowed_main_navigation)
-                .title("GA-Hub")
+                .title("Gyra")
                 .decorations(false)
                 .inner_size(1320.0, 860.0)
                 // min 与 ABSOLUTE_MIN 对齐：更小的逻辑工作区走最大化兜底
