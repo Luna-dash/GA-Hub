@@ -1,11 +1,11 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Settings2 } from 'lucide-react'
 import clsx from 'clsx'
 import type { AntiModels, AntiOrchestratorPreset } from '@/api/client'
 import { Z_LAYERS } from '@/config/zLayers'
 import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
-import { hasHigherLayerOverlay } from '@/utils/overlayStack'
+import { hasHigherLayerOverlay, isInsideTrappedOverlay } from '@/utils/overlayStack'
 
 export const DEFAULT_FAMILY = 'gemini-4-hydrogen'
 export const DEFAULT_MODEL = { id: `${DEFAULT_FAMILY}-high`, display_name: 'Gemini 4 Hydrogen (High)' }
@@ -325,10 +325,21 @@ export function AntiModelSelector({
   const selected = families.find(item => item.key === selectedFamilyKey) ?? families[0]
   const disabledNow = Boolean(disabled || families.length === 0)
   const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(0)
   const [position, setPosition] = useState<CSSProperties>({})
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef({ text: '', time: 0 })
   const menuId = useId()
+
+  useEffect(() => {
+    setActiveIndex(prev => (families.length === 0 ? 0 : Math.min(prev, families.length - 1)))
+  }, [families.length])
+
+  useEffect(() => {
+    if (!open) return
+    menuRef.current?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)?.scrollIntoView?.({ block: 'nearest' })
+  }, [open, activeIndex])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -394,6 +405,7 @@ export function AntiModelSelector({
 
   const effortText = EFFORT_SHORT_LABELS[effort] ?? effort
   const hasEffort = !isOrchestrator && effortOptions.length > 0
+  const activeEffortIdx = Math.max(0, effortOptions.findIndex(o => o.key === effort))
   const triggerTitle = title
     ?? (selected
       ? (selected.tooltip
@@ -402,6 +414,107 @@ export function AntiModelSelector({
       : '模型')
 
   const firstOrchIndex = families.findIndex(f => Boolean(f.isOrchestrator))
+
+  const openMenu = (initialIndex?: number) => {
+    if (disabledNow) return
+    searchRef.current = { text: '', time: 0 }
+    const selectedIdx = families.findIndex(item => item.key === selected?.key)
+    const fallbackIdx = selectedIdx >= 0 ? selectedIdx : 0
+    const nextIdx = initialIndex ?? fallbackIdx
+    setActiveIndex(families.length === 0 ? 0 : Math.max(0, Math.min(nextIdx, families.length - 1)))
+    setOpen(true)
+  }
+
+  const chooseFamilyAt = (index: number) => {
+    const item = families[index]
+    if (!item) return
+    searchRef.current = { text: '', time: 0 }
+    onSelectFamily(item.key)
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+
+  const handleBlur = (event: ReactFocusEvent<HTMLElement>) => {
+    const next = event.relatedTarget as Node | null
+    if (next && (triggerRef.current?.contains(next) || menuRef.current?.contains(next) || isInsideTrappedOverlay(next))) {
+      return
+    }
+    searchRef.current = { text: '', time: 0 }
+    setOpen(false)
+  }
+
+  const focusFooterControl = () => {
+    const footer = menuRef.current?.querySelector<HTMLElement>('[data-anti-model-footer]')
+    if (!footer) return false
+    const target = footer.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]:not([disabled])')
+      ?? footer.querySelector<HTMLElement>('[role="radio"]:not([disabled])')
+      ?? footer.querySelector<HTMLElement>('[data-anti-open-model-settings]:not([disabled])')
+      ?? footer.querySelector<HTMLElement>('button:not([disabled])')
+    if (!target) return false
+    target.focus()
+    return true
+  }
+
+  const onTriggerKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (disabledNow) return
+    if (event.key === 'Escape') {
+      if (!open) return
+      event.preventDefault()
+      event.stopPropagation()
+      searchRef.current = { text: '', time: 0 }
+      setOpen(false)
+      triggerRef.current?.focus()
+      return
+    }
+    if (event.key === 'Tab') {
+      if (!open) return
+      if (!event.shiftKey && focusFooterControl()) {
+        event.preventDefault()
+      } else {
+        searchRef.current = { text: '', time: 0 }
+        setOpen(false)
+      }
+      return
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      if (!open) {
+        const initial = event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? families.length - 1
+            : undefined
+        openMenu(initial)
+        return
+      }
+      if (families.length === 0) return
+      setActiveIndex(prev => {
+        if (event.key === 'Home') return 0
+        if (event.key === 'End') return families.length - 1
+        const delta = event.key === 'ArrowUp' ? -1 : 1
+        return (prev + delta + families.length) % families.length
+      })
+      return
+    }
+    const inTypeahead = open && searchRef.current.text.length > 0 && Date.now() - searchRef.current.time < 700
+    if (event.key === 'Enter' || (event.key === ' ' && !inTypeahead)) {
+      event.preventDefault()
+      if (open) chooseFamilyAt(activeIndex)
+      else openMenu()
+      return
+    }
+    if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (event.key === ' ') event.preventDefault()
+      const now = Date.now()
+      searchRef.current.text = (now - searchRef.current.time < 700 ? searchRef.current.text : '') + event.key.toLowerCase()
+      searchRef.current.time = now
+      const idx = families.findIndex(item => item.name.toLowerCase().startsWith(searchRef.current.text))
+      if (idx >= 0) {
+        if (!open) setOpen(true)
+        setActiveIndex(idx)
+      }
+    }
+  }
 
   return (
     <>
@@ -413,9 +526,12 @@ export function AntiModelSelector({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
+        aria-activedescendant={open && families[activeIndex] ? `${menuId}-option-${activeIndex}` : undefined}
         disabled={disabledNow}
         title={triggerTitle}
-        onClick={() => { if (!disabledNow) setOpen(prev => !prev) }}
+        onClick={() => { if (open) setOpen(false); else openMenu() }}
+        onBlur={handleBlur}
+        onKeyDown={onTriggerKeyDown}
         className="inline-flex h-[35px] min-h-[35px] max-h-[35px] min-w-0 max-w-[15rem] sm:max-w-[19rem] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-line bg-gradient-to-br from-bg-soft to-bg-card px-2.5 text-left text-sm text-ink shadow-[inset_0_1px_var(--c-inset-highlight),0_2px_3px_rgba(58,42,28,0.08)] transition-[border-color,box-shadow] hover:border-accent focus:outline-none focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span className="model-select-label min-w-0 flex-1 truncate">
@@ -442,27 +558,49 @@ export function AntiModelSelector({
           style={position}
           className="model-select-menu flex flex-col overflow-hidden"
           onMouseDown={event => event.preventDefault()}
+          onBlur={handleBlur}
+          onKeyDown={event => {
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              event.stopPropagation()
+              setOpen(false)
+              triggerRef.current?.focus()
+              return
+            }
+            if (event.key === 'Tab' && event.shiftKey) {
+              const footer = menuRef.current?.querySelector<HTMLElement>('[data-anti-model-footer]')
+              const firstFooterFocusable = footer?.querySelector<HTMLElement>(
+                '[role="radio"][tabindex="0"]:not([disabled]), [data-anti-open-model-settings]:not([disabled]), button:not([disabled])',
+              )
+              if (firstFooterFocusable && document.activeElement === firstFooterFocusable) {
+                event.preventDefault()
+                triggerRef.current?.focus()
+              }
+            }
+          }}
         >
           <div role="listbox" aria-label="模型" className="min-h-0 flex-1 overflow-y-auto p-1">
             {families.map((item, idx) => {
               const isSelected = item.key === selected?.key
+              const isActive = idx === activeIndex
               const showSeparator = firstOrchIndex > 0 && idx === firstOrchIndex
               return (
                 <div key={item.key}>
                   {showSeparator && <div role="separator" className="my-1 border-t border-line/50" />}
                   <button
+                    id={`${menuId}-option-${idx}`}
                     type="button"
                     role="option"
+                    tabIndex={-1}
+                    data-index={idx}
                     aria-selected={isSelected}
                     title={item.tooltip ?? item.name}
-                    onClick={() => {
-                      onSelectFamily(item.key)
-                      setOpen(false)
-                      triggerRef.current?.focus()
-                    }}
+                    onMouseEnter={() => setActiveIndex(idx)}
+                    onClick={() => chooseFamilyAt(idx)}
                     className={clsx(
                       'flex min-h-[32px] w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-sm text-ink transition-colors hover:bg-accent-soft/60',
-                      isSelected && 'bg-accent-soft/75 font-medium',
+                      isActive && 'bg-accent-soft/60 ring-1 ring-inset ring-accent/45',
+                      isSelected && 'bg-accent-soft/80 font-medium',
                     )}
                   >
                     <span className="model-select-label min-w-0 flex-1 truncate whitespace-nowrap">
@@ -485,14 +623,31 @@ export function AntiModelSelector({
               className="flex shrink-0 items-center justify-between gap-2 border-t border-line/60 bg-bg-soft/50 px-2.5 py-1.5"
             >
               {hasEffort ? (
-                <div role="radiogroup" aria-label="思考等级" className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-                  {effortOptions.map(option => {
+                <div
+                  role="radiogroup"
+                  aria-label="思考等级"
+                  className="flex min-w-0 flex-1 flex-wrap items-center gap-1"
+                  onKeyDown={event => {
+                    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+                    if (effortOptions.length === 0) return
+                    event.preventDefault()
+                    const delta = event.key === 'ArrowRight' ? 1 : -1
+                    const nextIdx = (activeEffortIdx + delta + effortOptions.length) % effortOptions.length
+                    const nextOption = effortOptions[nextIdx]
+                    onSelectEffort(nextOption.key)
+                    event.currentTarget
+                      .querySelector<HTMLButtonElement>(`[data-anti-effort-option="${nextOption.key}"]`)
+                      ?.focus()
+                  }}
+                >
+                  {effortOptions.map((option, idx) => {
                     const active = option.key === effort
                     return (
                       <button
                         key={option.key}
                         type="button"
                         role="radio"
+                        tabIndex={idx === activeEffortIdx ? 0 : -1}
                         aria-checked={active}
                         aria-label={option.name}
                         title={option.name}
@@ -503,7 +658,7 @@ export function AntiModelSelector({
                           triggerRef.current?.focus()
                         }}
                         className={clsx(
-                          'rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors',
+                          'rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45',
                           active
                             ? 'bg-accent text-[var(--c-accent-fg)] shadow-sm'
                             : 'border border-line/70 bg-bg-card text-ink-muted hover:border-accent/60 hover:text-ink',
@@ -527,7 +682,7 @@ export function AntiModelSelector({
                     setOpen(false)
                     onOpenOrchestratorSettings()
                   }}
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line/70 bg-bg-card text-ink-muted transition-colors hover:border-accent/60 hover:text-ink"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line/70 bg-bg-card text-ink-muted transition-colors hover:border-accent/60 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
                 >
                   <Settings2 size={13} aria-hidden="true" />
                 </button>

@@ -395,6 +395,81 @@
   .ga-floating-handle {
     @apply border border-[#54432B]/70 bg-[#6B583D] bg-gradient-to-b from-bg-card/15 to-transparent text-[#FAF4E6] shadow-[inset_0_1px_0_rgb(255_255_255_/_0.25),0_2px_5px_rgb(0_0_0_/_0.18)] transition-[background-color,box-shadow] hover:bg-[#5A4932] hover:shadow-[inset_0_1px_0_rgb(255_255_255_/_0.3),0_3px_7px_rgb(0_0_0_/_0.22)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent;
   }
+
+  /* 统一原生 <select> 视觉：保持原生语义的同时匹配 ThemedSelect 的纸面质感 */
+  .ga-select,
+  .ga-select-sm {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid rgb(var(--c-line-rgb) / 0.82);
+    border-radius: 9px;
+    background-color: var(--c-bg-card);
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236B5E4E' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"),
+      linear-gradient(160deg, var(--c-bg-soft), var(--c-bg-card));
+    background-repeat: no-repeat, no-repeat;
+    background-position: right 0.6rem center, 0 0;
+    background-size: 14px 14px, 100% 100%;
+    padding-right: 1.85rem !important;
+    box-shadow: inset 0 1px 0 var(--c-inset-highlight), 0 1px 2px rgba(28, 25, 23, 0.06);
+    color: var(--c-text);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .ga-select-sm {
+    @apply h-7 rounded-md pl-2 py-0 text-xs;
+    background-position: right 0.45rem center, 0 0;
+    background-size: 12px 12px, 100% 100%;
+    padding-right: 1.55rem !important;
+  }
+
+  .ga-select:hover:not(:disabled),
+  .ga-select-sm:hover:not(:disabled) {
+    border-color: rgb(var(--c-accent-rgb) / 0.55);
+  }
+
+  .ga-select:focus,
+  .ga-select-sm:focus {
+    border-color: var(--c-accent);
+    outline: none;
+  }
+
+  .ga-select:focus-visible,
+  .ga-select-sm:focus-visible {
+    border-color: var(--c-accent);
+    outline: none;
+    box-shadow: inset 0 1px 0 var(--c-inset-highlight), 0 0 0 2px rgb(var(--c-accent-rgb) / 0.45);
+  }
+
+  .ga-select:disabled,
+  .ga-select-sm:disabled {
+    background-image: none;
+    background-color: var(--c-disabled-bg);
+    color: var(--c-disabled-text);
+    border-color: var(--c-disabled-line);
+    box-shadow: none;
+    opacity: 0.75;
+    cursor: not-allowed;
+  }
+
+  .ga-select option,
+  .ga-select-sm option {
+    background-color: var(--c-bg-card);
+    color: var(--c-text);
+  }
+}
+
+html[data-theme="dark-forest"] .ga-select,
+html[data-theme="dark-forest"] .ga-select-sm {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23B8B2A6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"),
+    linear-gradient(160deg, var(--c-bg-soft), var(--c-bg-card));
+}
+
+html[data-theme="dark-forest"] .ga-select option,
+html[data-theme="dark-forest"] .ga-select-sm option {
+  background-color: var(--c-bg-card);
+  color: var(--c-text);
 }
 
 html[data-theme="dark-forest"] .ga-badge-connected {

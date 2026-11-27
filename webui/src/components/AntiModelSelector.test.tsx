@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -128,6 +128,125 @@ describe('AntiModelSelector helpers and component', () => {
     expect(openSettingsBtn).not.toBeNull()
     act(() => { openSettingsBtn.click() })
     expect(onOpenSettings).toHaveBeenCalledTimes(1)
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('supports full keyboard navigation, typeahead, Tab footer handoff, menuRef-aware blur, and effort roving selection', () => {
+    const families = buildSelectorFamilies(SAMPLE_ITEMS, DEFAULT_ORCHESTRATOR_PRESETS, ['gpt-oss-120b', 'gemini-3.8-flash'])
+    const onSelectFamily = vi.fn()
+    const onSelectEffort = vi.fn()
+    host = document.createElement('div')
+    document.body.append(host)
+    const outside = document.createElement('button')
+    outside.type = 'button'
+    outside.textContent = 'Outside'
+    host.append(outside)
+    const mount = document.createElement('div')
+    host.append(mount)
+    root = createRoot(mount)
+
+    function Harness() {
+      const [effort, setEffort] = useState('high')
+      return (
+        <AntiModelSelector
+          families={families}
+          selectedFamilyKey="gemini-4-neon"
+          effort={effort}
+          effortOptions={[{ key: 'low', name: 'low' }, { key: 'medium', name: 'medium' }, { key: 'high', name: 'high' }]}
+          isOrchestrator={false}
+          onSelectFamily={onSelectFamily}
+          onSelectEffort={(next) => {
+            onSelectEffort(next)
+            setEffort(next)
+          }}
+          onOpenOrchestratorSettings={vi.fn()}
+        />
+      )
+    }
+
+    act(() => {
+      root!.render(<Harness />)
+    })
+
+    const trigger = mount.querySelector<HTMLButtonElement>('button[role="combobox"]')!
+    const pressTrigger = (key: string, opts: Partial<KeyboardEventInit> = {}) => {
+      let ev!: KeyboardEvent
+      act(() => {
+        ev = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...opts })
+        trigger.dispatchEvent(ev)
+      })
+      return ev
+    }
+
+    trigger.focus()
+    // ArrowDown opens at selected index (0: Gemini 4 Neon), next ArrowDown moves to index 1
+    pressTrigger('ArrowDown')
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    const options = [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+    expect(options.every(o => o.tabIndex === -1)).toBe(true)
+    expect(trigger.getAttribute('aria-activedescendant')).toBe(options[0].id)
+
+    pressTrigger('ArrowDown')
+    expect(trigger.getAttribute('aria-activedescendant')).toBe(options[1].id)
+    pressTrigger('End')
+    expect(trigger.getAttribute('aria-activedescendant')).toBe(options[options.length - 1].id)
+    pressTrigger('Home')
+    expect(trigger.getAttribute('aria-activedescendant')).toBe(options[0].id)
+    pressTrigger('ArrowUp')
+    expect(trigger.getAttribute('aria-activedescendant')).toBe(options[options.length - 1].id)
+
+    // Enter commits active option and closes
+    pressTrigger('Enter')
+    expect(onSelectFamily).toHaveBeenLastCalledWith(families[families.length - 1].key)
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+    // Space opens, typeahead jumps to Claude Sonnet 5.5, Enter selects
+    pressTrigger(' ')
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    for (const ch of 'claude s') pressTrigger(ch)
+    const sonnetIdx = families.findIndex(f => f.key === 'claude-sonnet-5-5')
+    expect(trigger.getAttribute('aria-activedescendant')).toBe(
+      document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')[sonnetIdx].id,
+    )
+    pressTrigger('Enter')
+    expect(onSelectFamily).toHaveBeenLastCalledWith('claude-sonnet-5-5')
+
+    // Escape closes with stopPropagation and keeps focus on trigger
+    pressTrigger('ArrowDown')
+    const parentSpy = vi.fn()
+    host.addEventListener('keydown', parentSpy)
+    pressTrigger('Escape')
+    host.removeEventListener('keydown', parentSpy)
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(parentSpy).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(trigger)
+
+    // Tab hands off focus into [data-anti-model-footer] without closing via blur
+    pressTrigger('ArrowDown')
+    const tabEv = pressTrigger('Tab')
+    expect(tabEv.defaultPrevented).toBe(true)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    const highRadio = document.body.querySelector<HTMLButtonElement>('[data-anti-effort-option="high"]')!
+    expect(document.activeElement).toBe(highRadio)
+
+    // ArrowLeft / ArrowRight inside radiogroup roves selection and moves focus
+    const radiogroup = document.body.querySelector<HTMLElement>('[role="radiogroup"][aria-label="思考等级"]')!
+    act(() => {
+      radiogroup.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    })
+    expect(onSelectEffort).toHaveBeenLastCalledWith('low')
+    expect(document.activeElement).toBe(document.body.querySelector('[data-anti-effort-option="low"]'))
+
+    act(() => {
+      radiogroup.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+    })
+    expect(onSelectEffort).toHaveBeenLastCalledWith('high')
+    expect(document.activeElement).toBe(highRadio)
+
+    // Blurring to an outside element closes the menu cleanly
+    act(() => {
+      outside.focus()
+    })
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
   })
 })

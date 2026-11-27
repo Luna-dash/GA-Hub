@@ -709,7 +709,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
       {(s.type === 'native_claude' || s.type === 'claude') && (
         <>
           <Field label="thinking_type">
-            <select value={s.fields.thinking_type ?? ''} onChange={(e) => setField('thinking_type', e.target.value || undefined)} className={inp}>
+            <select value={s.fields.thinking_type ?? ''} onChange={(e) => setField('thinking_type', e.target.value || undefined)} className={`${inp} ga-select`}>
               <option value="">（不设置）</option>
               <option value="adaptive">adaptive（推荐）</option>
               <option value="enabled">enabled（需配 thinking_budget_tokens）</option>
@@ -744,13 +744,13 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
       {(s.type === 'native_oai' || s.type === 'oai') && (
         <>
           <Field label="api_mode">
-            <select value={s.fields.api_mode ?? 'chat_completions'} onChange={(e) => setField('api_mode', e.target.value)} className={inp}>
+            <select value={s.fields.api_mode ?? 'chat_completions'} onChange={(e) => setField('api_mode', e.target.value)} className={`${inp} ga-select`}>
               <option value="chat_completions">chat_completions（默认）</option>
               <option value="responses">responses（OpenAI Responses API）</option>
             </select>
           </Field>
           <Field label="reasoning_effort">
-            <select value={s.fields.reasoning_effort ?? ''} onChange={(e) => setField('reasoning_effort', e.target.value || undefined)} className={inp}>
+            <select value={s.fields.reasoning_effort ?? ''} onChange={(e) => setField('reasoning_effort', e.target.value || undefined)} className={`${inp} ga-select`}>
               <option value="">（不设置）</option>
               {['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((v) => <option key={v} value={v}>{v}</option>)}
             </select>

@@ -87,7 +87,7 @@ function RoleConfigRow({
             const nextEffort = resolveEffortForFamily(nextFam, parts.effort)
             onChange(composeModelVariantId(nextKey, nextEffort, nextFam))
           }}
-          className="h-7 min-w-0 flex-1 rounded-md border border-line bg-bg-soft/60 px-2 text-xs text-ink outline-none focus:border-accent"
+          className="ga-select-sm min-w-0 flex-1 text-ink"
         >
           {parts.familyKey && !matchedFamily && (
             <option value={parts.familyKey}>{parts.familyKey}（当前配置）</option>

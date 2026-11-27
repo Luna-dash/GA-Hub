@@ -100,7 +100,7 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
       <fieldset disabled={saving} className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block min-w-0 text-xs font-medium">任务名称<input className={settingsField} value={title} maxLength={200} onChange={e => setTitle(e.target.value)} /></label>
-          <label className="block min-w-0 text-xs font-medium">执行模型<select className={settingsField} value={key} onChange={e => setKey(e.target.value)}>
+          <label className="block min-w-0 text-xs font-medium">执行模型<select className={`${settingsField} ga-select`} value={key} onChange={e => setKey(e.target.value)}>
             <option value="">请选择模型</option>
             {key && !llms.data?.llms.some(m => m.key === key) && <option value={key}>模型已失效，请重新选择</option>}
             {llms.data?.llms.map(m => <option key={m.key} value={m.key}>{m.name}{llms.data.llms.filter(other => other.name === m.name).length > 1 ? ` · ${m.key}` : ''}</option>)}
