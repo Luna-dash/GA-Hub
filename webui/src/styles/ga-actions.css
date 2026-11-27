@@ -100,12 +100,15 @@
   .ga-btn-icon-badge {
     @apply inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line/80 bg-bg/95 text-ink-muted transition-colors;
     @apply hover:border-status-danger-line hover:bg-status-danger-soft hover:text-status-danger;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45;
     @apply disabled:opacity-40 disabled:cursor-not-allowed;
   }
 
   .ga-btn-chip {
     @apply inline-flex items-center gap-1 rounded-md border border-line/85 bg-bg-soft/90 px-2.5 py-1 text-[11px] leading-none text-ink-muted transition-all active:scale-[0.98];
-    @apply hover:border-accent/55 hover:bg-bg-card hover:text-ink disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply hover:border-accent/55 hover:bg-bg-card hover:text-ink;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
     box-shadow: inset 0 1px 0 var(--c-inset-highlight);
   }
 

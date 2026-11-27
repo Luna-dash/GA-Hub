@@ -411,7 +411,7 @@ export function AntiModelSelector({
         disabled={disabledNow}
         title={triggerTitle}
         onClick={() => { if (!disabledNow) setOpen(prev => !prev) }}
-        className="inline-flex h-[35px] min-h-[35px] max-h-[35px] min-w-0 max-w-[15rem] sm:max-w-[19rem] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-line bg-gradient-to-br from-bg-soft to-bg-card px-2.5 text-left text-sm text-ink shadow-[inset_0_1px_var(--c-inset-highlight),0_2px_3px_rgba(58,42,28,0.08)] transition-[border-color,box-shadow] hover:border-accent focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex h-[35px] min-h-[35px] max-h-[35px] min-w-0 max-w-[15rem] sm:max-w-[19rem] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-line bg-gradient-to-br from-bg-soft to-bg-card px-2.5 text-left text-sm text-ink shadow-[inset_0_1px_var(--c-inset-highlight),0_2px_3px_rgba(58,42,28,0.08)] transition-[border-color,box-shadow] hover:border-accent focus:outline-none focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span className="model-select-label min-w-0 flex-1 truncate">
           {selected?.name ?? (families.length ? '选择模型' : '暂无模型')}

@@ -211,12 +211,12 @@ export default function MyKey() {
               </button>
             ))}
           </div>
-          <button onClick={() => refetch()} className="ga-btn"><RefreshIcon size={14} /><span>刷新</span></button>
+          <button type="button" onClick={() => refetch()} className="ga-btn"><RefreshIcon size={14} /><span>刷新</span></button>
           {showUpload && (
-            <button onClick={handleUploadSync} disabled={syncBusy !== null} className="ga-btn"><Upload className="h-3.5 w-3.5" aria-hidden="true" /><span>{syncBusy === 'upload' ? '上传中…' : '上传mykey'}</span></button>
+            <button type="button" onClick={handleUploadSync} disabled={syncBusy !== null} className="ga-btn"><Upload className="h-3.5 w-3.5" aria-hidden="true" /><span>{syncBusy === 'upload' ? '上传中…' : '上传mykey'}</span></button>
           )}
-          <button onClick={handleFetchSync} disabled={syncBusy !== null} className="ga-btn"><Download className="h-3.5 w-3.5" aria-hidden="true" /><span>{syncBusy === 'fetch' ? '下载中…' : '下载mykey'}</span></button>
-          <button onClick={handleOpenFile} className="ga-btn"><FolderOpen className="h-3.5 w-3.5" aria-hidden="true" /><span>打开文件</span></button>
+          <button type="button" onClick={handleFetchSync} disabled={syncBusy !== null} className="ga-btn"><Download className="h-3.5 w-3.5" aria-hidden="true" /><span>{syncBusy === 'fetch' ? '下载中…' : '下载mykey'}</span></button>
+          <button type="button" onClick={handleOpenFile} className="ga-btn"><FolderOpen className="h-3.5 w-3.5" aria-hidden="true" /><span>打开文件</span></button>
         </div>
       }
     >
@@ -473,11 +473,11 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
             ) : null}
           </div>
           <div className="mt-3 flex gap-2 flex-wrap">
-            <button onClick={onEdit} className="mykey-card__action mykey-card__action--primary"><Pencil className="h-3 w-3" aria-hidden="true" /><span>编辑</span></button>
-            <button onClick={onDuplicate} className="mykey-card__action"><CopyIcon size={12} /><span>复制</span></button>
-            <button onClick={onDelete} className="mykey-card__action mykey-card__action--danger"><Trash2 className="h-3 w-3" aria-hidden="true" /><span>删除</span></button>
+            <button type="button" onClick={onEdit} className="mykey-card__action mykey-card__action--primary"><Pencil className="h-3 w-3" aria-hidden="true" /><span>编辑</span></button>
+            <button type="button" onClick={onDuplicate} className="mykey-card__action"><CopyIcon size={12} /><span>复制</span></button>
+            <button type="button" onClick={onDelete} className="mykey-card__action mykey-card__action--danger"><Trash2 className="h-3 w-3" aria-hidden="true" /><span>删除</span></button>
             {canTest && (
-              <button onClick={runTest} disabled={testing} className="mykey-card__action mykey-card__action--success">
+              <button type="button" onClick={runTest} disabled={testing} className="mykey-card__action mykey-card__action--success">
                 <Play className="h-3 w-3" aria-hidden="true" />
                 <span>{testing ? '测试中…' : '测 ping'}</span>
               </button>

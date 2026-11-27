@@ -209,7 +209,7 @@ function BackupDrawer({ onClose, onRestored }: {
             <div key={b.name} className="ga-paper-subcard p-3">
               <div className="flex items-baseline justify-between gap-2 mb-1">
                 <div className="text-xs text-ink-muted font-mono truncate" title={b.name}>{b.name}</div>
-                <button onClick={() => restore(b.name)} disabled={busy !== null}
+                <button type="button" onClick={() => restore(b.name)} disabled={busy !== null}
                   className="ga-btn-sm-primary">
                   <RewindIcon size={12} />
                   <span>{busy === b.name ? '回滚中…' : '回滚'}</span>
@@ -222,7 +222,7 @@ function BackupDrawer({ onClose, onRestored }: {
           ))}
         </div>
         <footer className="border-t border-line/45 px-4 py-2.5 text-xs text-ink-faint flex items-center justify-end">
-          <button onClick={() => refetch()} className="ga-btn-link"><RefreshIcon size={12} /><span>刷新</span></button>
+          <button type="button" onClick={() => refetch()} className="ga-btn-link"><RefreshIcon size={12} /><span>刷新</span></button>
         </footer>
     </ModalOverlay>
   )

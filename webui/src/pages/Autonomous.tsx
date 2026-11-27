@@ -115,6 +115,7 @@ export default function Autonomous() {
       }
       actions={
         <button
+          type="button"
           onClick={() => setEditor({ type: 'idle', enabled: true, name: '' })}
           className="ga-btn-primary"
         >

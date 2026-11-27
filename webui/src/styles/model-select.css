@@ -30,8 +30,12 @@
 .model-select-trigger > .model-select-mark { grid-area: 1 / 1; }
 .model-select-trigger > .model-select-label { grid-area: 1 / 2; }
 .model-select-trigger > .model-select-chevron { grid-area: 1 / 3; }
-.model-select-trigger:hover:not(:disabled), .model-select-trigger:focus { border-color: var(--c-accent); }
+.model-select-trigger:hover:not(:disabled), .model-select-trigger:focus-visible { border-color: var(--c-accent); }
 .model-select-trigger:focus { outline: none; }
+.model-select-trigger:focus-visible {
+  outline: none;
+  box-shadow: inset 0 1px var(--c-inset-highlight), 0 0 0 2px rgb(var(--c-accent-rgb) / 0.45);
+}
 .model-select-trigger:disabled { opacity: .5; cursor: not-allowed; }
 .model-select-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .model-select-mark { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex-shrink: 0; color: var(--c-text-muted); }

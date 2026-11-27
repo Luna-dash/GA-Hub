@@ -348,6 +348,7 @@ export function CommandPalette() {
               {g.items.map(({ a, idx }) => (
                 <button
                   key={a.id}
+                  type="button"
                   data-cmd-idx={idx}
                   onMouseEnter={() => setCursor(idx)}
                   onClick={() => exec(a)}

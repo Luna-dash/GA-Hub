@@ -81,6 +81,7 @@ export default function App() {
             已尝试 {failureCount} 次。后端可能仍在启动，或某个路由抛了异常。
           </div>
           <button
+            type="button"
             onClick={() => refetch()}
             className="ga-solid-primary px-4 py-2 rounded-lg text-sm"
           >

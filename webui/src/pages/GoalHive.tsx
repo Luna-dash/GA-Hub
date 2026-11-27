@@ -218,7 +218,7 @@ export default function GoalHive() {
             <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
             <span>子代理设置</span>
           </button>
-          <button onClick={abort} disabled={!streaming} className="ga-btn-danger">
+          <button type="button" onClick={abort} disabled={!streaming} className="ga-btn-danger">
             <Square className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
             <span>停止</span>
           </button>

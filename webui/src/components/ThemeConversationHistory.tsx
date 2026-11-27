@@ -147,7 +147,7 @@ export function ThemeConversationHistory({ sessionId, enabled }: { sessionId: st
       <span className="text-xs text-ink-faint">{section ? `${hasMore ? '… / ' : ''}${index + 1} / ${sections.length}` : '暂无对话'}</span>
       <button type="button" className={navigation} disabled={loading || index < 0 || index >= sections.length - 1} onClick={() => setSelected(index + 1 === sections.length - 1 ? null : sections[index + 1].id)}><span>下节</span><ChevronRight className="h-3.5 w-3.5" aria-hidden="true" /></button>
     </nav>
-    {error && <div role="alert" className="flex items-center justify-between gap-3 px-5 py-3 text-xs text-status-danger"><span>{error}</span><button className={navigation} onClick={() => void load()}><RefreshIcon spinning={loading} size={12} /><span>重试</span></button></div>}
+    {error && <div role="alert" className="flex items-center justify-between gap-3 px-5 py-3 text-xs text-status-danger"><span>{error}</span><button type="button" className={navigation} onClick={() => void load()}><RefreshIcon spinning={loading} size={12} /><span>重试</span></button></div>}
     <div ref={viewport} data-chat-scope className="max-h-[65vh] min-h-48 overflow-y-auto px-5 py-5 sm:px-6" aria-busy={loading}>
       {loading && <p role="status" className="mb-3 text-xs text-ink-faint">正在读取…</p>}
       {section ? <article data-chat-box className="min-w-0 space-y-6">

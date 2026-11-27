@@ -42,6 +42,7 @@ export class ErrorBoundary extends Component<Props, State> {
               {this.state.error?.message || '未知错误'}
             </p>
             <button
+              type="button"
               onClick={() => {
                 this.setState({ hasError: false, error: undefined })
                 window.location.href = '/'

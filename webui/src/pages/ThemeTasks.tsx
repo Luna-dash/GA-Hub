@@ -102,7 +102,7 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
       {llms.isError && <p role="alert" className="mt-4 rounded-xl bg-status-danger/10 p-3 text-sm text-status-danger">模型列表加载失败，请稍后重试。</p>}
       {error && <p role="alert" className="mt-4 rounded-xl bg-status-danger/10 p-3 text-sm text-status-danger">{error}</p>}
     </div>
-    <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line bg-bg-soft/50 px-5 py-3"><button className={`${button} px-4 py-2`} disabled={saving} onClick={onClose}>取消</button><button className={`${button} border-transparent ga-solid-primary px-5 py-2`} disabled={saving || !instruction.trim() || !title.trim() || !llms.data?.llms.some(m => m.key === key)} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></footer>
+    <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line bg-bg-soft/50 px-5 py-3"><button type="button" className={`${button} px-4 py-2`} disabled={saving} onClick={onClose}>取消</button><button type="button" className={`${button} border-transparent ga-solid-primary px-5 py-2`} disabled={saving || !instruction.trim() || !title.trim() || !llms.data?.llms.some(m => m.key === key)} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></footer>
   </ModalOverlay>
 }
 
@@ -293,7 +293,7 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
         {!model && <p className="mt-3 text-xs leading-5 text-status-warning">请点击上方「任务设置」重新选择模型，或在「LLM管理」中检查配置。</p>}
       </aside>
       <div className="min-w-0 p-4 sm:px-5">
-        {(failed || (frozen && run?.interrupted)) && <section className="rounded-2xl border border-status-danger/25 bg-status-danger/5 p-4 text-sm"><p className="font-medium text-status-danger">{failed ? '本次执行失败' : '上次执行中断，结果未确认'}</p><p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-xs text-ink-faint">{failureReason || '未记录具体失败原因，请在本次过程或会话历史中核对。'}</p>{failureReason && <details className="mt-2 text-xs"><summary>完整错误</summary><pre className="whitespace-pre-wrap break-words">{failureReason}</pre></details>}<button className={`${button} mt-2`} disabled={disabled} onClick={() => void prepareRetry()}>取回原指令重试</button></section>}
+        {(failed || (frozen && run?.interrupted)) && <section className="rounded-2xl border border-status-danger/25 bg-status-danger/5 p-4 text-sm"><p className="font-medium text-status-danger">{failed ? '本次执行失败' : '上次执行中断，结果未确认'}</p><p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-xs text-ink-faint">{failureReason || '未记录具体失败原因，请在本次过程或会话历史中核对。'}</p>{failureReason && <details className="mt-2 text-xs"><summary>完整错误</summary><pre className="whitespace-pre-wrap break-words">{failureReason}</pre></details>}<button type="button" className={`${button} mt-2`} disabled={disabled} onClick={() => void prepareRetry()}>取回原指令重试</button></section>}
 
         {notice && <p role="status" className="mb-3 text-xs text-ink-faint">{notice}</p>}
         {error && <p role="alert" className="mb-3 text-sm text-status-danger">{error}</p>}
@@ -369,8 +369,8 @@ export default function ThemeTasks() {
     actions={<button type="button" className="ga-btn-sm-primary" onClick={() => setPicking(true)}><Plus className="h-3.5 w-3.5" aria-hidden="true" /><span>从会话转入</span></button>}
   >
     <div className="ga-page-board">
-      {sessionsQuery.isError && <p role="alert" className="text-status-danger">加载失败。<button className={button} onClick={() => void sessionsQuery.refetch()}><RefreshIcon size={12} /><span>重试</span></button></p>}
-      {sessionsQuery.isLoading ? <p className="text-sm text-ink-faint">正在加载…</p> : tasks.length === 0 ? <div className="ga-paper-card border-dashed bg-bg-card/55 p-8 text-center"><p className="mb-4 text-sm text-ink-faint">暂无主题任务</p><button className={button} onClick={() => setPicking(true)}>选择已有会话</button></div> : <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">{orderedTasks.map(s => <ThemeCard key={s.id} expanded={expandedId === s.id} onExpandedChange={setExpandedId} session={s} unread={unreadSessionIds.has(s.id)} onSettings={() => setSetting(s)} refresh={refresh} autoOpen={openId === s.id} onAutoOpened={clearOpen} />)}</div>}
+      {sessionsQuery.isError && <p role="alert" className="text-status-danger">加载失败。<button type="button" className={button} onClick={() => void sessionsQuery.refetch()}><RefreshIcon size={12} /><span>重试</span></button></p>}
+      {sessionsQuery.isLoading ? <p className="text-sm text-ink-faint">正在加载…</p> : tasks.length === 0 ? <div className="ga-paper-card border-dashed bg-bg-card/55 p-8 text-center"><p className="mb-4 text-sm text-ink-faint">暂无主题任务</p><button type="button" className={button} onClick={() => setPicking(true)}>选择已有会话</button></div> : <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">{orderedTasks.map(s => <ThemeCard key={s.id} expanded={expandedId === s.id} onExpandedChange={setExpandedId} session={s} unread={unreadSessionIds.has(s.id)} onSettings={() => setSetting(s)} refresh={refresh} autoOpen={openId === s.id} onAutoOpened={clearOpen} />)}</div>}
     </div>
     {picking && (
       <ModalOverlay onClose={() => setPicking(false)} labelledBy="theme-pick-title" panelClassName="w-[min(560px,94vw)] rounded-2xl border border-line bg-bg p-6">

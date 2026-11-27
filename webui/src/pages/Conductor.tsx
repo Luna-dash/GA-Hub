@@ -723,7 +723,7 @@ export default function Conductor() {
                disappears as soon as any path reports a running engine — e.g.
                a later status poll or a successfully sent message. */
             <div className="conductor-header-engine flex items-center gap-2">
-              <button onClick={retryEnsure}
+              <button type="button" onClick={retryEnsure}
                 className={`ga-btn-primary ${ENGINE_TOGGLE_LAYOUT}`}
                 title="重新启动 Conductor 引擎">
                 <Play size={13} />重试启动
@@ -748,8 +748,8 @@ export default function Conductor() {
           </div>
         )}
         <div className="conductor-mobile-tabs" role="tablist" aria-label="工作区视图">
-          <button role="tab" aria-selected={mobileView === 'board'} onClick={() => setMobileView('board')}>当前任务</button>
-          <button role="tab" aria-selected={mobileView === 'context'} onClick={() => setMobileView('context')}>详情</button>
+          <button type="button" role="tab" aria-selected={mobileView === 'board'} onClick={() => setMobileView('board')}>当前任务</button>
+          <button type="button" role="tab" aria-selected={mobileView === 'context'} onClick={() => setMobileView('context')}>详情</button>
         </div>
         <div className="conductor-layout" data-mobile-view={mobileView}>
           {/* Left column = the task narrative: the board (task card + worker
@@ -830,8 +830,8 @@ export default function Conductor() {
           </section>
           <aside className="conductor-context" aria-label="任务详情">
             <div className="conductor-context-tabs" role="tablist" aria-label="任务内容">
-              <button id="conductor-tab-delivery" role="tab" aria-controls="conductor-panel-delivery" aria-selected={contextTab === 'delivery'} onClick={() => setContextTab('delivery')}><FileCheck2 size={14} />交付详情</button>
-              <button id="conductor-tab-activity" role="tab" aria-controls="conductor-panel-activity" aria-selected={contextTab === 'activity'} onClick={() => setContextTab('activity')}><Activity size={14} />动态</button>
+              <button type="button" id="conductor-tab-delivery" role="tab" aria-controls="conductor-panel-delivery" aria-selected={contextTab === 'delivery'} onClick={() => setContextTab('delivery')}><FileCheck2 size={14} />交付详情</button>
+              <button type="button" id="conductor-tab-activity" role="tab" aria-controls="conductor-panel-activity" aria-selected={contextTab === 'activity'} onClick={() => setContextTab('activity')}><Activity size={14} />动态</button>
             </div>
             <section role="tabpanel" id="conductor-panel-delivery" aria-labelledby="conductor-tab-delivery" hidden={contextTab !== 'delivery'} className="conductor-context-panel">
               {selectedWorker ? (

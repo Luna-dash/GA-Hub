@@ -156,15 +156,15 @@ function SessionTimeline({ sessionId, runId, current, enabled, active, onShowRep
           label={connection === 'open' ? (active ? '实时连接' : '已同步') : '连接中'}
           className="h-6 w-6"
         />
-        <button className={action} disabled={loading} onClick={() => void load()}><RefreshIcon spinning={loading} size={12} /><span>刷新</span></button>
+        <button type="button" className={action} disabled={loading} onClick={() => void load()}><RefreshIcon spinning={loading} size={12} /><span>刷新</span></button>
       </span>
     </div>
-    {error && <p role="alert" className="px-4 py-3 text-xs text-status-danger">读取失败：{error}<button className={`${action} ml-2`} disabled={loading} onClick={() => void load()}><RefreshIcon spinning={loading} size={12} /><span>重试</span></button></p>}
+    {error && <p role="alert" className="px-4 py-3 text-xs text-status-danger">读取失败：{error}<button type="button" className={`${action} ml-2`} disabled={loading} onClick={() => void load()}><RefreshIcon spinning={loading} size={12} /><span>重试</span></button></p>}
     <div ref={viewport} tabIndex={0} aria-label={current ? '本次过程时间线' : '会话历史时间线'} className="max-h-[65dvh] min-h-64 overflow-y-auto overscroll-contain p-4 sm:p-5 [overflow-anchor:none]" onScroll={event => {
       const el = event.currentTarget; position.current = el.scrollTop; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64
       if (follow.current) setUnseen(false)
     }}>
-      {!current && page?.has_more && page.next_before != null && <div className="mb-4 text-center"><button className={action} disabled={loading} onClick={() => void load(page.next_before!)}>加载更早消息</button></div>}
+      {!current && page?.has_more && page.next_before != null && <div className="mb-4 text-center"><button type="button" className={action} disabled={loading} onClick={() => void load(page.next_before!)}>加载更早消息</button></div>}
       {loading && <p role="status" className="mb-3 text-center text-xs text-ink-faint">正在读取…</p>}
       {!visible.length && !loading && <p className="py-16 text-center text-sm text-ink-faint">{current ? !runId ? '暂无可关联的执行记录，可在会话历史中查看。' : active ? '等待本次执行内容…' : '暂无本次执行记录，可在会话历史中查看。' : '暂无会话历史'}</p>}
       {visible.filter(message => !current || message.role === 'assistant').map((message, index) => current
@@ -174,7 +174,7 @@ function SessionTimeline({ sessionId, runId, current, enabled, active, onShowRep
     {current && visible.length > 0 && !active && !visible.some(message => message.streaming) && <div className="border-t border-line px-4 py-3 text-sm">
       <span className="mr-3 text-ink-faint">结果</span><button type="button" className="ga-btn-link" onClick={onShowReport}><span>查看结论</span><ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></button>
     </div>}
-    {unseen && <div className="border-t border-line p-2 text-center"><button className={action} onClick={() => {
+    {unseen && <div className="border-t border-line p-2 text-center"><button type="button" className={action} onClick={() => {
       follow.current = true; setUnseen(false)
       if (viewport.current) { viewport.current.scrollTop = viewport.current.scrollHeight; position.current = viewport.current.scrollTop }
     }}><span>有新内容 · 回到底部</span><ArrowDown className="h-3.5 w-3.5" aria-hidden="true" /></button></div>}

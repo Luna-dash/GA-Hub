@@ -98,6 +98,7 @@ export default function Tasks() {
       }
       actions={
         <button
+          type="button"
           onClick={() => setEditor({ type: 'cron', enabled: true, cron: '0 8 * * *', name: '' })}
           className="ga-btn-primary"
         >
