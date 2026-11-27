@@ -1,7 +1,7 @@
 import { QueryLoadState } from '@/components/QueryLoadState'
 // Autonomous evolution: schedule CRUD + run history + report viewer.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CronExpressionParser } from 'cron-parser'
 import { api } from '@/api/client'
@@ -269,27 +269,53 @@ export default function Autonomous() {
   )
 }
 
-function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; onFire: () => void }) {
+function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; onFire: () => Promise<void> }) {
   const qc = useQueryClient()
+  const [busyAction, setBusyAction] = useState<'fire' | 'toggle' | 'delete' | null>(null)
+  const busyRef = useRef(false)
+  const busy = busyAction !== null
+  const fire = async () => {
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusyAction('fire')
+    try {
+      await onFire()
+    } finally {
+      busyRef.current = false
+      setBusyAction(null)
+    }
+  }
   const toggle = async () => {
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusyAction('toggle')
     try {
       await api.upsertSchedule({ ...s, type: s.type as ScheduleType, enabled: !s.enabled })
       qc.invalidateQueries({ queryKey: queryKeys.schedules })
     } catch (e: any) {
       await dialog.alert('切换失败', errorMessageFromError(e))
+    } finally {
+      busyRef.current = false
+      setBusyAction(null)
     }
   }
   const remove = async () => {
-    const ok = await dialog.confirm('删除该计划？', s.name || s.id, {
-      confirmText: '删除',
-      tone: 'danger',
-    })
-    if (!ok) return
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusyAction('delete')
     try {
+      const ok = await dialog.confirm('删除该计划？', s.name || s.id, {
+        confirmText: '删除',
+        tone: 'danger',
+      })
+      if (!ok) return
       await api.deleteSchedule(s.id)
       qc.invalidateQueries({ queryKey: queryKeys.schedules })
     } catch (e: any) {
       await dialog.alert('删除失败', errorMessageFromError(e))
+    } finally {
+      busyRef.current = false
+      setBusyAction(null)
     }
   }
   const typeMeta = s.type === 'idle'
@@ -353,23 +379,25 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
           <span>{s.last_fired_at ? `上次 ${formatRelativeTime(s.last_fired_at)}` : '尚未触发'}</span>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <button type="button" onClick={onFire} className="ga-btn-sm-primary px-2.5">
+          <button type="button" onClick={() => { void fire() }} disabled={busy} className="ga-btn-sm-primary px-2.5">
             <Play className="h-3 w-3" aria-hidden="true" />
-            <span>立即触发</span>
+            <span>{busyAction === 'fire' ? '触发中…' : '立即触发'}</span>
           </button>
           <div className="ga-btn-group">
             <button
               type="button"
-              onClick={toggle}
+              onClick={() => { void toggle() }}
+              disabled={busy}
               className="ga-btn-group-item"
               title={s.enabled ? '暂停计划' : '启用计划'}
             >
               <Power className="h-3 w-3" aria-hidden="true" />
-              <span>{s.enabled ? '禁用' : '启用'}</span>
+              <span>{busyAction === 'toggle' ? (s.enabled ? '禁用中…' : '启用中…') : (s.enabled ? '禁用' : '启用')}</span>
             </button>
             <button
               type="button"
               onClick={onEdit}
+              disabled={busy}
               aria-label="编辑计划"
               title="编辑"
               className="ga-btn-group-item px-2"
@@ -378,7 +406,8 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
             </button>
             <button
               type="button"
-              onClick={remove}
+              onClick={() => { void remove() }}
+              disabled={busy}
               aria-label="删除计划"
               title="删除"
               className="ga-btn-group-item-danger px-2"

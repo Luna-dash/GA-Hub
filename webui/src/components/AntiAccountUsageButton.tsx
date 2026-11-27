@@ -240,8 +240,7 @@ export function AntiAccountUsageButton({
         aria-expanded={open}
         aria-controls={open ? popoverId : undefined}
         className={clsx('ga-btn-icon',
-          rows?.length ? 'text-ink' : 'text-ink-muted',
-          running && !usage.isPending ? '' : 'cursor-default opacity-65')}
+          rows?.length ? 'text-ink' : 'text-ink-muted')}
         onMouseEnter={handlePointerEnter}
         onMouseLeave={handlePointerLeave}
         onClick={() => {

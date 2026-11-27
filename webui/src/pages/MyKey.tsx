@@ -72,6 +72,9 @@ export default function MyKey() {
   const qc = useQueryClient()
   const [tab, setTab] = usePageState<Tab>('mykey.tab', 'structured')
   const [syncBusy, setSyncBusy] = useState<'upload' | 'fetch' | null>(null)
+  const [openingFile, setOpeningFile] = useState(false)
+  const openFileBusyRef = useRef(false)
+  const syncBusyRef = useRef(false)
   // 上传按钮默认隐藏；在设置页手动确认后才显示（跨页同步经 localStorage + 自定义事件）。
   const [showUpload, setShowUpload] = useState(getMyKeyShowUpload)
   useEffect(() => {
@@ -133,61 +136,79 @@ export default function MyKey() {
   }
 
   const handleOpenFile = async () => {
+    if (openFileBusyRef.current) return
+    openFileBusyRef.current = true
+    setOpeningFile(true)
     try {
       const result = await api.openMyKeyFile()
       toast.success(`已打开 ${result.path}`)
     } catch (e: any) {
       toast.error('打开文件失败：' + errorMessageFromError(e))
+    } finally {
+      openFileBusyRef.current = false
+      setOpeningFile(false)
     }
   }
 
 
   const handleUploadSync = async () => {
-    const ok = await dialog.confirm(
-      MYKEY_SYNC_CONFIRM.upload.title,
-      MYKEY_SYNC_CONFIRM.upload.message,
-      { confirmText: MYKEY_SYNC_CONFIRM.upload.confirmText },
-    )
-    if (!ok) return
-    setSyncBusy('upload')
+    if (syncBusyRef.current) return
+    syncBusyRef.current = true
     try {
-      const r = await api.uploadMyKeySync()
-      toast.success(myKeySyncSuccess('upload', r.stdout))
-    } catch (e: any) {
-      const feedback = myKeySyncFailure('upload', e)
-      void dialog.alert(feedback.title, feedback.message, { detail: feedback.detail })
+      const ok = await dialog.confirm(
+        MYKEY_SYNC_CONFIRM.upload.title,
+        MYKEY_SYNC_CONFIRM.upload.message,
+        { confirmText: MYKEY_SYNC_CONFIRM.upload.confirmText },
+      )
+      if (!ok) return
+      setSyncBusy('upload')
+      try {
+        const r = await api.uploadMyKeySync()
+        toast.success(myKeySyncSuccess('upload', r.stdout))
+      } catch (e: any) {
+        const feedback = myKeySyncFailure('upload', e)
+        void dialog.alert(feedback.title, feedback.message, { detail: feedback.detail })
+      } finally {
+        setSyncBusy(null)
+      }
     } finally {
-      setSyncBusy(null)
+      syncBusyRef.current = false
     }
   }
 
   const handleFetchSync = async () => {
-    const ok = await dialog.confirm(
-      MYKEY_SYNC_CONFIRM.fetch.title,
-      MYKEY_SYNC_CONFIRM.fetch.message,
-      { tone: 'danger', confirmText: MYKEY_SYNC_CONFIRM.fetch.confirmText },
-    )
-    if (!ok) return
-    setSyncBusy('fetch')
+    if (syncBusyRef.current) return
+    syncBusyRef.current = true
     try {
-      const r = await api.fetchMyKeySync()
-      if (r.warnings && r.warnings.length) {
-        void dialog.alert('配置已下载，部分模型需要检查',
-          '云端配置已同步到本机，但部分模型未能正常加载。请检查相关配置后再使用。',
-          { detail: r.warnings.join('\n') })
-      } else {
-        toast.success(myKeySyncSuccess('fetch', r.stdout))
+      const ok = await dialog.confirm(
+        MYKEY_SYNC_CONFIRM.fetch.title,
+        MYKEY_SYNC_CONFIRM.fetch.message,
+        { tone: 'danger', confirmText: MYKEY_SYNC_CONFIRM.fetch.confirmText },
+      )
+      if (!ok) return
+      setSyncBusy('fetch')
+      try {
+        const r = await api.fetchMyKeySync()
+        if (r.warnings && r.warnings.length) {
+          void dialog.alert('配置已下载，部分模型需要检查',
+            '云端配置已同步到本机，但部分模型未能正常加载。请检查相关配置后再使用。',
+            { detail: r.warnings.join('\n') })
+        } else {
+          toast.success(myKeySyncSuccess('fetch', r.stdout))
+        }
+        if (r.changed !== false) {
+          qc.invalidateQueries({ queryKey: queryKeys.mykey.data })
+          qc.invalidateQueries({ queryKey: queryKeys.llms })
+          qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
+        }
+      } catch (e: any) {
+        const feedback = myKeySyncFailure('fetch', e)
+        void dialog.alert(feedback.title, feedback.message, { detail: feedback.detail })
+      } finally {
+        setSyncBusy(null)
       }
-      if (r.changed !== false) {
-        qc.invalidateQueries({ queryKey: queryKeys.mykey.data })
-        qc.invalidateQueries({ queryKey: queryKeys.llms })
-        qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
-      }
-    } catch (e: any) {
-      const feedback = myKeySyncFailure('fetch', e)
-      void dialog.alert(feedback.title, feedback.message, { detail: feedback.detail })
     } finally {
-      setSyncBusy(null)
+      syncBusyRef.current = false
     }
   }
 
@@ -216,7 +237,7 @@ export default function MyKey() {
             <button type="button" onClick={handleUploadSync} disabled={syncBusy !== null} className="ga-btn"><Upload className="h-3.5 w-3.5" aria-hidden="true" /><span>{syncBusy === 'upload' ? '上传中…' : '上传mykey'}</span></button>
           )}
           <button type="button" onClick={handleFetchSync} disabled={syncBusy !== null} className="ga-btn"><Download className="h-3.5 w-3.5" aria-hidden="true" /><span>{syncBusy === 'fetch' ? '下载中…' : '下载mykey'}</span></button>
-          <button type="button" onClick={handleOpenFile} className="ga-btn"><FolderOpen className="h-3.5 w-3.5" aria-hidden="true" /><span>打开文件</span></button>
+          <button type="button" onClick={handleOpenFile} disabled={openingFile} className="ga-btn"><FolderOpen className="h-3.5 w-3.5" aria-hidden="true" /><span>{openingFile ? '打开中…' : '打开文件'}</span></button>
         </div>
       }
     >
@@ -309,18 +330,30 @@ function StructuredView({ data, onWrite, onProxyDirtyChange }: {
     })
   }
 
+  const [deletingVar, setDeletingVar] = useState<string | null>(null)
+  const deleteBusyRef = useRef(false)
+
   const remove = async (s: MyKeySession) => {
-    const ok = await dialog.confirm(
-      `删除 ${s.var}？`,
-      `确定从 mykey.py 删除该配置？删除前会自动保留备份。`,
-      { tone: 'danger', confirmText: '删除' },
-    )
-    if (!ok) return
+    if (deleteBusyRef.current) return
+    deleteBusyRef.current = true
     try {
-      const r = await api.mutateMyKey({ action: 'delete', var: s.var })
-      onWrite(r)
-    } catch (e: any) {
-      dialog.alert('删除失败', errorMessageFromError(e))
+      const ok = await dialog.confirm(
+        `删除 ${s.var}？`,
+        `确定从 mykey.py 删除该配置？删除前会自动保留备份。`,
+        { tone: 'danger', confirmText: '删除' },
+      )
+      if (!ok) return
+      setDeletingVar(s.var)
+      try {
+        const r = await api.mutateMyKey({ action: 'delete', var: s.var })
+        onWrite(r)
+      } catch (e: any) {
+        dialog.alert('删除失败', errorMessageFromError(e))
+      } finally {
+        setDeletingVar(null)
+      }
+    } finally {
+      deleteBusyRef.current = false
     }
   }
 
@@ -345,6 +378,8 @@ function StructuredView({ data, onWrite, onProxyDirtyChange }: {
             const expanded = openRows.has(row)
             return (
               <SessionCard key={entry.var} s={entry} expanded={expanded}
+                deleting={deletingVar === entry.var}
+                busy={deletingVar !== null}
                 onToggle={() => {
                   setOpenRows((prev) => {
                     const next = new Set(prev)
@@ -355,7 +390,7 @@ function StructuredView({ data, onWrite, onProxyDirtyChange }: {
                 }}
                 onEdit={() => startEdit(entry)}
                 onDuplicate={() => startDuplicate(entry)}
-                onDelete={() => remove(entry)} />
+                onDelete={() => { void remove(entry) }} />
             )
           })}
           {sessions.length === 0 && mixins.length === 0 && (
@@ -382,9 +417,11 @@ function StructuredView({ data, onWrite, onProxyDirtyChange }: {
   )
 }
 
-function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
+function SessionCard({ s, expanded, deleting, busy, onToggle, onEdit, onDuplicate, onDelete }: {
   s: MyKeySession
   expanded: boolean
+  deleting: boolean
+  busy: boolean
   onToggle: () => void
   onEdit: () => void
   onDuplicate: () => void
@@ -396,6 +433,7 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<MyKeySessionTestResult | null>(null)
   const runTest = async () => {
+    if (testing || busy) return
     setTesting(true)
     setTestResult(null)
     try {
@@ -473,11 +511,11 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
             ) : null}
           </div>
           <div className="mt-3 flex gap-2 flex-wrap">
-            <button type="button" onClick={onEdit} className="ga-btn-sm-primary"><Pencil className="h-3 w-3" aria-hidden="true" /><span>编辑</span></button>
-            <button type="button" onClick={onDuplicate} className="ga-btn-sm"><CopyIcon size={12} /><span>复制</span></button>
-            <button type="button" onClick={onDelete} className="ga-btn-sm-danger"><Trash2 className="h-3 w-3" aria-hidden="true" /><span>删除</span></button>
+            <button type="button" onClick={onEdit} disabled={busy} className="ga-btn-sm-primary"><Pencil className="h-3 w-3" aria-hidden="true" /><span>编辑</span></button>
+            <button type="button" onClick={onDuplicate} disabled={busy} className="ga-btn-sm"><CopyIcon size={12} /><span>复制</span></button>
+            <button type="button" onClick={onDelete} disabled={busy} className="ga-btn-sm-danger"><Trash2 className="h-3 w-3" aria-hidden="true" /><span>{deleting ? '删除中…' : '删除'}</span></button>
             {canTest && (
-              <button type="button" onClick={runTest} disabled={testing} className="ga-btn-sm border-status-success-line/85 text-status-success hover:border-status-success/60 hover:bg-status-success-soft hover:text-status-success">
+              <button type="button" onClick={runTest} disabled={testing || busy} className="ga-btn-sm border-status-success-line/85 text-status-success hover:border-status-success/60 hover:bg-status-success-soft hover:text-status-success">
                 <Play className="h-3 w-3" aria-hidden="true" />
                 <span>{testing ? '测试中…' : '测 ping'}</span>
               </button>

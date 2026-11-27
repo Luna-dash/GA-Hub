@@ -350,4 +350,44 @@ describe('MyKey upload button visibility', () => {
     expect(host.querySelector('textarea')).toBeNull()
   })
 
+  it('guards StructuredView delete and open-file buttons against double-clicks while pending', async () => {
+    let resolveDelete!: (val: unknown) => void
+    let resolveOpen!: (val: { path: string }) => void
+    apiMock.mutateMyKey.mockImplementation(() => new Promise((resolve) => { resolveDelete = resolve }))
+    apiMock.openMyKeyFile.mockImplementation(() => new Promise((resolve) => { resolveOpen = resolve }))
+    vi.spyOn(dialog, 'confirm').mockResolvedValue(true)
+
+    await mountFixture()
+
+    // Open file double-click guard
+    const openBtn = Array.from(host.querySelectorAll('button')).find(b => b.textContent === '打开文件')!
+    await act(async () => {
+      openBtn.click()
+      openBtn.click()
+    })
+    expect(apiMock.openMyKeyFile).toHaveBeenCalledTimes(1)
+    expect(openBtn.disabled).toBe(true)
+    expect(openBtn.textContent).toBe('打开中…')
+    await act(async () => { resolveOpen({ path: '/synthetic/config.py' }); await Promise.resolve() })
+    expect(openBtn.disabled).toBe(false)
+    expect(openBtn.textContent).toBe('打开文件')
+
+    // Card delete double-click guard
+    act(() => host.querySelector<HTMLButtonElement>('.mykey-card__toggle')!.click())
+    const delBtn = Array.from(host.querySelectorAll('button')).find(b => b.textContent === '删除')!
+    await act(async () => {
+      delBtn.click()
+      delBtn.click()
+    })
+    await act(async () => { await Promise.resolve() })
+    expect(apiMock.mutateMyKey).toHaveBeenCalledTimes(1)
+    expect(delBtn.disabled).toBe(true)
+    expect(delBtn.textContent).toBe('删除中…')
+    expect(Array.from(host.querySelectorAll('button')).find(b => b.textContent === '编辑')!.disabled).toBe(true)
+    await act(async () => {
+      resolveDelete({ ok: true, mtime: 1, raw: '', structured: { sessions: [], mixins: [], globals: {} } })
+      await Promise.resolve()
+    })
+  })
+
 })

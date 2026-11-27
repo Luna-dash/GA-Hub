@@ -61,7 +61,8 @@ export function FontAppearancePanel() {
   }
 
   const handleActivate = async (packId: string) => {
-    setBusyId(packId)
+    if (busyId !== null) return
+    setBusyId(`activate:${packId}`)
     try {
       const next = await fontApi.activate(packId)
       await applyAndCache(next)
@@ -74,7 +75,8 @@ export function FontAppearancePanel() {
   }
 
   const handleDelete = async (pack: FontPackInfo) => {
-    setBusyId(pack.id)
+    if (busyId !== null) return
+    setBusyId(`delete:${pack.id}`)
     try {
       const next = await fontApi.deletePack(pack.id)
       await applyAndCache(next)
@@ -141,7 +143,7 @@ export function FontAppearancePanel() {
               onClick={() => { void handleActivate('system') }}
               className="ga-btn-sm"
             >
-              切回系统默认
+              {busyId === 'activate:system' ? '切换中…' : '切回系统默认'}
             </button>
           )}
           <input
@@ -264,7 +266,7 @@ export function FontAppearancePanel() {
                           onClick={() => { void handleActivate(pack.id) }}
                           className="ga-btn-sm-primary"
                         >
-                          启用
+                          {busyId === `activate:${pack.id}` ? '启用中…' : '启用'}
                         </button>
                       )}
                       {pack.removable && (
@@ -276,7 +278,7 @@ export function FontAppearancePanel() {
                           className="ga-btn-sm-danger"
                         >
                           <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                          <span>移除</span>
+                          <span>{busyId === `delete:${pack.id}` ? '移除中…' : '移除'}</span>
                         </button>
                       )}
                     </>

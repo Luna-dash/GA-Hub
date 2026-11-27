@@ -167,4 +167,49 @@ describe('Autonomous schedule dialog & report drawer', () => {
     await act(async () => { winBtn.click(); await new Promise((r) => setTimeout(r, 20)) })
     expect(apiMock.report).toHaveBeenCalledWith('win-report.md')
   })
+
+  it('locks ScheduleCard buttons against rapid double-clicks during toggle, triggerNow, and delete', async () => {
+    let resolveToggle!: () => void
+    let resolveFire!: () => void
+    let resolveDelete!: () => void
+    apiMock.upsertSchedule.mockImplementation(() => new Promise<void>((resolve) => { resolveToggle = resolve }))
+    apiMock.triggerSchedule.mockImplementation(() => new Promise<void>((resolve) => { resolveFire = resolve }))
+    apiMock.deleteSchedule.mockImplementation(() => new Promise<void>((resolve) => { resolveDelete = resolve }))
+    vi.spyOn(dialog, 'confirm').mockResolvedValue(true)
+
+    await renderPage()
+
+    // 1. Toggle double-click guard
+    const toggleBtn = button('启用')
+    await act(async () => {
+      toggleBtn.click()
+      toggleBtn.click()
+    })
+    expect(apiMock.upsertSchedule).toHaveBeenCalledTimes(1)
+    expect(button('启用中…').disabled).toBe(true)
+    expect(button('立即触发').disabled).toBe(true)
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="删除计划"]')!.disabled).toBe(true)
+    await act(async () => { resolveToggle(); await Promise.resolve() })
+    expect(button('立即触发').disabled).toBe(false)
+
+    // 2. Trigger double-click guard
+    const fireBtn = button('立即触发')
+    await act(async () => { fireBtn.click() })
+    await act(async () => { fireBtn.click() })
+    expect(apiMock.triggerSchedule).toHaveBeenCalledTimes(1)
+    expect(button('触发中…').disabled).toBe(true)
+    await act(async () => { resolveFire(); await Promise.resolve() })
+    expect(button('立即触发').disabled).toBe(false)
+
+    // 3. Delete double-click guard
+    const delBtn = host.querySelector<HTMLButtonElement>('button[aria-label="删除计划"]')!
+    await act(async () => {
+      delBtn.click()
+      delBtn.click()
+    })
+    await act(async () => { await Promise.resolve() })
+    expect(apiMock.deleteSchedule).toHaveBeenCalledTimes(1)
+    expect(button('立即触发').disabled).toBe(true)
+    await act(async () => { resolveDelete(); await Promise.resolve() })
+  })
 })
