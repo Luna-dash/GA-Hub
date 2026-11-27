@@ -18,6 +18,7 @@ export function FontAppearancePanel() {
   const fileRef = useRef<HTMLInputElement | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
+  const busyRef = useRef(false)
   const lastDownloadPhaseRef = useRef<string | null>(null)
 
   const fontsQuery = useQuery({
@@ -49,6 +50,8 @@ export function FontAppearancePanel() {
   }
 
   const handleDownload = async (packId: string) => {
+    if (busyRef.current) return
+    busyRef.current = true
     setBusyId(packId)
     try {
       const next = await fontApi.download(packId)
@@ -56,12 +59,14 @@ export function FontAppearancePanel() {
     } catch (error) {
       toast.error('字体下载启动失败：' + errorMessageFromError(error))
     } finally {
+      busyRef.current = false
       setBusyId(null)
     }
   }
 
   const handleActivate = async (packId: string) => {
-    if (busyId !== null) return
+    if (busyRef.current) return
+    busyRef.current = true
     setBusyId(`activate:${packId}`)
     try {
       const next = await fontApi.activate(packId)
@@ -70,12 +75,14 @@ export function FontAppearancePanel() {
     } catch (error) {
       toast.error('切换字体失败：' + errorMessageFromError(error))
     } finally {
+      busyRef.current = false
       setBusyId(null)
     }
   }
 
   const handleDelete = async (pack: FontPackInfo) => {
-    if (busyId !== null) return
+    if (busyRef.current) return
+    busyRef.current = true
     setBusyId(`delete:${pack.id}`)
     try {
       const next = await fontApi.deletePack(pack.id)
@@ -84,11 +91,14 @@ export function FontAppearancePanel() {
     } catch (error) {
       toast.error('移除字体失败：' + errorMessageFromError(error))
     } finally {
+      busyRef.current = false
       setBusyId(null)
     }
   }
 
   const handleBoldStyle = async (boldStyle: 'restrained' | 'standard') => {
+    if (busyRef.current) return
+    busyRef.current = true
     setBusyId(`bold:${boldStyle}`)
     try {
       const next = await fontApi.updatePreferences(boldStyle)
@@ -96,6 +106,7 @@ export function FontAppearancePanel() {
     } catch (error) {
       toast.error('更新字重策略失败：' + errorMessageFromError(error))
     } finally {
+      busyRef.current = false
       setBusyId(null)
     }
   }
@@ -103,7 +114,8 @@ export function FontAppearancePanel() {
   const handleImportChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
-    if (!file) return
+    if (!file || busyRef.current) return
+    busyRef.current = true
     setImporting(true)
     try {
       const next = await fontApi.importFile(file)
@@ -112,6 +124,7 @@ export function FontAppearancePanel() {
     } catch (error) {
       toast.error('导入字体失败：' + errorMessageFromError(error))
     } finally {
+      busyRef.current = false
       setImporting(false)
     }
   }
@@ -139,7 +152,7 @@ export function FontAppearancePanel() {
           {activePack !== 'system' && (
             <button
               type="button"
-              disabled={busyId !== null}
+              disabled={importing || busyId !== null}
               onClick={() => { void handleActivate('system') }}
               className="ga-btn-sm"
             >
@@ -155,7 +168,7 @@ export function FontAppearancePanel() {
           />
           <button
             type="button"
-            disabled={importing || Boolean(downloading)}
+            disabled={importing || busyId !== null || Boolean(downloading)}
             onClick={() => fileRef.current?.click()}
             className="ga-btn-sm"
           >
@@ -175,7 +188,7 @@ export function FontAppearancePanel() {
             <button
               key={value}
               type="button"
-              disabled={busyId !== null}
+              disabled={importing || busyId !== null}
               aria-pressed={boldStyle === value}
               onClick={() => { void handleBoldStyle(value) }}
               className={`ga-segmented-btn ${
@@ -250,7 +263,7 @@ export function FontAppearancePanel() {
                   {!pack.installed ? (
                     <button
                       type="button"
-                      disabled={anyDownloading || busyId !== null}
+                      disabled={anyDownloading || importing || busyId !== null}
                       onClick={() => { void handleDownload(pack.id) }}
                       className="ga-btn-sm-primary"
                     >
@@ -262,7 +275,7 @@ export function FontAppearancePanel() {
                       {!pack.active && (
                         <button
                           type="button"
-                          disabled={anyDownloading || busyId !== null}
+                          disabled={anyDownloading || importing || busyId !== null}
                           onClick={() => { void handleActivate(pack.id) }}
                           className="ga-btn-sm-primary"
                         >
@@ -272,7 +285,7 @@ export function FontAppearancePanel() {
                       {pack.removable && (
                         <button
                           type="button"
-                          disabled={anyDownloading || busyId !== null}
+                          disabled={anyDownloading || importing || busyId !== null}
                           onClick={() => { void handleDelete(pack) }}
                           title="删除已下载字体文件"
                           className="ga-btn-sm-danger"

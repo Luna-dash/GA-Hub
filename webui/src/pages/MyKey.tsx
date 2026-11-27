@@ -111,7 +111,10 @@ export default function MyKey() {
     queryKey: ['mykey', 'auto-sync'], queryFn: api.myKeyAutoSync, refetchInterval: 30_000, refetchIntervalInBackground: false,
   })
   const [autoSyncBusy, setAutoSyncBusy] = useState(false)
+  const autoSyncBusyRef = useRef(false)
   const toggleAutoSync = async (enabled: boolean) => {
+    if (autoSyncBusyRef.current) return
+    autoSyncBusyRef.current = true
     setAutoSyncBusy(true)
     try {
       const status = await api.setMyKeyAutoSync(enabled)
@@ -119,6 +122,7 @@ export default function MyKey() {
     } catch {
       toast.error('自动同步设置未保存，请稍后重试')
     } finally {
+      autoSyncBusyRef.current = false
       setAutoSyncBusy(false)
     }
   }
@@ -431,9 +435,11 @@ function SessionCard({ s, expanded, deleting, busy, onToggle, onEdit, onDuplicat
   const title = s.fields.name || s.var
   const canTest = s.type !== 'mixin'
   const [testing, setTesting] = useState(false)
+  const testBusyRef = useRef(false)
   const [testResult, setTestResult] = useState<MyKeySessionTestResult | null>(null)
   const runTest = async () => {
-    if (testing || busy) return
+    if (testBusyRef.current || busy) return
+    testBusyRef.current = true
     setTesting(true)
     setTestResult(null)
     try {
@@ -442,6 +448,7 @@ function SessionCard({ s, expanded, deleting, busy, onToggle, onEdit, onDuplicat
     } catch (e: unknown) {
       setTestResult({ ok: false, error: errorMessageFromError(e) })
     } finally {
+      testBusyRef.current = false
       setTesting(false)
     }
   }
@@ -571,6 +578,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
   const [s, setS] = useState<MyKeySession>(session)
   const [showKey, setShowKey] = useState(false)
   const [saving, setSaving] = useState(false)
+  const saveBusyRef = useRef(false)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => setS(session), [session])
@@ -578,6 +586,8 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
   const setField = (k: string, v: any) => setS({ ...s, fields: { ...s.fields, [k]: v } })
 
   const save = async () => {
+    if (saveBusyRef.current) return
+    saveBusyRef.current = true
     setErr(null); setSaving(true)
     try {
       // Normalize empty strings to undefined for non-required fields.
@@ -598,6 +608,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
     } catch (e: unknown) {
       setErr(myKeyParseErrorFromError(e))
     } finally {
+      saveBusyRef.current = false
       setSaving(false)
     }
   }

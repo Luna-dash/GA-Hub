@@ -1,5 +1,5 @@
 import { QueryLoadState } from '@/components/QueryLoadState'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { TaskRun, TaskSchedule, TaskScheduleType } from '@/api/types'
@@ -56,7 +56,7 @@ export default function Tasks() {
   const start = page * RUNS_PER_PAGE
   const pageRuns = runs.slice(start, start + RUNS_PER_PAGE)
 
-  const triggerNow = async (id: string) => {
+  const triggerNow = async (id: string): Promise<void> => {
     const ok = await dialog.confirm(
       '立即触发一次定时任务？',
       '这会让 Agent 立刻执行该任务 Prompt，可在运行历史中查看执行结果。',
@@ -216,37 +216,54 @@ export default function Tasks() {
   )
 }
 
-function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; onFire: () => void }) {
+function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; onFire: () => Promise<void> }) {
   const qc = useQueryClient()
-  const [busy, setBusy] = useState(false)
+  const [busyAction, setBusyAction] = useState<'fire' | 'toggle' | 'delete' | null>(null)
+  const busyRef = useRef(false)
+  const busy = busyAction !== null
+  const fire = async () => {
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusyAction('fire')
+    try {
+      await onFire()
+    } finally {
+      busyRef.current = false
+      setBusyAction(null)
+    }
+  }
   const toggle = async () => {
-    if (busy) return
-    setBusy(true)
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusyAction('toggle')
     try {
       await api.upsertTaskSchedule({ ...s, type: s.type as TaskScheduleType, enabled: !s.enabled })
       void qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
     } catch (e: unknown) {
       await dialog.alert('切换失败', errorMessageFromError(e))
     } finally {
-      setBusy(false)
+      busyRef.current = false
+      setBusyAction(null)
     }
   }
   const remove = async () => {
-    if (busy) return
-    const ok = await dialog.confirm('删除该定时任务？', s.name || s.id, {
-      confirmText: '删除',
-      tone: 'danger',
-    })
-    if (!ok) return
-    setBusy(true)
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusyAction('delete')
     try {
+      const ok = await dialog.confirm('删除该定时任务？', s.name || s.id, {
+        confirmText: '删除',
+        tone: 'danger',
+      })
+      if (!ok) return
       await api.deleteTaskSchedule(s.id)
       toast.success('已删除定时任务')
       void qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
     } catch (e: unknown) {
       await dialog.alert('删除失败', errorMessageFromError(e))
     } finally {
-      setBusy(false)
+      busyRef.current = false
+      setBusyAction(null)
     }
   }
   const TypeIcon = s.type === 'cron' ? Calendar : Clock
@@ -303,20 +320,20 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
           <span>{s.last_fired_at ? `最近 ${formatRelativeTime(s.last_fired_at)}` : '尚未触发'}</span>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <button type="button" onClick={onFire} disabled={busy} className="ga-btn-sm-primary px-2.5">
+          <button type="button" onClick={() => { void fire() }} disabled={busy} className="ga-btn-sm-primary px-2.5">
             <Play className="h-3 w-3" aria-hidden="true" />
-            <span>立即触发</span>
+            <span>{busyAction === 'fire' ? '触发中…' : '立即触发'}</span>
           </button>
           <div className="ga-btn-group">
             <button
               type="button"
-              onClick={toggle}
+              onClick={() => { void toggle() }}
               disabled={busy}
               className="ga-btn-group-item"
               title={s.enabled ? '暂停任务' : '启用任务'}
             >
               <Power className="h-3 w-3" aria-hidden="true" />
-              <span>{s.enabled ? '禁用' : '启用'}</span>
+              <span>{busyAction === 'toggle' ? (s.enabled ? '禁用中…' : '启用中…') : (s.enabled ? '禁用' : '启用')}</span>
             </button>
             <button
               type="button"
@@ -330,13 +347,14 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
             </button>
             <button
               type="button"
-              onClick={remove}
+              onClick={() => { void remove() }}
               disabled={busy}
               aria-label="删除任务"
-              title="删除"
+              title={busyAction === 'delete' ? '删除中…' : '删除'}
               className="ga-btn-group-item-danger px-2"
             >
               <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              {busyAction === 'delete' && <span>删除中…</span>}
             </button>
           </div>
         </div>

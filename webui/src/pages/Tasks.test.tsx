@@ -4,7 +4,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
-import type { TaskRun } from '@/api/types'
+import type { TaskRun, TaskSchedule } from '@/api/types'
 import { queryKeys } from '@/queries/queryKeys'
 import { dialog } from '@/stores/dialogStore'
 import Tasks from './Tasks'
@@ -185,4 +185,110 @@ it('hides legacy progress and loads the full conclusion only on demand', async (
   })
   expect(api.taskRunResult).toHaveBeenCalledWith('clean-2')
   expect(document.querySelector('[role=dialog] strong')?.textContent).toBe('归档通过')
+})
+
+it('locks TaskCard buttons against same-tick double-clicks, shows loading labels, and unlocks after rejection', async () => {
+  let currentSchedule: TaskSchedule = {
+    id: 't-lock', name: '早报任务', type: 'interval', interval_minutes: 60, cron: '',
+    prompt: 'test', enabled: false, fire_count: 0, last_fired_at: 0,
+  }
+  vi.mocked(api.taskSchedules).mockImplementation(async () => ({ schedules: [currentSchedule] }))
+  vi.mocked(api.taskRuns).mockResolvedValue({ runs: [] })
+  client.setQueryData(queryKeys.tasks.schedules, { schedules: [currentSchedule] })
+  client.setQueryData(queryKeys.tasks.runs, { runs: [] })
+  act(() => root.render(<QueryClientProvider client={client}><Tasks /></QueryClientProvider>))
+
+  const btn = (text: string) => Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === text)!
+  const alertSpy = vi.spyOn(dialog, 'alert').mockResolvedValue(undefined)
+  const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValue(true)
+
+  // 1. Toggle same-tick double-click + rejection recovery
+  let rejectToggle!: (err: Error) => void
+  vi.mocked(api.upsertTaskSchedule).mockImplementationOnce(() => new Promise<TaskSchedule>((_, reject) => { rejectToggle = reject }))
+  const enableBtn = btn('启用')
+  await act(async () => {
+    enableBtn.click()
+    enableBtn.click()
+  })
+  expect(api.upsertTaskSchedule).toHaveBeenCalledTimes(1)
+  expect(btn('启用中…').disabled).toBe(true)
+  expect(btn('立即触发').disabled).toBe(true)
+  expect(host.querySelector<HTMLButtonElement>('button[aria-label="编辑任务"]')!.disabled).toBe(true)
+  expect(host.querySelector<HTMLButtonElement>('button[aria-label="删除任务"]')!.disabled).toBe(true)
+  await act(async () => { rejectToggle(new Error('toggle failed')); await Promise.resolve() })
+  await act(async () => { await Promise.resolve() })
+  expect(alertSpy).toHaveBeenCalledWith('切换失败', 'toggle failed')
+  expect(btn('启用').disabled).toBe(false)
+
+  // Subsequent toggle succeeds and transitions to enabled=true, then 禁用 -> 禁用中…
+  let resolveToggle!: (v: TaskSchedule) => void
+  vi.mocked(api.upsertTaskSchedule).mockImplementationOnce(() => new Promise<TaskSchedule>((resolve) => { resolveToggle = resolve }))
+  await act(async () => { btn('启用').click() })
+  expect(api.upsertTaskSchedule).toHaveBeenCalledTimes(2)
+  currentSchedule = { ...currentSchedule, enabled: true }
+  await act(async () => { resolveToggle(currentSchedule); await Promise.resolve() })
+  await act(async () => { await new Promise((r) => setTimeout(r, 15)) })
+
+  let resolveDisable!: (v: TaskSchedule) => void
+  vi.mocked(api.upsertTaskSchedule).mockImplementationOnce(() => new Promise<TaskSchedule>((resolve) => { resolveDisable = resolve }))
+  const disableBtn = btn('禁用')
+  await act(async () => {
+    disableBtn.click()
+    disableBtn.click()
+  })
+  expect(api.upsertTaskSchedule).toHaveBeenCalledTimes(3)
+  expect(btn('禁用中…').disabled).toBe(true)
+  currentSchedule = { ...currentSchedule, enabled: false }
+  await act(async () => { resolveDisable(currentSchedule); await Promise.resolve() })
+  await act(async () => { await new Promise((r) => setTimeout(r, 15)) })
+
+  // 2. Trigger same-tick double-click (even across dialog.confirm) + rejection recovery
+  let resolveConfirm!: (ok: boolean) => void
+  confirmSpy.mockImplementationOnce(() => new Promise<boolean>((resolve) => { resolveConfirm = resolve }))
+  let rejectFire!: (err: Error) => void
+  vi.mocked(api.triggerTaskSchedule).mockImplementationOnce(() => new Promise((_, reject) => { rejectFire = reject }))
+
+  const fireBtn = btn('立即触发')
+  await act(async () => {
+    fireBtn.click()
+    fireBtn.click()
+  })
+  expect(confirmSpy).toHaveBeenCalledTimes(1)
+  expect(btn('触发中…').disabled).toBe(true)
+  expect(btn('启用').disabled).toBe(true)
+  expect(host.querySelector<HTMLButtonElement>('button[aria-label="编辑任务"]')!.disabled).toBe(true)
+  expect(host.querySelector<HTMLButtonElement>('button[aria-label="删除任务"]')!.disabled).toBe(true)
+
+  await act(async () => { resolveConfirm(true); await Promise.resolve() })
+  expect(api.triggerTaskSchedule).toHaveBeenCalledTimes(1)
+  await act(async () => { rejectFire(new Error('fire failed')); await Promise.resolve() })
+  await act(async () => { await Promise.resolve() })
+  expect(alertSpy).toHaveBeenCalledWith('触发失败', 'fire failed')
+  expect(btn('立即触发').disabled).toBe(false)
+
+  // 3. Delete same-tick double-click (before dialog.confirm) + rejection recovery + 删除中…
+  let resolveDelConfirm!: (ok: boolean) => void
+  confirmSpy.mockImplementationOnce(() => new Promise<boolean>((resolve) => { resolveDelConfirm = resolve }))
+  let rejectDelete!: (err: Error) => void
+  vi.mocked(api.deleteTaskSchedule).mockImplementationOnce(() => new Promise((_, reject) => { rejectDelete = reject }))
+
+  const delBtn = host.querySelector<HTMLButtonElement>('button[aria-label="删除任务"]')!
+  await act(async () => {
+    delBtn.click()
+    delBtn.click()
+  })
+  expect(confirmSpy).toHaveBeenCalledTimes(2)
+  expect(delBtn.disabled).toBe(true)
+  expect(delBtn.textContent).toContain('删除中…')
+  expect(btn('立即触发').disabled).toBe(true)
+
+  await act(async () => { resolveDelConfirm(true); await Promise.resolve() })
+  expect(api.deleteTaskSchedule).toHaveBeenCalledTimes(1)
+  await act(async () => { rejectDelete(new Error('delete failed')); await Promise.resolve() })
+  await act(async () => { await Promise.resolve() })
+  expect(alertSpy).toHaveBeenCalledWith('删除失败', 'delete failed')
+  expect(delBtn.disabled).toBe(false)
+
+  confirmSpy.mockRestore()
+  alertSpy.mockRestore()
 })

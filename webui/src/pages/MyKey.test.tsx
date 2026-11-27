@@ -17,6 +17,7 @@ const apiMock = vi.hoisted(() => ({
   setMyKeyAutoSync: vi.fn(),
   openMyKeyFile: vi.fn(),
   mutateMyKey: vi.fn(),
+  testMyKeySession: vi.fn(),
   mykeyBackups: vi.fn(),
   restoreMyKeyBackup: vi.fn(),
 }))
@@ -388,6 +389,62 @@ describe('MyKey upload button visibility', () => {
       resolveDelete({ ok: true, mtime: 1, raw: '', structured: { sessions: [], mixins: [], globals: {} } })
       await Promise.resolve()
     })
+  })
+
+  it('guards SessionCard.runTest, SessionDialog.save, and toggleAutoSync against same-tick double-clicks and unlocks on rejection', async () => {
+    let rejectTest!: (err: Error) => void
+    let rejectSave!: (err: Error) => void
+    let rejectSync!: (err: Error) => void
+    apiMock.testMyKeySession.mockReset().mockImplementation(() => new Promise((_, reject) => { rejectTest = reject }))
+    apiMock.mutateMyKey.mockReset().mockImplementation(() => new Promise((_, reject) => { rejectSave = reject }))
+    apiMock.setMyKeyAutoSync.mockReset().mockImplementation(() => new Promise((_, reject) => { rejectSync = reject }))
+
+    await mountFixture()
+
+    // 1. toggleAutoSync same-tick double-click + rejection unlock
+    const toggle = host.querySelector<HTMLInputElement>('[aria-label="启用每日自动同步"]')!
+    await act(async () => {
+      toggle.click()
+      toggle.click()
+    })
+    expect(apiMock.setMyKeyAutoSync).toHaveBeenCalledTimes(1)
+    expect(toggle.disabled).toBe(true)
+    await act(async () => { rejectSync(new Error('sync err')); await Promise.resolve() })
+    expect(toggle.disabled).toBe(false)
+
+    // 2. SessionCard.runTest same-tick double-click + rejection unlock
+    act(() => host.querySelector<HTMLButtonElement>('.mykey-card__toggle')!.click())
+    const pingBtn = Array.from(host.querySelectorAll('button')).find(b => b.textContent === '测 ping')!
+    await act(async () => {
+      pingBtn.click()
+      pingBtn.click()
+    })
+    expect(apiMock.testMyKeySession).toHaveBeenCalledTimes(1)
+    expect(pingBtn.disabled).toBe(true)
+    expect(pingBtn.textContent).toBe('测试中…')
+    await act(async () => { rejectTest(new Error('ping timeout')); await Promise.resolve() })
+    expect(pingBtn.disabled).toBe(false)
+    expect(pingBtn.textContent).toBe('测 ping')
+    expect(host.textContent).toContain('ping timeout')
+
+    // Subsequent click after rejection works
+    apiMock.testMyKeySession.mockResolvedValueOnce({ ok: true, latency_ms: 42 })
+    await act(async () => { pingBtn.click(); await Promise.resolve() })
+    expect(apiMock.testMyKeySession).toHaveBeenCalledTimes(2)
+
+    // 3. SessionDialog.save same-tick double-click + rejection unlock
+    click('编辑')
+    const saveBtn = Array.from(host.querySelectorAll('button')).find(b => b.textContent === '保存并应用')!
+    await act(async () => {
+      saveBtn.click()
+      saveBtn.click()
+    })
+    expect(apiMock.mutateMyKey).toHaveBeenCalledTimes(1)
+    expect(saveBtn.disabled).toBe(true)
+    expect(saveBtn.textContent).toBe('保存中…')
+    await act(async () => { rejectSave(new Error('write conflict')); await Promise.resolve() })
+    expect(saveBtn.disabled).toBe(false)
+    expect(saveBtn.textContent).toBe('保存并应用')
   })
 
 })
