@@ -95,7 +95,7 @@ def test_t3_profile_env_isolation_strips_keys_and_forces_file_storage(tmp_path, 
     assert "GOOGLE_API_KEY" not in env
     assert "ELECTRON_RUN_AS_NODE" not in env
     assert env["AGY_ACP_FORCE_FILE_STORAGE"] == "1"
-    assert env["AGY_CLI_DISABLE_AUTO_UPDATE"] == "1"
+    assert env["AGY_CLI_DISABLE_AUTO_UPDATE"] == "true"
     assert env["SSH_CONNECTION"] == "127.0.0.1 0 127.0.0.1 0"
     assert env["GEMINI_HOME"] == str(tmp_path / "agy-profiles" / "workspace" / "home" / ".gemini")
 

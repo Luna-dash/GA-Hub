@@ -1410,7 +1410,9 @@ def clean_agy_env(
         "GEMINI_HOME": str(gemini_dir),
         "HOME": str(home),
         "AGY_ACP_FORCE_FILE_STORAGE": "1",
-        "AGY_CLI_DISABLE_AUTO_UPDATE": "1",
+        # Official agy Go CLI checks `os.Getenv("AGY_CLI_DISABLE_AUTO_UPDATE") == "true"`
+        # (passing "1" is ignored and spawns a detached `--bg-updater` child).
+        "AGY_CLI_DISABLE_AUTO_UPDATE": "true",
         "PYTHONUNBUFFERED": "1",
         # Match T3 Code: SSH_CONNECTION forces isolated file-storage OAuth tokens instead of OS keyring.
         "SSH_CONNECTION": raw.get("SSH_CONNECTION") or "127.0.0.1 0 127.0.0.1 0",
