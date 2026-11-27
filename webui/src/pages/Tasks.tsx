@@ -10,6 +10,7 @@ import { errorMessageFromError } from '@/utils/sessionUi'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { useHubEvent } from '@/hooks/useHubEvent'
+import { useDirtyClose } from '@/hooks/useDirtyClose'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronExpressionParser } from 'cron-parser'
 import { CronCardLine, CronPreview } from '@/components/CronPreview'
@@ -365,7 +366,7 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
 
 function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onClose: () => void }) {
   const qc = useQueryClient()
-  const [s, setS] = useState<Partial<TaskSchedule>>({
+  const [initialSnapshot] = useState<Partial<TaskSchedule>>(() => ({
     type: 'cron',
     enabled: true,
     name: '',
@@ -373,8 +374,17 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
     cron: '0 8 * * *',
     interval_minutes: 60,
     ...initial,
-  })
+  }))
+  const [s, setS] = useState<Partial<TaskSchedule>>(initialSnapshot)
   const [saving, setSaving] = useState(false)
+  const numEq = (a?: number, b?: number) => (Number.isNaN(a) && Number.isNaN(b)) || a === b
+  const isDirty = (s.name ?? '') !== (initialSnapshot.name ?? '')
+    || s.type !== initialSnapshot.type
+    || Boolean(s.enabled) !== Boolean(initialSnapshot.enabled)
+    || (s.prompt ?? '') !== (initialSnapshot.prompt ?? '')
+    || (s.type === 'cron' && (s.cron ?? '') !== (initialSnapshot.cron ?? ''))
+    || (s.type === 'interval' && !numEq(s.interval_minutes, initialSnapshot.interval_minutes))
+  const { requestClose } = useDirtyClose({ dirty: isDirty, busy: saving, onClose })
   const save = async () => {
     if (saving) return
     const type = (s.type ?? 'cron') as TaskScheduleType
@@ -415,10 +425,10 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
     }
   }
   return (
-    <ModalOverlay onClose={() => { if (!saving) onClose() }} closeOnBackdrop={!saving} labelledBy="task-dialog-title" panelClassName="p-6 w-[38rem] max-w-[92vw] max-h-[92vh] overflow-y-auto">
+    <ModalOverlay onClose={requestClose} closeOnBackdrop={false} labelledBy="task-dialog-title" panelClassName="p-6 w-[38rem] max-w-[92vw] max-h-[92vh] overflow-y-auto">
       <div className="flex items-center justify-between gap-3 border-b border-line/70 pb-3 mb-4">
         <h3 id="task-dialog-title" className="text-base font-semibold text-ink">{initial.id ? '编辑定时任务' : '新建定时任务'}</h3>
-        <CloseIconButton label="关闭弹窗" variant="ghost" iconSize={16} disabled={saving} onClick={onClose} />
+        <CloseIconButton label="关闭弹窗" variant="ghost" iconSize={16} disabled={saving} onClick={requestClose} />
       </div>
       <Field label="名称">
         <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="每日早报" />
@@ -457,7 +467,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
         </label>
       </Field>
       <div className="flex justify-end gap-2 mt-4">
-        <button type="button" onClick={onClose} disabled={saving} className="ga-btn">取消</button>
+        <button type="button" onClick={requestClose} disabled={saving} className="ga-btn">取消</button>
         <button type="button" onClick={save} disabled={saving} className="ga-btn-primary">
           <Save className="h-3.5 w-3.5" aria-hidden="true" />
           <span>{saving ? '保存中…' : '保存'}</span>

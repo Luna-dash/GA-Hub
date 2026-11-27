@@ -48,6 +48,7 @@ import { defaultSessionLlmKey, resolveSessionLlmKey } from '@/utils/llm'
 import { MainModelSelect } from '@/components/ModelSelect'
 import { ProjectSelect } from '@/components/ProjectSelect'
 import { useHubEvent } from '@/hooks/useHubEvent'
+import { useDirtyClose } from '@/hooks/useDirtyClose'
 import { useSessionSelectionGuard } from '@/hooks/useSessionSelectionGuard'
 import { createAndOpenSession, markSessionUsed, upsertSessionInList, type SessionListData } from '@/queries/sessions'
 import { queryKeys } from '@/queries/queryKeys'
@@ -104,7 +105,13 @@ export default function LiveChat() {
   const [abortPendingSid, setAbortPendingSid] = useState<string | null>(null)
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [scheduleAt, setScheduleAt] = useState('')
+  const [initialScheduleAt, setInitialScheduleAt] = useState('')
   const [scheduleSaving, setScheduleSaving] = useState(false)
+  const { requestClose: requestCloseSchedule } = useDirtyClose({
+    dirty: scheduleOpen && scheduleAt !== initialScheduleAt,
+    busy: scheduleSaving,
+    onClose: () => setScheduleOpen(false),
+  })
   const [scheduleError, setScheduleError] = useState('')
   const [scheduleNow, setScheduleNow] = useState(() => Date.now())
   const llmChangeSeqRef = useRef(0)
@@ -460,7 +467,9 @@ export default function LiveChat() {
   const openSchedule = () => {
     const next = new Date(Date.now() + 5 * 60_000)
     next.setSeconds(0, 0)
-    setScheduleAt(toLocalDateTimeValue(next))
+    const initialValue = toLocalDateTimeValue(next)
+    setInitialScheduleAt(initialValue)
+    setScheduleAt(initialValue)
     setScheduleError('')
     setScheduleOpen(true)
   }
@@ -930,7 +939,7 @@ export default function LiveChat() {
         </div>
 
         {scheduleOpen && (
-          <ModalOverlay onClose={() => { if (!scheduleSaving) setScheduleOpen(false) }} labelledBy="schedule-title" closeOnBackdrop={false} panelClassName="p-5 w-full max-w-md rounded-2xl">
+          <ModalOverlay onClose={requestCloseSchedule} labelledBy="schedule-title" closeOnBackdrop={false} panelClassName="p-5 w-full max-w-md rounded-2xl">
             <h2 id="schedule-title" className="text-lg font-semibold text-ink">定时发送</h2>
             <p className="mt-1 text-sm text-ink-faint">选择未来 48 小时内的发送时间，支持跨到第二天。</p>
             <label className="mt-4 block text-sm font-medium text-ink">
@@ -955,7 +964,7 @@ export default function LiveChat() {
                 type="button"
                 className="ga-btn"
                 disabled={scheduleSaving}
-                onClick={() => setScheduleOpen(false)}
+                onClick={requestCloseSchedule}
               >取消</button>
               <button
                 type="button"

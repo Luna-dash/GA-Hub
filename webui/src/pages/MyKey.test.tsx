@@ -447,4 +447,29 @@ describe('MyKey upload button visibility', () => {
     expect(saveBtn.textContent).toBe('保存并应用')
   })
 
+  it('prompts before closing SessionDialog when fields are dirty and respects cancel/confirm', async () => {
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    await mountFixture()
+    act(() => host.querySelector<HTMLButtonElement>('.mykey-card__toggle')!.click())
+    click('编辑')
+
+    const varInput = host.querySelector<HTMLInputElement>('[role="dialog"] input[placeholder="native_claude_xxx_config"]')!
+    input(varInput, 'renamed_config')
+
+    await act(async () => {
+      click('取消')
+      await Promise.resolve()
+    })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+
+    await act(async () => {
+      click('取消')
+      await Promise.resolve()
+    })
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    confirmSpy.mockRestore()
+  })
+
 })

@@ -8,6 +8,7 @@ import { CloseIconButton } from '@/components/ActionIcons'
 import clsx from 'clsx'
 import { SubagentModelSelect } from '@/components/ModelSelect'
 import { ModalOverlay } from '@/components/ModalOverlay'
+import { useDirtyClose } from '@/hooks/useDirtyClose'
 
 export type SubagentSettingsValue = {
   llmKey: string | null
@@ -46,6 +47,11 @@ export function SubagentSettingsModal({ llms, value, locked, autoAccept, engineS
     requestAnimationFrame(() => triggerRef.current?.focus())
   }
 
+  const isDirty = draftKey !== value
+    || draftLocked !== (value !== null && locked)
+    || draftAutoAccept !== autoAccept
+  const { requestClose } = useDirtyClose({ dirty: isDirty, onClose: closeDialog })
+
   const save = () => {
     onSave({ llmKey: draftKey, locked: draftKey !== null && draftLocked, autoAccept: draftAutoAccept })
     closeDialog()
@@ -67,7 +73,8 @@ export function SubagentSettingsModal({ llms, value, locked, autoAccept, engineS
       </button>
       {open && (
         <ModalOverlay
-          onClose={closeDialog}
+          onClose={requestClose}
+          closeOnBackdrop={false}
           panelRef={dialogRef}
           labelledBy="subagent-settings-title"
           panelClassName="w-full max-w-md"
@@ -79,7 +86,7 @@ export function SubagentSettingsModal({ llms, value, locked, autoAccept, engineS
               title="关闭"
               variant="ghost"
               iconSize={16}
-              onClick={closeDialog}
+              onClick={requestClose}
             />
           </div>
           <div className="space-y-5 px-5 py-5">
@@ -141,7 +148,7 @@ export function SubagentSettingsModal({ llms, value, locked, autoAccept, engineS
             </div>
           </div>
           <div className="flex justify-end gap-2 border-t border-line/70 px-5 py-4">
-            <button type="button" className="ga-btn" onClick={closeDialog}>取消</button>
+            <button type="button" className="ga-btn" onClick={requestClose}>取消</button>
             <button type="button" className="ga-btn-primary" onClick={save}>保存</button>
           </div>
         </ModalOverlay>

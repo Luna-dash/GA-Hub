@@ -435,8 +435,13 @@ describe('Conductor chat scroll restoration', () => {
     const lock = dialog.querySelector('input[type="checkbox"]') as HTMLInputElement
     expect(lock.disabled).toBe(false)
     act(() => lock.click())
-    act(() => button('取消').click())
+    mocks.dialogConfirm.mockResolvedValueOnce(true)
+    await act(async () => {
+      button('取消').click()
+      await Promise.resolve()
+    })
     runAnimationFrames()
+    expect(mocks.dialogConfirm).toHaveBeenCalledTimes(1)
     expect(mocks.selectSubagentLlm).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(button('子代理设置'))
 
@@ -466,6 +471,40 @@ describe('Conductor chat scroll restoration', () => {
     expect(host.querySelector('[role="dialog"]')).toBeNull()
     expect(mocks.selectSubagentLlm).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(button('子代理设置'))
+  })
+
+  it('ignores backdrop clicks and guards dirty subagent settings against accidental Escape discard', async () => {
+    renderPage()
+    await flushQueries()
+
+    act(() => button('子代理设置').click())
+    const dlg = host.querySelector('[role="dialog"]')!
+    const backdrop = dlg.parentElement!
+    act(() => {
+      backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    })
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+
+    const select = dlg.querySelector('[aria-label="子代理默认模型"]') as HTMLSelectElement
+    act(() => {
+      select.value = 'worker'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    mocks.dialogConfirm.mockResolvedValueOnce(false)
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+    expect(mocks.dialogConfirm).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+
+    mocks.dialogConfirm.mockResolvedValueOnce(true)
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
   })
 
   it('saves the auto-accept policy through the settings API', async () => {

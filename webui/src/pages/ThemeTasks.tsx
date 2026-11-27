@@ -15,6 +15,7 @@ import { formatRelativeTime } from '@/utils/timeFormat'
 import { writeClipboard } from '@/utils/clipboard'
 import { readRecentInstructions, writeRecentInstructions, readRunInstruction, themeFailureReason } from '@/utils/themeTaskActions'
 import { errorMessageFromError, sessionChatHref } from '@/utils/sessionUi'
+import { useDirtyClose } from '@/hooks/useDirtyClose'
 import { toast } from '@/stores/toastStore'
 import {
   CloseIconButton,
@@ -62,12 +63,21 @@ function LiveThemeElapsed({ run, active }: { run: ThemeRun; active: boolean }) {
 
 export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubSession; onClose: () => void; onSaved: () => void }) {
   const config = session.theme_task ?? session.previous_theme_task
-  const [title, setTitle] = useState(session.title)
-  const [instruction, setInstruction] = useState(config?.instruction ?? '')
-  const [description, setDescription] = useState(config?.description ?? '')
-  const [key, setKey] = useState(session.llm_key ?? '')
+  const initialTitle = session.title
+  const initialInstruction = config?.instruction ?? ''
+  const initialDescription = config?.description ?? ''
+  const initialKey = session.llm_key ?? ''
+  const [title, setTitle] = useState(initialTitle)
+  const [instruction, setInstruction] = useState(initialInstruction)
+  const [description, setDescription] = useState(initialDescription)
+  const [key, setKey] = useState(initialKey)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const isDirty = title !== initialTitle
+    || instruction !== initialInstruction
+    || description !== initialDescription
+    || key !== initialKey
+  const { requestClose } = useDirtyClose({ dirty: isDirty, busy: saving, onClose })
   const llms = useQuery({ queryKey: queryKeys.llms, queryFn: api.llms })
   async function save() {
     setSaving(true); setError('')
@@ -79,10 +89,10 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
     } catch (e) { setError(errorMessageFromError(e)) } finally { setSaving(false) }
   }
   const settingsField = `mt-2 w-full rounded-xl border border-line bg-bg p-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/15 disabled:opacity-50`
-  return <ModalOverlay onClose={() => { if (!saving) onClose() }} labelledBy={`theme-settings-title-${session.id}`} closeOnBackdrop={false} panelClassName="flex max-h-[90dvh] w-[min(600px,94vw)] flex-col overflow-hidden !rounded-2xl border border-line bg-bg shadow-2xl">
+  return <ModalOverlay onClose={requestClose} labelledBy={`theme-settings-title-${session.id}`} closeOnBackdrop={false} panelClassName="flex max-h-[90dvh] w-[min(600px,94vw)] flex-col overflow-hidden !rounded-2xl border border-line bg-bg shadow-2xl">
     <header className="flex shrink-0 items-center justify-between gap-4 border-b border-line px-5 py-3">
       <div><h2 id={`theme-settings-title-${session.id}`} className="text-base font-semibold">{session.theme_task ? '任务设置' : '转入主题任务'}</h2></div>
-      <CloseIconButton label="关闭任务设置" variant="ghost" iconSize={15} disabled={saving} className="h-7 w-7 shrink-0 rounded-full text-ink-faint hover:bg-bg-soft hover:text-accent disabled:opacity-40" onClick={onClose} />
+      <CloseIconButton label="关闭任务设置" variant="ghost" iconSize={15} disabled={saving} className="h-7 w-7 shrink-0 rounded-full text-ink-faint hover:bg-bg-soft hover:text-accent disabled:opacity-40" onClick={requestClose} />
     </header>
     <div className="min-h-0 overflow-y-auto px-5 pb-4">
       <fieldset disabled={saving} className="space-y-4">
@@ -102,7 +112,7 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
       {llms.isError && <p role="alert" className="mt-4 rounded-xl bg-status-danger/10 p-3 text-sm text-status-danger">模型列表加载失败，请稍后重试。</p>}
       {error && <p role="alert" className="mt-4 rounded-xl bg-status-danger/10 p-3 text-sm text-status-danger">{error}</p>}
     </div>
-    <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line bg-bg-soft/50 px-5 py-3"><button type="button" className="ga-btn px-4" disabled={saving} onClick={onClose}>取消</button><button type="button" className="ga-btn-primary px-5" disabled={saving || !instruction.trim() || !title.trim() || !llms.data?.llms.some(m => m.key === key)} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></footer>
+    <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line bg-bg-soft/50 px-5 py-3"><button type="button" className="ga-btn px-4" disabled={saving} onClick={requestClose}>取消</button><button type="button" className="ga-btn-primary px-5" disabled={saving || !instruction.trim() || !title.trim() || !llms.data?.llms.some(m => m.key === key)} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></footer>
   </ModalOverlay>
 }
 
@@ -140,6 +150,23 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
   const [recent, setRecent] = useState(() => readRecentInstructions(session.id))
   const [notice, setNotice] = useState('')
   const [retryRunId, setRetryRunId] = useState<string | null>(null)
+  const promptModalInitialRef = useRef<{ text: string; saveDefault: boolean }>({ text: '', saveDefault: false })
+  const promptModalOpen = editDraft !== null || adjust
+  const promptModalDirty = promptModalOpen && (
+    (editDraft ?? draft) !== promptModalInitialRef.current.text
+    || (adjust && saveDefault !== promptModalInitialRef.current.saveDefault)
+  )
+  const closePromptModal = () => {
+    setEditDraft(null)
+    setAdjust(false)
+    setRetryRunId(null)
+    setSaveDefault(false)
+  }
+  const { requestClose: requestClosePrompt } = useDirtyClose({
+    dirty: promptModalDirty,
+    busy: pending,
+    onClose: closePromptModal,
+  })
   const cardRef = useRef<HTMLElement>(null)
   useEffect(() => {
     if (expanded) cardRef.current?.scrollIntoView?.({ block: 'start', behavior: 'instant' })
@@ -214,6 +241,7 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
     lock.current = true; setPending(true); setError(''); setNotice('')
     try {
       const instruction = await readRunInstruction(session.id, run.run_id)
+      promptModalInitialRef.current = { text: instruction, saveDefault: false }
       setEditDraft(instruction); setSaveDefault(false); setRetryRunId(run.run_id); setAdjust(true)
     } catch (e) { setError(errorMessageFromError(e)) }
     finally { lock.current = false; setPending(false) }
@@ -242,14 +270,14 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
       {!expanded && <>
         <div className="ga-paper-subcard relative mt-3 flex min-h-16 items-center p-2.5 pr-10">
           <p aria-label={`本次启动提示词：${title}`} className={`min-w-0 flex-1 whitespace-pre-wrap break-words text-sm line-clamp-3 ${draft.trim() ? '' : 'text-ink-faint'}`} title={draft}>{draft || '尚未填写提示词'}</p>
-          <button type="button" aria-label={`编辑本次提示词：${title}`} title="编辑提示词" disabled={pending || active} className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => setEditDraft(draft)}><Pencil className="h-3.5 w-3.5" aria-hidden="true" /></button>
+          <button type="button" aria-label={`编辑本次提示词：${title}`} title="编辑提示词" disabled={pending || active} className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => { promptModalInitialRef.current = { text: draft, saveDefault: false }; setEditDraft(draft) }}><Pencil className="h-3.5 w-3.5" aria-hidden="true" /></button>
         </div>
         <div className="mt-3 flex items-center justify-between gap-2 text-xs"><span role="status" aria-label={active && !uncertain ? runtime?.status === 'aborting' ? '正在停止' : '运行中' : status} className="flex items-center gap-1.5 text-ink-faint">{active && !uncertain ? <span aria-hidden="true" className="h-3.5 w-3.5 rounded-full border-2 border-accent border-t-transparent motion-safe:animate-spin" /> : <><span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${dotTone}`} />{status}</>}</span>{run && <span className="tabular-nums text-ink-faint">{active ? <LiveThemeElapsed run={run} active={active} /> : formatRelativeTime(run.finished_at ?? run.started_at)} · {run.turns} turn</span>}</div>
       </>}
       {!expanded && notice && <p role="status" className="mt-3 text-xs text-ink-faint">{notice}</p>}
       {!expanded && error && <p role="alert" className="mt-3 text-sm text-status-danger">{error}</p>}
     </div>
-    {(editDraft !== null || adjust) && <ModalOverlay onClose={() => { if (!pending) { setEditDraft(null); setAdjust(false); setRetryRunId(null) } }} labelledBy={`theme-prompt-title-${session.id}`} closeOnBackdrop={false} panelClassName="w-[min(520px,94vw)] max-h-[90dvh] overflow-y-auto border border-line bg-bg p-5 shadow-2xl">
+    {promptModalOpen && <ModalOverlay onClose={requestClosePrompt} labelledBy={`theme-prompt-title-${session.id}`} closeOnBackdrop={false} panelClassName="w-[min(520px,94vw)] max-h-[90dvh] overflow-y-auto border border-line bg-bg p-5 shadow-2xl">
       <h3 id={`theme-prompt-title-${session.id}`} className="mb-3 text-sm font-semibold">本次提示词</h3>
       <textarea aria-label={adjust ? "本次执行指令" : "编辑本次启动提示词"} autoFocus disabled={pending} className={`${field} min-h-36 max-h-[45dvh] resize-y`} value={editDraft ?? draft} onChange={e => setEditDraft(e.target.value)} />
       {retryRunId && <p className="mt-2 text-xs text-status-warning">已恢复原指令，确认后将重新执行。</p>}
@@ -259,7 +287,7 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
       </section>
       {adjust && <label className="mt-3 flex items-center gap-2 text-xs text-ink-faint"><input type="checkbox" checked={saveDefault} disabled={pending} onChange={e => setSaveDefault(e.target.checked)} />保存为默认指令</label>}
       {error && <p role="alert" className="mt-2 text-xs text-status-danger">{error}</p>}
-      <div className="mt-4 flex justify-end gap-2"><button type="button" className="ga-btn" disabled={pending} onClick={() => { setEditDraft(null); setAdjust(false); setRetryRunId(null) }}>取消</button>
+      <div className="mt-4 flex justify-end gap-2"><button type="button" className="ga-btn" disabled={pending} onClick={requestClosePrompt}>取消</button>
         {!retryRunId && <button type="button" className="ga-btn" disabled={pending} onClick={() => { setDraft((editDraft ?? draft).trim()); setEditDraft(null); setAdjust(false) }}>保存</button>}
         {adjust && <button type="button" className="ga-btn-primary" disabled={disabled || !(editDraft ?? draft).trim()} onClick={() => void execute((editDraft ?? draft).trim(), true, true)}>{retryRunId ? '确认重试' : '确认执行'}</button>}
       </div>
@@ -286,8 +314,8 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
         <div className="ga-paper-subcard p-3">
           <p aria-label={`本次启动提示词：${title}`} className={`line-clamp-6 whitespace-pre-wrap break-words text-sm leading-6 ${draft.trim() ? '' : 'text-ink-faint'}`} title={draft}>{draft || '尚未填写提示词'}</p>
           <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line/35 pt-2">
-            <button type="button" className="ga-btn-link" disabled={pending || active} title="调整提示词并立即运行" onClick={() => setAdjust(true)}>本次调整</button>
-            <button type="button" aria-label={`编辑本次提示词：${title}`} title="编辑提示词" disabled={pending || active} className="flex h-6 w-6 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => setEditDraft(draft)}><Pencil className="h-3.5 w-3.5" aria-hidden="true" /></button>
+            <button type="button" className="ga-btn-link" disabled={pending || active} title="调整提示词并立即运行" onClick={() => { promptModalInitialRef.current = { text: draft, saveDefault: false }; setSaveDefault(false); setAdjust(true) }}>本次调整</button>
+            <button type="button" aria-label={`编辑本次提示词：${title}`} title="编辑提示词" disabled={pending || active} className="flex h-6 w-6 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => { promptModalInitialRef.current = { text: draft, saveDefault: false }; setEditDraft(draft) }}><Pencil className="h-3.5 w-3.5" aria-hidden="true" /></button>
           </div>
         </div>
         {!model && <p className="mt-3 text-xs leading-5 text-status-warning">请点击上方「任务设置」重新选择模型，或在「LLM管理」中检查配置。</p>}
@@ -373,10 +401,10 @@ export default function ThemeTasks() {
       {sessionsQuery.isLoading ? <p className="text-sm text-ink-faint">正在加载…</p> : tasks.length === 0 ? <div className="ga-paper-card border-dashed bg-bg-card/55 p-8 text-center"><p className="mb-4 text-sm text-ink-faint">暂无主题任务</p><button type="button" className={button} onClick={() => setPicking(true)}>选择已有会话</button></div> : <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">{orderedTasks.map(s => <ThemeCard key={s.id} expanded={expandedId === s.id} onExpandedChange={setExpandedId} session={s} unread={unreadSessionIds.has(s.id)} onSettings={() => setSetting(s)} refresh={refresh} autoOpen={openId === s.id} onAutoOpened={clearOpen} />)}</div>}
     </div>
     {picking && (
-      <ModalOverlay onClose={() => setPicking(false)} labelledBy="theme-pick-title" panelClassName="w-[min(560px,94vw)] rounded-2xl border border-line bg-bg p-6">
+      <ModalOverlay onClose={() => { setPicking(false); setSearch('') }} labelledBy="theme-pick-title" panelClassName="w-[min(560px,94vw)] rounded-2xl border border-line bg-bg p-6">
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 id="theme-pick-title" className="font-semibold">选择已有会话</h2>
-          <CloseIconButton label="关闭选择会话" variant="ghost" iconSize={15} onClick={() => setPicking(false)} className="h-7 w-7 text-ink-muted hover:bg-bg-soft hover:text-ink" />
+          <CloseIconButton label="关闭选择会话" variant="ghost" iconSize={15} onClick={() => { setPicking(false); setSearch('') }} className="h-7 w-7 text-ink-muted hover:bg-bg-soft hover:text-ink" />
         </div>
         <input aria-label="搜索会话" className={field} placeholder="搜索名称或项目" value={search} onChange={e => setSearch(e.target.value)} />
         <div className="mt-3 max-h-96 space-y-2 overflow-auto">
@@ -386,7 +414,7 @@ export default function ThemeTasks() {
             </p>
           ) : (
             pickable.map(s => (
-              <button key={s.id} type="button" className="block w-full rounded-lg border border-line p-3 text-left hover:bg-bg-soft" onClick={() => { setPicking(false); setSetting(s) }}>
+              <button key={s.id} type="button" className="block w-full rounded-lg border border-line p-3 text-left hover:bg-bg-soft" onClick={() => { setPicking(false); setSearch(''); setSetting(s) }}>
                 <div className="text-sm">{s.title || '未命名会话'}</div>
                 <div className="mt-1 text-xs text-ink-faint">{s.project_name || '自由会话'} · {modelName(s.llm_key)}</div>
               </button>

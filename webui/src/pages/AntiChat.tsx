@@ -451,7 +451,7 @@ export default function AntiChat() {
           </div>}
       </div>
     </div>
-    {creating && <ModalOverlay onClose={closeCreate} labelledBy="anti-create-session-title" panelClassName="w-[28rem] max-w-[92vw] p-5">
+    {creating && <ModalOverlay onClose={closeCreate} closeOnBackdrop={false} labelledBy="anti-create-session-title" panelClassName="w-[28rem] max-w-[92vw] p-5">
       <form className="space-y-4" onSubmit={event => {
         event.preventDefault()
         if (selectedProject && !create.isPending) create.mutate(selectedProject.name)

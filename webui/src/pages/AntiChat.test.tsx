@@ -8,6 +8,7 @@ import AntiChat from './AntiChat'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
 import { AntiAccountUsageButton } from '@/components/AntiAccountUsageButton'
 import { resetPageState } from '@/utils/pageState'
+import { dialog } from '@/stores/dialogStore'
 import { useToastStore } from '@/stores/toastStore'
 
 beforeEach(() => {
@@ -3742,6 +3743,132 @@ it('renders per-model cost breakdown in AntiAccountUsageButton stats footer', as
     expect(byModelEl!.textContent).toContain('~$0.003')
     expect(byModelEl!.textContent).toContain('~$0.0012')
   } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('enforces closeOnBackdrop=false on AntiChat creating modal, guards dirty AntiAgyProfiles close, and ignores stale codeLoginStatus after cancel', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+    status, headers: { 'Content-Type': 'application/json' },
+  })
+  let resolveStatus!: (res: Response) => void
+  const statusPending = new Promise<Response>((resolve) => { resolveStatus = resolve })
+  const profilesPayload = {
+    active: 'work',
+    login_profile: null,
+    profiles: [
+      { id: 'work', name: '工作', auth_state: 'authenticated', has_credentials: true, path: 'C:/work' },
+    ],
+  }
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    const path = new URL(url, 'http://localhost').pathname
+    if (path === '/api/anti/status' || path === '/api/anti/daemon/status') return Promise.resolve(reply({ state: 'ready', managed: true, active_count: 0, agy_available: true, auth_state: 'authenticated' }))
+    if (path === '/api/file-transfer') return Promise.resolve(reply([]))
+    if (path === '/api/anti/profiles') return Promise.resolve(reply(profilesPayload))
+    if (path === '/api/anti/sessions') return Promise.resolve(reply([]))
+    if (path === '/api/anti/models') return Promise.resolve(reply({ items: [] }))
+    if (path === '/api/anti/models/config') return Promise.resolve(reply({ orchestrator_presets: [], hidden_models: [] }))
+    if (path === '/api/anti/profiles/work/login/start' && init?.method === 'POST') {
+      return Promise.resolve(reply({ flow_id: 'flow-stale', profile_id: 'work', phase: 'waiting_code', authorization_url: 'https://accounts.google.com/auth' }))
+    }
+    if (path === '/api/anti/profiles/login/status/flow-stale' && (!init?.method || init.method === 'GET')) {
+      return statusPending
+    }
+    if (path === '/api/anti/profiles/login/cancel/flow-stale' && init?.method === 'POST') {
+      return Promise.resolve(reply({ ok: true }))
+    }
+    return Promise.resolve(reply({}))
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+
+  try {
+    await act(async () => root.render(
+      <QueryClientProvider client={cache}>
+        <MemoryRouter>
+          <AntiChat />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ))
+    await flush()
+
+    // 1. creating modal ignores backdrop clicks
+    const createBtn = host.querySelector<HTMLButtonElement>('[data-testid="create-session-empty"]')!
+    await act(async () => { createBtn.click() })
+    await flush()
+    const createDialog = document.body.querySelector('[aria-labelledby="anti-create-session-title"]')!
+    expect(createDialog).not.toBeNull()
+    await act(async () => {
+      createDialog.parentElement!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    })
+    expect(document.body.querySelector('[aria-labelledby="anti-create-session-title"]')).not.toBeNull()
+    await act(async () => {
+      const cancelBtn = [...createDialog.querySelectorAll('button')].find(b => b.textContent?.trim() === '取消')!
+      cancelBtn.click()
+    })
+    expect(document.body.querySelector('[aria-labelledby="anti-create-session-title"]')).toBeNull()
+
+    // 2. AntiAgyProfiles dirty add-form confirms before discarding on close
+    const accountsBtn = [...host.querySelectorAll('button')].find(b => b.getAttribute('aria-label')?.startsWith('Agy 账号：'))!
+    await act(async () => { accountsBtn.click() })
+    await flush()
+    await act(async () => { document.body.querySelector<HTMLButtonElement>('button[aria-label="添加账号"]')!.click() })
+    await flush()
+    const nameInput = document.body.querySelector('#agy-profile-name') as HTMLInputElement
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setValue.call(nameInput, '草稿账号')
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-labelledby="agy-accounts-title"] button[aria-label="关闭"]')!.click()
+      await Promise.resolve()
+    })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(document.body.querySelector('[aria-labelledby="agy-accounts-title"]')).not.toBeNull()
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-labelledby="agy-accounts-title"] button[aria-label="关闭"]')!.click()
+      await Promise.resolve()
+    })
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(document.body.querySelector('[aria-labelledby="agy-accounts-title"]')).toBeNull()
+
+    // 3. Stale codeLoginStatus response after cancelling must not resurrect codeLogin form
+    await act(async () => { accountsBtn.click() })
+    await flush()
+    await act(async () => { document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：工作"]')!.click() })
+    await flush()
+    await act(async () => { document.body.querySelector<HTMLButtonElement>('button[aria-label="授权码登录：工作"]')!.click() })
+    await flush()
+    expect(document.body.textContent).toContain('Google 授权码登录')
+
+    // Trigger in-flight status refresh, then cancel before status resolves
+    await act(async () => { document.body.querySelector<HTMLButtonElement>('button[aria-label="刷新授权状态"]')!.click() })
+    await act(async () => {
+      const cancelLoginBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent?.trim() === '取消')!
+      cancelLoginBtn.click()
+    })
+    expect(document.body.textContent).not.toContain('Google 授权码登录')
+
+    await act(async () => {
+      resolveStatus(reply({ flow_id: 'flow-stale', profile_id: 'work', phase: 'waiting_code', authorization_url: 'https://accounts.google.com/auth' }))
+      await Promise.resolve()
+    })
+    expect(document.body.textContent).not.toContain('Google 授权码登录')
+  } finally {
+    confirmSpy.mockRestore()
     await act(async () => root.unmount())
     cache.clear()
     host.remove()

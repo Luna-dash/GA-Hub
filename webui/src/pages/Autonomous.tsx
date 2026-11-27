@@ -13,6 +13,7 @@ import { formatRelativeTime } from '@/utils/timeFormat'
 import { dialog } from '@/stores/dialogStore'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { useHubEvent } from '@/hooks/useHubEvent'
+import { useDirtyClose } from '@/hooks/useDirtyClose'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronCardLine, CronPreview } from '@/components/CronPreview'
 import { writeClipboard } from '@/utils/clipboard'
@@ -423,7 +424,7 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
 
 function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onClose: () => void }) {
   const qc = useQueryClient()
-  const [s, setS] = useState<Partial<Schedule>>({
+  const [initialSnapshot] = useState<Partial<Schedule>>(() => ({
     type: 'idle',
     enabled: true,
     name: '',
@@ -432,8 +433,18 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
     cron: '0 9 * * *',
     interval_minutes: 60,
     ...initial,
-  })
+  }))
+  const [s, setS] = useState<Partial<Schedule>>(initialSnapshot)
   const [saving, setSaving] = useState(false)
+  const numEq = (a?: number, b?: number) => (Number.isNaN(a) && Number.isNaN(b)) || a === b
+  const isDirty = (s.name ?? '') !== (initialSnapshot.name ?? '')
+    || s.type !== initialSnapshot.type
+    || Boolean(s.enabled) !== Boolean(initialSnapshot.enabled)
+    || (s.prompt ?? '') !== (initialSnapshot.prompt ?? '')
+    || (s.type === 'idle' && !numEq(s.idle_minutes, initialSnapshot.idle_minutes))
+    || (s.type === 'cron' && (s.cron ?? '') !== (initialSnapshot.cron ?? ''))
+    || (s.type === 'interval' && !numEq(s.interval_minutes, initialSnapshot.interval_minutes))
+  const { requestClose } = useDirtyClose({ dirty: isDirty, busy: saving, onClose })
   const save = async () => {
     if (saving) return
     const type = (s.type ?? 'idle') as ScheduleType
@@ -473,10 +484,10 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
     }
   }
   return (
-    <ModalOverlay onClose={() => { if (!saving) onClose() }} closeOnBackdrop={!saving} labelledBy="autonomous-schedule-title" panelClassName="p-6 w-[34rem] max-w-[92vw]">
+    <ModalOverlay onClose={requestClose} closeOnBackdrop={false} labelledBy="autonomous-schedule-title" panelClassName="p-6 w-[34rem] max-w-[92vw]">
         <div className="flex items-center justify-between gap-3 border-b border-line/70 pb-3 mb-4">
           <h3 id="autonomous-schedule-title" className="text-base font-semibold text-ink">{initial.id ? '编辑计划' : '新建自主进化计划'}</h3>
-          <CloseIconButton label="关闭弹窗" variant="ghost" iconSize={16} disabled={saving} onClick={onClose} />
+          <CloseIconButton label="关闭弹窗" variant="ghost" iconSize={16} disabled={saving} onClick={requestClose} />
         </div>
         <Field label="名称">
           <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="人类可读的备注" />
@@ -522,7 +533,7 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
           </label>
         </Field>
         <div className="flex justify-end gap-2 mt-4">
-          <button type="button" onClick={onClose} disabled={saving} className="ga-btn">取消</button>
+          <button type="button" onClick={requestClose} disabled={saving} className="ga-btn">取消</button>
           <button type="button" onClick={save} disabled={saving} className="ga-btn-primary">
             <Save className="h-3.5 w-3.5" aria-hidden="true" />
             <span>{saving ? '保存中…' : '保存'}</span>

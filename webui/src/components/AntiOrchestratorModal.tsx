@@ -20,6 +20,7 @@ import {
   type AgyModelFamily,
 } from '@/components/AntiModelSelector'
 import { ModalOverlay } from '@/components/ModalOverlay'
+import { useDirtyClose } from '@/hooks/useDirtyClose'
 import { readPageState } from '@/utils/pageState'
 
 const syncTimeFormat = new Intl.DateTimeFormat('zh-CN', {
@@ -226,13 +227,35 @@ export function AntiOrchestratorModal({
   const hiddenSet = new Set(hiddenDraft)
   const visibleCount = normalFamilies.filter(fam => !hiddenSet.has(fam.key)).length
 
-  const close = () => {
-    if (syncModels.isPending || saveConfig.isPending) return
+  const closeImmediate = () => {
     onClose()
     setMessage('')
     syncModels.reset()
     saveConfig.reset()
   }
+
+  const baselinePresets = useMemo(
+    () => normalizeOrchestratorPresets(modelsConfigQuery.data?.orchestrator_presets),
+    [modelsConfigQuery.data?.orchestrator_presets],
+  )
+  const baselineHidden = useMemo(
+    () => [...new Set((Array.isArray(modelsConfigQuery.data?.hidden_models) ? modelsConfigQuery.data.hidden_models : []).map(m => m.trim()).filter(Boolean))].sort(),
+    [modelsConfigQuery.data?.hidden_models],
+  )
+  const normalizedHiddenDraft = useMemo(
+    () => [...new Set(hiddenDraft.map(m => m.trim()).filter(Boolean))].sort(),
+    [hiddenDraft],
+  )
+  const isDirty = useMemo(() => (
+    JSON.stringify(presetDrafts) !== JSON.stringify(baselinePresets)
+    || JSON.stringify(normalizedHiddenDraft) !== JSON.stringify(baselineHidden)
+  ), [presetDrafts, baselinePresets, normalizedHiddenDraft, baselineHidden])
+
+  const { requestClose } = useDirtyClose({
+    dirty: isDirty,
+    busy: syncModels.isPending || saveConfig.isPending,
+    onClose: closeImmediate,
+  })
 
   if (!open) return null
 
@@ -248,7 +271,8 @@ export function AntiOrchestratorModal({
 
   return createPortal(
     <ModalOverlay
-      onClose={close}
+      onClose={requestClose}
+      closeOnBackdrop={false}
       labelledBy="agy-orchestrator-title"
       panelClassName="flex max-h-[88vh] w-[36rem] max-w-[94vw] flex-col overflow-hidden p-0"
     >
@@ -263,7 +287,7 @@ export function AntiOrchestratorModal({
           <button
             type="button"
             className="ga-btn-sm shrink-0 px-2 text-[11px]"
-            onClick={close}
+            onClick={requestClose}
             disabled={syncModels.isPending || saveConfig.isPending}
           >
             <X className="h-3.5 w-3.5" aria-hidden="true" />

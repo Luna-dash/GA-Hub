@@ -292,3 +292,45 @@ it('locks TaskCard buttons against same-tick double-clicks, shows loading labels
   confirmSpy.mockRestore()
   alertSpy.mockRestore()
 })
+
+it('ignores backdrop clicks in TaskDialog and prompts only when dirty on close', async () => {
+  act(() => root.render(<QueryClientProvider client={client}><Tasks /></QueryClientProvider>))
+  const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+
+  const newBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.includes('新建任务'))!
+  act(() => newBtn.click())
+  const dlg = host.querySelector('[role="dialog"]')!
+  const backdrop = dlg.parentElement!
+
+  // Backdrop click is ignored even when clean
+  act(() => { backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
+  expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+
+  // Clean Escape closes synchronously without confirm
+  act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+  expect(host.querySelector('[role="dialog"]')).toBeNull()
+  expect(confirmSpy).not.toHaveBeenCalled()
+
+  // Reopen, dirty the name input, and verify Escape prompts
+  act(() => newBtn.click())
+  const nameInput = host.querySelector<HTMLInputElement>('[role="dialog"] input[placeholder="每日早报"]')!
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  act(() => {
+    setValue.call(nameInput, '未保存任务')
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await Promise.resolve()
+  })
+  expect(confirmSpy).toHaveBeenCalledTimes(1)
+  expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await Promise.resolve()
+  })
+  expect(confirmSpy).toHaveBeenCalledTimes(2)
+  expect(host.querySelector('[role="dialog"]')).toBeNull()
+  confirmSpy.mockRestore()
+})

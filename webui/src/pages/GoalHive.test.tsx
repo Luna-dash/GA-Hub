@@ -171,7 +171,7 @@ describe('Goal Hive compact subagent settings', () => {
     expect(button('HIVE', modeControl).getAttribute('aria-pressed')).toBe('false')
   })
 
-  it('defaults Hive workers to the main model and saves only on confirmation', () => {
+  it('defaults Hive workers to the main model and saves only on confirmation', async () => {
     renderPage()
     act(() => button('HIVE').click())
 
@@ -179,27 +179,46 @@ describe('Goal Hive compact subagent settings', () => {
     expect(trigger.disabled).toBe(false)
     act(() => trigger.click())
 
-    let dialog = host.querySelector('[role="dialog"]')!
-    let select = dialog.querySelector('[aria-label="Hive 子代理默认模型"]') as HTMLSelectElement
+    let dlg = host.querySelector('[role="dialog"]')!
+    let select = dlg.querySelector('[aria-label="Hive 子代理默认模型"]') as HTMLSelectElement
     expect(select.value).toBe('')
     expect(select.textContent).toContain('跟随主模型')
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
     act(() => {
       select.value = 'worker'
       select.dispatchEvent(new Event('change', { bubbles: true }))
     })
-    act(() => button('取消', dialog).click())
+    // Backdrop clicks must be ignored
+    act(() => {
+      dlg.parentElement!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    })
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+    // Cancelling dirty-close confirmation keeps dialog open
+    await act(async () => {
+      button('取消', dlg).click()
+      await Promise.resolve()
+    })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+    // Confirming dirty-close discards edits and closes
+    await act(async () => {
+      button('取消', dlg).click()
+      await Promise.resolve()
+    })
     runAnimationFrames()
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
     expect(mocks.selectSubagentLlm).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(trigger)
+    confirmSpy.mockRestore()
 
     act(() => trigger.click())
-    dialog = host.querySelector('[role="dialog"]')!
-    select = dialog.querySelector('[aria-label="Hive 子代理默认模型"]') as HTMLSelectElement
+    dlg = host.querySelector('[role="dialog"]')!
+    select = dlg.querySelector('[aria-label="Hive 子代理默认模型"]') as HTMLSelectElement
     act(() => {
       select.value = 'worker'
       select.dispatchEvent(new Event('change', { bubbles: true }))
     })
-    act(() => button('保存', dialog).click())
+    act(() => button('保存', dlg).click())
     expect(mocks.selectSubagentLlm).toHaveBeenCalledWith('worker')
     expect(host.querySelector('[role="dialog"]')).toBeNull()
   })

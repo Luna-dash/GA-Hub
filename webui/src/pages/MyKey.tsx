@@ -27,6 +27,7 @@ import { RawView } from '@/components/MyKeyRawView'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
+import { useDirtyClose } from '@/hooks/useDirtyClose'
 import { usePageState } from '@/utils/pageState'
 import { getMyKeyShowUpload, MYKEY_SHOW_UPLOAD_EVENT, MYKEY_SYNC_CONFIRM, myKeySyncSuccess, myKeySyncFailure } from '@/utils/mykeySyncUi'
 import { errorMessageFromError, myKeyParseErrorFromError } from '@/utils/sessionUi'
@@ -583,6 +584,9 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
 
   useEffect(() => setS(session), [session])
 
+  const isDirty = s.var !== session.var || !fieldsEqual(s.fields, session.fields)
+  const { requestClose } = useDirtyClose({ dirty: isDirty, busy: saving, onClose })
+
   const setField = (k: string, v: any) => setS({ ...s, fields: { ...s.fields, [k]: v } })
 
   const save = async () => {
@@ -614,7 +618,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
   }
 
   return (
-    <ModalOverlay onClose={() => { if (!saving) onClose() }} closeOnBackdrop={false} panelClassName="p-6 w-[40rem] max-w-[92vw] max-h-[88vh] overflow-y-auto">
+    <ModalOverlay onClose={requestClose} closeOnBackdrop={false} panelClassName="p-6 w-[40rem] max-w-[92vw] max-h-[88vh] overflow-y-auto">
       <div className="flex items-baseline justify-between mb-4">
         <h3 className="text-base font-semibold">
           {mode === 'create' ? '新增链路' : mode === 'duplicate' ? '复制链路' : '编辑链路'}
@@ -625,7 +629,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
           variant="ghost"
           iconSize={16}
           disabled={saving}
-          onClick={onClose}
+          onClick={requestClose}
           className="text-ink-muted hover:text-ink disabled:opacity-40"
         />
       </div>
@@ -758,7 +762,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
       {err && <div className="mt-3 text-xs text-status-danger bg-status-danger-soft border border-status-danger-line rounded p-2 break-words">{err}</div>}
 
       <div className="mt-5 flex justify-end gap-2">
-        <button type="button" onClick={onClose} disabled={saving} className="ga-btn">取消</button>
+        <button type="button" onClick={requestClose} disabled={saving} className="ga-btn">取消</button>
         <button type="button" onClick={save} disabled={saving} className="ga-btn-primary">
           <Save className="h-3.5 w-3.5" aria-hidden="true" />
           <span>{saving ? '保存中…' : '保存并应用'}</span>
@@ -1011,4 +1015,13 @@ function stripUiOnly(fields: Record<string, any>): Record<string, any> {
     out[k] = v
   }
   return out
+}
+
+function fieldsEqual(a: Record<string, any>, b: Record<string, any>): boolean {
+  const na = stripUiOnly(a)
+  const nb = stripUiOnly(b)
+  const keysA = Object.keys(na).sort()
+  const keysB = Object.keys(nb).sort()
+  if (keysA.length !== keysB.length) return false
+  return keysA.every((k, i) => k === keysB[i] && JSON.stringify(na[k]) === JSON.stringify(nb[k]))
 }

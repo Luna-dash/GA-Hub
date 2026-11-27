@@ -212,4 +212,41 @@ describe('Autonomous schedule dialog & report drawer', () => {
     expect(button('立即触发').disabled).toBe(true)
     await act(async () => { resolveDelete(); await Promise.resolve() })
   })
+
+  it('ignores backdrop clicks in ScheduleDialog and confirms dirty close', async () => {
+    await renderPage()
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+
+    await act(async () => button('新建计划').click())
+    const dlg = host.querySelector('[role="dialog"]')!
+    act(() => { dlg.parentElement!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+
+    // Clean cancel closes immediately
+    await act(async () => button('取消', dlg).click())
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(confirmSpy).not.toHaveBeenCalled()
+
+    // Reopen, edit name, and verify dirty-close prompt
+    await act(async () => button('新建计划').click())
+    const nameInput = host.querySelector<HTMLInputElement>('[role="dialog"] input[placeholder="人类可读的备注"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(nameInput, '草稿计划')
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      button('取消').click()
+      await Promise.resolve()
+    })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+
+    await act(async () => {
+      button('取消').click()
+      await Promise.resolve()
+    })
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    confirmSpy.mockRestore()
+  })
 })

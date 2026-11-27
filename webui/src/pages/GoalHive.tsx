@@ -7,6 +7,7 @@ import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
 import { bubbleTone } from '@/components/bubbleTone'
 import { MessageContent } from '@/components/MessageContent'
 import { ModalOverlay } from '@/components/ModalOverlay'
+import { useDirtyClose } from '@/hooks/useDirtyClose'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
@@ -95,6 +96,11 @@ export default function GoalHive() {
     setSubagentSettingsOpen(false)
     requestAnimationFrame(() => subagentSettingsButtonRef.current?.focus())
   }
+
+  const { requestClose: requestCloseSubagentSettings } = useDirtyClose({
+    dirty: subagentSettingsOpen && draftSubagentLlmKey !== subagentLlmKey,
+    onClose: closeSubagentSettings,
+  })
 
   const saveSubagentSettings = () => {
     selectSubagentLlm(draftSubagentLlmKey)
@@ -365,7 +371,8 @@ export default function GoalHive() {
 
       {subagentSettingsOpen && (
         <ModalOverlay
-          onClose={closeSubagentSettings}
+          onClose={requestCloseSubagentSettings}
+          closeOnBackdrop={false}
           panelRef={subagentSettingsDialogRef}
           labelledBy="goal-hive-subagent-settings-title"
           panelClassName="w-full max-w-md"
@@ -376,7 +383,7 @@ export default function GoalHive() {
               label="关闭子代理设置"
               variant="ghost"
               iconSize={16}
-              onClick={closeSubagentSettings}
+              onClick={requestCloseSubagentSettings}
               className="h-8 w-8 text-ink-muted hover:bg-bg-soft hover:text-ink"
             />
           </div>
@@ -394,7 +401,7 @@ export default function GoalHive() {
             </label>
           </div>
           <div className="flex justify-end gap-2 border-t border-line/70 px-5 py-4">
-            <button type="button" className="ga-btn" onClick={closeSubagentSettings}>取消</button>
+            <button type="button" className="ga-btn" onClick={requestCloseSubagentSettings}>取消</button>
             <button type="button" className="ga-btn-primary" onClick={saveSubagentSettings}>保存</button>
           </div>
         </ModalOverlay>

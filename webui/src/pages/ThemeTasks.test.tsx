@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { hasUnreadThemeCompletions } from '@/stores/themeCompletionStore'
 import { queryKeys } from '@/queries/queryKeys'
+import { dialog } from '@/stores/dialogStore'
 import ThemeTasks, { ThemeTaskSettings } from './ThemeTasks'
 import { api } from '@/api/client'
 import { writeClipboard } from '@/utils/clipboard'
@@ -224,15 +225,26 @@ it('edits the compact prompt in a modal without saving the default and blocks bl
 
 it('discards modal edits on cancel and Escape without starting a task', async () => {
   await wait(60)
-  await click('编辑本次提示词：签到'); await editPrompt('不保存'); await click('取消')
+  const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true).mockResolvedValueOnce(true)
+  await click('编辑本次提示词：签到'); await editPrompt('不保存')
+  await click('取消')
+  expect(confirmSpy).toHaveBeenCalledTimes(1)
+  expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+  await click('取消')
+  expect(confirmSpy).toHaveBeenCalledTimes(2)
   expect(host.querySelector('[aria-label="本次启动提示词：签到"]')?.textContent).toBe('检查签到')
   await click('编辑本次提示词：签到')
   expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe('检查签到')
   await editPrompt('仍不保存')
-  act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await Promise.resolve()
+  })
+  expect(confirmSpy).toHaveBeenCalledTimes(3)
   expect(host.querySelector('[role="dialog"]')).toBeNull()
   expect(host.querySelector('[aria-label="本次启动提示词：签到"]')?.textContent).toBe('检查签到')
   expect(api.startThemeRun).not.toHaveBeenCalled()
+  confirmSpy.mockRestore()
 })
 
 it('uses round controls, switches to stop while running, and moves the spinner to the footer', async () => {
@@ -439,4 +451,35 @@ it('refreshes models when shared queryKeys.llms invalidates and prevents concurr
   expect(api.themeConfig).toHaveBeenCalledTimes(1)
   await act(async () => { finishMove() })
   await wait()
+})
+
+it('resets picking search on close and confirms dirty close in ThemeTaskSettings', async () => {
+  await wait(60)
+  await click('从会话转入')
+  const searchInput = host.querySelector<HTMLInputElement>('input[aria-label="搜索会话"]')!
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  act(() => {
+    setValue.call(searchInput, '不存在的关键词')
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await click('关闭选择会话')
+  await click('从会话转入')
+  expect(host.querySelector<HTMLInputElement>('input[aria-label="搜索会话"]')!.value).toBe('')
+  await click('关闭选择会话')
+
+  const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+  await click('打开主题任务：签到')
+  await click('任务设置：签到')
+  const titleInput = host.querySelector<HTMLInputElement>('[role="dialog"] input')!
+  act(() => {
+    setValue.call(titleInput, '改名草稿')
+    titleInput.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await click('取消')
+  expect(confirmSpy).toHaveBeenCalledTimes(1)
+  expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+  await click('取消')
+  expect(confirmSpy).toHaveBeenCalledTimes(2)
+  expect(host.querySelector('[role="dialog"]')).toBeNull()
+  confirmSpy.mockRestore()
 })

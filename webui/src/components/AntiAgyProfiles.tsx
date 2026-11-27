@@ -7,7 +7,9 @@ import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
 import { antiApi, type AgyCodeLoginState } from '@/api/client'
 import { Z_LAYERS } from '@/config/zLayers'
+import { useDirtyClose } from '@/hooks/useDirtyClose'
 import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
+import { dialog } from '@/stores/dialogStore'
 import { hasHigherLayerOverlay } from '@/utils/overlayStack'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import {
@@ -120,14 +122,11 @@ export function AntiAgyProfiles({
   }, [controlledOpen, onOpenChange])
 
   const [view, setView] = useState<PanelView>({ kind: initialView })
-  const prevSyncKeyRef = useRef('')
-  const syncKey = `${open}:${initialView}`
-  if (prevSyncKeyRef.current !== syncKey) {
-    prevSyncKeyRef.current = syncKey
+  useLayoutEffect(() => {
     if (open) {
       setView({ kind: initialView })
     }
-  }
+  }, [open, initialView])
 
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({})
   const [name, setName] = useState('')
@@ -138,6 +137,12 @@ export function AntiAgyProfiles({
   const [authCode, setAuthCode] = useState('')
   const [refreshingCodeLogin, setRefreshingCodeLogin] = useState(false)
   const refreshCodeLoginBusyRef = useRef(false)
+  const codeLoginEpochRef = useRef(0)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
   const prevLoginProfile = useRef<string | null | undefined>(undefined)
   const popoverId = useId()
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -271,8 +276,9 @@ export function AntiAgyProfiles({
   })
 
   const codeLoginStart = useMutation({
-    mutationFn: (profileId: string) => antiApi.startCodeLogin(profileId),
-    onSuccess: state => {
+    mutationFn: ({ profileId }: { profileId: string; epoch: number }) => antiApi.startCodeLogin(profileId),
+    onSuccess: (state, vars) => {
+      if (!mountedRef.current || vars.epoch !== codeLoginEpochRef.current) return
       setCodeLogin(state)
       setAuthCode('')
       if (state.phase === 'completed') {
@@ -282,8 +288,9 @@ export function AntiAgyProfiles({
     },
   })
   const codeLoginSubmit = useMutation({
-    mutationFn: ({ flowId, code }: { flowId: string; code: string }) => antiApi.submitCodeLogin(flowId, code),
-    onSuccess: state => {
+    mutationFn: ({ flowId, code }: { flowId: string; code: string; epoch: number }) => antiApi.submitCodeLogin(flowId, code),
+    onSuccess: (state, vars) => {
+      if (!mountedRef.current || vars.epoch !== codeLoginEpochRef.current) return
       setCodeLogin(state)
       if (state.phase === 'completed') {
         setMessage('Google 授权码登录成功，凭据已保存。')
@@ -298,10 +305,11 @@ export function AntiAgyProfiles({
     const flow = codeLogin
     if (!flow || (flow.phase !== 'starting' && flow.phase !== 'waiting_code')) return
     let active = true
+    const epoch = codeLoginEpochRef.current
     const timer = window.setInterval(async () => {
       try {
         const next = await antiApi.codeLoginStatus(flow.flow_id)
-        if (!active) return
+        if (!active || !mountedRef.current || epoch !== codeLoginEpochRef.current) return
         setCodeLogin(next)
         if (next.phase === 'completed') {
           setMessage('Google 授权码登录成功，凭据已保存。')
@@ -336,25 +344,59 @@ export function AntiAgyProfiles({
   const usingHiddenDefault = Boolean(profiles.data?.active === 'default')
   const loginProfile = profiles.data?.login_profile
   const cancelActiveCodeLogin = useCallback((flow: AgyCodeLoginState | null) => {
+    codeLoginEpochRef.current += 1
     if (!flow || (flow.phase !== 'starting' && flow.phase !== 'waiting_code')) return
     void antiApi.cancelCodeLogin(flow.flow_id).catch(() => undefined).finally(() => {
       void cache.invalidateQueries({ queryKey: key, exact: true })
     })
   }, [cache])
-  const navigateTo = (next: PanelView) => {
+  const hasActiveCodeLogin = Boolean(codeLogin && (codeLogin.phase === 'starting' || codeLogin.phase === 'waiting_code'))
+  const addDirty = view.kind === 'add' && name.trim().length > 0
+  const accountDirty = view.kind === 'account' && Boolean(
+    (viewedProfile && renameDraft !== viewedProfile.name)
+    || authCode.trim()
+    || hasActiveCodeLogin,
+  )
+  const isDirty = open && (addDirty || accountDirty)
+  const busy = action.isPending || codeLoginStart.isPending || codeLoginSubmit.isPending
+  const navConfirmingRef = useRef(false)
+  const restoreFocusOnCloseRef = useRef(false)
+  const applyNavigateTo = (next: PanelView) => {
     cancelActiveCodeLogin(codeLogin)
     setCodeLogin(null)
     setAuthCode('')
+    setName('')
+    if (viewedProfile) setRenameDraft(viewedProfile.name)
     setConfirmDeleteId(null)
     setMessage('')
     action.reset()
     setView(next)
   }
-  const close = useCallback(() => {
+  const navigateTo = (next: PanelView) => {
+    if (busy || navConfirmingRef.current) return
+    if (next.kind !== view.kind && (addDirty || accountDirty)) {
+      navConfirmingRef.current = true
+      void dialog.confirm(
+        '放弃未保存的修改？',
+        '切换视图将放弃当前未保存的修改或中断授权码登录流程。',
+        { confirmText: '放弃修改', cancelText: '继续编辑', tone: 'danger' },
+      ).then((discard) => {
+        if (discard) applyNavigateTo(next)
+      }).finally(() => {
+        navConfirmingRef.current = false
+      })
+      return
+    }
+    applyNavigateTo(next)
+  }
+  const closeImmediate = useCallback(() => {
     if (action.isPending || codeLoginStart.isPending || codeLoginSubmit.isPending) return
+    const shouldRestoreFocus = restoreFocusOnCloseRef.current
+    restoreFocusOnCloseRef.current = false
     cancelActiveCodeLogin(codeLogin)
     setOpen(false)
     setView({ kind: 'list' })
+    setName('')
     setConfirmDeleteId(null)
     setCodeLogin(null)
     setAuthCode('')
@@ -362,17 +404,23 @@ export function AntiAgyProfiles({
     action.reset()
     codeLoginStart.reset()
     codeLoginSubmit.reset()
+    if (shouldRestoreFocus) triggerRef.current?.focus()
   }, [action, cancelActiveCodeLogin, codeLogin, codeLoginStart, codeLoginSubmit, setOpen])
-  const closeRef = useRef(close)
-  closeRef.current = close
+  const { requestClose } = useDirtyClose({
+    dirty: isDirty,
+    busy,
+    onClose: closeImmediate,
+  })
+  const requestCloseRef = useRef(requestClose)
+  requestCloseRef.current = requestClose
 
   useOverlayRegistration({
     active: open,
     zIndex: Z_LAYERS.popover,
     getPanel: () => panelRef.current,
     onEscape: () => {
-      closeRef.current()
-      triggerRef.current?.focus()
+      restoreFocusOnCloseRef.current = true
+      requestCloseRef.current()
     },
     trapFocus: false,
   })
@@ -402,7 +450,8 @@ export function AntiAgyProfiles({
     const outside = (event: PointerEvent) => {
       if (hasHigherLayerOverlay(Z_LAYERS.popover)) return
       if (event.target instanceof Node && !triggerRef.current?.contains(event.target) && !panelRef.current?.contains(event.target)) {
-        closeRef.current()
+        restoreFocusOnCloseRef.current = false
+        requestCloseRef.current()
       }
     }
     update()
@@ -662,9 +711,9 @@ export function AntiAgyProfiles({
               className="ga-btn-sm shrink-0 px-2 text-[11px]"
               disabled={disabled || codeLoginStart.isPending}
               aria-label={`授权码登录：${profile.name}`}
-              onClick={() => codeLoginStart.mutate(profile.id)}
+              onClick={() => codeLoginStart.mutate({ profileId: profile.id, epoch: ++codeLoginEpochRef.current })}
             >
-              {codeLoginStart.isPending && codeLoginStart.variables === profile.id ? '生成链接…' : '授权码登录'}
+              {codeLoginStart.isPending && codeLoginStart.variables?.profileId === profile.id ? '生成链接…' : '授权码登录'}
             </button>
             {!nonWindows && (
               <button
@@ -716,7 +765,11 @@ export function AntiAgyProfiles({
                     onSubmit={e => {
                       e.preventDefault()
                       if (authCode.trim() && !codeLoginSubmit.isPending) {
-                        codeLoginSubmit.mutate({ flowId: codeLogin.flow_id, code: authCode.trim() })
+                        codeLoginSubmit.mutate({
+                          flowId: codeLogin.flow_id,
+                          code: authCode.trim(),
+                          epoch: codeLoginEpochRef.current,
+                        })
                       }
                     }}
                   >
@@ -739,7 +792,9 @@ export function AntiAgyProfiles({
                         if (refreshCodeLoginBusyRef.current) return
                         refreshCodeLoginBusyRef.current = true
                         setRefreshingCodeLogin(true)
+                        const epoch = codeLoginEpochRef.current
                         void antiApi.codeLoginStatus(codeLogin.flow_id).then(next => {
+                          if (!mountedRef.current || epoch !== codeLoginEpochRef.current) return
                           setCodeLogin(next)
                           if (next.phase === 'completed') {
                             setMessage('Google 授权码登录成功，凭据已保存。')
@@ -750,7 +805,7 @@ export function AntiAgyProfiles({
                           }
                         }).catch(() => undefined).finally(() => {
                           refreshCodeLoginBusyRef.current = false
-                          setRefreshingCodeLogin(false)
+                          if (mountedRef.current) setRefreshingCodeLogin(false)
                         })
                       }}
                     >
@@ -946,8 +1001,12 @@ export function AntiAgyProfiles({
       aria-expanded={open}
       aria-controls={open ? popoverId : undefined}
       onClick={() => {
-        if (open) close()
-        else setOpen(true)
+        if (open) {
+          restoreFocusOnCloseRef.current = false
+          requestClose()
+        } else {
+          setOpen(true)
+        }
       }}
     >
       {renderTierPillIcon(showTierEffect ? activeTierInfo?.tier : undefined, customActive && !activeNeedLogin)}
@@ -1022,7 +1081,10 @@ export function AntiAgyProfiles({
                   type="button"
                   aria-label="关闭"
                   title="关闭"
-                  onClick={close}
+                  onClick={() => {
+                    restoreFocusOnCloseRef.current = false
+                    requestClose()
+                  }}
                   disabled={action.isPending}
                   className="ga-btn-icon-ghost"
                 >
