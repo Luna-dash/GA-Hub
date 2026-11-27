@@ -267,8 +267,6 @@ export function AntiDaemonControl({
     : busy ? '处理中'
     : state === 'stopped' ? '已停止'
     : '不可用'
-  const compactBtn = 'ga-btn-sm shrink-0 px-2 text-[11px]'
-  const compactDangerBtn = 'ga-btn-sm-danger shrink-0 px-2 text-[11px]'
   const hasDaemonLifecycleBtns = (!running && state === 'stopped') || ((running || state === 'unavailable') && managed)
   const diagError = daemonError ?? resetWorker.error
 
@@ -387,7 +385,7 @@ export function AntiDaemonControl({
                 aria-label="关闭"
                 title="关闭"
                 onClick={closeDiag}
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-bg-soft hover:text-ink"
+                className="ga-btn-icon-ghost h-6 w-6"
               >
                 <X className="h-3.5 w-3.5" aria-hidden="true" />
                 <span className="sr-only">关闭</span>
@@ -419,13 +417,13 @@ export function AntiDaemonControl({
                   <div className="flex shrink-0 items-center gap-1.5">
                     <button
                       type="button"
-                      className={compactDangerBtn}
+                      className="ga-btn-sm-danger shrink-0"
                       disabled={busy}
                       onClick={() => (forceConflict === 'restart' ? restart.mutate(true) : stop.mutate(true))}
                     >
                       {forceConflict === 'restart' ? '强制重置运行时' : '强制停止运行时'}
                     </button>
-                    <button type="button" className={compactBtn} onClick={clearForceConflict}>
+                    <button type="button" className="ga-btn-sm shrink-0" onClick={clearForceConflict}>
                       取消
                     </button>
                   </div>
@@ -435,7 +433,7 @@ export function AntiDaemonControl({
               <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
-                  className={clsx(compactBtn, showWorkers && 'border-accent/60 bg-accent-soft/45 text-ink')}
+                  className={clsx('ga-btn-sm shrink-0', showWorkers && 'border-accent/60 bg-accent-soft/45 text-ink')}
                   onClick={() => {
                     setShowWorkers(v => !v)
                     setShowLogs(false)
@@ -445,7 +443,7 @@ export function AntiDaemonControl({
                 </button>
                 <button
                   type="button"
-                  className={clsx(compactBtn, showLogs && 'border-accent/60 bg-accent-soft/45 text-ink')}
+                  className={clsx('ga-btn-sm shrink-0', showLogs && 'border-accent/60 bg-accent-soft/45 text-ink')}
                   onClick={() => {
                     setShowLogs(v => !v)
                     setShowWorkers(false)
@@ -455,13 +453,13 @@ export function AntiDaemonControl({
                 </button>
                 {hasDaemonLifecycleBtns && <span aria-hidden="true" className="mx-0.5 h-3.5 w-px bg-line/70" />}
                 {!running && state === 'stopped' && (
-                  <button type="button" className={compactBtn} disabled={busy} onClick={() => start.mutate()}>启用 Agy</button>
+                  <button type="button" className="ga-btn-sm shrink-0" disabled={busy} onClick={() => start.mutate()}>启用 Agy</button>
                 )}
                 {(running || state === 'unavailable') && managed && (
-                  <button type="button" className={compactBtn} disabled={busy} onClick={() => restart.mutate(false)}>重置运行时</button>
+                  <button type="button" className="ga-btn-sm shrink-0" disabled={busy} onClick={() => restart.mutate(false)}>重置运行时</button>
                 )}
                 {running && managed && (
-                  <button type="button" className={compactBtn} disabled={busy} onClick={() => stop.mutate(false)}>停止运行时</button>
+                  <button type="button" className="ga-btn-sm shrink-0" disabled={busy} onClick={() => stop.mutate(false)}>停止运行时</button>
                 )}
               </div>
 
@@ -507,7 +505,7 @@ export function AntiDaemonControl({
                             </div>
                             <button
                               type="button"
-                              className={forceReset ? compactDangerBtn : compactBtn}
+                              className={forceReset ? 'ga-btn-sm-danger shrink-0' : 'ga-btn-sm shrink-0'}
                               disabled={resetWorker.isPending}
                               onClick={() => resetWorker.mutate({ sid: worker.session_id, force: forceReset })}
                             >

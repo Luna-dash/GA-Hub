@@ -993,6 +993,9 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
   const eventsCalled: string[] = []
   let calibratedPct: number | null = null
   let codeSubmitted = ''
+  let codeStatusCalls = 0
+  let holdCodeStatus = false
+  let releaseCodeStatus: (() => void) | null = null
   let commandItems = [
     { name: 'plan', description: '先生成方案', hint: '<goal>' },
     { name: 'teamwork', description: 'Coordinate multiple autonomous agents together' },
@@ -1105,6 +1108,10 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
       return reply({ flow_id: 'flow-1', profile_id: 'work', phase: 'completed', authorization_url: null, error: null })
     }
     if (path === '/api/anti/profiles/login/status/flow-1') {
+      codeStatusCalls += 1
+      if (holdCodeStatus) {
+        await new Promise<void>(resolve => { releaseCodeStatus = resolve })
+      }
       return reply({ flow_id: 'flow-1', profile_id: 'work', phase: 'waiting_code', authorization_url: 'https://accounts.google.com/o/oauth2/auth?client_id=test', error: null })
     }
     throw new Error(`Unexpected request: ${path}`)
@@ -1247,6 +1254,21 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     await act(async () => { codeLoginBtn.click() })
     await flush()
     expect(document.body.textContent).toContain('https://accounts.google.com/o/oauth2/auth?client_id=test')
+    const refreshCodeBtn = document.body.querySelector<HTMLButtonElement>('button[aria-label="刷新授权状态"]')!
+    const statusCallsBefore = codeStatusCalls
+    holdCodeStatus = true
+    await act(async () => {
+      refreshCodeBtn.click()
+      refreshCodeBtn.click()
+    })
+    expect(codeStatusCalls).toBe(statusCallsBefore + 1)
+    expect(refreshCodeBtn.disabled).toBe(true)
+    expect(refreshCodeBtn.textContent?.trim()).toBe('刷新中…')
+    holdCodeStatus = false
+    await act(async () => { releaseCodeStatus?.(); await Promise.resolve() })
+    await flush()
+    expect(refreshCodeBtn.disabled).toBe(false)
+    expect(refreshCodeBtn.textContent?.trim()).toBe('刷新')
     const codeInput = document.body.querySelector<HTMLInputElement>('input[aria-label="Google 授权码"]')!
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(codeInput, 'auth-code-xyz')

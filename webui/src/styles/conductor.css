@@ -184,7 +184,7 @@ header:has(.conductor-header-history) > div:has(.conductor-header-history) { fle
 .conductor-history-delete { flex: 0 0 30px; display: inline-flex; align-items: center; justify-content: center; color: var(--c-text-faint); background: transparent; border: 0; cursor: pointer; opacity: .62; transition: opacity .12s ease, color .12s ease; }
 .conductor-history-item:hover .conductor-history-delete, .conductor-history-item:focus-within .conductor-history-delete { opacity: 1; }
 .conductor-history-delete:hover { @apply text-status-danger; }
-.conductor-history-delete:disabled { cursor: default; }
+.conductor-history-delete:disabled { cursor: not-allowed; }
 .conductor-history-row { display: grid; flex: 1; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 12px; text-align: left; color: var(--c-text); background: transparent; border: 0; cursor: pointer; }
 .conductor-history-item:hover .conductor-history-row, .conductor-history-row[data-selected="true"] { background: var(--c-accent-soft); }
 .conductor-history-status { display: inline-flex; align-items: center; justify-content: center; width: 18px; }

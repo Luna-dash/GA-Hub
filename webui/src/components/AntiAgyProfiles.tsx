@@ -134,6 +134,8 @@ export function AntiAgyProfiles({
   const [message, setMessage] = useState('')
   const [codeLogin, setCodeLogin] = useState<AgyCodeLoginState | null>(null)
   const [authCode, setAuthCode] = useState('')
+  const [refreshingCodeLogin, setRefreshingCodeLogin] = useState(false)
+  const refreshCodeLoginBusyRef = useRef(false)
   const prevLoginProfile = useRef<string | null | undefined>(undefined)
   const popoverId = useId()
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -633,7 +635,7 @@ export function AntiAgyProfiles({
                     }
                   }}
                   className={clsx(
-                    'rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
+                    'rounded-md px-2 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45',
                     activeOpt
                       ? 'bg-accent text-[var(--c-accent-fg)] shadow-sm'
                       : 'border border-line/70 bg-bg-soft/60 text-ink-muted hover:border-accent/60 hover:text-ink',
@@ -726,7 +728,11 @@ export function AntiAgyProfiles({
                       type="button"
                       className="ga-btn-sm shrink-0 px-2 text-[11px]"
                       aria-label="刷新授权状态"
+                      disabled={refreshingCodeLogin || codeLoginSubmit.isPending}
                       onClick={() => {
+                        if (refreshCodeLoginBusyRef.current) return
+                        refreshCodeLoginBusyRef.current = true
+                        setRefreshingCodeLogin(true)
                         void antiApi.codeLoginStatus(codeLogin.flow_id).then(next => {
                           setCodeLogin(next)
                           if (next.phase === 'completed') {
@@ -736,10 +742,13 @@ export function AntiAgyProfiles({
                             void cache.invalidateQueries({ queryKey: key, exact: true })
                             refresh()
                           }
-                        }).catch(() => undefined)
+                        }).catch(() => undefined).finally(() => {
+                          refreshCodeLoginBusyRef.current = false
+                          setRefreshingCodeLogin(false)
+                        })
                       }}
                     >
-                      刷新
+                      {refreshingCodeLogin ? '刷新中…' : '刷新'}
                     </button>
                     <button
                       type="button"
@@ -970,7 +979,7 @@ export function AntiAgyProfiles({
                     aria-label="返回账号列表"
                     title="返回账号列表"
                     onClick={() => navigateTo({ kind: 'list' })}
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line/70 bg-bg-card text-ink-muted transition-colors hover:border-accent/50 hover:text-ink"
+                    className="ga-btn-icon-sm"
                   >
                     <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
@@ -1009,7 +1018,7 @@ export function AntiAgyProfiles({
                   title="关闭"
                   onClick={close}
                   disabled={action.isPending}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-transparent text-ink-muted transition-colors hover:border-line/70 hover:bg-bg-soft hover:text-ink disabled:opacity-45"
+                  className="ga-btn-icon-ghost"
                 >
                   <X className="h-3.5 w-3.5" aria-hidden="true" />
                   <span className="sr-only">关闭</span>

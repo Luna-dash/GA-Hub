@@ -1609,7 +1609,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
               </button>
               <button
                 type="button"
-                className="ga-btn-link px-1.5 py-0.5 text-[11px] text-ink-muted hover:text-ink disabled:opacity-45"
+                className="ga-btn-link-muted px-1.5 py-0.5 text-[11px]"
                 disabled={resetAcp.isPending}
                 onClick={() => resetAcp.mutate(true)}
               >

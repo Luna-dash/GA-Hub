@@ -706,7 +706,7 @@ export default function Conversations() {
                 </div>
                 <div className="text-sm font-medium text-status-danger">读取会话详情失败：{errorMessageFromError(detailErr)}</div>
                 <div className="mt-4 flex items-center justify-center gap-2">
-                  <button type="button" onClick={() => { void refetchDetail() }} className="ga-btn h-8 px-3 text-xs">
+                  <button type="button" onClick={() => { void refetchDetail() }} className="ga-btn-sm">
                     <RotateCw className="h-3.5 w-3.5" aria-hidden="true" />
                     <span>重试</span>
                   </button>
@@ -717,7 +717,7 @@ export default function Conversations() {
                       writePageState('conversations.lastActive', null)
                       nav('/conversations', { replace: true })
                     }}
-                    className="ga-btn h-8 px-3 text-xs"
+                    className="ga-btn-sm"
                   >
                     <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
                     <span>返回列表</span>

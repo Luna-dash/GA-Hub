@@ -303,11 +303,15 @@ export function CloseIconButton({
   type = 'button',
   ...props
 }: CloseIconButtonProps) {
+  const hasRounded = Boolean(className && /(?:^|\s|!)rounded(?:-[^\s]+)?(?:\s|$)/.test(className))
   const variantClass =
     variant === 'badge'
       ? 'ga-btn-icon-badge'
       : variant === 'compact'
-        ? 'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-bg-soft hover:text-status-danger disabled:opacity-40'
+        ? clsx(
+            'inline-flex h-6 w-6 shrink-0 items-center justify-center text-ink-muted transition-colors hover:bg-bg-soft hover:text-status-danger disabled:opacity-40',
+            !hasRounded && 'rounded-full',
+          )
         : 'ga-btn-icon-ghost'
   const size = iconSize ?? (variant === 'badge' ? 11 : variant === 'compact' ? 13 : 15)
   return (
