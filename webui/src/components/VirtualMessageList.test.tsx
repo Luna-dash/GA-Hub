@@ -415,4 +415,69 @@ describe('VirtualMessageList', () => {
     expect(row50.style.top).toBe('5200px')
     expect(scroller.scrollTop).toBe(5_184)
   })
+
+  it('never pulls scrollTop upward into history when pinnedToBottom is true and rows resize', () => {
+    const callbacks: Array<() => void> = []
+    class FakeResizeObserver {
+      constructor(cb: () => void) { callbacks.push(cb) }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+
+    function PinnedHarness() {
+      const scrollRef = useRef<HTMLDivElement>(null)
+      return (
+        <div ref={scrollRef}>
+          <VirtualMessageList
+            ref={(value) => { handle = value }}
+            items={items}
+            scrollRef={scrollRef}
+            pinnedToBottom
+            virtualizationThreshold={5}
+            overscanPx={900}
+            itemKey={(item) => item}
+            estimateSize={() => 300}
+            renderItem={(item) => <div>{item}</div>}
+          />
+        </div>
+      )
+    }
+
+    act(() => root.render(<PinnedHarness />))
+    const scroller = host.firstElementChild as HTMLDivElement
+    const list = host.querySelector<HTMLElement>('[data-chat-virtual-list]')!
+    let scrollTop = 0
+    Object.defineProperties(scroller, {
+      clientHeight: { value: 400, configurable: true },
+      scrollHeight: {
+        get: () => Number.parseFloat(list.style.height || '0'),
+        configurable: true,
+      },
+      scrollTop: {
+        get: () => scrollTop,
+        set: (value: number) => {
+          const maxTop = Math.max(0, Number.parseFloat(list.style.height || '0') - 400)
+          scrollTop = Math.max(0, Math.min(value, maxTop))
+        },
+        configurable: true,
+      },
+    })
+    Object.defineProperty(scroller, 'scrollTo', { value: undefined, configurable: true })
+
+    act(() => handle?.scrollToIndex(items.length - 1, { behavior: 'auto', align: 'end' }))
+    const initialBottom = scroller.scrollHeight - 400
+    expect(scroller.scrollTop).toBe(initialBottom)
+
+    // Simulate tail expanding >80px (creating dist >= 80 momentarily) while an overscan row above shrinks by -200px.
+    const aboveRow = host.querySelector<HTMLElement>('[data-virtual-index="96"]')!
+    const tailRow = host.querySelector<HTMLElement>('[data-virtual-index="99"]')!
+    expect(aboveRow).not.toBeNull()
+    expect(tailRow).not.toBeNull()
+    Object.defineProperty(aboveRow, 'offsetHeight', { value: 100, configurable: true })
+    Object.defineProperty(tailRow, 'offsetHeight', { value: 500, configurable: true })
+    act(() => callbacks.forEach((cb) => cb()))
+
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight - 400)
+  })
 })

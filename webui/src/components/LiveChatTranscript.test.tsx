@@ -275,4 +275,103 @@ describe('LiveChatTranscript reading intent', () => {
     })
     expect(host.querySelector('[aria-label="对话位置导航"]')).toBeNull()
   })
+
+  it('does not slam scrollTop before projectionReady on open-latest and stops retrying once bottom-clamped', () => {
+    resetPageState()
+    layout.first = 2
+    layout.scrollToIndex.mockReset()
+    const policyMessages: ChatMsg[] = Array.from({ length: 8 }, (_, i) => ({
+      role: i % 2 ? 'assistant' : 'user',
+      content: `msg ${i}`,
+      runId: `run-${Math.floor(i / 2)}`,
+      streamId: `s-${i}`,
+    }))
+    let scrollTop = 0
+    const scrollTopSetter = vi.fn((next: number) => { scrollTop = next })
+    act(() => {
+      useChatStore.setState({
+        sessionId: 'open-latest-sess',
+        msgs: policyMessages,
+        streaming: false,
+        resumePolicy: 'open-latest',
+        projectionReady: false,
+        historyStatus: 'ready',
+        historyHasMore: false,
+        olderHistoryStatus: 'idle',
+      })
+      root.render(
+        <LiveChatTranscript
+          key="open-latest-sess"
+          ref={handle}
+          sessionId="open-latest-sess"
+          sessionError=""
+          scheduledChats={[]}
+          scheduleNow={0}
+          onCancelSchedule={() => {}}
+          onRewind={() => {}}
+        />,
+      )
+    })
+    const el = host.querySelector('[data-live-chat-scroll]') as HTMLDivElement
+    Object.defineProperties(el, {
+      scrollHeight: { configurable: true, value: 4000 },
+      clientHeight: { configurable: true, value: 500 },
+      scrollTop: { configurable: true, get: () => scrollTop, set: scrollTopSetter },
+    })
+    el.scrollTo = vi.fn()
+
+    // While projectionReady is false, a msgs update must not pre-slam scrollTop to bottom.
+    act(() => {
+      useChatStore.setState({ msgs: [...policyMessages] })
+    })
+    expect(scrollTopSetter).not.toHaveBeenCalled()
+
+    // Once projectionReady becomes true, open-latest targets last user turn (index 6).
+    // Simulate a short final turn that clamps at maxScrollTop (3500) with first visible = 4 (< 6).
+    layout.first = 4
+    layout.scrollToIndex.mockImplementation(() => { scrollTop = 3500 })
+    act(() => {
+      useChatStore.setState({ projectionReady: true })
+    })
+    flushFrames(); flushFrames()
+    // First verification sees attempt=0 bottom-clamp and schedules one follow-up pass;
+    // the follow-up pass (attempt=1) confirms bottom-clamp and stops instead of looping 12 times.
+    flushFrames(); flushFrames()
+    const callsAfterSettle = layout.scrollToIndex.mock.calls.length
+    expect(callsAfterSettle).toBe(2)
+    act(() => vi.advanceTimersByTime(1000))
+    expect(layout.scrollToIndex).toHaveBeenCalledTimes(callsAfterSettle)
+  })
+
+  it('stays pinned at bottom when tail content grows >= 80px after jumpToBottom', () => {
+    const el = mount()
+    let scrollTop = 400
+    let scrollHeight = 4000
+    const scrollTopSetter = vi.fn((next: number) => { scrollTop = next })
+    Object.defineProperties(el, {
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      clientHeight: { configurable: true, value: 500 },
+      scrollTop: { configurable: true, get: () => scrollTop, set: scrollTopSetter },
+    })
+
+    act(() => {
+      el.dispatchEvent(new Event('wheel'))
+      el.dispatchEvent(new Event('scroll'))
+      flushFrames()
+    })
+    click('跳到底部')
+    expect(host.querySelector('[aria-label="对话位置导航"]')).toBeNull()
+
+    // Advance past the 900ms jumpToBottom window, then expand tail height by > 80px (e.g. image/markdown load).
+    act(() => vi.advanceTimersByTime(1500))
+    scrollHeight = 4240
+    scrollTopSetter.mockClear()
+    act(() => {
+      el.dispatchEvent(new Event('scroll'))
+      flushFrames()
+    })
+    expect(scrollTopSetter).toHaveBeenCalledWith(4240)
+    expect(host.querySelector('[aria-label="对话位置导航"]')).toBeNull()
+    expect(saved().A.stuck).toBe(true)
+  })
 })

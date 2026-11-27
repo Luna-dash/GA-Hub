@@ -43,9 +43,9 @@ import { ProjectSelect } from '@/components/ProjectSelect'
 import { SessionRail } from '@/components/SessionRail'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import type { HubSession, PasteAttachment, SessionRuntime } from '@/api/types'
-import { readPageState, usePageState, writePageState } from '@/utils/pageState'
-import { routeChatWheel } from '@/utils/chatWheel'
-import { createRafScheduler } from '@/utils/rafScheduler'
+import { useTranscriptViewport } from '@/hooks/useTranscriptViewport'
+import { usePageState } from '@/utils/pageState'
+import { getFirstVisibleDomItemIndex, scrollDomItemIntoView } from '@/utils/transcriptViewport'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
 import { formatRunUsage } from '@/utils/antiUsage'
@@ -566,22 +566,6 @@ function Conversation({ session, headerActions, profileId, profilesData, support
   } as CSSProperties
   const transcript = useRef<HTMLDivElement>(null)
   const utilityRailRef = useRef<HTMLElement>(null)
-  const followTranscript = useRef(true)
-  const [stuckBottom, setStuckBottom] = useState(true)
-  const [activeTurn, setActiveTurn] = useState(-1)
-  const activeTurnRef = useRef(-1)
-  const navTargetRef = useRef<number | null>(null)
-  const navLockUntilRef = useRef(0)
-  const jumpingToBottomUntilRef = useRef(0)
-  const [unreadRuns, setUnreadRuns] = useState(0)
-  const seenRunCountRef = useRef(0)
-  const scrollPositionsRef = useRef<Record<string, { scrollTop: number; stuck: boolean }>>(
-    readPageState('antiChat.scrollPositions', {}),
-  )
-  const updateActiveTurn = useCallback((next: number) => {
-    activeTurnRef.current = next
-    setActiveTurn((previous) => previous === next ? previous : next)
-  }, [])
   const models = useQuery({
     queryKey: ['anti-models', effectiveProfileId],
     enabled: Boolean(effectiveProfileId),
@@ -834,186 +818,49 @@ function Conversation({ session, headerActions, profileId, profilesData, support
   }
 
   const runs = history.data ?? []
-
-  const syncTranscriptNav = useCallback(() => {
-    const el = transcript.current
-    if (!el) return
-    const now = performance.now()
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    if (jumpingToBottomUntilRef.current > now) {
-      if (atBottom) {
-        jumpingToBottomUntilRef.current = 0
-      } else {
-        return
-      }
-    }
-    followTranscript.current = atBottom
-    setStuckBottom(atBottom)
-    if (atBottom) {
-      setUnreadRuns(0)
-      seenRunCountRef.current = runs.length
-    }
-    const nodes = el.querySelectorAll<HTMLElement>('[data-anti-turn]')
-    if (nodes.length === 0) {
-      updateActiveTurn(-1)
-      return
-    }
-    const navTarget = navTargetRef.current
-    if (navTarget !== null && navTarget < nodes.length && now < navLockUntilRef.current) {
-      updateActiveTurn(navTarget)
-      return
-    }
-    navTargetRef.current = null
-    navLockUntilRef.current = 0
-    const elRect = el.getBoundingClientRect?.()
-    const hasLiveRects = Boolean(elRect && elRect.height > 0)
-    let currentTurn = atBottom ? nodes.length - 1 : 0
-    if (!atBottom) {
-      const threshold = hasLiveRects ? elRect.top + el.clientTop + 48 : el.scrollTop + 48
-      nodes.forEach((node, idx) => {
-        const rect = node.getBoundingClientRect?.()
-        const top = hasLiveRects && rect && rect.height > 0 ? rect.top : node.offsetTop
-        if (top <= threshold) currentTurn = idx
-      })
-    }
-    updateActiveTurn(currentTurn)
-    if (initializedRunsRef.current) {
-      const next = { ...scrollPositionsRef.current, [sid]: { scrollTop: el.scrollTop, stuck: atBottom } }
-      const entries = Object.entries(next)
-      scrollPositionsRef.current = entries.length > 40 ? Object.fromEntries(entries.slice(entries.length - 40)) : next
-      writePageState('antiChat.scrollPositions', scrollPositionsRef.current)
-    }
-  }, [runs.length, sid, updateActiveTurn])
-
-  const syncTranscriptNavRef = useRef(syncTranscriptNav)
-  syncTranscriptNavRef.current = syncTranscriptNav
-
-  useEffect(() => {
-    const el = transcript.current
-    if (!el) return
-    const scrollScheduler = createRafScheduler(() => syncTranscriptNavRef.current())
-    const clearNavLock = () => {
-      navTargetRef.current = null
-      navLockUntilRef.current = 0
-      jumpingToBottomUntilRef.current = 0
-    }
-    const onScrollEnd = () => {
-      const now = performance.now()
-      if (now < jumpingToBottomUntilRef.current || now < navLockUntilRef.current) {
-        syncTranscriptNavRef.current()
-        return
-      }
-      clearNavLock()
-      scrollScheduler.schedule()
-    }
-    el.addEventListener('scroll', scrollScheduler.schedule, { passive: true })
-    el.addEventListener('scrollend', onScrollEnd, { passive: true })
-    el.addEventListener('wheel', clearNavLock, { passive: true })
-    el.addEventListener('touchstart', clearNavLock, { passive: true })
-    el.addEventListener('pointerdown', clearNavLock, { passive: true })
-    return () => {
-      scrollScheduler.cancel()
-      el.removeEventListener('scroll', scrollScheduler.schedule)
-      el.removeEventListener('scrollend', onScrollEnd)
-      el.removeEventListener('wheel', clearNavLock)
-      el.removeEventListener('touchstart', clearNavLock)
-      el.removeEventListener('pointerdown', clearNavLock)
-    }
-  }, [sid])
-
-  const hasRuns = runs.length > 0
-  useEffect(() => {
-    const el = transcript.current
-    const rail = utilityRailRef.current
-    if (!el || !rail || !hasRuns) return
-    const clearNavLock = () => {
-      navTargetRef.current = null
-      navLockUntilRef.current = 0
-      jumpingToBottomUntilRef.current = 0
-    }
-    const onWheel = (event: WheelEvent) => routeChatWheel(event, el, clearNavLock)
-    rail.addEventListener('wheel', onWheel, { capture: true, passive: false })
-    return () => {
-      rail.removeEventListener('wheel', onWheel, { capture: true })
-    }
-  }, [hasRuns, sid])
-
-  const jumpToBottom = useCallback(() => {
-    const el = transcript.current
-    if (!el) return
-    const lastTurn = runs.length - 1
-    followTranscript.current = true
-    setStuckBottom(true)
-    setUnreadRuns(0)
-    seenRunCountRef.current = runs.length
-    navTargetRef.current = lastTurn >= 0 ? lastTurn : null
-    navLockUntilRef.current = performance.now() + 900
-    jumpingToBottomUntilRef.current = performance.now() + 900
-    updateActiveTurn(Math.max(0, lastTurn))
-    el.scrollTop = el.scrollHeight
-    requestAnimationFrame(() => {
-      if (jumpingToBottomUntilRef.current > performance.now()) {
-        el.scrollTop = el.scrollHeight
-      }
-    })
-  }, [runs.length, updateActiveTurn])
-
-  const collapseToLatest = useCallback(() => {
-    navTargetRef.current = null
-    navLockUntilRef.current = 0
-    jumpingToBottomUntilRef.current = 0
-    followTranscript.current = true
-    setStuckBottom(true)
-    setUnreadRuns(0)
-    seenRunCountRef.current = runs.length
-    updateActiveTurn(runs.length - 1)
-    const el = transcript.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-    if (initializedRunsRef.current) {
-      const next = { ...scrollPositionsRef.current, [sid]: { scrollTop: el.scrollTop, stuck: true } }
-      const entries = Object.entries(next)
-      scrollPositionsRef.current = entries.length > 40 ? Object.fromEntries(entries.slice(entries.length - 40)) : next
-      writePageState('antiChat.scrollPositions', scrollPositionsRef.current)
-    }
-    requestAnimationFrame(() => {
-      if (followTranscript.current && transcript.current === el) {
-        el.scrollTop = el.scrollHeight
-      }
-    })
-  }, [runs.length, sid, updateActiveTurn])
-
-  const jumpToTurnIndex = useCallback((targetIndex: number) => {
-    const el = transcript.current
-    if (!el || runs.length === 0) return
-    const next = Math.max(0, Math.min(runs.length - 1, targetIndex))
-    const target = el.querySelector<HTMLElement>(`[data-anti-turn="${next}"]`)
-    if (!target) return
-    followTranscript.current = false
-    setStuckBottom(false)
-    navTargetRef.current = next
-    navLockUntilRef.current = performance.now() + 700
-    jumpingToBottomUntilRef.current = 0
-    updateActiveTurn(next)
-    const elRect = el.getBoundingClientRect?.()
-    const targetRect = target.getBoundingClientRect?.()
-    const top = elRect && targetRect && elRect.height > 0 && targetRect.height > 0
-      ? Math.max(0, el.scrollTop + (targetRect.top - elRect.top - el.clientTop) - 16)
-      : Math.max(0, target.offsetTop - 16)
-    const farJump = Math.abs(top - el.scrollTop) > Math.max(el.clientHeight * 2.5, 1600)
-    if (typeof el.scrollTo === 'function') {
-      el.scrollTo({ top, behavior: farJump ? 'auto' : 'smooth' })
-    } else {
-      el.scrollTop = top
-    }
-  }, [runs.length, updateActiveTurn])
-
-  const jumpToTurn = useCallback((delta: -1 | 1) => {
-    const currentIndex = activeTurnRef.current < 0
-      ? (followTranscript.current ? runs.length - 1 : 0)
-      : activeTurnRef.current
-    jumpToTurnIndex(currentIndex + delta)
-  }, [jumpToTurnIndex, runs.length])
+  const turnItemIndexes = useMemo(() => runs.map((_, index) => index), [runs.length])
+  const {
+    stuckBottom,
+    unread: unreadRuns,
+    activeTurn,
+    jumpToBottom,
+    collapseToLatest,
+    jumpToTurnIndex,
+    jumpToTurn,
+    followTail,
+    pinScrollToBottom,
+  } = useTranscriptViewport({
+    sessionId: sid,
+    storageKey: 'antiChat.scrollPositions',
+    scrollRef: transcript,
+    utilityRailRef,
+    hasUtilityRail: runs.length > 0,
+    resumePolicy: 'restore-position',
+    hydration: history.isError ? 'failed' : history.isSuccess ? 'ready' : 'loading-history',
+    contentRevision: runs,
+    unreadTotalCount: runs.length,
+    unreadMode: 'delta',
+    deferInitialLanding: false,
+    adapter: {
+      itemCount: runs.length,
+      getItemKey: (index) => runs[index]?.id ?? '',
+      findIndexByKey: (key) => runs.findIndex((run) => run.id === key),
+      turnItemIndexes,
+      getFirstVisibleIndex: (offsetPx) => (
+        transcript.current ? getFirstVisibleDomItemIndex(transcript.current, '[data-anti-turn]', offsetPx) : 0
+      ),
+      scrollToItem: (index, { behavior, align }) => {
+        const el = transcript.current
+        if (!el) return
+        if (align === 'end' && index >= runs.length - 1) {
+          el.scrollTop = el.scrollHeight
+          return
+        }
+        const target = el.querySelector<HTMLElement>(`[data-anti-turn="${index}"]`)
+        if (target) scrollDomItemIntoView(el, target, behavior)
+      },
+    },
+  })
 
   const minimapTurns = useMemo(
     () => runs.map((run, idx) => {
@@ -1028,47 +875,14 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     [runs],
   )
 
-  const initializedRunsRef = useRef(false)
-  const scrollToLatest = useCallback(() => {
-    const el = transcript.current
-    if (!el || !history.isSuccess) return
-    if (!initializedRunsRef.current) {
-      initializedRunsRef.current = true
-      seenRunCountRef.current = runs.length
-      setUnreadRuns(0)
-      const saved = scrollPositionsRef.current[sid]
-      if (saved && !saved.stuck && runs.length > 0) {
-        el.scrollTop = saved.scrollTop
-        followTranscript.current = false
-        setStuckBottom(false)
-        syncTranscriptNavRef.current()
-        return
-      }
-      el.scrollTop = el.scrollHeight
-      followTranscript.current = true
-      setStuckBottom(true)
-      updateActiveTurn(runs.length - 1)
-      return
-    }
-    if (followTranscript.current) {
-      el.scrollTop = el.scrollHeight
-      seenRunCountRef.current = runs.length
-      setUnreadRuns(0)
-      setStuckBottom(true)
-      updateActiveTurn(runs.length - 1)
-    } else if (runs.length > seenRunCountRef.current) {
-      setUnreadRuns(runs.length - seenRunCountRef.current)
-    }
-  }, [history.isSuccess, runs.length, sid, updateActiveTurn])
   const handleEventsChanged = useCallback(() => {
     const now = Date.now()
     if (now - lastActivityAtRef.current >= 1000) {
       lastActivityAtRef.current = now
       setLastActivityAt(now)
     }
-    scrollToLatest()
-  }, [scrollToLatest])
-  useEffect(scrollToLatest, [history.isSuccess, runs.length, scrollToLatest])
+    pinScrollToBottom()
+  }, [pinScrollToBottom])
   const activeApproval: AntiApprovalPrompt | null = current
     ? (live.data?.approval ?? current.approval ?? null)
     : null
@@ -1079,27 +893,25 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     setApprovalCollapsed(false)
   }, [activeApprovalId])
   useLayoutEffect(() => {
-    const el = transcript.current
-    if (!el || !activeApprovalId || !followTranscript.current) return
-    el.scrollTop = el.scrollHeight
-  }, [activeApprovalId, approvalCollapsed])
+    if (!activeApprovalId) return
+    pinScrollToBottom()
+  }, [activeApprovalId, approvalCollapsed, pinScrollToBottom])
   useLayoutEffect(() => {
-    const el = transcript.current
-    if (!el || queueItems.length === 0 || !followTranscript.current) return
-    el.scrollTop = el.scrollHeight
-  }, [queueItems.length, queueCollapsed, Boolean(pendingEditItem)])
+    if (queueItems.length === 0) return
+    pinScrollToBottom()
+  }, [queueItems.length, queueCollapsed, Boolean(pendingEditItem), pinScrollToBottom])
   useEffect(() => {
     const dock = approvalDockRef.current
     const el = transcript.current
     if (!dock || !el || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => {
-      if (followTranscript.current && transcript.current === el) {
-        el.scrollTop = el.scrollHeight
+      if (transcript.current === el) {
+        pinScrollToBottom()
       }
     })
     observer.observe(dock)
     return () => observer.disconnect()
-  }, [activeApprovalId])
+  }, [activeApprovalId, pinScrollToBottom])
   const [silentNow, setSilentNow] = useState(Date.now)
   useEffect(() => {
     if (!current || activeApprovalId) return
@@ -1197,7 +1009,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     send.reset()
     cancel.reset()
     resetAcp.reset()
-    followTranscript.current = true
+    followTail()
     setPending(body)
     send.mutate(body)
   }
@@ -1281,7 +1093,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
   const dispatchQueued = useMutation({
     mutationFn: (qid?: string) => antiApi.dispatchQueuedPrompt(sid, qid),
     onSuccess: res => {
-      followTranscript.current = true
+      followTail()
       if (res.run) {
         cache.setQueryData<Run[]>(key, old => [...(old ?? []).filter(row => row.id !== res.run.id), res.run])
       }

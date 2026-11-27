@@ -5,20 +5,15 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react'
 import { ScheduleClockFace, scheduleClockButtonClass } from './ScheduleClockFace'
 import type { ScheduledChat } from '@/api/types'
-import { decideViewportAction } from '@/utils/conversationViewport'
 import { useChatStore, type ChatMsg } from '@/stores/chatStore'
 import { formatDateTime } from '@/utils/formatTime'
-import { readPageState, writePageState } from '@/utils/pageState'
-import { lastProgrammaticScrollAt, markProgrammaticScroll } from '@/utils/programmaticScroll'
-import { createRafScheduler } from '@/utils/rafScheduler'
-import { routeChatWheel } from '@/utils/chatWheel'
+import { useTranscriptViewport } from '@/hooks/useTranscriptViewport'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { useChatPerformanceProbe } from '@/utils/useChatPerformanceProbe'
 import { MessageBubble } from './MessageBubble'
@@ -27,11 +22,6 @@ import { ConversationTurnMinimap } from './ConversationTurnMinimap'
 import { TranscriptNavDock } from './TranscriptNavDock'
 import { VirtualMessageList, type VirtualMessageListHandle } from './VirtualMessageList'
 import { Z_LAYERS } from '@/config/zLayers'
-
-// A freshly launched UI lands on the latest turn (its user question at the
-// top of the viewport); positions saved by a previous run are ignored. Route
-// remounts within the same run still restore the saved reading position.
-let freshLaunchPending = true
 
 // Degraded-landing escape for the projection barrier: if replay_done never
 // arrives (e.g. the transport is down and the managed socket keeps retrying),
@@ -88,117 +78,14 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     // bottom; otherwise retain their reading position and count new messages.
     const utilityRailRef = useRef<HTMLElement>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
-    const [stuckBottom, setStuckBottom] = useState(true)
-    const [unread, setUnread] = useState(0)
-    const [activeTurn, setActiveTurn] = useState(-1)
-    const activeTurnRef = useRef(-1)
     const [hoveredSchedule, setHoveredSchedule] = useState<{
       task: ScheduledChat
       top: number
       right: number
     } | null>(null)
-    const navigationTargetRef = useRef<number | null>(null)
-    const navigationLockUntilRef = useRef(0)
-    const jumpingToBottomUntilRef = useRef(0)
     const prependingHistoryRef = useRef(false)
     const virtualListRef = useRef<VirtualMessageListHandle>(null)
-    const updateActiveTurn = useCallback((next: number) => {
-      activeTurnRef.current = next
-      setActiveTurn((previous) => previous === next ? previous : next)
-    }, [])
 
-    // Reading-position persistence across route switches. The anchor is the
-    // first visible message key, so restores survive estimate-vs-measured
-    // height drift after remount.
-    const scrollPositionsRef = useRef<Record<string, SavedScrollPosition>>(
-      readPageState('liveChat.scrollPositions', {}),
-    )
-    const restoredSessionsRef = useRef<Set<string>>(new Set())
-    // Reader gestures capture geometry; explicit navigation saves its target
-    // synchronously. Internal layout compensation must never change intent.
-    const lastUserGestureAtRef = useRef(0)
-    const viewportIntentVersionRef = useRef(0)
-    const aimDeadlineRef = useRef(0)
-    const msgsRef = useRef(msgs)
-    msgsRef.current = msgs
-    const capturePosition = useCallback((knownFirstVisible?: number) => {
-      const el = scrollRef.current
-      // Detached DOM reads zeros and would overwrite a good saved position
-      // with a bogus stuck=true entry during unmount cleanup.
-      if (!sessionId || !el || !el.isConnected || msgs.length === 0) return
-      // Session-switch race: the store swaps msgs (and its sessionId) to the
-      // next session before this transcript's sessionId prop catches up.
-      // Capturing in that window would persist the NEXT session's message
-      // key under this session. getState() keeps the check race-free even
-      // for leave-captures that run between renders.
-      if (useChatStore.getState().sessionId !== sessionId) return
-      // The remount commit runs recomputeStuck (and its capture) before the
-      // one-shot restore effect scrolls back. Without this gate that early
-      // capture clobbers the saved position with the initial (bottom) state.
-      if (!restoredSessionsRef.current.has(sessionId)) return
-      // Captures during programmatic motion (restore landing, measurement
-      // correction, bottom pinning) would persist a position the reader
-      // never chose. Only write when the last real gesture is newer than
-      // the last programmatic scroll.
-      const gestureAt = lastUserGestureAtRef.current
-      if (gestureAt === 0 || lastProgrammaticScrollAt() > gestureAt) return
-      const index = knownFirstVisible ?? (virtualListRef.current?.getFirstVisibleIndex(48) ?? 0)
-      const message = msgs[index]
-      if (!message) return
-      const nextKey = chatMessageKey(message)
-      const nextStuck = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-      const previous = scrollPositionsRef.current[sessionId]
-      if (previous?.key === nextKey && previous?.stuck === nextStuck) return
-      scrollPositionsRef.current[sessionId] = {
-        key: nextKey,
-        stuck: nextStuck,
-      }
-      writePageState('liveChat.scrollPositions', trimScrollPositions(scrollPositionsRef.current))
-    }, [msgs, sessionId])
-    // Commit before any smooth scroll/measurement so switching away mid-motion
-    // retains the chosen destination, not the geometry of an intermediate frame.
-    const commitNavigation = useCallback((index: number, stuck: boolean) => {
-      if (!sessionId || useChatStore.getState().sessionId !== sessionId) return
-      viewportIntentVersionRef.current += 1
-      virtualListRef.current?.releasePrependAnchor()
-      lastUserGestureAtRef.current = 0
-      restoredSessionsRef.current.add(sessionId)
-      freshLaunchPending = false
-      const message = msgsRef.current[index]
-      scrollPositionsRef.current[sessionId] = {
-        key: message ? chatMessageKey(message) : '',
-        stuck,
-      }
-      writePageState('liveChat.scrollPositions', trimScrollPositions(scrollPositionsRef.current))
-      useChatStore.getState().setReadingOlderHistory(sessionId, !stuck)
-      setStuckBottom(stuck)
-      setUnread(0)
-    }, [sessionId])
-    const followTail = useCallback(() => {
-      commitNavigation(msgsRef.current.length - 1, true)
-    }, [commitNavigation])
-
-    const capturePositionRef = useRef(capturePosition)
-    capturePositionRef.current = capturePosition
-
-    // Suppress bottom-pinning during hydration when the user left this
-    // session mid-read, so the restore below is not fought by pinning.
-    useEffect(() => {
-      if (!sessionId) return
-      const saved = scrollPositionsRef.current[sessionId]
-      if (saved && !saved.stuck) setStuckBottom(false)
-    }, [sessionId])
-
-    // Persist the reading position when leaving a session (unmount or
-    // in-place switch) and allow restoring it again on return.
-    useEffect(() => {
-      if (!sessionId) return
-      return () => {
-        capturePositionRef.current()
-        viewportIntentVersionRef.current += 1
-        restoredSessionsRef.current.delete(sessionId)
-      }
-    }, [sessionId])
     const turnCount = useMemo(
       () => msgs.reduce((count, message) => count + (message.role === 'user' ? 1 : 0), 0),
       [msgs],
@@ -207,8 +94,6 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       () => msgs.flatMap((message, index) => message.role === 'user' ? [index] : []),
       [msgs],
     )
-    const turnMessageIndexesRef = useRef<number[]>(turnMessageIndexes)
-    turnMessageIndexesRef.current = turnMessageIndexes
     const minimapTurns = useMemo(
       () => turnMessageIndexes.map((msgIdx, idx) => {
         const msg = msgs[msgIdx]
@@ -231,208 +116,6 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       streaming,
     })
 
-    useImperativeHandle(forwardedRef, () => ({
-      pinToBottom: followTail,
-    }), [followTail])
-
-    const recomputeStuck = () => {
-      const el = scrollRef.current
-      if (!el) return
-      const now = performance.now()
-      const dist = el.scrollHeight - el.scrollTop - el.clientHeight
-      const at = dist < 80
-      if (jumpingToBottomUntilRef.current > now) {
-        if (at) {
-          jumpingToBottomUntilRef.current = 0
-        } else {
-          return
-        }
-      }
-      if (sessionId) useChatStore.getState().setReadingOlderHistory(sessionId, !at)
-      setStuckBottom(at)
-      if (at) setUnread(0)
-
-      const turns = turnMessageIndexesRef.current
-      if (turns.length === 0) {
-        updateActiveTurn(-1)
-        return
-      }
-      const navigationTarget = navigationTargetRef.current
-      if (navigationTarget !== null && navigationTarget < turns.length && now < navigationLockUntilRef.current) {
-        updateActiveTurn(navigationTarget)
-        return
-      }
-      navigationTargetRef.current = null
-      navigationLockUntilRef.current = 0
-
-      let current = at ? turns.length - 1 : 0
-      let firstVisibleIndex: number | undefined
-      if (!at) {
-        firstVisibleIndex = virtualListRef.current?.getFirstVisibleIndex(48) ?? 0
-        for (let index = 0; index < turns.length; index += 1) {
-          if (turns[index] <= firstVisibleIndex) current = index
-          else break
-        }
-      }
-      updateActiveTurn(current)
-      capturePosition(firstVisibleIndex)
-    }
-    const recomputeStuckRef = useRef(recomputeStuck)
-    recomputeStuckRef.current = recomputeStuck
-    const hasUtilityRail = scheduledChats.length > 0 || turnCount > 0
-
-    useEffect(() => {
-      const el = scrollRef.current
-      if (!el) return
-      const scrollScheduler = createRafScheduler(() => recomputeStuckRef.current())
-      // Real input only: programmatic scrolls never fire these events, so
-      // they are the trusted signal that re-arms position capturing.
-      const onUserGesture = () => {
-        virtualListRef.current?.releasePrependAnchor()
-        navigationTargetRef.current = null
-        navigationLockUntilRef.current = 0
-        jumpingToBottomUntilRef.current = 0
-        viewportIntentVersionRef.current += 1
-        lastUserGestureAtRef.current = performance.now()
-      }
-      const onScrollEnd = () => {
-        const now = performance.now()
-        if (now < jumpingToBottomUntilRef.current || now < navigationLockUntilRef.current) return
-        navigationTargetRef.current = null
-        navigationLockUntilRef.current = 0
-        jumpingToBottomUntilRef.current = 0
-        scrollScheduler.schedule()
-      }
-      el.addEventListener('scroll', scrollScheduler.schedule, { passive: true })
-      el.addEventListener('scrollend', onScrollEnd, { passive: true })
-      el.addEventListener('wheel', onUserGesture, { passive: true })
-      el.addEventListener('touchstart', onUserGesture, { passive: true })
-      el.addEventListener('pointerdown', onUserGesture, { passive: true })
-      const onKeyDown = (event: KeyboardEvent) => {
-        if (event.target === el && ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) onUserGesture()
-      }
-      el.addEventListener('keydown', onKeyDown)
-      return () => {
-        scrollScheduler.cancel()
-        el.removeEventListener('scroll', scrollScheduler.schedule)
-        el.removeEventListener('scrollend', onScrollEnd)
-        el.removeEventListener('wheel', onUserGesture)
-        el.removeEventListener('touchstart', onUserGesture)
-        el.removeEventListener('pointerdown', onUserGesture)
-        el.removeEventListener('keydown', onKeyDown)
-      }
-    }, [sessionId])
-
-    useEffect(() => {
-      const el = scrollRef.current
-      const utilityRail = utilityRailRef.current
-      if (!el || !utilityRail || !hasUtilityRail) return
-      const onUserGesture = () => {
-        virtualListRef.current?.releasePrependAnchor()
-        navigationTargetRef.current = null
-        navigationLockUntilRef.current = 0
-        jumpingToBottomUntilRef.current = 0
-        viewportIntentVersionRef.current += 1
-        lastUserGestureAtRef.current = performance.now()
-      }
-      const onWheel = (event: WheelEvent) => routeChatWheel(event, el, onUserGesture)
-      utilityRail.addEventListener('wheel', onWheel, { capture: true, passive: false })
-      return () => {
-        utilityRail.removeEventListener('wheel', onWheel, { capture: true })
-      }
-    }, [hasUtilityRail, sessionId])
-
-    useEffect(() => {
-      recomputeStuckRef.current()
-    }, [msgs.length, sessionId, turnCount, scheduledChats.length])
-
-    // The list owns history anchoring; only ordinary updates follow the tail.
-    const lastMsgsRef = useRef(msgs)
-    const lastLenRef = useRef(0)
-    useLayoutEffect(() => {
-      const el = scrollRef.current
-      const msgsChanged = msgs !== lastMsgsRef.current
-      lastMsgsRef.current = msgs
-      const grew = msgs.length > lastLenRef.current
-      lastLenRef.current = msgs.length
-      if (!el || !msgsChanged) return
-      if (prependingHistoryRef.current) {
-        prependingHistoryRef.current = false
-        return
-      }
-      if (virtualListRef.current?.hasPrependAnchor()) return
-      if (stuckBottom) {
-        markProgrammaticScroll()
-        el.scrollTop = el.scrollHeight
-      } else if (grew) {
-        setUnread((count) => count + 1)
-      }
-    }, [msgs, stuckBottom])
-
-    // Aim the viewport at the anchor row and make the landing stick. Row
-    // heights above the anchor are still estimates on the first pass; once
-    // their measured sizes land, the compensation in VirtualMessageList can
-    // nudge the viewport off the anchor (a neighbour becomes first visible).
-    // Re-aiming with the converged offsets is deterministic, so verify after
-    // measurements settle and re-aim a bounded number of times. Stand down
-    // immediately if the reader takes over with a real gesture.
-    const aimAtAnchor = useCallback((anchorKey: string | null, fallbackIndex: number, attempt: number, session: string, version: number) => {
-      // A landing chain belongs to the session that scheduled it: a switch
-      // mid-flight must not re-aim (or re-scroll) the next session's list.
-      if (useChatStore.getState().sessionId !== session || viewportIntentVersionRef.current !== version) return
-      const list = virtualListRef.current
-      if (!list) return
-      const currentMsgs = msgsRef.current
-      const index = anchorKey !== null
-        ? currentMsgs.findIndex((message) => chatMessageKey(message) === anchorKey)
-        : Math.max(0, Math.min(currentMsgs.length - 1, fallbackIndex))
-      if (index < 0) return
-      markProgrammaticScroll()
-      list.scrollToIndex(index, { behavior: 'auto', align: 'start' })
-      if (attempt >= 12) return
-      const verify = () => {
-        if (useChatStore.getState().sessionId !== session) return
-        if (viewportIntentVersionRef.current !== version) return
-        const first = virtualListRef.current?.getFirstVisibleIndex(48) ?? -1
-        const firstMessage = currentMsgs[first]
-        const anchored = anchorKey !== null
-          && firstMessage !== undefined
-          && chatMessageKey(firstMessage) === anchorKey
-        const landed = anchorKey !== null ? anchored : first === index
-        // A first-pass clamp into the "bottom" zone must not be trusted as
-        // final: with estimated (unmeasured) row heights the target position
-        // is still provisional, and accepting it would strand the viewport
-        // at the real bottom once the offsets settle. Keep re-aiming with
-        // the fresh offsets; the attempt budget above bounds the effort for
-        // targets that genuinely bottom out.
-        if (landed) {
-          // Rows above the anchor can finish measuring after this verdict
-          // (slow markdown/images) and push the anchor off the 48px line.
-          // Keep re-checking on a sparse schedule until the settle horizon
-          // passes, and only re-aim if the anchor actually drifted.
-          if (anchorKey !== null && Date.now() < aimDeadlineRef.current && attempt < 12) {
-            setTimeout(() => {
-              if (useChatStore.getState().sessionId !== session || viewportIntentVersionRef.current !== version) return
-              const latestMsgs = msgsRef.current
-              const latestFirst = virtualListRef.current?.getFirstVisibleIndex(48) ?? -1
-              const latestMsg = latestMsgs[latestFirst]
-              if (latestMsg && chatMessageKey(latestMsg) === anchorKey) return
-              aimAtAnchor(anchorKey, fallbackIndex, attempt + 1, session, version)
-            }, 250)
-          }
-          return
-        }
-        aimAtAnchor(anchorKey, fallbackIndex, attempt + 1, session, version)
-      }
-      // Early passes ride animation frames; later passes give slow rows
-      // (markdown, attachments) a beat to measure before the final verdict.
-      if (attempt < 3) {
-        requestAnimationFrame(() => requestAnimationFrame(verify))
-      } else {
-        setTimeout(verify, 60)
-      }
-    }, [])
-
     // Final landing is gated by the projection barrier: cached messages may
     // render, but a running session waits for replay before following latest.
     // Escape hatch: when the barrier never resolves within the grace period
@@ -447,132 +130,66 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       return () => window.clearTimeout(timer)
     }, [sessionId, projectionReady, historyStatus])
 
-    useEffect(() => {
-      const action = decideViewportAction({
-        resumePolicy,
-        hydration: projectionReady
-          ? 'ready'
-          : (historyStatus === 'loading_history'
-            ? 'loading-history'
-            : (projectionFailed ? 'failed' : 'replaying')),
-        hasMessages: msgs.length > 0,
-      })
-      if (action === 'wait' || !sessionId) return
-      if (restoredSessionsRef.current.has(sessionId)) return
-      restoredSessionsRef.current.add(sessionId)
-      const saved = freshLaunchPending ? null : scrollPositionsRef.current[sessionId]
-      freshLaunchPending = false
-      const version = viewportIntentVersionRef.current
-      aimDeadlineRef.current = Date.now() + 1500
+    const hasUtilityRail = scheduledChats.length > 0 || turnCount > 0
+    const {
+      stuckBottom,
+      unread,
+      activeTurn,
+      jumpToBottom,
+      collapseToLatest,
+      jumpToTurnIndex,
+      jumpToTurn,
+      followTail,
+      invalidateLanding,
+    } = useTranscriptViewport({
+      sessionId,
+      storageKey: 'liveChat.scrollPositions',
+      scrollRef,
+      utilityRailRef,
+      hasUtilityRail,
+      resumePolicy,
+      hydration: projectionReady
+        ? 'ready'
+        : (historyStatus === 'loading_history'
+          ? 'loading-history'
+          : (projectionFailed ? 'failed' : 'replaying')),
+      contentRevision: msgs,
+      unreadTotalCount: msgs.length,
+      unreadMode: 'increment',
+      ignoreSavedOnFreshLaunch: true,
+      suppressTailFollowRef: prependingHistoryRef,
+      recomputeDeps: [turnCount, scheduledChats.length],
+      adapter: {
+        itemCount: msgs.length,
+        getItemKey: (index) => (msgs[index] ? chatMessageKey(msgs[index]) : ''),
+        findIndexByKey: (key) => msgs.findIndex((message) => chatMessageKey(message) === key),
+        turnItemIndexes: turnMessageIndexes,
+        openLatestItemIndex: turnMessageIndexes.at(-1),
+        getFirstVisibleIndex: (offsetPx = 48) => virtualListRef.current?.getFirstVisibleIndex(offsetPx) ?? 0,
+        scrollToItem: (index, options) => virtualListRef.current?.scrollToIndex(index, options),
+        hasPrependAnchor: () => virtualListRef.current?.hasPrependAnchor() ?? false,
+        releasePrependAnchor: () => virtualListRef.current?.releasePrependAnchor(),
+        isSessionCurrent: () => Boolean(sessionId && useChatStore.getState().sessionId === sessionId),
+        onReadingStateChange: (reading) => {
+          if (sessionId) useChatStore.getState().setReadingOlderHistory(sessionId, reading)
+        },
+      },
+    })
 
-      if (action === 'follow-latest' || (action === 'restore-position' && saved?.stuck)) {
-        const lastIndex = msgs.length - 1
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          if (useChatStore.getState().sessionId !== sessionId || viewportIntentVersionRef.current !== version) return
-          markProgrammaticScroll()
-          virtualListRef.current?.scrollToIndex(lastIndex, { behavior: 'auto', align: 'end' })
-          setStuckBottom(true)
-          setUnread(0)
-        }))
-        return
-      }
-
-      if (action === 'restore-position' && saved && !saved.stuck && saved.key) {
-        const index = msgs.findIndex((message) => chatMessageKey(message) === saved.key)
-        if (index >= 0) {
-          aimAtAnchor(saved.key, index, 0, sessionId, version)
-          useChatStore.getState().setReadingOlderHistory(sessionId, true)
-          setStuckBottom(false)
-          return
-        }
-      }
-
-      for (let index = msgs.length - 1; index >= 0; index -= 1) {
-        if (msgs[index].role !== 'user') continue
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          if (useChatStore.getState().sessionId !== sessionId || viewportIntentVersionRef.current !== version) return
-          aimAtAnchor(null, index, 0, sessionId, version)
-          const el = scrollRef.current
-          if (el) {
-            const at = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-            useChatStore.getState().setReadingOlderHistory(sessionId, !at)
-            setStuckBottom(at)
-          }
-        }))
-        return
-      }
-    }, [sessionId, historyStatus, projectionReady, projectionFailed, resumePolicy, msgs, aimAtAnchor])
+    useImperativeHandle(forwardedRef, () => ({
+      pinToBottom: followTail,
+    }), [followTail])
 
     const captureHistoryAnchor = useCallback(() => {
       prependingHistoryRef.current = true
       if (virtualListRef.current?.prepareForPrepend()) {
         // Do not let a pending initial landing override the reader’s anchor.
-        viewportIntentVersionRef.current += 1
+        invalidateLanding()
       }
-    }, [])
+    }, [invalidateLanding])
 
     const handleLoadOlderHistory = () => loadOlderHistory(captureHistoryAnchor)
     const handleLoadAllHistory = () => loadAllHistory(captureHistoryAnchor)
-
-    const jumpToBottom = () => {
-      const el = scrollRef.current
-      if (!el) return
-      followTail()
-      const lastTurn = turnCount - 1
-      navigationTargetRef.current = lastTurn >= 0 ? lastTurn : null
-      navigationLockUntilRef.current = performance.now() + 900
-      jumpingToBottomUntilRef.current = performance.now() + 900
-      if (lastTurn >= 0) updateActiveTurn(lastTurn)
-      markProgrammaticScroll()
-      if (msgsRef.current.length > 0) {
-        virtualListRef.current?.scrollToIndex(msgsRef.current.length - 1, { behavior: 'auto', align: 'end' })
-      }
-      el.scrollTop = el.scrollHeight
-      requestAnimationFrame(() => {
-        if (useChatStore.getState().sessionId === sessionId && jumpingToBottomUntilRef.current > performance.now()) {
-          markProgrammaticScroll()
-          el.scrollTop = el.scrollHeight
-        }
-      })
-      setUnread(0)
-    }
-
-    const collapseToLatest = useCallback(() => {
-      navigationTargetRef.current = null
-      navigationLockUntilRef.current = 0
-      jumpingToBottomUntilRef.current = 0
-      followTail()
-      updateActiveTurn(turnMessageIndexesRef.current.length - 1)
-      const el = scrollRef.current
-      if (!el) return
-      markProgrammaticScroll()
-      virtualListRef.current?.scrollToIndex(Math.max(0, msgsRef.current.length - 1), { behavior: 'instant', align: 'end' })
-      el.scrollTop = el.scrollHeight
-    }, [followTail, updateActiveTurn])
-
-    const jumpToTurnIndex = (turnIndex: number) => {
-      const el = scrollRef.current
-      if (!el || turnCount === 0) return
-      const clamped = Math.max(0, Math.min(turnCount - 1, turnIndex))
-      navigationTargetRef.current = clamped
-      navigationLockUntilRef.current = performance.now() + 700
-      jumpingToBottomUntilRef.current = 0
-      updateActiveTurn(clamped)
-      const targetIndex = turnMessageIndexesRef.current[clamped]
-      if (targetIndex == null) return
-      commitNavigation(targetIndex, false)
-      virtualListRef.current?.scrollToIndex(targetIndex, { behavior: 'smooth', align: 'start' })
-    }
-
-    const jumpToTurn = (direction: -1 | 1) => {
-      const el = scrollRef.current
-      if (!el || turnCount === 0) return
-      const currentTurn = activeTurnRef.current
-      const current = currentTurn < 0 ? (stuckBottom ? turnCount - 1 : 0) : currentTurn
-      const next = Math.max(0, Math.min(turnCount - 1, current + direction))
-      if (next === current) return
-      jumpToTurnIndex(next)
-    }
 
     const renderChatMessage = useCallback((message: ChatMsg, index: number) => {
       // system 消息（/btw 回答 role='system'；GA-Hub 通知 source='system'；
@@ -591,15 +208,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         ? sourceLabel(message.source)
         : undefined
       return (
-        <div
-          {...(message.role === 'user' ? { 'data-chat-turn': true } : {})}
-          style={message.source === 'history'
-            ? {
-              contentVisibility: 'auto',
-              containIntrinsicSize: `auto ${Math.max(40, Math.round(estimateChatMessageSize(message) - 8))}px`,
-            }
-            : undefined}
-        >
+        <div {...(message.role === 'user' ? { 'data-chat-turn': true } : {})}>
           <MessageBubble
             role={role}
             recoveryNotice={message.recoveryNotice}
@@ -775,20 +384,6 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     )
   },
 )
-
-interface SavedScrollPosition {
-  key: string
-  stuck: boolean
-}
-
-function trimScrollPositions(
-  positions: Record<string, SavedScrollPosition>,
-  limit = 40,
-): Record<string, SavedScrollPosition> {
-  const entries = Object.entries(positions)
-  if (entries.length <= limit) return positions
-  return Object.fromEntries(entries.slice(entries.length - limit))
-}
 
 function chatMessageKey(message: ChatMsg): string {
   const identity = message.streamId || message.pendingWebuiId

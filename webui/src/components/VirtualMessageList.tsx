@@ -68,6 +68,9 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
   const offsetsRef = useRef<number[]>([0])
   const prependAnchorRef = useRef<{ key: string; y: number } | null>(null)
   const hasVirtualizedRef = useRef(false)
+  const pinnedToBottomRef = useRef(pinnedToBottom)
+  pinnedToBottomRef.current = pinnedToBottom
+  const lastAppliedRevisionRef = useRef(0)
   const navTargetRef = useRef<{
     index: number
     align: 'start' | 'center' | 'end'
@@ -224,7 +227,12 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
     hasVirtualizedRef.current = virtualized
     if (prependAnchorRef.current && anchorIndex < 0) prependAnchorRef.current = null
     restorePrependAnchor()
-    if (layoutRevision < latestMeasureSeqRef.current) return
+    if (layoutRevision < latestMeasureSeqRef.current) {
+      syncViewport()
+      return
+    }
+    const revisionChanged = lastAppliedRevisionRef.current !== layoutRevision
+    lastAppliedRevisionRef.current = layoutRevision
     const scroller = scrollRef.current
     const pendingDelta = pendingScrollDeltaRef.current
     pendingScrollDeltaRef.current = 0
@@ -232,6 +240,13 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
     if (nav && scroller) {
       if (performance.now() >= nav.until) {
         navTargetRef.current = null
+        if (nav.toBottom && pinnedToBottom && nav.needsRealign) {
+          const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+          if (Math.abs(scroller.scrollTop - maxTop) >= 1) {
+            markProgrammaticScroll()
+            scroller.scrollTop = scroller.scrollHeight
+          }
+        }
       } else if (nav.needsRealign) {
         nav.needsRealign = false
         if (nav.toBottom) {
@@ -249,12 +264,20 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
           }
         }
       }
+    } else if (pinnedToBottom && scroller && !prependAnchorRef.current) {
+      if (revisionChanged) {
+        const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+        if (Math.abs(scroller.scrollTop - maxTop) >= 1) {
+          markProgrammaticScroll()
+          scroller.scrollTop = scroller.scrollHeight
+        }
+      }
     } else if (pendingDelta !== 0 && scroller && !prependAnchorRef.current) {
       markProgrammaticScroll()
       scroller.scrollTop += pendingDelta
     }
     syncViewport()
-  }, [anchorIndex, computeTargetTop, getRowMetrics, items, layoutRevision, offsets, restorePrependAnchor, scrollRef, syncViewport, virtualized])
+  }, [anchorIndex, computeTargetTop, getRowMetrics, items, layoutRevision, offsets, pinnedToBottom, restorePrependAnchor, scrollRef, syncViewport, virtualized])
 
   useEffect(() => {
     const scroller = scrollRef.current
@@ -341,17 +364,23 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
     const currentlyPinned = scroller
       ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80
       : pinnedToBottom
-    if (virtualized && !prependAnchorRef.current && scroller && Math.abs(delta) >= 0.5 && wasAboveViewport && !currentlyPinned) {
+    if (pinnedToBottom && !prependAnchorRef.current && (!nav || nav.toBottom)) {
+      pendingScrollDeltaRef.current = 0
+      if (virtualized && scroller && Math.abs(delta) >= 0.5) {
+        window.requestAnimationFrame(() => {
+          if (scrollRef.current === scroller && !prependAnchorRef.current
+            && !navTargetRef.current
+            && pinnedToBottomRef.current) {
+            const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+            if (Math.abs(scroller.scrollTop - maxTop) >= 1) {
+              markProgrammaticScroll()
+              scroller.scrollTop = scroller.scrollHeight
+            }
+          }
+        })
+      }
+    } else if (virtualized && !prependAnchorRef.current && scroller && Math.abs(delta) >= 0.5 && wasAboveViewport && !currentlyPinned) {
       pendingScrollDeltaRef.current += delta
-    } else if (virtualized && !prependAnchorRef.current && scroller && Math.abs(delta) >= 0.5 && currentlyPinned && pinnedToBottom) {
-      window.requestAnimationFrame(() => {
-        if (scrollRef.current === scroller && !prependAnchorRef.current
-          && !navTargetRef.current
-          && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80 + Math.max(0, delta)) {
-          markProgrammaticScroll()
-          scroller.scrollTop = scroller.scrollHeight
-        }
-      })
     }
     setLayoutRevision(nextSeq)
   }, [pinnedToBottom, scrollRef, virtualized])
