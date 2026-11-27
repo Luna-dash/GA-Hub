@@ -117,6 +117,25 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
           <li>设备码为本机标识，升级软件不会改变。</li>
         </ul>
       </details>
+      {status.diagnostics && <details className="border-t border-line/40 pt-3 text-xs text-ink-faint">
+        <summary className="w-fit cursor-pointer text-ink-muted hover:text-ink">链路诊断</summary>
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-ink-muted">
+            <span>协议：{status.diagnostics.protocol ? `v${status.diagnostics.protocol}` : '未握手'}</span>
+            {status.connector_version && <span>连接器：{status.connector_version}</span>}
+            {status.diagnostics.credential_backend && <span>凭据后端：{status.diagnostics.credential_backend}</span>}
+            <span>活跃流：HTTP {status.diagnostics.active_http ?? 0} / WS {status.diagnostics.active_ws ?? 0}</span>
+            <span>重连：{status.diagnostics.reconnect_count ?? 0} 次</span>
+            <span>流量：↓{((status.diagnostics.bytes_in ?? 0) / 1024).toFixed(1)} KB / ↑{((status.diagnostics.bytes_out ?? 0) / 1024).toFixed(1)} KB</span>
+          </div>
+          {!!status.diagnostics.capabilities?.length && <p className="break-all text-[11px]">能力：{status.diagnostics.capabilities.join(', ')}</p>}
+          {!!status.diagnostics.events?.length && <ul className="max-h-36 space-y-1 overflow-y-auto rounded-lg bg-bg-soft/60 p-2 font-mono text-[11px]">
+            {status.diagnostics.events.slice(-15).reverse().map((ev, i) => (
+              <li key={`${ev.ts}-${i}`}>{new Date(ev.ts * 1000).toLocaleTimeString('zh-CN', {hour12: false})} [{ev.level}] {ev.event}{ev.detail ? ` · ${ev.detail}` : ''}</li>
+            ))}
+          </ul>}
+        </div>
+      </details>}
     </>}
     {error && <p role="alert" className="break-words text-sm text-status-warning">{error}</p>}
     {message && <p role="status" className="text-sm text-status-success">{message}</p>}

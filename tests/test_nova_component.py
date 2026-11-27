@@ -658,6 +658,66 @@ class ConnectorHardeningTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(connector._sanitize_control_event({'topic': 'conductor:log', 'payload': {'session_id': 's1'}}))
         self.assertIsNone(connector._sanitize_control_event({'topic': 'session:runtime', 'payload': {'status': 'idle'}}))
         self.assertIsNone(connector._sanitize_control_event({'topic': 'session:runtime', 'payload': {'session_id': 's\n1'}}))
+        waiting = connector._sanitize_control_event({
+            'topic': 'anti:runtime',
+            'payload': {'session_id': 'a1', 'status': 'waiting_input', 'run_id': 'r1', 'prompt_type': 'question', 'prompt': 'secret'},
+        })
+        self.assertEqual(waiting, ('agy.runtime', {
+            'session_id': 'a1', 'status': 'waiting_input', 'run_id': 'r1', 'prompt_type': 'question',
+        }))
+        invalid_pt = connector._sanitize_control_event({
+            'topic': 'anti:runtime',
+            'payload': {'session_id': 'a1', 'status': 'waiting_input', 'prompt_type': 'evil'},
+        })
+        self.assertEqual(invalid_pt, ('agy.runtime', {'session_id': 'a1', 'status': 'waiting_input'}))
+
+    def test_cross_platform_credential_backends_and_diagnostics(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'assets' / 'nova'))
+        import connector
+
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = connector.FileCredentialBackend(Path(tmp))
+            self.assertEqual(backend.name, 'file_0600')
+            backend.write('t1', 'dev1', 'secret-token-1')
+            self.assertEqual(backend.read('t1'), 'secret-token-1')
+            backend.write('t1', 'dev1', 'secret-token-2')
+            self.assertEqual(backend.read('t1'), 'secret-token-2')
+            backend.delete('t1')
+            with self.assertRaises(FileNotFoundError):
+                backend.read('t1')
+            # Deleting non-existent credential is idempotent
+            backend.delete('t1')
+
+            with patch.object(connector.sys, 'platform', 'linux'):
+                b_linux = connector.get_credential_backend(Path(tmp))
+                self.assertEqual(b_linux.name, 'file_0600')
+            with patch.object(connector.sys, 'platform', 'darwin'):
+                b_mac = connector.get_credential_backend(Path(tmp))
+                self.assertEqual(b_mac.name, 'macos_keychain')
+            with patch.object(connector.sys, 'platform', 'win32'), patch.object(connector, 'win32cred', None):
+                b_win_fallback = connector.get_credential_backend(Path(tmp))
+                self.assertEqual(b_win_fallback.name, 'file_0600')
+
+        diag = connector.ConnectorDiagnostics(max_events=3)
+        for i in range(5):
+            diag.record('evt', f'detail-{i}')
+        snap = diag.snapshot()
+        self.assertEqual(len(snap['events']), 3)
+        self.assertEqual(snap['events'][0]['detail'], 'detail-2')
+        self.assertEqual(snap['events'][-1]['detail'], 'detail-4')
+
+        svc = NovaService()
+        svc.connector = SimpleNamespace(
+            STATE=Path(self.tmp_dir) if hasattr(self, 'tmp_dir') else Path(tempfile.gettempdir()),
+            identity=lambda: 'a' * 24,
+            CONNECTOR_VERSION='2.2.0',
+            ConnectorDiagnostics=connector.ConnectorDiagnostics,
+            credential_backend_name=lambda: 'file_0600',
+        )
+        svc.diagnostics = diag
+        out = svc.snapshot()
+        self.assertEqual(out['diagnostics']['credential_backend'], 'file_0600')
+        self.assertEqual(len(out['diagnostics']['events']), 3)
 
     async def test_draining_signal_resets_backoff_without_escalation(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'assets' / 'nova'))

@@ -68,6 +68,7 @@ class NovaService:
         self.paused = False
         self.last_connected_at: float | None = None
         self.rtt_ms: int | None = None
+        self.diagnostics = None
 
     def load(self):
         if self.connector is None:
@@ -112,8 +113,13 @@ class NovaService:
                     "on_connection": self._set_connected,
                 }
                 with contextlib.suppress(TypeError, ValueError):
-                    if "on_heartbeat" in inspect.signature(c.run).parameters:
+                    params = inspect.signature(c.run).parameters
+                    if "on_heartbeat" in params:
                         kwargs["on_heartbeat"] = self._on_heartbeat
+                    if "diagnostics" in params and hasattr(c, "ConnectorDiagnostics"):
+                        if self.diagnostics is None:
+                            self.diagnostics = c.ConnectorDiagnostics()
+                        kwargs["diagnostics"] = self.diagnostics
                 self.task = asyncio.create_task(c.run(**kwargs), name="nova-connector")
                 self.task.add_done_callback(self._done)
         except Exception as exc:
@@ -174,6 +180,12 @@ class NovaService:
             config = c.STATE / "device.json"
             running = bool(self.task and not self.task.done())
             connected = running and self.connected
+            diag_snap = self.diagnostics.snapshot() if self.diagnostics is not None else None
+            if diag_snap is not None and not diag_snap.get("credential_backend"):
+                fn = getattr(c, "credential_backend_name", None)
+                if callable(fn):
+                    with contextlib.suppress(Exception):
+                        diag_snap["credential_backend"] = fn()
             return {
                 "device": c.identity(),
                 "device_name": _read_device_name(config),
@@ -186,6 +198,7 @@ class NovaService:
                 "error": self.error,
                 "error_detail": self.error_detail,
                 "connector_version": getattr(c, "CONNECTOR_VERSION", None),
+                "diagnostics": diag_snap,
                 "server": PUBLIC,
             }
         except Exception as exc:
@@ -208,6 +221,7 @@ class NovaService:
             self.error = None
             self.error_detail = None
             self.paused = False
+            self.diagnostics = None
             return {"paired": False, "device": device}
 
     async def start_pair(self, read_name: Callable[[], Awaitable[str]]) -> dict[str, object]:

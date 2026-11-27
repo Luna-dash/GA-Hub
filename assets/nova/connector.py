@@ -1,7 +1,8 @@
-"""Windows GA-Hub connector. Credentials stay in Windows Credential Manager."""
+"""Cross-platform GA-Hub Nova connector."""
 import argparse
 import asyncio
 import base64
+from collections import deque
 import contextlib
 import hashlib
 import json
@@ -10,15 +11,21 @@ import random
 import re
 from pathlib import Path
 import secrets
+import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import urlsplit
 import zlib
 
 import aiohttp
 from aiohttp import web, WSMsgType
-import win32cred
-import win32timezone  # pywin32: CredRead implicitly converts LastWritten
+try:
+    import win32cred
+    import win32timezone  # pywin32: CredRead implicitly converts LastWritten
+except ImportError:
+    win32cred = None
+    win32timezone = None
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parent / 'remote_access'))
@@ -28,12 +35,15 @@ STATE = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'GAHubNova'
 CRED_PREFIX = 'GAHub.Nova.'
 ARTIFACT_ROOTS = None  # Set by the desktop host; standalone keeps legacy roots.
 
-CONNECTOR_VERSION = '2.1.0'
+CONNECTOR_VERSION = '2.2.0'
 PROTOCOL_VERSION = 2
 FRAME_MAGIC = b'NV'
 FRAME_REQ_CHUNK = 1
 FRAME_RESP_CHUNK = 2
 FLAG_GZIP = 1
+CHUNKED_UPLOAD_SIZE = 512 * 1024
+CHUNKED_UPLOAD_MAX_CHUNK = 1024 * 1024
+CHUNKED_UPLOAD_TTL = 900
 CAPABILITIES = (
     'binary',
     'credit_flow',
@@ -45,7 +55,44 @@ CAPABILITIES = (
     'control_events',
     'token_rotate',
     'graceful_drain',
+    'resumable_upload',
 )
+
+
+class ConnectorDiagnostics:
+    """In-memory ring buffer and runtime counters for local Nova diagnostics."""
+
+    def __init__(self, max_events: int = 50):
+        self.protocol = None
+        self.capabilities = []
+        self.credential_backend = None
+        self.active_http = 0
+        self.active_ws = 0
+        self.reconnect_count = 0
+        self.bytes_in = 0
+        self.bytes_out = 0
+        self.events = deque(maxlen=max_events)
+
+    def record(self, event: str, detail: str = '', level: str = 'info') -> None:
+        self.events.append({
+            'ts': round(time.time(), 2),
+            'level': level,
+            'event': event,
+            'detail': str(detail)[:160],
+        })
+
+    def snapshot(self) -> dict:
+        return {
+            'protocol': self.protocol,
+            'capabilities': list(self.capabilities),
+            'credential_backend': self.credential_backend,
+            'active_http': self.active_http,
+            'active_ws': self.active_ws,
+            'reconnect_count': self.reconnect_count,
+            'bytes_in': self.bytes_in,
+            'bytes_out': self.bytes_out,
+            'events': list(self.events),
+        }
 
 
 class ConnectorAuthError(RuntimeError):
@@ -168,10 +215,171 @@ class LocalGateway(gateway.Gateway):
         self.submissions = {}
         self.agy_creations = {}
         self.uploads = {}
+        self.chunked_uploads = {}
         self.artifacts = gateway.ArtifactStore(ARTIFACT_ROOTS)
         self.upload_slots = asyncio.Semaphore(2)
         self.progress_hub = gateway.ProgressHub(self)
         self.local_secret = secrets.token_urlsafe(32)
+
+    async def close(self):
+        for entry in list(self.chunked_uploads.values()):
+            with contextlib.suppress(OSError):
+                Path(entry['temp_path']).unlink(missing_ok=True)
+        self.chunked_uploads.clear()
+        await super().close()
+
+    def _prune_chunked_uploads(self):
+        now = time.monotonic()
+        expired = [k for k, v in self.chunked_uploads.items() if now - v['updated_at'] >= CHUNKED_UPLOAD_TTL]
+        for key in expired:
+            entry = self.chunked_uploads.pop(key, None)
+            if entry:
+                with contextlib.suppress(OSError):
+                    Path(entry['temp_path']).unlink(missing_ok=True)
+
+    async def handle_chunked_upload(self, request, tail: str, *, scope=None):
+        if not self.origin_ok(request):
+            raise web.HTTPForbidden(text='Origin required')
+        self._prune_chunked_uploads()
+        owner = request.cookies.get(gateway.COOKIE)
+        if not owner:
+            raise web.HTTPForbidden()
+        method = request.method
+        if method == 'POST' and tail == '/init':
+            if request.query_string:
+                raise web.HTTPBadRequest(text='Query not allowed')
+            try:
+                body = await request.json()
+            except ValueError:
+                raise web.HTTPBadRequest(text='Invalid JSON')
+            if not isinstance(body, dict) or set(body) != {'filename', 'size'}:
+                raise web.HTTPBadRequest(text='Invalid upload metadata')
+            raw_name = body.get('filename')
+            total_size = body.get('size')
+            if not isinstance(raw_name, str) or not isinstance(total_size, int) or isinstance(total_size, bool):
+                raise web.HTTPBadRequest(text='Invalid upload metadata')
+            name = raw_name.replace('\\', '/').rsplit('/', 1)[-1][:255]
+            if not name or not gateway.allowed_file(name):
+                raise web.HTTPUnsupportedMediaType(text='File type not allowed')
+            if total_size <= 0 or total_size > gateway.MAX_FILE:
+                raise web.HTTPRequestEntityTooLarge(max_size=gateway.MAX_FILE, actual_size=max(0, total_size))
+            if len(self.chunked_uploads) >= 16:
+                raise web.HTTPTooManyRequests(text='Too many concurrent chunked uploads')
+            uid = secrets.token_urlsafe(24)
+
+            def _make_temp():
+                f = tempfile.NamedTemporaryFile(prefix='nova-up-', delete=False)
+                path = f.name
+                f.close()
+                return path
+
+            temp_path = await asyncio.to_thread(_make_temp)
+            now = time.monotonic()
+            self.chunked_uploads[(scope, uid)] = {
+                'owner': owner,
+                'name': name,
+                'size': total_size,
+                'offset': 0,
+                'temp_path': temp_path,
+                'created_at': now,
+                'updated_at': now,
+            }
+            return web.json_response({
+                'upload_id': uid,
+                'chunk_size': CHUNKED_UPLOAD_SIZE,
+                'offset': 0,
+                'size': total_size,
+            })
+
+        m = re.fullmatch(r'/([A-Za-z0-9_-]{16,64})(/complete)?', tail)
+        if not m:
+            raise web.HTTPNotFound()
+        uid, complete = m.groups()
+        key = (scope, uid)
+        entry = self.chunked_uploads.get(key)
+        if not entry or not secrets.compare_digest(entry['owner'], owner):
+            raise web.HTTPNotFound(text='Upload session not found')
+
+        if method == 'GET' and not complete:
+            return web.json_response({
+                'upload_id': uid,
+                'offset': entry['offset'],
+                'size': entry['size'],
+                'name': entry['name'],
+            })
+
+        if method == 'DELETE' and not complete:
+            self.chunked_uploads.pop(key, None)
+            with contextlib.suppress(OSError):
+                Path(entry['temp_path']).unlink(missing_ok=True)
+            return web.Response(status=204)
+
+        if method == 'PUT' and not complete:
+            qm = re.fullmatch(r'offset=([0-9]{1,10})', request.query_string)
+            if not qm:
+                raise web.HTTPBadRequest(text='Missing offset query')
+            req_offset = int(qm.group(1))
+            if req_offset != entry['offset']:
+                return web.json_response({'detail': 'Offset mismatch', 'offset': entry['offset']}, status=409)
+            chunk = await request.read()
+            if not chunk or len(chunk) > CHUNKED_UPLOAD_MAX_CHUNK:
+                raise web.HTTPBadRequest(text='Invalid chunk size')
+            if entry['offset'] + len(chunk) > entry['size'] or entry['offset'] + len(chunk) > gateway.MAX_FILE:
+                raise web.HTTPRequestEntityTooLarge(max_size=entry['size'], actual_size=entry['offset'] + len(chunk))
+
+            def _append(path, data):
+                with open(path, 'ab') as fp:
+                    fp.write(data)
+
+            await asyncio.to_thread(_append, entry['temp_path'], chunk)
+            entry['offset'] += len(chunk)
+            entry['updated_at'] = time.monotonic()
+            return web.json_response({
+                'upload_id': uid,
+                'offset': entry['offset'],
+                'size': entry['size'],
+            })
+
+        if method == 'POST' and complete == '/complete':
+            if entry['offset'] != entry['size']:
+                raise web.HTTPConflict(text='Upload incomplete')
+            now = time.monotonic()
+            self.uploads = {k: v for k, v in self.uploads.items() if now - v[0] < gateway.TTL}
+            if len(self.uploads) >= 256:
+                raise web.HTTPTooManyRequests(text='Upload cache full')
+            self.chunked_uploads.pop(key, None)
+            try:
+                async with self.upload_slots:
+                    base = await self.backend()
+                    with open(entry['temp_path'], 'rb') as fp:
+                        form = aiohttp.FormData()
+                        form.add_field('file', fp, filename=entry['name'], content_type='application/octet-stream')
+                        async with self.http.post(
+                            base + '/api/upload',
+                            data=form,
+                            headers={'Origin': base},
+                            allow_redirects=False,
+                            timeout=aiohttp.ClientTimeout(total=120),
+                        ) as up:
+                            if up.status != 200:
+                                return web.Response(status=up.status, text='Upload rejected by GA-Hub')
+                            data = await up.json()
+                ref = {'path': data['path'], 'name': data['name'], 'size': data['size'], 'source': 'managed_upload'}
+                final_uid = secrets.token_urlsafe(24)
+                self.uploads[(scope, final_uid) if scope is not None else final_uid] = (time.monotonic(), owner, ref)
+                return web.json_response({
+                    'upload_id': final_uid,
+                    'name': ref['name'],
+                    'size': ref['size'],
+                    'expires_at': int(time.time() + gateway.TTL),
+                })
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                raise web.HTTPBadGateway(text='Upload failed; retry before sending')
+            finally:
+                with contextlib.suppress(OSError):
+                    Path(entry['temp_path']).unlink(missing_ok=True)
+
+        raise web.HTTPForbidden()
 
     def authenticated(self, request):
         return secrets.compare_digest(request.headers.get('Authorization', ''), 'Bearer ' + self.local_secret)
@@ -183,6 +391,8 @@ class LocalGateway(gateway.Gateway):
     async def handle(self, request):
         if not request.path.startswith('/api/') or not self.authenticated(request):
             raise web.HTTPForbidden()
+        if request.path.startswith('/api/upload/chunked/'):
+            return await self.handle_chunked_upload(request, request.path.removeprefix('/api/upload/chunked'))
         if request.path.startswith('/api/agy/'):
             if not self.origin_ok(request):
                 raise web.HTTPForbidden()
@@ -213,6 +423,9 @@ class LocalGateway(gateway.Gateway):
     async def handle_agy(self, request):
         path = request.path.removeprefix('/api/agy')
         method = request.method
+        agy_chunked = re.fullmatch(r'/sessions/([A-Za-z0-9_-]{1,128})/upload/chunked(/.*)', path)
+        if agy_chunked and not request.headers.get('Upgrade'):
+            return await self.handle_chunked_upload(request, agy_chunked.group(2), scope=('agy', agy_chunked.group(1)))
         event_query = (method == 'GET' and re.fullmatch(r'/sessions/[A-Za-z0-9_-]{1,128}/runs/[A-Za-z0-9_-]{1,128}/events', path)
                        and re.fullmatch(r'after=[0-9]{1,15}', request.query_string))
         compact = (method == 'GET' and request.query_string == 'view=compact&limit=40'
@@ -407,14 +620,129 @@ def identity():
     return value
 
 
-def save_credential(server, device, token):
-    win32cred.CredWrite({'Type': 1, 'TargetName': credential_target(server), 'UserName': device, 'CredentialBlob': token, 'Persist': 2}, 0)
+class WindowsCredentialBackend:
+    name = 'windows_credman'
+
+    def write(self, target: str, username: str, secret: str) -> None:
+        win32cred.CredWrite({'Type': 1, 'TargetName': target, 'UserName': username, 'CredentialBlob': secret, 'Persist': 2}, 0)
+
+    def read(self, target: str) -> str:
+        blob = win32cred.CredRead(target, 1)['CredentialBlob']
+        return blob.decode('utf-16-le')
+
+    def delete(self, target: str) -> None:
+        win32cred.CredDelete(target, 1)
 
 
-def save_pair(server, device, name, token):
-    STATE.mkdir(parents=True, exist_ok=True)
-    save_credential(server, device, token)
-    path = STATE / 'device.json'
+class MacOSKeychainBackend:
+    name = 'macos_keychain'
+
+    def write(self, target: str, username: str, secret: str) -> None:
+        subprocess.run(
+            ['/usr/bin/security', 'add-generic-password', '-U', '-s', target, '-a', username, '-w', secret],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def read(self, target: str) -> str:
+        proc = subprocess.run(
+            ['/usr/bin/security', 'find-generic-password', '-s', target, '-w'],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return proc.stdout.rstrip('\r\n')
+
+    def delete(self, target: str) -> None:
+        subprocess.run(
+            ['/usr/bin/security', 'delete-generic-password', '-s', target],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+
+class FileCredentialBackend:
+    """0600-protected JSON credential store for Linux and headless hosts."""
+    name = 'file_0600'
+
+    def __init__(self, state_dir=None):
+        self.state_dir = Path(state_dir) if state_dir is not None else STATE
+        self.path = self.state_dir / 'credentials.json'
+
+    def _load_all(self) -> dict:
+        if not self.path.exists():
+            return {}
+        try:
+            data = json.loads(self.path.read_text(encoding='utf-8'))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _save_all(self, data: dict) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        staged = self.path.with_suffix('.new')
+        raw = json.dumps(data, ensure_ascii=False, indent=2).encode('utf-8')
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        fd = os.open(str(staged), flags, 0o600)
+        try:
+            os.write(fd, raw)
+        finally:
+            os.close(fd)
+        with contextlib.suppress(OSError):
+            os.chmod(staged, 0o600)
+        staged.replace(self.path)
+        with contextlib.suppress(OSError):
+            os.chmod(self.path, 0o600)
+
+    def write(self, target: str, username: str, secret: str) -> None:
+        data = self._load_all()
+        data[target] = {'username': username, 'secret': secret}
+        self._save_all(data)
+
+    def read(self, target: str) -> str:
+        entry = self._load_all().get(target)
+        if not isinstance(entry, dict) or not isinstance(entry.get('secret'), str):
+            raise FileNotFoundError(f'Credential not found: {target}')
+        return entry['secret']
+
+    def delete(self, target: str) -> None:
+        data = self._load_all()
+        if target in data:
+            del data[target]
+            self._save_all(data)
+
+
+def get_credential_backend(state_dir=None):
+    if sys.platform == 'win32' and win32cred is not None:
+        return WindowsCredentialBackend()
+    if sys.platform == 'darwin':
+        return MacOSKeychainBackend()
+    return FileCredentialBackend(state_dir)
+
+
+def credential_backend_name(state_dir=None) -> str:
+    return get_credential_backend(state_dir).name
+
+
+def save_credential(server, device, token, *, state_dir=None):
+    get_credential_backend(state_dir).write(credential_target(server), device, token)
+
+
+def load_credential(server, *, state_dir=None) -> str:
+    return get_credential_backend(state_dir).read(credential_target(server))
+
+
+def delete_credential(server, *, state_dir=None) -> None:
+    get_credential_backend(state_dir).delete(credential_target(server))
+
+
+def save_pair(server, device, name, token, *, state_dir=None):
+    root = Path(state_dir) if state_dir is not None else STATE
+    root.mkdir(parents=True, exist_ok=True)
+    save_credential(server, device, token, state_dir=root)
+    path = root / 'device.json'
     staged = path.with_suffix('.new')
     staged.write_text(json.dumps({'server': server, 'device': device, 'name': name}, ensure_ascii=False, indent=2), encoding='utf-8')
     staged.replace(path)
@@ -447,6 +775,9 @@ def _sanitize_control_event(msg):
         val = payload.get(key)
         if isinstance(val, str) and 1 <= len(val) <= limit and not any(ord(c) < 32 for c in val):
             clean[key] = val
+    prompt_type = payload.get('prompt_type')
+    if prompt_type in ('question', 'approval'):
+        clean['prompt_type'] = prompt_type
     if event_name in ('session.runtime', 'agy.runtime') and 'session_id' not in clean:
         return None
     return event_name, clean
@@ -534,6 +865,7 @@ async def connect_once(
     local_runtime=None,
     on_heartbeat=None,
     on_token_rotated=None,
+    diagnostics=None,
 ):
     owns_runtime = local_runtime is None
     runtime = LocalGatewayRuntime(backend) if owns_runtime else local_runtime
@@ -688,6 +1020,8 @@ async def connect_once(
                         out_credits[rid] = credit_state
 
                     async def send_resp_chunk(chunk_bytes: bytes, flags: int = 0):
+                        if diagnostics is not None:
+                            diagnostics.bytes_out += len(chunk_bytes)
                         if not use_binary:
                             await ws.send_json({'kind': 'chunk', 'id': rid, 'data': base64.b64encode(chunk_bytes).decode()})
                             return
@@ -832,7 +1166,7 @@ async def connect_once(
                                         continue
                                     evt_name, evt_data = parsed
                                     is_terminal = (
-                                        evt_data.get('status') in ('idle', 'error')
+                                        evt_data.get('status') in ('idle', 'error', 'waiting_input')
                                         or bool(evt_data.get('completed_run_id'))
                                     )
                                     now_ts = time.monotonic()
@@ -871,10 +1205,15 @@ async def connect_once(
                 ) as ws:
                     if on_connection is not None:
                         on_connection(True)
+                    if diagnostics is not None:
+                        diagnostics.credential_backend = credential_backend_name()
+                        diagnostics.record('connected', f'device={device[:8]}…')
                     pulse = asyncio.create_task(heartbeat(ws))
                     print('Nova 已连接，设备：' + device, flush=True)
                     async for msg in ws:
                         if msg.type == WSMsgType.BINARY:
+                            if diagnostics is not None:
+                                diagnostics.bytes_in += len(msg.data)
                             try:
                                 ftype, _flags, rid_hex, payload = unpack_frame(msg.data)
                             except ValueError:
@@ -891,10 +1230,18 @@ async def connect_once(
                             continue
                         if msg.type != WSMsgType.TEXT:
                             break
+                        if diagnostics is not None:
+                            diagnostics.bytes_in += len(msg.data.encode('utf-8'))
+                            diagnostics.active_http = len(http_tasks)
+                            diagnostics.active_ws = len(ws_tasks)
                         data = json.loads(msg.data)
                         kind = data.get('kind')
                         if kind == 'hello':
                             negotiated = min(PROTOCOL_VERSION, int(data.get('protocol', 1)))
+                            if diagnostics is not None:
+                                diagnostics.protocol = negotiated
+                                diagnostics.capabilities = list(CAPABILITIES) if negotiated >= 2 else []
+                                diagnostics.record('hello', f'protocol=v{negotiated}')
                             if negotiated >= 2:
                                 initial_ready = await probe_ready()
                                 last_ready = initial_ready
@@ -919,6 +1266,8 @@ async def connect_once(
                             except (TypeError, ValueError):
                                 ms = 1500
                             drain_delay = max(0.2, min(30.0, ms / 1000.0))
+                            if diagnostics is not None:
+                                diagnostics.record('draining', f'reconnect_after={ms}ms')
                         elif kind == 'token_rotate':
                             rot_id = data.get('id')
                             new_token = data.get('token')
@@ -934,8 +1283,12 @@ async def connect_once(
                                 try:
                                     await asyncio.to_thread(on_token_rotated, new_token)
                                     await ws.send_json({'kind': 'token_rotate_ack', 'id': rot_id, 'ok': True})
+                                    if diagnostics is not None:
+                                        diagnostics.record('token_rotated', 'credential updated')
                                 except Exception as exc:
                                     await ws.send_json({'kind': 'token_rotate_ack', 'id': rot_id, 'ok': False, 'error': type(exc).__name__})
+                                    if diagnostics is not None:
+                                        diagnostics.record('token_rotate_failed', type(exc).__name__, level='error')
                         elif kind == 'window_ack':
                             state = out_credits.get(data.get('id'))
                             if state is not None:
@@ -975,6 +1328,10 @@ async def connect_once(
             finally:
                 if on_connection is not None:
                     on_connection(False)
+                if diagnostics is not None:
+                    diagnostics.active_http = 0
+                    diagnostics.active_ws = 0
+                    diagnostics.record('disconnected', 'draining' if drain_delay is not None else 'closed')
                 active = list(http_tasks.values()) + list(ws_tasks.values()) + [t for t in (pulse, bridge) if t is not None]
                 for task in active:
                     task.cancel()
@@ -985,25 +1342,30 @@ async def connect_once(
     return drain_delay
 
 
-async def run(backend=None, *, on_connection=None, on_heartbeat=None, state_dir=None):
+async def run(backend=None, *, on_connection=None, on_heartbeat=None, state_dir=None, diagnostics=None):
     base_state = Path(state_dir) if state_dir is not None else STATE
     lock_handle = acquire_instance_lock(base_state)
     runtime = LocalGatewayRuntime(backend)
     try:
         config = json.loads((base_state / 'device.json').read_text(encoding='utf-8'))
         server = config['server']
-        blob = win32cred.CredRead(credential_target(server), 1)['CredentialBlob']
-        token = blob.decode('utf-16-le')
+        token = load_credential(server, state_dir=base_state)
+        if diagnostics is not None:
+            diagnostics.credential_backend = credential_backend_name(base_state)
 
         def handle_token_rotated(new_token: str):
             nonlocal token
-            save_credential(server, config['device'], new_token)
+            save_credential(server, config['device'], new_token, state_dir=base_state)
             token = new_token
 
         delay = 2
+        attempts = 0
         while True:
             connected_at = None
             drain_delay = None
+            if attempts > 0 and diagnostics is not None:
+                diagnostics.reconnect_count += 1
+            attempts += 1
 
             def handle_conn(state: bool):
                 nonlocal connected_at
@@ -1022,16 +1384,25 @@ async def run(backend=None, *, on_connection=None, on_heartbeat=None, state_dir=
                     local_runtime=runtime,
                     on_heartbeat=on_heartbeat,
                     on_token_rotated=handle_token_rotated,
+                    diagnostics=diagnostics,
                 )
             except aiohttp.WSServerHandshakeError as e:
                 if e.status in (401, 403):
+                    if diagnostics is not None:
+                        diagnostics.record('auth_error', f'HTTP {e.status}', level='error')
                     raise ConnectorAuthError('设备已撤销或凭证无效，请重新配对。') from e
+                if diagnostics is not None:
+                    diagnostics.record('handshake_error', f'HTTP {e.status}', level='warn')
                 print('连接暂不可用：' + type(e).__name__, flush=True)
             except (asyncio.CancelledError, ConnectorAuthError, ConnectorConflictError):
                 raise
             except (aiohttp.ClientError, OSError, asyncio.TimeoutError) as e:
+                if diagnostics is not None:
+                    diagnostics.record('connect_error', type(e).__name__, level='warn')
                 print('连接中断：' + type(e).__name__, flush=True)
             except Exception as e:
+                if diagnostics is not None:
+                    diagnostics.record('unexpected_error', type(e).__name__, level='error')
                 print('连接异常，稍后重试：' + type(e).__name__, flush=True)
 
             if drain_delay is not None:

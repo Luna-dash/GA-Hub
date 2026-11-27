@@ -20,6 +20,25 @@ class NovaAccountRequest(BaseModel):
     confirm: bool = False
 
 
+class NovaDiagnosticEvent(BaseModel):
+    ts: float
+    level: str = "info"
+    event: str
+    detail: str = ""
+
+
+class NovaDiagnosticsResp(BaseModel):
+    protocol: int | None = None
+    capabilities: list[str] = Field(default_factory=list)
+    credential_backend: str | None = None
+    active_http: int = 0
+    active_ws: int = 0
+    reconnect_count: int = 0
+    bytes_in: int = 0
+    bytes_out: int = 0
+    events: list[NovaDiagnosticEvent] = Field(default_factory=list)
+
+
 class NovaStatusResp(BaseModel):
     model_config = {"extra": "allow"}
 
@@ -34,6 +53,7 @@ class NovaStatusResp(BaseModel):
     error: str | None = None
     error_detail: str | None = None
     connector_version: str | None = None
+    diagnostics: NovaDiagnosticsResp | None = None
     server: str | None = None
     local_token: str | None = None
 

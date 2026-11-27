@@ -335,6 +335,53 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                     bad_resp = await asyncio.wait_for(client.post(api + '/upload', data=bad_form, headers=auth), timeout=5)
                     self.assertEqual(bad_resp.status, 415)
 
+                    # Wave 3: Resumable chunked upload (init -> PUT -> 409 resync -> GET -> PUT -> complete -> attach)
+                    chunked_bytes = b'A' * (300 * 1024) + b'B' * (300 * 1024)
+                    init_r = await client.post(
+                        api + '/upload/chunked/init',
+                        json={'filename': 'resumable.txt', 'size': len(chunked_bytes)},
+                        headers=auth,
+                    )
+                    self.assertEqual(init_r.status, 200, await init_r.text())
+                    up_id = (await init_r.json())['upload_id']
+                    p1 = await client.put(
+                        f'{api}/upload/chunked/{up_id}?offset=0',
+                        data=chunked_bytes[:300 * 1024],
+                        headers={**auth, 'Content-Type': 'application/octet-stream'},
+                    )
+                    self.assertEqual(p1.status, 200, await p1.text())
+                    self.assertEqual((await p1.json())['offset'], 300 * 1024)
+                    # Wrong offset returns 409 with authoritative server offset
+                    p_bad = await client.put(
+                        f'{api}/upload/chunked/{up_id}?offset=0',
+                        data=chunked_bytes[:1024],
+                        headers={**auth, 'Content-Type': 'application/octet-stream'},
+                    )
+                    self.assertEqual(p_bad.status, 409)
+                    self.assertEqual((await p_bad.json())['offset'], 300 * 1024)
+                    # GET state confirms offset before resuming second half
+                    st_r = await client.get(f'{api}/upload/chunked/{up_id}', headers=auth)
+                    self.assertEqual(st_r.status, 200)
+                    self.assertEqual((await st_r.json())['offset'], 300 * 1024)
+                    p2 = await client.put(
+                        f'{api}/upload/chunked/{up_id}?offset={300 * 1024}',
+                        data=chunked_bytes[300 * 1024:],
+                        headers={**auth, 'Content-Type': 'application/octet-stream'},
+                    )
+                    self.assertEqual(p2.status, 200, await p2.text())
+                    done_r = await client.post(f'{api}/upload/chunked/{up_id}/complete', headers=auth)
+                    self.assertEqual(done_r.status, 200, await done_r.text())
+                    done_data = await done_r.json()
+                    self.assertEqual(done_data['size'], len(chunked_bytes))
+                    # Attach completed chunked upload to a chat run
+                    run_with_chunk = await client.post(
+                        api + '/sessions/s1/runs',
+                        json={'text': 'See resumable', 'request_id': str(uuid.uuid4()), 'upload_ids': [done_data['upload_id']]},
+                        headers=auth,
+                    )
+                    self.assertEqual(run_with_chunk.status, 200, await run_with_chunk.text())
+                    self.assertEqual(chat_runs[-1]['attachments'][0]['size'], len(chunked_bytes))
+
                     # Register artifact token via chat messages path containing large_file
                     original_bytes = report.read_bytes()
                     report.write_bytes(large_payload)
@@ -509,10 +556,16 @@ class SettingsAccountE2E(unittest.IsolatedAsyncioTestCase):
                     'topic': 'anti:runtime',
                     'payload': {'session_id': 'a-ctrl', 'status': 'running', 'run_id': 'ar-1'},
                 })
+                await local_sub.send_json({
+                    'topic': 'anti:runtime',
+                    'payload': {'session_id': 'a-ctrl', 'status': 'waiting_input', 'run_id': 'ar-1', 'prompt_type': 'question'},
+                })
                 got1 = await ev_ws.receive_json(timeout=5)
                 got2 = await ev_ws.receive_json(timeout=5)
+                got3 = await ev_ws.receive_json(timeout=5)
                 self.assertEqual(got1, {'event': 'session.runtime', 'data': {'session_id': 's-ctrl', 'status': 'idle', 'completed_run_id': 'r-done'}})
                 self.assertEqual(got2, {'event': 'agy.runtime', 'data': {'session_id': 'a-ctrl', 'status': 'running', 'run_id': 'ar-1'}})
+                self.assertEqual(got3, {'event': 'agy.runtime', 'data': {'session_id': 'a-ctrl', 'status': 'waiting_input', 'run_id': 'ar-1', 'prompt_type': 'question'}})
                 await ev_ws.close()
 
                 # Rotate device token live while connected

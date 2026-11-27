@@ -15328,6 +15328,101 @@
         ],
         "title": "NovaAccountRequest"
       },
+      "NovaDiagnosticEvent": {
+        "properties": {
+          "ts": {
+            "type": "number",
+            "title": "Ts"
+          },
+          "level": {
+            "type": "string",
+            "title": "Level",
+            "default": "info"
+          },
+          "event": {
+            "type": "string",
+            "title": "Event"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "ts",
+          "event"
+        ],
+        "title": "NovaDiagnosticEvent"
+      },
+      "NovaDiagnosticsResp": {
+        "properties": {
+          "protocol": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Protocol"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capabilities"
+          },
+          "credential_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Backend"
+          },
+          "active_http": {
+            "type": "integer",
+            "title": "Active Http",
+            "default": 0
+          },
+          "active_ws": {
+            "type": "integer",
+            "title": "Active Ws",
+            "default": 0
+          },
+          "reconnect_count": {
+            "type": "integer",
+            "title": "Reconnect Count",
+            "default": 0
+          },
+          "bytes_in": {
+            "type": "integer",
+            "title": "Bytes In",
+            "default": 0
+          },
+          "bytes_out": {
+            "type": "integer",
+            "title": "Bytes Out",
+            "default": 0
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/NovaDiagnosticEvent"
+            },
+            "type": "array",
+            "title": "Events"
+          }
+        },
+        "type": "object",
+        "title": "NovaDiagnosticsResp"
+      },
       "NovaStatusResp": {
         "properties": {
           "device": {
@@ -15432,6 +15527,16 @@
               }
             ],
             "title": "Connector Version"
+          },
+          "diagnostics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NovaDiagnosticsResp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "server": {
             "anyOf": [

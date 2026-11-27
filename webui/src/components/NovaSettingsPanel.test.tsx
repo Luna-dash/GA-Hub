@@ -121,4 +121,33 @@ describe('Nova embedded settings', () => {
     await act(async () => button('重新连接').click())
     expect(novaApi.action).toHaveBeenCalledWith('reconnect', undefined)
   })
+
+  it('renders collapsed connector diagnostics when available', async () => {
+    vi.mocked(novaApi.status).mockResolvedValue({
+      ...status,
+      paired: true,
+      running: true,
+      connected: true,
+      connector_version: '2.2.0',
+      diagnostics: {
+        protocol: 2,
+        capabilities: ['binary', 'resumable_upload'],
+        credential_backend: 'windows_credman',
+        active_http: 1,
+        active_ws: 2,
+        reconnect_count: 3,
+        bytes_in: 2048,
+        bytes_out: 4096,
+        events: [{ ts: 1700000000, level: 'info', event: 'hello', detail: 'protocol=v2' }],
+      },
+    })
+    await act(async () => root.render(<NovaSettingsPanel />))
+    const allDetails = Array.from(host.querySelectorAll('details'))
+    expect(allDetails).toHaveLength(2)
+    expect(allDetails[1].querySelector('summary')?.textContent).toBe('链路诊断')
+    expect(allDetails[1].textContent).toContain('协议：v2')
+    expect(allDetails[1].textContent).toContain('windows_credman')
+    expect(allDetails[1].textContent).toContain('resumable_upload')
+    expect(allDetails[1].textContent).toContain('protocol=v2')
+  })
 })

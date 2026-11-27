@@ -5810,6 +5810,59 @@ export interface components {
              */
             confirm: boolean;
         };
+        /** NovaDiagnosticEvent */
+        NovaDiagnosticEvent: {
+            /** Ts */
+            ts: number;
+            /**
+             * Level
+             * @default info
+             */
+            level: string;
+            /** Event */
+            event: string;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+        };
+        /** NovaDiagnosticsResp */
+        NovaDiagnosticsResp: {
+            /** Protocol */
+            protocol?: number | null;
+            /** Capabilities */
+            capabilities?: string[];
+            /** Credential Backend */
+            credential_backend?: string | null;
+            /**
+             * Active Http
+             * @default 0
+             */
+            active_http: number;
+            /**
+             * Active Ws
+             * @default 0
+             */
+            active_ws: number;
+            /**
+             * Reconnect Count
+             * @default 0
+             */
+            reconnect_count: number;
+            /**
+             * Bytes In
+             * @default 0
+             */
+            bytes_in: number;
+            /**
+             * Bytes Out
+             * @default 0
+             */
+            bytes_out: number;
+            /** Events */
+            events?: components["schemas"]["NovaDiagnosticEvent"][];
+        };
         /** NovaStatusResp */
         NovaStatusResp: {
             /** Device */
@@ -5843,6 +5896,7 @@ export interface components {
             error_detail?: string | null;
             /** Connector Version */
             connector_version?: string | null;
+            diagnostics?: components["schemas"]["NovaDiagnosticsResp"] | null;
             /** Server */
             server?: string | null;
             /** Local Token */

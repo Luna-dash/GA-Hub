@@ -652,6 +652,19 @@ class AntiSessions:
                             log.warning("Could not persist an Agy stream event for run %s", rid, exc_info=True)
                             write_failure_logged = True
                 _EVENT_BUS.notify(key, ephemeral=evt if etype == "approval.requested" else None)
+                if etype == "approval.requested":
+                    approval_obj = evt.get("approval") if isinstance(evt.get("approval"), dict) else {}
+                    prompt_type = (
+                        "question"
+                        if (approval_obj.get("prompt_type") == "question" or approval_obj.get("question"))
+                        else "approval"
+                    )
+                    self._publish_anti_runtime({
+                        "session_id": sid,
+                        "status": "waiting_input",
+                        "run_id": rid,
+                        "prompt_type": prompt_type,
+                    })
 
         result: dict[str, Any] = {}
         registered = False
