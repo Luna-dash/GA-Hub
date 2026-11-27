@@ -22,6 +22,7 @@ import { api } from '@/api/client'
 import type { MyKeyData, MyKeySession, MyKeySessionTestResult, MyKeySessionType, MyKeyWriteResult } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { ModalOverlay } from '@/components/ModalOverlay'
+import { QueryLoadState } from '@/components/QueryLoadState'
 import { SessionChannelIcon } from '@/components/SessionChannelIcon'
 import { RawView } from '@/components/MyKeyRawView'
 import { dialog } from '@/stores/dialogStore'
@@ -30,6 +31,7 @@ import { queryKeys } from '@/queries/queryKeys'
 import { useDirtyClose } from '@/hooks/useDirtyClose'
 import { usePageState } from '@/utils/pageState'
 import { getMyKeyShowUpload, MYKEY_SHOW_UPLOAD_EVENT, MYKEY_SYNC_CONFIRM, myKeySyncSuccess, myKeySyncFailure } from '@/utils/mykeySyncUi'
+import { extractErrorMessage } from '@/utils/errors'
 import { errorMessageFromError, myKeyParseErrorFromError } from '@/utils/sessionUi'
 import {
   ArrowDown,
@@ -83,7 +85,7 @@ export default function MyKey() {
     window.addEventListener(MYKEY_SHOW_UPLOAD_EVENT, sync)
     return () => window.removeEventListener(MYKEY_SHOW_UPLOAD_EVENT, sync)
   }, [])
-  const { data, isLoading, isError, error, refetch } = useQuery({ queryKey: queryKeys.mykey.data, queryFn: api.mykey })
+  const { data, isLoading, isError, isFetching, error, refetch } = useQuery({ queryKey: queryKeys.mykey.data, queryFn: api.mykey })
   const rawDirtyRef = useRef(false)
   const proxyDirtyRef = useRef(false)
   const setRawDirty = useCallback((dirty: boolean) => { rawDirtyRef.current = dirty }, [])
@@ -259,30 +261,52 @@ export default function MyKey() {
               <span>每日同步</span>
             </label>
           </div>
-          <p role="status" className="mt-2 text-xs text-ink-faint">
-            {autoSync.isError ? '自动同步状态暂不可用' : autoSync.data
-              ? `${autoSync.data.running ? '正在检查云端…' : (autoSync.data.message || (autoSync.data.enabled ? '每日自动同步已开启' : '每日自动同步未开启'))}${autoSync.data.last_checked ? ` · 最近检查 ${new Date(autoSync.data.last_checked).toLocaleString()}` : ''}`
-              : '读取同步状态…'}
-          </p>
-        </section>
-        {isLoading && <div className="text-ink-faint text-sm">载入中…</div>}
-        {isError && (
-          <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-status-danger-line bg-status-danger-soft px-4 py-3 text-sm text-status-danger">
-            <span>读取 mykey.py 失败：{errorMessageFromError(error)}</span>
-            <button type="button" onClick={() => void refetch()} className="ga-btn shrink-0"><RefreshIcon size={14} /><span>重试</span></button>
-          </div>
-        )}
-        {data && !data.exists && (
-          <div className="rounded-xl border border-status-warning-line bg-status-warning-soft p-4 text-sm text-status-warning">
-            <div className="font-semibold mb-1">mykey.py 不存在</div>
-            <div className="text-status-warning-strong">
-              路径 <span className="font-mono">{data.path}</span> 上还没有这个文件。
-              切到「原始」tab 创建一份，或点下方右侧的 <strong>+ OpenAI (native)</strong> / <strong>+ Claude (native)</strong> 添加第一条链路。
+          {autoSync.isError ? (
+            <div role="alert" className="mt-2 flex flex-wrap items-center gap-2 text-xs text-status-danger">
+              <span>自动同步状态暂不可用：{extractErrorMessage(autoSync.error, '请重试')}</span>
+              <button
+                type="button"
+                className="ga-btn-xs"
+                disabled={autoSync.isFetching}
+                onClick={() => { void autoSync.refetch() }}
+              >
+                {autoSync.isFetching ? '重试中…' : '重试'}
+              </button>
             </div>
+          ) : (
+            <p role="status" className="mt-2 text-xs text-ink-faint">
+              {autoSync.data
+                ? `${autoSync.data.running ? '正在检查云端…' : (autoSync.data.message || (autoSync.data.enabled ? '每日自动同步已开启' : '每日自动同步未开启'))}${autoSync.data.last_checked ? ` · 最近检查 ${new Date(autoSync.data.last_checked).toLocaleString()}` : ''}`
+                : '读取同步状态…'}
+            </p>
+          )}
+        </section>
+        {data && isError && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-status-danger-line bg-status-danger-soft px-4 py-3 text-sm text-status-danger">
+            <span>读取 mykey.py 失败：{extractErrorMessage(error)}</span>
+            <button type="button" onClick={() => void refetch()} disabled={isFetching} className="ga-btn shrink-0">
+              <RefreshIcon size={14} /><span>{isFetching ? '重试中…' : '重试'}</span>
+            </button>
           </div>
         )}
-        {data && tab === 'structured' && <StructuredView data={data} onWrite={onWriteResult} onProxyDirtyChange={setProxyDirty} />}
-        {data && tab === 'raw' && <RawView data={data} onWrite={onWriteResult} onDirtyChange={setRawDirty} />}
+        <QueryLoadState
+          query={{ isLoading, isError: isError && !data, isFetching, error, refetch }}
+          label="mykey.py"
+          errorTitle="读取 mykey.py 失败"
+          showDetail
+        >
+          {data && !data.exists && (
+            <div className="rounded-xl border border-status-warning-line bg-status-warning-soft p-4 text-sm text-status-warning">
+              <div className="font-semibold mb-1">mykey.py 不存在</div>
+              <div className="text-status-warning-strong">
+                路径 <span className="font-mono">{data.path}</span> 上还没有这个文件。
+                切到「原始」tab 创建一份，或点下方右侧的 <strong>+ OpenAI (native)</strong> / <strong>+ Claude (native)</strong> 添加第一条链路。
+              </div>
+            </div>
+          )}
+          {data && tab === 'structured' && <StructuredView data={data} onWrite={onWriteResult} onProxyDirtyChange={setProxyDirty} />}
+          {data && tab === 'raw' && <RawView data={data} onWrite={onWriteResult} onDirtyChange={setRawDirty} />}
+        </QueryLoadState>
       </div>
     </PageShell>
   )

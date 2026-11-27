@@ -283,7 +283,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
               <div>正在恢复历史对话…</div>
             </div>
           )}
-          {!sessionError && historyStatus !== 'loading_history' && msgs.length === 0 && (
+          {!sessionError && historyStatus !== 'loading_history' && historyStatus !== 'history_error' && msgs.length === 0 && (
             <div className="flex h-full items-center justify-center text-sm text-ink-faint">
               开始一段对话，或粘贴一张图问个问题。
             </div>

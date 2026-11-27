@@ -205,6 +205,24 @@ describe('LiveChatTranscript reading intent', () => {
     expect(host.textContent).not.toContain('开始一段对话')
   })
 
+  it('does not show the empty-state welcome alongside a history_error banner', () => {
+    act(() => {
+      useChatStore.setState({
+        sessionId: 'A',
+        msgs: [],
+        streaming: false,
+        projectionReady: true,
+        historyStatus: 'history_error',
+        historyError: '历史记录不可用',
+      })
+      root.render(<LiveChatTranscript sessionId="A"
+        sessionError="" scheduledChats={[]} scheduleNow={0}
+        onCancelSchedule={() => {}} onRewind={() => {}} />)
+    })
+    expect(host.textContent).toContain('历史消息加载失败：历史记录不可用')
+    expect(host.textContent).not.toContain('开始一段对话')
+  })
+
   it('renders the multi-turn minimap selector and jumps to the clicked round', () => {
     mount()
     const minimapButtons = host.querySelectorAll<HTMLButtonElement>('[aria-label="多轮会话选择器"] button')

@@ -7,6 +7,7 @@ import type { HubSession, ThemeRun } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { MessageContent } from '@/components/MessageContent'
+import { QueryLoadState } from '@/components/QueryLoadState'
 import { ThemeTaskHistory, ThemeTaskTabs, type ThemeTaskTab } from '@/components/ThemeTaskHistory'
 import { queryKeys } from '@/queries/queryKeys'
 import { themeReportConclusion } from '@/utils/themeReport'
@@ -14,6 +15,7 @@ import { hubEventClient } from '@/runtime/hubEventClient'
 import { formatRelativeTime } from '@/utils/timeFormat'
 import { writeClipboard } from '@/utils/clipboard'
 import { readRecentInstructions, writeRecentInstructions, readRunInstruction, themeFailureReason } from '@/utils/themeTaskActions'
+import { extractErrorMessage } from '@/utils/errors'
 import { errorMessageFromError, sessionChatHref } from '@/utils/sessionUi'
 import { useDirtyClose } from '@/hooks/useDirtyClose'
 import { toast } from '@/stores/toastStore'
@@ -108,8 +110,9 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
         <label className="block text-xs font-medium">默认指令<textarea aria-label="默认执行指令" className={`${settingsField} min-h-48 max-h-[40dvh] resize-y leading-relaxed`} value={instruction} onChange={e => setInstruction(e.target.value)} /></label>
         <details className="text-xs text-ink-faint"><summary className="cursor-pointer hover:text-accent">任务描述{description ? ` · ${description.slice(0, 35)}${description.length > 35 ? '…' : ''}` : '（可选）'}</summary><textarea aria-label="任务描述" className={`${settingsField} min-h-20 resize-y`} value={description} onChange={e => setDescription(e.target.value)} /></details>
       </fieldset>
-      {llms.isLoading && <p className="mt-3 text-xs text-ink-faint">加载模型…</p>}
-      {llms.isError && <p role="alert" className="mt-4 rounded-xl bg-status-danger/10 p-3 text-sm text-status-danger">模型列表加载失败，请稍后重试。</p>}
+      <div className="mt-3">
+        <QueryLoadState query={llms} label="模型列表" compact showDetail />
+      </div>
       {error && <p role="alert" className="mt-4 rounded-xl bg-status-danger/10 p-3 text-sm text-status-danger">{error}</p>}
     </div>
     <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line bg-bg-soft/50 px-5 py-3"><button type="button" className="ga-btn px-4" disabled={saving} onClick={requestClose}>取消</button><button type="button" className="ga-btn-primary px-5" disabled={saving || !instruction.trim() || !title.trim() || !llms.data?.llms.some(m => m.key === key)} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></footer>
@@ -397,8 +400,35 @@ export default function ThemeTasks() {
     actions={<button type="button" className="ga-btn-sm-primary" onClick={() => setPicking(true)}><Plus className="h-3.5 w-3.5" aria-hidden="true" /><span>从会话转入</span></button>}
   >
     <div className="ga-page-board">
-      {sessionsQuery.isError && <p role="alert" className="text-status-danger">加载失败。<button type="button" className={button} onClick={() => void sessionsQuery.refetch()}><RefreshIcon size={12} /><span>重试</span></button></p>}
-      {sessionsQuery.isLoading ? <p className="text-sm text-ink-faint">正在加载…</p> : tasks.length === 0 ? <div className="ga-paper-card border-dashed bg-bg-card/55 p-8 text-center"><p className="mb-4 text-sm text-ink-faint">暂无主题任务</p><button type="button" className={button} onClick={() => setPicking(true)}>选择已有会话</button></div> : <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">{orderedTasks.map(s => <ThemeCard key={s.id} expanded={expandedId === s.id} onExpandedChange={setExpandedId} session={s} unread={unreadSessionIds.has(s.id)} onSettings={() => setSetting(s)} refresh={refresh} autoOpen={openId === s.id} onAutoOpened={clearOpen} />)}</div>}
+      {!sessionsQuery.data && (sessionsQuery.isLoading || sessionsQuery.isError) ? (
+        <QueryLoadState query={sessionsQuery} label="主题任务" showDetail />
+      ) : (
+        <>
+          {sessionsQuery.isError && (
+            <div role="alert" className="flex items-center justify-between gap-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-xs text-status-danger">
+              <span>主题任务刷新失败：{extractErrorMessage(sessionsQuery.error)}</span>
+              <button
+                type="button"
+                className="ga-btn-xs shrink-0"
+                disabled={sessionsQuery.isFetching}
+                onClick={() => void sessionsQuery.refetch()}
+              >
+                {sessionsQuery.isFetching ? '重试中…' : '重试'}
+              </button>
+            </div>
+          )}
+          {!sessionsQuery.isError && tasks.length === 0 ? (
+            <div className="ga-paper-card border-dashed bg-bg-card/55 p-8 text-center">
+              <p className="mb-4 text-sm text-ink-faint">暂无主题任务</p>
+              <button type="button" className={button} onClick={() => setPicking(true)}>选择已有会话</button>
+            </div>
+          ) : tasks.length > 0 ? (
+            <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {orderedTasks.map(s => <ThemeCard key={s.id} expanded={expandedId === s.id} onExpandedChange={setExpandedId} session={s} unread={unreadSessionIds.has(s.id)} onSettings={() => setSetting(s)} refresh={refresh} autoOpen={openId === s.id} onAutoOpened={clearOpen} />)}
+            </div>
+          ) : null}
+        </>
+      )}
     </div>
     {picking && (
       <ModalOverlay onClose={() => { setPicking(false); setSearch('') }} labelledBy="theme-pick-title" panelClassName="w-[min(560px,94vw)] rounded-2xl border border-line bg-bg p-6">

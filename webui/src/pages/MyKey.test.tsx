@@ -501,4 +501,16 @@ describe('MyKey upload button visibility', () => {
     confirmSpy.mockRestore()
   })
 
+  it('provides a retry button when autoSync fails to load', async () => {
+    apiMock.myKeyAutoSync.mockRejectedValueOnce({ body: { detail: '同步服务不可达' } })
+    await mountFixture()
+    const autoSyncSection = host.querySelector('section[aria-label="云端自动同步"]')!
+    expect(autoSyncSection.querySelector('[role="alert"]')?.textContent).toContain('自动同步状态暂不可用：同步服务不可达')
+
+    apiMock.myKeyAutoSync.mockResolvedValueOnce({ enabled: true, running: false, message: '每日自动同步已开启', last_checked: null })
+    const retryBtn = Array.from(autoSyncSection.querySelectorAll('button')).find(b => b.textContent === '重试')!
+    await act(async () => { retryBtn.click(); await settle() })
+    expect(autoSyncSection.querySelector('[role="alert"]')).toBeNull()
+    expect(autoSyncSection.textContent).toContain('每日自动同步已开启')
+  })
 })

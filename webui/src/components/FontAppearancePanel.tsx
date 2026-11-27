@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Download, Trash2, Upload } from 'lucide-react'
 import { fontApi, type FontPackInfo, type FontSettings } from '@/api/client'
+import { QueryLoadState } from '@/components/QueryLoadState'
 import { queryKeys } from '@/queries/queryKeys'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
@@ -232,11 +233,7 @@ export function FontAppearancePanel() {
         </div>
       )}
 
-      {fontsQuery.isLoading ? (
-        <div className="text-xs text-ink-faint">正在读取字体列表…</div>
-      ) : fontsQuery.isError ? (
-        <div role="alert" className="text-xs text-status-danger">无法读取字体列表，请确认后端已就绪。</div>
-      ) : (
+      <QueryLoadState query={fontsQuery} label="字体列表" compact showDetail>
         <div className="space-y-2">
           {(data?.packs ?? []).map((pack) => {
             const isDownloadingThis = downloading?.pack_id === pack.id
@@ -308,7 +305,7 @@ export function FontAppearancePanel() {
             )
           })}
         </div>
-      )}
+      </QueryLoadState>
 
       <div className="rounded-lg border border-line/70 bg-bg-soft/65 px-3 py-1.5 text-xs text-ink flex flex-wrap items-center justify-between gap-2">
         <span className="text-[11px] text-ink-faint">效果预览</span>

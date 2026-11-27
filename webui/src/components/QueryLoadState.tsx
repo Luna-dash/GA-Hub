@@ -12,12 +12,14 @@ type QueryState = {
 export function QueryLoadState({
   query,
   label,
+  errorTitle,
   compact = false,
   showDetail = false,
   children,
 }: {
   query: QueryState
   label: string
+  errorTitle?: string
   compact?: boolean
   showDetail?: boolean
   children?: ReactNode
@@ -34,8 +36,9 @@ export function QueryLoadState({
   }
   if (!query.isError) return <>{children}</>
 
+  const baseErrorText = errorTitle ?? `${label}加载失败`
   const detail = showDetail && query.error != null ? extractErrorMessage(query.error, '') : ''
-  const errorText = detail ? `${label}加载失败：${detail}` : `${label}加载失败`
+  const errorText = detail ? `${baseErrorText}：${detail}` : baseErrorText
 
   return (
     <div

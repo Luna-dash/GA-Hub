@@ -340,8 +340,16 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
       )}
 
       {error && (
-        <div role="alert" className="rounded-xl border border-status-danger-line bg-status-danger-soft px-4 py-3 text-xs text-status-danger">
-          {error}
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-status-danger-line bg-status-danger-soft px-4 py-3 text-xs text-status-danger">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="ga-btn-xs shrink-0"
+            disabled={loading}
+            onClick={() => void refresh()}
+          >
+            {loading ? '重试中…' : '重试'}
+          </button>
         </div>
       )}
 

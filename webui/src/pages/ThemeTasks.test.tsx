@@ -483,3 +483,34 @@ it('resets picking search on close and confirms dirty close in ThemeTaskSettings
   expect(host.querySelector('[role="dialog"]')).toBeNull()
   confirmSpy.mockRestore()
 })
+
+it('never renders empty state alongside sessionsQuery error and offers retry in ThemeTaskSettings on llms error', async () => {
+  act(() => root.unmount())
+  client.clear()
+  root = createRoot(host)
+  vi.mocked(api.sessions).mockRejectedValueOnce({ body: { detail: '会话接口异常' } })
+  await act(async () => {
+    root.render(<QueryClientProvider client={client}><MemoryRouter><ThemeTasks /></MemoryRouter></QueryClientProvider>)
+  })
+  await wait(40)
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('主题任务加载失败：会话接口异常')
+  expect(host.textContent).not.toContain('暂无主题任务')
+
+  // Verify ThemeTaskSettings renders retry when llms query fails
+  vi.mocked(api.llms).mockRejectedValueOnce({ body: { detail: '模型接口超时' } })
+  const session = {
+    id: 'one', title: '签到', llm_key: 'model', llm_index: null, archive_path: null,
+    project_name: null, project_path: null, created_at: '', updated_at: '', theme_task: null,
+    previous_theme_task: { instruction: '检查签到', description: '' },
+  }
+  const settingsClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  await act(async () => {
+    root.render(<QueryClientProvider client={settingsClient}><ThemeTaskSettings session={session} onClose={() => {}} onSaved={() => {}} /></QueryClientProvider>)
+  })
+  await wait(40)
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('模型列表加载失败：模型接口超时')
+  vi.mocked(api.llms).mockResolvedValueOnce({ llms: [{ key: 'model', name: '执行模型' }] } as never)
+  await click('重试')
+  expect(host.querySelector('[role="alert"]')).toBeNull()
+  settingsClient.clear()
+})
