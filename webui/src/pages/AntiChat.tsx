@@ -55,6 +55,7 @@ import { antiSessionToRuntime } from '@/utils/sessionUi'
 import { markSessionRead } from '@/stores/sessionUnreadStore'
 import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { useDraftStore } from '@/stores/draftStore'
+import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import { queryKeys } from '@/queries/queryKeys'
@@ -1065,6 +1066,21 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       clearQueue.reset()
     },
   })
+  const clearQueueConfirmRef = useRef(false)
+  const confirmClearQueue = async () => {
+    if (clearQueue.isPending || clearQueueConfirmRef.current) return
+    clearQueueConfirmRef.current = true
+    try {
+      const ok = await dialog.confirm(
+        '清空待发队列？',
+        `将移除队列中的全部 ${queueItems.length} 条待发消息，清空后无法恢复。`,
+        { confirmText: '清空队列', tone: 'danger' },
+      )
+      if (ok) clearQueue.mutate()
+    } finally {
+      clearQueueConfirmRef.current = false
+    }
+  }
   const moveQueued = useMutation({
     mutationFn: ({ qid, direction }: { qid: string; direction: 'up' | 'down' | 'top' }) =>
       antiApi.moveQueuedPrompt(sid, qid, direction),
@@ -1549,7 +1565,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
         dispatchPending={dispatchQueued.isPending}
         pendingEditItem={pendingEditItem}
         onToggleCollapsed={() => setQueueCollapsed(prev => !prev)}
-        onClearAll={() => clearQueue.mutate()}
+        onClearAll={() => { void confirmClearQueue() }}
         onMoveItem={(qid, direction) => moveQueued.mutate({ qid, direction })}
         onSteerItem={(item) => steerQueued.mutate(item.id)}
         onDispatchItem={(item) => dispatchQueued.mutate(item.id)}

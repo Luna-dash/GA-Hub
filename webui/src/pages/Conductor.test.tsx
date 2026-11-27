@@ -775,6 +775,18 @@ describe('Conductor chat scroll restoration', () => {
 
     expect(() => button('通过')).toThrow()
     expect(() => button('打回返工')).toThrow()
+
+    mocks.dialogConfirm.mockResolvedValueOnce(false)
+    act(() => button('终止').click())
+    await flushQueries()
+    expect(mocks.dialogConfirm).toHaveBeenCalledWith(
+      '终止该子代理？',
+      expect.any(String),
+      expect.objectContaining({ confirmText: '终止', tone: 'danger' }),
+    )
+    expect(mocks.conductorSubagentAction).not.toHaveBeenCalled()
+
+    mocks.dialogConfirm.mockResolvedValueOnce(true)
     act(() => button('终止').click())
     await flushQueries()
     expect(mocks.conductorSubagentAction).toHaveBeenCalledWith(

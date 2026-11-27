@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FontAppearancePanel } from './FontAppearancePanel'
 import type { FontSettings } from '@/api/client'
+import { dialog } from '@/stores/dialogStore'
 
 const fontApiMock = vi.hoisted(() => ({
   settings: vi.fn(),
@@ -93,12 +94,22 @@ describe('FontAppearancePanel loading feedback', () => {
     await act(async () => { resolveActivate(baseSettings); await Promise.resolve() })
     expect(button('启用').disabled).toBe(false)
 
-    await act(async () => { button('移除').click() })
-    expect(fontApiMock.deletePack).toHaveBeenCalledTimes(1)
-    expect(button('移除中…').disabled).toBe(true)
-    expect(button('启用').disabled).toBe(true)
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    try {
+      await act(async () => { button('移除').click(); await Promise.resolve() })
+      expect(confirmSpy).toHaveBeenCalledTimes(1)
+      expect(fontApiMock.deletePack).not.toHaveBeenCalled()
 
-    await act(async () => { resolveDelete({ ...baseSettings, packs: [] }); await Promise.resolve() })
+      await act(async () => { button('移除').click(); await Promise.resolve() })
+      expect(confirmSpy).toHaveBeenCalledTimes(2)
+      expect(fontApiMock.deletePack).toHaveBeenCalledTimes(1)
+      expect(button('移除中…').disabled).toBe(true)
+      expect(button('启用').disabled).toBe(true)
+
+      await act(async () => { resolveDelete({ ...baseSettings, packs: [] }); await Promise.resolve() })
+    } finally {
+      confirmSpy.mockRestore()
+    }
   })
 
   it('guards all async actions against same-tick rapid double-clicks and unlocks cleanly on rejection', async () => {
@@ -148,16 +159,23 @@ describe('FontAppearancePanel loading feedback', () => {
     await act(async () => { rejectActivate(new Error('activate fail')); await Promise.resolve() })
     expect(button('导入本地字体…').disabled).toBe(false)
 
-    // 2. handleDelete same-tick double-click + rejection unlocks
-    const delBtn = button('移除')
-    await act(async () => {
-      delBtn.click()
-      delBtn.click()
-    })
-    expect(fontApiMock.deletePack).toHaveBeenCalledTimes(1)
-    expect(button('导入本地字体…').disabled).toBe(true)
-    await act(async () => { rejectDelete(new Error('delete fail')); await Promise.resolve() })
-    expect(button('导入本地字体…').disabled).toBe(false)
+    // 2. handleDelete same-tick double-click (before dialog.confirm resolves) + rejection unlocks
+    const confirmDeleteSpy = vi.spyOn(dialog, 'confirm').mockResolvedValue(true)
+    try {
+      const delBtn = button('移除')
+      await act(async () => {
+        delBtn.click()
+        delBtn.click()
+        await Promise.resolve()
+      })
+      expect(confirmDeleteSpy).toHaveBeenCalledTimes(1)
+      expect(fontApiMock.deletePack).toHaveBeenCalledTimes(1)
+      expect(button('导入本地字体…').disabled).toBe(true)
+      await act(async () => { rejectDelete(new Error('delete fail')); await Promise.resolve() })
+      expect(button('导入本地字体…').disabled).toBe(false)
+    } finally {
+      confirmDeleteSpy.mockRestore()
+    }
 
     // 3. handleDownload same-tick double-click + rejection unlocks
     const dlBtn = button('下载并启用')

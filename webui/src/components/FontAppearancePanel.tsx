@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Download, Trash2, Upload } from 'lucide-react'
 import { fontApi, type FontPackInfo, type FontSettings } from '@/api/client'
 import { queryKeys } from '@/queries/queryKeys'
+import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { applyFontSettings } from '@/utils/fontLoader'
 import { errorMessageFromError } from '@/utils/sessionUi'
@@ -83,8 +84,14 @@ export function FontAppearancePanel() {
   const handleDelete = async (pack: FontPackInfo) => {
     if (busyRef.current) return
     busyRef.current = true
-    setBusyId(`delete:${pack.id}`)
     try {
+      const ok = await dialog.confirm(
+        `移除字体包「${pack.name}」？`,
+        '将删除本地已下载的字体文件，之后如需使用需重新下载。',
+        { confirmText: '移除', tone: 'danger' },
+      )
+      if (!ok) return
+      setBusyId(`delete:${pack.id}`)
       const next = await fontApi.deletePack(pack.id)
       await applyAndCache(next)
       toast.success(`已移除 ${pack.name}`)

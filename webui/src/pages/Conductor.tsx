@@ -128,6 +128,7 @@ export default function Conductor() {
   const [antiProject, setAntiProject] = useState('')
   const { data: antiProjects } = useQuery({ queryKey: queryKeys.projects, queryFn: api.projects })
   const actionInFlightRef = useRef(false)
+  const abortConfirmRef = useRef(false)
   const ensureFiredRef = useRef(false)
   const ensureInFlightRef = useRef(false)
   const chatEndRef = useRef<HTMLDivElement | null>(null)
@@ -845,7 +846,20 @@ export default function Conductor() {
                     reworkReason: reworkSid === selectedWorker.id ? reworkReason : '',
                     onAccept: () => void runSubagentAction(selectedWorker.id, 'accept'),
                     onForceAccept: () => void runSubagentAction(selectedWorker.id, 'accept', '人工核对证据后强制通过', true),
-                    onAbort: () => void runSubagentAction(selectedWorker.id, 'abort'),
+                    onAbort: () => {
+                      const sid = selectedWorker.id
+                      if (actionInFlightRef.current || abortConfirmRef.current) return
+                      abortConfirmRef.current = true
+                      void dialog.confirm(
+                        '终止该子代理？',
+                        '将立即中止该子代理的当前执行，未交付的工作进度不会保留。',
+                        { confirmText: '终止', tone: 'danger' },
+                      ).then((ok) => {
+                        if (ok) void runSubagentAction(sid, 'abort')
+                      }).finally(() => {
+                        abortConfirmRef.current = false
+                      })
+                    },
                     onReworkOpen: () => { setReworkSid(selectedWorker.id); setReworkReason('') },
                     onReworkReasonChange: setReworkReason,
                     onReworkCancel: () => setReworkSid((prev) => (prev === selectedWorker.id ? null : prev)),

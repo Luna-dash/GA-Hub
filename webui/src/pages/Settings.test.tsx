@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Settings from './Settings'
 import { api, fontApi, novaApi, updateApi } from '@/api/client'
+import { dialog } from '@/stores/dialogStore'
 
 vi.mock('@/api/client', () => ({
   api: { setupStatus: vi.fn(), setupValidate: vi.fn(), setupSave: vi.fn(), chatRetryConfig: vi.fn(), saveChatRetryConfig: vi.fn() },
@@ -204,5 +205,51 @@ describe('Settings functional tabs', () => {
     expect(document.documentElement.dataset.paperTexture).toBe('fiber')
     expect(localStorage.getItem('gahub.uiTheme.v1')).toBe('crisp-green-soft')
     expect(localStorage.getItem('gahub.uiPaperTexture.v1')).toBe('fiber')
+  })
+
+  it('requires danger confirmation before removing an installed font pack', async () => {
+    const installedSettings = {
+      active_pack: 'system',
+      bold_style: 'restrained',
+      packs: [{
+        id: 'harmonyos-sans-sc',
+        name: 'HarmonyOS Sans SC',
+        summary: 'test pack',
+        license: 'HarmonyOS Sans License',
+        mode: 'enhanced',
+        approx_bytes: 13_000_000,
+        installed: true,
+        installed_bytes: 13_000_000,
+        active: false,
+        removable: true,
+      }],
+      download: null,
+    } as const
+    vi.mocked(fontApi.settings).mockResolvedValue(installedSettings as never)
+    vi.mocked(fontApi.deletePack).mockResolvedValue({
+      ...installedSettings,
+      packs: [{ ...installedSettings.packs[0], installed: false, installed_bytes: 0 }],
+    } as never)
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+
+    try {
+      await mount()
+      await click('fonts')
+
+      const removeBtn = Array.from(panel().querySelectorAll<HTMLButtonElement>('button'))
+        .find((b) => b.textContent?.includes('移除'))!
+      await act(async () => { removeBtn.click(); await Promise.resolve() })
+      expect(confirmSpy).toHaveBeenCalledWith(
+        '移除字体包「HarmonyOS Sans SC」？',
+        expect.any(String),
+        expect.objectContaining({ confirmText: '移除', tone: 'danger' }),
+      )
+      expect(fontApi.deletePack).not.toHaveBeenCalled()
+
+      await act(async () => { removeBtn.click(); await Promise.resolve() })
+      expect(fontApi.deletePack).toHaveBeenCalledWith('harmonyos-sans-sc')
+    } finally {
+      confirmSpy.mockRestore()
+    }
   })
 })

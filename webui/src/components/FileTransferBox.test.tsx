@@ -134,6 +134,9 @@ it('dismisses the open panel on outside click without stealing focus and keeps i
       host.querySelector<HTMLButtonElement>('[aria-label="清空列表"]')!.click()
     })
     const panel = host.querySelector<HTMLElement>('[role="dialog"]')!
+    const confirmBar = host.querySelector<HTMLElement>('[role="alertdialog"]')!
+    expect(confirmBar).not.toBeNull()
+    expect(confirmBar.getAttribute('aria-label')).toBe('确认清空列表')
     await act(async () => {
       panel.dispatchEvent(new Event('pointerdown', { bubbles: true }))
     })

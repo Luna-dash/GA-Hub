@@ -603,29 +603,42 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await flush()
     expect(profilesList.some(p => p.name === '克隆号')).toBe(true)
 
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：克隆号"]')!.click()
-    })
-    await flush()
-    const logoutBtn = document.body.querySelector('button[aria-label="清除凭据：克隆号"]') as HTMLButtonElement
-    await act(async () => { logoutBtn.click() })
-    await flush()
-    expect(profilesList.find(p => p.id === 'cloned')?.has_credentials).toBe(false)
+    const confirmProfileSpy = vi.spyOn(dialog, 'confirm').mockResolvedValue(true)
+    try {
+      await act(async () => {
+        document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：克隆号"]')!.click()
+      })
+      await flush()
+      const logoutBtn = document.body.querySelector('button[aria-label="清除凭据：克隆号"]') as HTMLButtonElement
+      await act(async () => { logoutBtn.click() })
+      await flush()
+      expect(confirmProfileSpy).toHaveBeenCalledWith(
+        '清除账号凭据？',
+        expect.stringContaining('克隆号'),
+        expect.objectContaining({ tone: 'danger' }),
+      )
+      expect(profilesList.find(p => p.id === 'cloned')?.has_credentials).toBe(false)
 
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('button[aria-label="返回账号列表"]')!.click()
-    })
-    await flush()
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：工作"]')!.click()
-    })
-    await flush()
-    const delBtn = document.body.querySelector('button[aria-label="删除账号：工作"]') as HTMLButtonElement
-    await act(async () => { delBtn.click() })
-    const confirmDel = document.body.querySelector('button[aria-label="确认删除：工作"]') as HTMLButtonElement
-    await act(async () => { confirmDel.click() })
-    await flush()
-    expect(profilesList.some(p => p.id === 'work')).toBe(false)
+      await act(async () => {
+        document.body.querySelector<HTMLButtonElement>('button[aria-label="返回账号列表"]')!.click()
+      })
+      await flush()
+      await act(async () => {
+        document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：工作"]')!.click()
+      })
+      await flush()
+      const delBtn = document.body.querySelector('button[aria-label="删除账号：工作"]') as HTMLButtonElement
+      await act(async () => { delBtn.click() })
+      await flush()
+      expect(confirmProfileSpy).toHaveBeenCalledWith(
+        '删除账号？',
+        expect.stringContaining('工作'),
+        expect.objectContaining({ tone: 'danger' }),
+      )
+      expect(profilesList.some(p => p.id === 'work')).toBe(false)
+    } finally {
+      confirmProfileSpy.mockRestore()
+    }
 
     // Close profile modal and stop gateway; offline cached quota remains available when opened
     const closeModalBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '关闭') as HTMLButtonElement
@@ -3867,6 +3880,80 @@ it('enforces closeOnBackdrop=false on AntiChat creating modal, guards dirty Anti
       await Promise.resolve()
     })
     expect(document.body.textContent).not.toContain('Google 授权码登录')
+  } finally {
+    confirmSpy.mockRestore()
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('confirms via dialog.confirm before clearing AntiQueuedDock items', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+    status, headers: { 'Content-Type': 'application/json' },
+  })
+  const session = {
+    id: 's-q-clear',
+    title: 'Queue Clear Session',
+    project: 'demo',
+    workspace: 'D:/demo',
+    has_conversation: false,
+    queued_count: 1,
+  }
+  let queueItems = [{ id: 'q-1', prompt: '待清空消息', mode: 'plan', permission_mode: 'approval-required' }]
+  let deleteCalls = 0
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    const path = new URL(url, 'http://localhost').pathname
+    const method = init?.method ?? 'GET'
+    if (path === '/api/anti/status') return Promise.resolve(reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' }))
+    if (path === '/api/anti/profiles') return Promise.resolve(reply({ active: 'default', profiles: [] }))
+    if (path === '/api/anti/sessions') return Promise.resolve(reply([{ ...session, queued_count: queueItems.length }]))
+    if (path === `/api/anti/sessions/${session.id}/runs`) return Promise.resolve(reply([]))
+    if (path === `/api/anti/sessions/${session.id}/queue` && method === 'GET') return Promise.resolve(reply({ items: queueItems, pause_reason: null }))
+    if (path === `/api/anti/sessions/${session.id}/queue` && method === 'DELETE') {
+      deleteCalls += 1
+      queueItems = []
+      return Promise.resolve(reply({ items: [], pause_reason: null }))
+    }
+    if (path.startsWith('/api/anti/models')) return Promise.resolve(reply({ items: [] }))
+    if (path.startsWith('/api/file-transfer')) return Promise.resolve(reply([]))
+    return Promise.resolve(reply({}))
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 15)) })
+  const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('[data-anti-queued-dock]')).not.toBeNull()
+    })
+
+    const clearBtn = [...host.querySelectorAll<HTMLButtonElement>('[data-anti-queued-dock] button')]
+      .find(b => b.textContent?.trim() === '清空')!
+    await act(async () => { clearBtn.click(); await Promise.resolve() })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(confirmSpy).toHaveBeenCalledWith(
+      '清空待发队列？',
+      expect.stringContaining('1 条'),
+      expect.objectContaining({ tone: 'danger' }),
+    )
+    expect(deleteCalls).toBe(0)
+    expect(host.querySelector('[data-anti-queued-dock]')).not.toBeNull()
+
+    await act(async () => { clearBtn.click(); await Promise.resolve() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(deleteCalls).toBe(1)
+      expect(host.querySelector('[data-anti-queued-dock]')).toBeNull()
+    })
   } finally {
     confirmSpy.mockRestore()
     await act(async () => root.unmount())

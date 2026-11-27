@@ -433,7 +433,11 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
             </button>
           </div>
           {confirmAction && (
-            <div className="mb-2 flex items-center gap-1.5 rounded-lg border border-line bg-bg-soft/65 px-2 py-1.5 text-xs">
+            <div
+              role="alertdialog"
+              aria-label={confirmAction === 'list' ? '确认清空列表' : '确认删除暂存文档'}
+              className="mb-2 flex items-center gap-1.5 rounded-lg border border-line bg-bg-soft/65 px-2 py-1.5 text-xs"
+            >
               <span className="flex-1 truncate font-medium">
                 {confirmAction === 'list' ? '清空列表？' : '删除暂存文档？'}
               </span>

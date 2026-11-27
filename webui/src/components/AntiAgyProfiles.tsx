@@ -131,7 +131,6 @@ export function AntiAgyProfiles({
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({})
   const [name, setName] = useState('')
   const [renameDraft, setRenameDraft] = useState('')
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [codeLogin, setCodeLogin] = useState<AgyCodeLoginState | null>(null)
   const [authCode, setAuthCode] = useState('')
@@ -164,7 +163,6 @@ export function AntiAgyProfiles({
     if (viewedProfile) {
       setRenameDraft(viewedProfile.name)
     }
-    setConfirmDeleteId(null)
   }, [viewedProfile?.id, viewedProfile?.name])
 
   useEffect(() => {
@@ -223,7 +221,6 @@ export function AntiAgyProfiles({
       } else if (args.kind === 'switch') {
         const data = await antiApi.switchProfile(args.profile.id)
         cache.setQueryData(key, data)
-        setConfirmDeleteId(null)
         void cache.invalidateQueries({ queryKey: ['anti-models'] })
         void cache.invalidateQueries({ queryKey: ['anti-commands'] })
         void cache.invalidateQueries({ queryKey: ['anti-workers'] })
@@ -236,7 +233,6 @@ export function AntiAgyProfiles({
           ...old,
           profiles: old.profiles.filter(p => p.id !== args.profile.id),
         }))
-        setConfirmDeleteId(null)
         setView({ kind: 'list' })
         setMessage(`已删除「${args.profile.name}」。`)
       } else if (args.kind === 'logout') {
@@ -367,7 +363,6 @@ export function AntiAgyProfiles({
     setAuthCode('')
     setName('')
     if (viewedProfile) setRenameDraft(viewedProfile.name)
-    setConfirmDeleteId(null)
     setMessage('')
     action.reset()
     setView(next)
@@ -397,7 +392,6 @@ export function AntiAgyProfiles({
     setOpen(false)
     setView({ kind: 'list' })
     setName('')
-    setConfirmDeleteId(null)
     setCodeLogin(null)
     setAuthCode('')
     setMessage('')
@@ -466,6 +460,35 @@ export function AntiAgyProfiles({
   }, [open])
 
   const disabled = action.isPending || profiles.isError
+  const destructiveConfirmRef = useRef(false)
+  const confirmLogout = async (profile: Profile) => {
+    if (disabled || destructiveConfirmRef.current) return
+    destructiveConfirmRef.current = true
+    try {
+      const ok = await dialog.confirm(
+        '清除账号凭据？',
+        `将移除「${profile.name}」的本地登录凭据（保留会话记录），之后需要重新登录。`,
+        { confirmText: '清除凭据', tone: 'danger' },
+      )
+      if (ok) action.mutate({ kind: 'logout', profile })
+    } finally {
+      destructiveConfirmRef.current = false
+    }
+  }
+  const confirmDelete = async (profile: Profile) => {
+    if (disabled || destructiveConfirmRef.current) return
+    destructiveConfirmRef.current = true
+    try {
+      const ok = await dialog.confirm(
+        '删除账号？',
+        `将移除「${profile.name}」的本地凭据与配置记录，且无法恢复。`,
+        { confirmText: '删除账号', tone: 'danger' },
+      )
+      if (ok) action.mutate({ kind: 'delete', profile })
+    } finally {
+      destructiveConfirmRef.current = false
+    }
+  }
   const add = (event: FormEvent) => {
     event.preventDefault()
     if (!disabled && profiles.data && name.trim()) action.mutate({ kind: 'create', name: name.trim() })
@@ -732,7 +755,7 @@ export function AntiAgyProfiles({
                 className="ga-btn-sm-danger shrink-0 px-2 text-[11px]"
                 disabled={disabled}
                 aria-label={`清除凭据：${profile.name}`}
-                onClick={() => action.mutate({ kind: 'logout', profile })}
+                onClick={() => { void confirmLogout(profile) }}
               >
                 清除凭据
               </button>
@@ -870,38 +893,16 @@ export function AntiAgyProfiles({
         {!isActive && profile.id !== 'default' && (
           <div className="flex items-center justify-between gap-2 rounded-xl border border-line/70 bg-bg-card px-3 py-2.5">
             <span className="text-xs text-ink-muted">删除后将移除此账号的本地凭据与记录。</span>
-            {confirmDeleteId === profile.id ? (
-              <div className="flex shrink-0 items-center gap-1.5">
-                <button
-                  type="button"
-                  className="ga-btn-sm-solid-danger shrink-0 text-[11px]"
-                  disabled={disabled}
-                  aria-label={`确认删除：${profile.name}`}
-                  onClick={() => action.mutate({ kind: 'delete', profile })}
-                >
-                  确认删除
-                </button>
-                <button
-                  type="button"
-                  className="ga-btn-sm shrink-0 px-2 text-[11px]"
-                  disabled={disabled}
-                  onClick={() => setConfirmDeleteId(null)}
-                >
-                  取消
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="ga-btn-sm-danger shrink-0 px-2 text-[11px]"
-                disabled={disabled}
-                aria-label={`删除账号：${profile.name}`}
-                onClick={() => setConfirmDeleteId(profile.id)}
-              >
-                <Trash2 className="h-3 w-3" aria-hidden="true" />
-                <span>删除账号</span>
-              </button>
-            )}
+            <button
+              type="button"
+              className="ga-btn-sm-danger shrink-0 px-2 text-[11px]"
+              disabled={disabled}
+              aria-label={`删除账号：${profile.name}`}
+              onClick={() => { void confirmDelete(profile) }}
+            >
+              <Trash2 className="h-3 w-3" aria-hidden="true" />
+              <span>删除账号</span>
+            </button>
           </div>
         )}
       </div>
