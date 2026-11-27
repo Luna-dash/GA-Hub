@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { QueryClientContext } from '@tanstack/react-query'
 import { addTransferFile, fileTransferQueryKey } from './FileTransferBox'
@@ -13,6 +13,7 @@ import { isAppInternalUrl, isHttpUrl, openExternalIfNeeded } from '@/utils/openE
 import { Z_LAYERS } from '@/config/zLayers'
 import { APP_PAGES } from '@/config/pages'
 import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
+import { restoreOverlayFocus } from '@/utils/overlayStack'
 
 export const FileLinkContext = createContext<{ sessionId?: string; projectPath?: string; project?: string; engine?: 'chat' | 'anti' }>({})
 export const FileTransferConclusion = createContext<{ engine: 'chat' | 'anti'; sessionId?: string; project?: string } | null>(null)
@@ -77,6 +78,7 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
   const transferSessionId = conclusion?.sessionId ?? sessionId
   const [info, setInfo] = useState<PathInfo | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -84,18 +86,49 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
   const binding = useRef('')
   binding.current = JSON.stringify([sessionId, projectPath, engine, path])
   useEffect(() => { setInfo(null); setMenu(null) }, [path, sessionId, projectPath, engine])
+  const closeMenu = useCallback((restoreFocus = false) => {
+    setMenu(null)
+    if (restoreFocus) restoreOverlayFocus(triggerRef.current)
+  }, [])
   useOverlayRegistration({
     active: Boolean(menu),
-    zIndex: Z_LAYERS.contextMenu,
+    zIndex: Z_LAYERS.contextMenu + 1,
     getPanel: () => menuRef.current,
-    onEscape: () => {
-      setMenu(null)
-      triggerRef.current?.focus()
-    },
+    onEscape: () => closeMenu(true),
     trapFocus: false,
   })
   const resolved = info?.resolved || null
   const parent = resolved ? (info?.is_dir ? resolved : resolved.replace(/[/\\][^/\\]+[/\\]?$/, '')) : null
+
+  useLayoutEffect(() => {
+    if (!menu) { setMenuPos(null); return }
+    const panel = menuRef.current
+    if (!panel) return
+    const rect = panel.getBoundingClientRect()
+    const pad = 8
+    const width = rect.width || 240
+    const height = rect.height || 180
+    const maxLeft = Math.max(pad, window.innerWidth - width - pad)
+    const maxTop = Math.max(pad, window.innerHeight - height - pad)
+    setMenuPos({
+      left: Math.max(pad, Math.min(menu.x, maxLeft)),
+      top: Math.max(pad, Math.min(menu.y, maxTop)),
+    })
+  }, [menu, info, resolved])
+
+  useEffect(() => {
+    if (!menu) return
+    const panel = menuRef.current
+    if (!panel) return
+    const firstEnabled = panel.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')
+    if (firstEnabled) {
+      if (!panel.contains(document.activeElement) || document.activeElement === panel) {
+        firstEnabled.focus()
+      }
+    } else if (!panel.contains(document.activeElement)) {
+      panel.focus()
+    }
+  }, [menu, info, resolved, busy])
 
   const resolve = async () => {
     const key = binding.current
@@ -141,22 +174,58 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
     catch (error) { toast.error(errorMessageFromError(error, `复制${label}失败`)) }
     finally { setMenu(null) }
   }
-  const item = (label: string, action: () => void, disabled = false) => <button key={label} type="button"
+  const openMenuAt = (x: number, y: number) => {
+    setMenu({ x, y })
+    void resolve().catch(error => toast.error(errorMessageFromError(error, '解析失败')))
+  }
+  const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Tab') {
+      closeMenu(false)
+      return
+    }
+    const panel = menuRef.current
+    if (!panel) return
+    const items = Array.from(panel.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])'))
+    if (items.length === 0) return
+    const currentIndex = items.findIndex((element) => element === document.activeElement)
+    let nextIndex = -1
+    if (event.key === 'ArrowDown') nextIndex = currentIndex >= 0 ? (currentIndex + 1) % items.length : 0
+    else if (event.key === 'ArrowUp') nextIndex = currentIndex >= 0 ? (currentIndex - 1 + items.length) % items.length : items.length - 1
+    else if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = items.length - 1
+    if (nextIndex !== -1) {
+      event.preventDefault()
+      items[nextIndex].focus()
+    }
+  }
+  const item = (label: string, action: () => void, disabled = false) => <button key={label} type="button" role="menuitem" tabIndex={-1}
     disabled={disabled} onClick={action}
-    className="block w-full break-all px-3 py-1.5 text-left text-sm hover:bg-bg-soft disabled:opacity-40">{label}</button>
+    className="block w-full break-all px-3 py-1.5 text-left text-sm hover:bg-bg-soft focus:bg-bg-soft focus:outline-none disabled:opacity-40">{label}</button>
+
+  const fallbackLeft = menu ? Math.max(8, Math.min(menu.x, window.innerWidth - 240)) : 8
+  const fallbackTop = menu ? Math.max(8, Math.min(menu.y, window.innerHeight - 180)) : 8
 
   return <>
     <button ref={triggerRef} type="button" className="path-link" disabled={busy}
       title={resolved || path}
+      aria-haspopup="menu"
+      aria-expanded={Boolean(menu)}
       onClick={() => { void reveal() }}
+      onKeyDown={event => {
+        if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+          event.preventDefault()
+          const rect = event.currentTarget.getBoundingClientRect()
+          openMenuAt(rect.left, rect.bottom + 4)
+        }
+      }}
       onContextMenu={event => {
-        event.preventDefault(); setMenu({ x: event.clientX, y: event.clientY })
-        void resolve().catch(error => toast.error(errorMessageFromError(error, '解析失败')))
+        event.preventDefault()
+        openMenuAt(event.clientX, event.clientY)
       }}>{busy ? '处理中…' : display}</button>
     {menu && createPortal(<>
-      <div className="fixed inset-0" style={{ zIndex: Z_LAYERS.contextMenu }} onClick={() => setMenu(null)} />
-      <div ref={menuRef} role="menu" tabIndex={-1} className="ga-paper-popover fixed max-h-[70vh] min-w-48 max-w-[90vw] overflow-auto rounded-lg py-1 text-ink focus:outline-none"
-        style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 440)), top: Math.max(8, Math.min(menu.y, window.innerHeight - 260)), zIndex: Z_LAYERS.contextMenu + 1 }}>
+      <div className="fixed inset-0" style={{ zIndex: Z_LAYERS.contextMenu }} onClick={() => closeMenu(false)} />
+      <div ref={menuRef} role="menu" tabIndex={-1} onKeyDown={handleMenuKeyDown} className="ga-paper-popover fixed max-h-[70vh] min-w-48 max-w-[90vw] overflow-auto rounded-lg py-1 text-ink focus:outline-none"
+        style={{ left: menuPos?.left ?? fallbackLeft, top: menuPos?.top ?? fallbackTop, zIndex: Z_LAYERS.contextMenu + 1 }}>
         <div className="px-3 py-1 text-xs break-all">匹配范围：{info?.scope || projectPath || '未绑定项目'}</div>
         {info && !resolved && <div className="px-3 py-1 text-sm">{info.incomplete ? '搜索达到预算或部分目录不可读，结果未完整；请选择明确路径' : info.ambiguous ? '存在多个匹配，请选择' : '未找到文件，请使用完整路径'}</div>}
         {!resolved && info?.candidates?.map(candidate => item(candidate, () => { void reveal('open', candidate) }, busy))}

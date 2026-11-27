@@ -70,7 +70,7 @@ export function ModalOverlay({
   return (
     <div
       className={clsx(
-        'bg-[#241B12]/40 backdrop-blur-[3px] flex',
+        'bg-[var(--c-modal-backdrop)] backdrop-blur-[3px] flex',
         align === 'center' ? 'items-center justify-center px-4' : 'items-stretch justify-end',
       )}
       style={{ position: 'fixed', inset: 0, zIndex }}

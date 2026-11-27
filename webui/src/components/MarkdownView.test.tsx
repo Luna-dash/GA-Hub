@@ -508,4 +508,68 @@ describe('MarkdownView responsive wrapping', () => {
     })
     expect(mocks.toastSuccess).toHaveBeenCalledWith('已放入中转箱')
   })
+
+  it('opens PathLink menu via Shift+F10 and ContextMenu, supports arrow navigation, and restores focus on Escape', async () => {
+    mocks.resolveFile.mockResolvedValue({
+      raw: 'src/app.ts',
+      resolved: 'D:/repo/src/app.ts',
+      exists: true,
+      is_dir: false,
+      ambiguous: false,
+      scope: 'repo',
+    })
+
+    act(() => root.render(
+      <FileLinkContext.Provider value={{ sessionId: 's1', projectPath: 'D:/repo', engine: 'chat' }}>
+        <PathLink path="src/app.ts" display="src/app.ts" />
+      </FileLinkContext.Provider>,
+    ))
+
+    const trigger = host.querySelector('button.path-link') as HTMLButtonElement
+    trigger.focus()
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+    await act(async () => {
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+    })
+
+    const menu = document.body.querySelector('[role="menu"]') as HTMLDivElement
+    expect(menu).not.toBeNull()
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])'))
+    expect(items.length).toBeGreaterThanOrEqual(4)
+    expect(document.activeElement).toBe(items[0])
+
+    act(() => {
+      menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(items[1])
+
+    act(() => {
+      menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(items[items.length - 1])
+
+    act(() => {
+      menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(items[0])
+
+    act(() => {
+      menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(items[items.length - 1])
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(document.body.querySelector('[role="menu"]')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+
+    await act(async () => {
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true, cancelable: true }))
+    })
+    expect(document.body.querySelector('[role="menu"]')).not.toBeNull()
+  })
 })

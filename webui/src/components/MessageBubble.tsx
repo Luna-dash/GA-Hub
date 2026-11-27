@@ -371,7 +371,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
           {hasHeader && (
             <div data-chat-box-chrome className="mb-2 flex min-h-6 select-none items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
               <span className="inline-flex shrink-0 items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
+                <span className="h-1.5 w-1.5 rounded-full bg-accent" />
                 GA Agent
               </span>
               {toolbar}

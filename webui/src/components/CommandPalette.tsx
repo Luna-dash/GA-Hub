@@ -330,7 +330,7 @@ export function CommandPalette() {
   return (
     <div
       style={{ zIndex: Z_LAYERS.palette }}
-      className="fixed inset-0 bg-[#241B12]/40 backdrop-blur-[3px] flex items-start justify-center pt-[9vh] px-4"
+      className="fixed inset-0 bg-[var(--c-modal-backdrop)] backdrop-blur-[3px] flex items-start justify-center pt-[9vh] px-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget && isTopOverlay(overlayIdRef.current)) close() }}
     >
       <div

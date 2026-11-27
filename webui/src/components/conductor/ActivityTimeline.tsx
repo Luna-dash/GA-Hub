@@ -20,7 +20,7 @@ import { formatClock } from '@/utils/timeFormat'
 // server/services/conductor_activity.py, whose vocabulary is the wire
 // contract). The `satisfies` clause turns a newly added kind into a compile
 // error; UNKNOWN_TONE is the runtime backstop for a hub newer than this build.
-const UNKNOWN_TONE = 'bg-[#9A8E7D]'
+const UNKNOWN_TONE = 'bg-ink-faint/75'
 
 const KIND_TONE: Record<string, string> = {
   worker_spawned: 'bg-status-info',

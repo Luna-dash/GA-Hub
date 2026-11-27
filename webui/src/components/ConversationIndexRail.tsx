@@ -66,7 +66,7 @@ export function ConversationIndexRail({ children, collapsible = true }: Conversa
         aria-expanded={!collapsed}
         onClick={toggle}
         title={collapsed ? '展开历史对话索引' : '折叠历史对话索引'}
-        className="absolute right-2 top-1/2 z-20 lg:left-full lg:right-auto flex h-14 w-5 -translate-y-1/2 items-center justify-center rounded-r-full border border-l-0 border-[#54432B]/70 bg-[#6B583D] bg-gradient-to-b from-bg-card/15 to-transparent text-[#FAF4E6] shadow-[inset_0_1px_0_rgb(255_255_255_/_0.25),0_2px_5px_rgb(0_0_0_/_0.18)] transition-[background-color,box-shadow] duration-200 hover:bg-[#5A4932] hover:shadow-[inset_0_1px_0_rgb(255_255_255_/_0.3),0_3px_7px_rgb(0_0_0_/_0.22)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className="ga-floating-handle absolute right-2 top-1/2 z-20 lg:left-full lg:right-auto flex h-14 w-5 -translate-y-1/2 items-center justify-center rounded-r-full border-l-0 duration-200"
       >
         <RailFoldGlyph direction={collapsed ? 'right' : 'left'} className="h-3.5 w-3.5 shrink-0" />
       </button>

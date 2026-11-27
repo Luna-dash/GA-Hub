@@ -777,19 +777,19 @@ describe('SessionRail', () => {
     const dotClasses = (id: string) =>
       (host.querySelector(`[data-session-id="${id}"] [data-status-dot]`) as HTMLElement).className.split(/\s+/)
 
-    expect(dotClasses('state-active')).toContain('bg-[#D97706]')
+    expect(dotClasses('state-active')).toContain('ga-rail-dot--active')
     expect(dotClasses('state-active')).toContain('ga-session-dot-running')
-    expect(dotClasses('state-completed')).toContain('bg-[#1F8A4C]')
+    expect(dotClasses('state-completed')).toContain('ga-rail-dot--completed')
     expect(dotClasses('state-completed')).not.toContain('ga-session-dot-running')
-    expect(dotClasses('state-error')).toContain('bg-[#C93B2B]')
-    expect(dotClasses('state-idle')).toContain('bg-[#A89C8B]/75')
+    expect(dotClasses('state-error')).toContain('ga-rail-dot--error')
+    expect(dotClasses('state-idle')).toContain('ga-rail-dot--idle')
 
     // Selected running row also receives the lifted card highlight without losing its running dot.
     renderWithCurrent('state-active')
     const activeSelectedRow = host.querySelector('[data-session-id="state-active"]') as HTMLDivElement
     expect(activeSelectedRow.getAttribute('data-current')).toBe('true')
     expect(activeSelectedRow.className.split(/\s+/)).toContain('bg-bg-card')
-    expect(dotClasses('state-active')).toContain('bg-[#D97706]')
+    expect(dotClasses('state-active')).toContain('ga-rail-dot--active')
   })
 
   it('syncs inert between expanded rail and collapsed strip, and guards rename IME/Escape/rejections', async () => {
@@ -851,5 +851,48 @@ describe('SessionRail', () => {
     } finally {
       window.removeEventListener('keydown', handleWindowKeyDown)
     }
+  })
+
+  it('supports keyboard rename via F2 or explicit rename button and restores focus on Escape and Enter', async () => {
+    const onRename = vi.fn().mockResolvedValue(undefined)
+    const targetId = sessions[0].id
+    act(() => root.render(
+      <SessionRail sessions={sessions} runtimes={runtimes} currentId={targetId} onSelect={vi.fn()} onRename={onRename} onDelete={vi.fn()} />,
+    ))
+
+    const rowBtn = host.querySelector(`[data-session-id="${targetId}"] > div > button`) as HTMLButtonElement
+    expect(rowBtn).not.toBeNull()
+    rowBtn.focus()
+
+    // F2 starts inline rename from the row button.
+    act(() => {
+      rowBtn.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }))
+    })
+    let input = host.querySelector(`input[aria-label="重命名 ${sessions[0].title}"]`) as HTMLInputElement
+    expect(input).not.toBeNull()
+
+    // Escape cancels rename and restores focus to the row button.
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(host.querySelector(`input[aria-label="重命名 ${sessions[0].title}"]`)).toBeNull()
+    expect(document.activeElement).toBe(host.querySelector(`[data-session-id="${targetId}"] > div > button`))
+
+    // Explicit rename button sits inside the action group beside delete and opens rename.
+    const renameBtn = host.querySelector(`button[aria-label="重命名 ${sessions[0].title}"]`) as HTMLButtonElement
+    expect(renameBtn).not.toBeNull()
+    expect(renameBtn.parentElement).toBe(host.querySelector(`button[aria-label="移除 ${sessions[0].title}"]`)?.parentElement)
+    act(() => { renameBtn.click() })
+    input = host.querySelector(`input[aria-label="重命名 ${sessions[0].title}"]`) as HTMLInputElement
+    expect(input).not.toBeNull()
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(input, '新标题')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+    expect(onRename).toHaveBeenCalledWith(targetId, '新标题')
+    expect(document.activeElement).toBe(host.querySelector(`[data-session-id="${targetId}"] > div > button`))
   })
 })

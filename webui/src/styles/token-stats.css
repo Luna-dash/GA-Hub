@@ -18,15 +18,15 @@
 .token-section-header h2 { margin: 0; font-size: 14px; font-weight: 600; }
 .token-section-header h2 + .token-note { margin-top: 3px; }
 .token-chart-key { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; color: var(--c-text-muted); font-size: 11px; }
-.token-chart-key i { width: 9px; height: 9px; border-radius: 2px; background: #748574; }
+.token-chart-key i { width: 9px; height: 9px; border-radius: 2px; background: var(--c-chart-input); }
 .token-chart-scroll { overflow-x: auto; padding: 0 12px; }
 .token-chart { display: block; width: 100%; min-width: 340px; height: auto; max-height: 280px; }
 .token-chart-long { min-width: 600px; }
 .token-grid-line { stroke: var(--c-line); stroke-opacity: .22; stroke-dasharray: 3 5; }
 .token-axis-label { fill: var(--c-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .token-axis-today { fill: var(--c-text); font-weight: 600; }
-.token-bar { fill: #748574; opacity: .88; transition: opacity 120ms; }
-.token-bar-today { fill: #a6b09d; stroke: #748574; stroke-width: 1; stroke-dasharray: 3 2; }
+.token-bar { fill: var(--c-chart-input); opacity: .88; transition: opacity 120ms; }
+.token-bar-today { fill: var(--c-chart-today); stroke: var(--c-chart-input); stroke-width: 1; stroke-dasharray: 3 2; }
 .token-bar-active { opacity: 1; }
 .token-bar-zero { fill: var(--c-line); opacity: .5; stroke: none; }
 .token-bar-hit { cursor: pointer; }
@@ -70,7 +70,7 @@
 .token-engine-anti { color: var(--c-accent); background: rgb(var(--c-accent-soft-rgb) / .55); border-color: rgb(var(--c-accent-soft-rgb) / .8); }
 .token-engine-split { color: var(--c-text-muted); }
 .token-session-track { height: 4px; max-width: 480px; border-radius: 4px; background: rgb(var(--c-bg-soft-rgb) / .6); overflow: hidden; }
-.token-session-track > div { height: 100%; background: #87927d; border-radius: 4px; }
+.token-session-track > div { height: 100%; background: var(--c-chart-track); border-radius: 4px; }
 .token-session-main .token-note { margin-top: 5px; font-size: 11px; }
 .token-session-value { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; font-variant-numeric: tabular-nums; }
 .token-session-value strong { font-size: 16px; font-weight: 600; }

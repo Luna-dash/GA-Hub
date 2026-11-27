@@ -130,8 +130,7 @@ describe('geminiQuotaSummary and hourly slot helpers', () => {
 describe('resolveAccountTier', () => {
   it('maps ultra, pro, plus, enterprise, and free tiers to warm-luxury presentations and rejects unknown values', () => {
     const ultra = resolveAccountTier('ultra', 'Google AI Ultra')
-    expect(ultra).toMatchObject({ tier: 'ultra', shortLabel: 'Ultra', fullLabel: 'Google AI Ultra', pillClass: 'ga-account-pill--ultra' })
-    expect(ultra?.cardFrameAccentClass).toContain('#B68934')
+    expect(ultra).toMatchObject({ tier: 'ultra', shortLabel: 'Ultra', fullLabel: 'Google AI Ultra', pillClass: 'ga-account-pill--ultra', cardBadgeClass: 'ga-tier-badge--ultra', cardFrameAccentClass: 'ga-tier-frame--ultra' })
 
     expect(resolveAccountTier('pro')).toMatchObject({ tier: 'pro', shortLabel: 'Pro', fullLabel: 'Google AI Pro', pillClass: 'ga-account-pill--pro' })
     expect(resolveAccountTier('plus')).toMatchObject({ tier: 'plus', shortLabel: 'Plus', fullLabel: 'Google AI Plus', pillClass: 'ga-account-pill--plus' })

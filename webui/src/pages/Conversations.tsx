@@ -938,7 +938,7 @@ function RoundView({
             >
               <div data-chat-box-chrome className="mb-2 flex min-h-6 select-none items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
                 <span className="inline-flex shrink-0 items-center gap-2">
-                  <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
+                  <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-accent" />
                   GA Agent
                 </span>
                 <div className="pointer-events-none flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
@@ -1106,7 +1106,7 @@ function MessageBlock({
       {isAssistant && (
         <div data-chat-box-chrome className="mb-1.5 flex min-h-6 select-none items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
           <span className="inline-flex shrink-0 items-center gap-2">
-            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
+            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-accent" />
             {label}
           </span>
           <div className="pointer-events-none flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">

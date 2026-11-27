@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
-// Custom palette references CSS variables in styles/index.css. The app is a
-// single forced paper-yellow theme — no dark-mode machinery anywhere.
+// Custom palette references CSS variables in styles/index.css (paper presets +
+// dark-forest preset selected via html[data-theme]).
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}', '!./src/**/*.test.{ts,tsx}'],
   theme: {

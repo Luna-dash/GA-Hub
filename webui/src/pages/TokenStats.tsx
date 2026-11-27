@@ -15,10 +15,10 @@ const ranges: { value: DailyUsageRange; label: string }[] = [
   { value: '7d', label: '近 7 日' }, { value: '30d', label: '近 30 日' }, { value: 'week', label: '本周' },
 ]
 const parts = [
-  { key: 'input', label: '输入', color: '#748574' },
-  { key: 'output', label: '输出', color: '#aa8959' },
-  { key: 'cache_read', label: '缓存读取', color: '#758d9a' },
-  { key: 'cache_create', label: '缓存写入', color: '#918196' },
+  { key: 'input', label: '输入', color: 'var(--c-chart-input)' },
+  { key: 'output', label: '输出', color: 'var(--c-chart-output)' },
+  { key: 'cache_read', label: '缓存读取', color: 'var(--c-chart-cache-read)' },
+  { key: 'cache_create', label: '缓存写入', color: 'var(--c-chart-cache-create)' },
 ] as const
 
 function Metric({ label, value, title }: { label: string; value: string; title?: string }) {

@@ -31,6 +31,7 @@ import {
   ChevronDown,
   CollapseChevronsIcon,
   Download,
+  Pencil,
   PinGlyph,
   RailFoldGlyph,
   SquarePen,
@@ -56,11 +57,11 @@ interface SessionRailProps {
 
 const activityDot = {
   // 状态仅通过圆点区分：高色相与明度反差，避免 8px 小圆点混色；运行中叠加柔和呼吸外环。
-  active: 'bg-[#D97706] ga-session-dot-running',
-  completed: 'bg-[#1F8A4C] shadow-[0_0_0_3px_rgba(31,138,76,0.20)]',
-  idle: 'bg-[#A89C8B]/75',
-  error: 'bg-[#C93B2B] shadow-[0_0_0_3px_rgba(201,59,43,0.20)]',
-  unknown: 'bg-[#A89C8B]/75',
+  active: 'ga-rail-dot--active ga-session-dot-running',
+  completed: 'ga-rail-dot--completed',
+  idle: 'ga-rail-dot--idle',
+  error: 'ga-rail-dot--error',
+  unknown: 'ga-rail-dot--idle',
 }
 
 // 激活态高亮与状态完全正交：非当前行不再铺状态底色，当前行以浮起纸卡 + 左侧主色竖条强高亮。
@@ -77,11 +78,11 @@ const activityLabel = {
 }
 
 const activityRail = {
-  active: 'bg-[#D97706] ga-session-dot-running group-hover:bg-[#B45309]',
-  completed: 'bg-[#1F8A4C] shadow-[0_0_0_3px_rgba(31,138,76,0.16)] group-hover:bg-[#176E3B]',
-  idle: 'bg-[#A89C8B]/75 shadow-[0_0_0_3px_rgba(168,156,139,0.12)] group-hover:bg-[#8D7B5D]',
-  error: 'bg-[#C93B2B] shadow-[0_0_0_3px_rgba(201,59,43,0.16)] group-hover:bg-[#A62D20]',
-  unknown: 'bg-[#A89C8B]/75 shadow-[0_0_0_3px_rgba(168,156,139,0.12)] group-hover:bg-[#8D7B5D]',
+  active: 'ga-rail-dot--active ga-rail-dot--interactive ga-session-dot-running',
+  completed: 'ga-rail-dot--completed ga-rail-dot--interactive',
+  idle: 'ga-rail-dot--idle ga-rail-dot--interactive',
+  error: 'ga-rail-dot--error ga-rail-dot--interactive',
+  unknown: 'ga-rail-dot--idle ga-rail-dot--interactive',
 }
 
 const LEGACY_RECENT_KEY = storageKeys.sessionRailLegacyRecentActivity
@@ -117,6 +118,14 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
   const deleteConfirmRef = useRef<HTMLDivElement>(null)
   const asideRef = useRef<HTMLElement>(null)
   const attentionRailRef = useRef<HTMLDivElement>(null)
+  const rowButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const pendingFocusIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (editingId !== null || !pendingFocusIdRef.current) return
+    const targetId = pendingFocusIdRef.current
+    pendingFocusIdRef.current = null
+    rowButtonRefs.current[targetId]?.focus()
+  }, [editingId])
   const { unread, seen } = useSessionUnreadSnapshot(scope)
   // 置顶的分组键按置顶先后排列，持久化到本设备；未置顶组仍按关注度与最近活动排序。
   const [pinnedGroups, setPinnedGroups] = useState<string[]>(() => {
@@ -483,9 +492,13 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                           }}
                           onKeyDown={(event) => {
                             if (event.nativeEvent.isComposing || event.keyCode === 229) return
-                            if (event.key === 'Enter') event.currentTarget.blur()
+                            if (event.key === 'Enter') {
+                              pendingFocusIdRef.current = session.id
+                              event.currentTarget.blur()
+                            }
                             if (event.key === 'Escape') {
                               event.stopPropagation()
+                              pendingFocusIdRef.current = session.id
                               setEditingId(null)
                             }
                           }}
@@ -495,14 +508,24 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                         />
                       ) : (
                         <button
+                          ref={(el) => {
+                            if (el) rowButtonRefs.current[session.id] = el
+                            else delete rowButtonRefs.current[session.id]
+                          }}
                           type="button"
                           onClick={() => selectSession(session.id)}
-                          onDoubleClick={() => beginRename(session)}
+                          onDoubleClick={() => { if (onRename) beginRename(session) }}
+                          onKeyDown={(event) => {
+                            if (onRename && event.key === 'F2') {
+                              event.preventDefault()
+                              beginRename(session)
+                            }
+                          }}
                           aria-current={current ? 'page' : undefined}
                           title={`${sessionTitle(session)} · ${sessionStatusLabel(runtime)}${session.project_name ? ` · ${session.project_name}` : ''}`}
                           className="block min-h-7 w-full pl-2.5 pr-2 py-1 text-left"
                         >
-                          <span className="flex items-center gap-2 pr-8">
+                          <span className={clsx('flex items-center gap-2', onRename && onDelete ? 'pr-14' : onRename || onDelete ? 'pr-8' : 'pr-2')}>
                             <span aria-hidden="true" data-status-dot={activity} title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
                             <span className={clsx('min-w-0 flex-1 truncate text-sm', current ? 'font-semibold' : 'font-medium')} style={{ fontSize: `${railTitlePercent(titleScale)}%` }} title={sessionTitle(session)}>{sessionTitle(session)}</span>
                           </span>
@@ -512,6 +535,17 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                         <div
                           className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100"
                         >
+                          {onRename && (
+                            <button
+                              type="button"
+                              onClick={() => beginRename(session)}
+                              aria-label={`重命名 ${sessionTitle(session)}`}
+                              title="重命名（F2 或双击）"
+                              className="flex h-6 w-6 items-center justify-center rounded text-ink-muted transition-colors hover:bg-bg-soft hover:text-ink"
+                            >
+                              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                          )}
                           {onDelete && (
                             <button
                               type="button"

@@ -437,7 +437,7 @@ export function phaseDot(phase: SubagentPhase): string {
     phase === 'reviewing' && 'bg-status-info',
     phase === 'accepted' && 'bg-status-success-strong',
     // stopped: one-off neutral, sanctioned by the palette comment
-    phase === 'stopped' && 'bg-[#9A8E7D]',
+    phase === 'stopped' && 'bg-ink-faint/75',
   )
 }
 
