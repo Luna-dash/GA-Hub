@@ -642,4 +642,54 @@ describe('ImagePasteInput attachment presentation', () => {
       Object.defineProperty(window, 'innerHeight', { value: origHeight, configurable: true })
     }
   })
+
+  it('guards BtwDialog Enter within 80ms after compositionend and submits once settled', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-28T00:00:00Z'))
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, content: 'answer' }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      container = document.createElement('div')
+      document.body.appendChild(container)
+      root = createRoot(container)
+      act(() => {
+        root?.render(
+          <ImagePasteInput
+            text="/btw"
+            onText={vi.fn()}
+            attachments={[]}
+            onAttachments={vi.fn()}
+            onSubmit={vi.fn()}
+            btwSessionId="s-ime"
+            onSlashCommand={vi.fn()}
+          />,
+        )
+      })
+      act(() => container!.querySelector<HTMLButtonElement>('[role="option"]')!.click())
+      const dlg = container.querySelector<HTMLElement>('[role="dialog"][aria-label="BTW 旁路提问"]')!
+      const ta = dlg.querySelector<HTMLTextAreaElement>('textarea')!
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(ta, '测试旁路')
+        ta.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+
+      act(() => {
+        ta.dispatchEvent(new Event('compositionstart', { bubbles: true }))
+        ta.dispatchEvent(new Event('compositionend', { bubbles: true }))
+        vi.advanceTimersByTime(30)
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      })
+      expect(fetchMock).not.toHaveBeenCalled()
+
+      act(() => {
+        vi.advanceTimersByTime(60)
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
 })

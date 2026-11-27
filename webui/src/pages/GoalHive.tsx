@@ -8,6 +8,7 @@ import { bubbleTone } from '@/components/bubbleTone'
 import { MessageContent } from '@/components/MessageContent'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { useDirtyClose } from '@/hooks/useDirtyClose'
+import { useImeCompositionGuard } from '@/hooks/useImeCompositionGuard'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
@@ -17,7 +18,7 @@ import { GoalHiveSocket } from '@/runtime/goalHiveSocket'
 import { queryKeys } from '@/queries/queryKeys'
 import { extractErrorMessage } from '@/utils/errors'
 import { usePageState } from '@/utils/pageState'
-import { CloseIconButton, Play, Settings2, Square, StatusIconBadge, Trash2 } from '@/components/ActionIcons'
+import { ArrowDownToLine, CloseIconButton, Play, Settings2, Square, StatusIconBadge, Trash2 } from '@/components/ActionIcons'
 
 type GoalMode = 'goal' | 'hive'
 
@@ -71,6 +72,8 @@ export default function GoalHive() {
   const targetRef = useRef<HTMLTextAreaElement | null>(null)
   const conditionRef = useRef<HTMLTextAreaElement | null>(null)
   const stickToBottomRef = useRef(true)
+  const [stuckBottom, setStuckBottom] = useState(true)
+  const ime = useImeCompositionGuard(80)
   const subagentSettingsButtonRef = useRef<HTMLButtonElement | null>(null)
   const subagentSettingsDialogRef = useRef<HTMLDivElement | null>(null)
 
@@ -142,7 +145,25 @@ export default function GoalHive() {
   const handleLogScroll = () => {
     const el = logRef.current
     if (!el) return
-    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 64
+    stickToBottomRef.current = near
+    setStuckBottom(near)
+  }
+
+  const jumpToBottom = () => {
+    stickToBottomRef.current = true
+    setStuckBottom(true)
+    const el = logRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }
+
+  const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (ime.isImeEnterOrComposing(event)) return
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault()
+      event.currentTarget.form?.requestSubmit()
+    }
   }
 
   useEffect(() => {
@@ -169,6 +190,7 @@ export default function GoalHive() {
     const text = parts.join('\n')
 
     stickToBottomRef.current = true
+    setStuckBottom(true)
     const sent = wsRef.current.send({
       type: 'submit',
       text,
@@ -288,6 +310,9 @@ export default function GoalHive() {
                   value={target}
                   rows={3}
                   onChange={(event) => setTarget(event.target.value)}
+                  onCompositionStart={ime.onCompositionStart}
+                  onCompositionEnd={ime.onCompositionEnd}
+                  onKeyDown={handleComposerKeyDown}
                   placeholder={config.placeholder}
                   wrap="soft"
                   className="w-full min-w-0 max-h-[220px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line/75 bg-bg-soft/75 px-3.5 py-2.5 text-sm leading-6 text-ink placeholder:text-ink-faint outline-none focus:border-accent focus:bg-bg-card focus:ring-2 focus:ring-accent/15 whitespace-pre-wrap break-words [overflow-wrap:anywhere] transition-colors"
@@ -301,6 +326,9 @@ export default function GoalHive() {
                   value={condition}
                   rows={2}
                   onChange={(event) => setCondition(event.target.value)}
+                  onCompositionStart={ime.onCompositionStart}
+                  onCompositionEnd={ime.onCompositionEnd}
+                  onKeyDown={handleComposerKeyDown}
                   placeholder="例如：先汇报计划；不得修改记忆；预算到期后总结验证结果。"
                   wrap="soft"
                   className="w-full min-w-0 max-h-[180px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line/75 bg-bg-soft/75 px-3.5 py-2.5 text-sm leading-6 text-ink placeholder:text-ink-faint outline-none focus:border-accent focus:bg-bg-card focus:ring-2 focus:ring-accent/15 whitespace-pre-wrap break-words [overflow-wrap:anywhere] transition-colors"
@@ -379,24 +407,38 @@ export default function GoalHive() {
               <span>清空历史</span>
             </button>
           </div>
-          <div ref={logRef} data-chat-scope onScroll={handleLogScroll} className="flex-1 min-h-0 overflow-auto p-5 space-y-4">
-            {msgs.length === 0 ? (
-              <div className="h-full min-h-64 grid place-items-center text-sm text-ink-faint">尚无 Goal / Hive 输出。</div>
-            ) : (
-              msgs.map((msg) => (
-                <article key={msg.id} data-chat-box className={clsx('rounded-xl px-4 py-3', bubbleTone(msg.role, 'card').surfaceClass)}>
-                  <div data-chat-box-chrome className="mb-1.5 flex select-none items-center gap-2 text-xs font-medium text-ink-muted">
-                    <span>{msg.role === 'user' ? '你' : mode === 'hive' ? 'Hive 主控' : 'Goal Agent'}</span>
-                    {msg.streaming && (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-normal text-accent">
-                        <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse motion-reduce:animate-none" aria-hidden="true" />
-                        <span>输出中</span>
-                      </span>
-                    )}
-                  </div>
-                  <MessageContent content={msg.content} format="pre" className="text-sm leading-6 text-ink font-sans" />
-                </article>
-              ))
+          <div className="relative flex flex-1 min-h-0 flex-col">
+            <div ref={logRef} data-chat-scope onScroll={handleLogScroll} className="flex-1 min-h-0 overflow-auto p-5 space-y-4">
+              {msgs.length === 0 ? (
+                <div className="h-full min-h-64 grid place-items-center text-sm text-ink-faint">尚无 Goal / Hive 输出。</div>
+              ) : (
+                msgs.map((msg) => (
+                  <article key={msg.id} data-chat-box className={clsx('rounded-xl px-4 py-3', bubbleTone(msg.role, 'card').surfaceClass)}>
+                    <div data-chat-box-chrome className="mb-1.5 flex select-none items-center gap-2 text-xs font-medium text-ink-muted">
+                      <span>{msg.role === 'user' ? '你' : mode === 'hive' ? 'Hive 主控' : 'Goal Agent'}</span>
+                      {msg.streaming && (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-normal text-accent">
+                          <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse motion-reduce:animate-none" aria-hidden="true" />
+                          <span>输出中</span>
+                        </span>
+                      )}
+                    </div>
+                    <MessageContent content={msg.content} format="pre" className="text-sm leading-6 text-ink font-sans" />
+                  </article>
+                ))
+              )}
+            </div>
+            {!stuckBottom && msgs.length > 0 && (
+              <button
+                type="button"
+                onClick={jumpToBottom}
+                aria-label="回到底部"
+                title="回到底部"
+                className="ga-btn-sm absolute bottom-4 right-5 z-10 shadow-md"
+              >
+                <ArrowDownToLine className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>回到底部</span>
+              </button>
             )}
           </div>
         </section>

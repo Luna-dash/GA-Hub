@@ -9,7 +9,7 @@
 
 import { create } from 'zustand'
 
-export type ToastKind = 'success' | 'error' | 'info'
+export type ToastKind = 'success' | 'error' | 'info' | 'warning'
 
 export interface ToastItem {
   id: number
@@ -141,4 +141,6 @@ export const toast = {
     useToastStore.getState().push('error', message, duration),
   info: (message: string, duration?: number) =>
     useToastStore.getState().push('info', message, duration),
+  warning: (message: string, duration?: number) =>
+    useToastStore.getState().push('warning', message, duration),
 }

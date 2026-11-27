@@ -169,6 +169,7 @@ function FileTransferIcon({ className }: { className?: string }) {
 
 export interface FileTransferBoxProps {
   canInsert: boolean
+  insertDisabledReason?: string
   onInsert: (file: TransferredFile) => void
   source?: {
     engine: 'chat' | 'anti'
@@ -177,7 +178,7 @@ export interface FileTransferBoxProps {
   }
 }
 
-export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBoxProps) {
+export function FileTransferBox({ canInsert, insertDisabledReason, onInsert, source }: FileTransferBoxProps) {
   const [open, setOpen] = useState(false)
   const [confirmAction, setConfirmAction] = useState<'list' | 'documents' | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -481,6 +482,11 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
               {extractErrorMessage(clearList.error ?? clearDocs.error, '操作失败，请重试')}
             </p>
           )}
+          {!canInsert && insertDisabledReason && (
+            <p role="status" className="mb-2 rounded-lg border border-status-warning-line/70 bg-status-warning-soft/75 px-2.5 py-1.5 text-[11px] text-status-warning">
+              {insertDisabledReason}
+            </p>
+          )}
           {files.isPending ? (
             <p className="py-2 text-center text-xs text-ink-muted">加载中…</p>
           ) : files.isError && !files.data ? (
@@ -510,7 +516,7 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
                         <li key={file.id}>
                           <button
                             type="button"
-                            title={file.path}
+                            title={!canInsert && insertDisabledReason ? insertDisabledReason : file.path}
                             disabled={!canInsert || !file.available || busy}
                             className="flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-xs transition-colors hover:border-line/70 hover:bg-bg-soft disabled:opacity-50"
                             onClick={() => { onInsert(file); close() }}

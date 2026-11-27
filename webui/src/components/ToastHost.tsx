@@ -3,7 +3,7 @@
 // doesn't touch the shared index.css that other work may be editing.
 
 import { useEffect, useRef } from 'react'
-import { CheckCircle2, Info, XCircle, type LucideIcon } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Info, XCircle, type LucideIcon } from 'lucide-react'
 import { CloseIconButton } from '@/components/ActionIcons'
 import { useToastStore, type ToastKind } from '@/stores/toastStore'
 import { Z_LAYERS } from '@/config/zLayers'
@@ -12,6 +12,7 @@ const TONE: Record<ToastKind, { ring: string; Icon: LucideIcon; iconCls: string 
   success: { ring: 'border-status-success-line', Icon: CheckCircle2, iconCls: 'text-status-success' },
   error: { ring: 'border-status-danger-line', Icon: XCircle, iconCls: 'text-status-danger' },
   info: { ring: 'border-status-info-line', Icon: Info, iconCls: 'text-status-info' },
+  warning: { ring: 'border-status-warning-line', Icon: AlertTriangle, iconCls: 'text-status-warning' },
 }
 
 export function ToastHost() {

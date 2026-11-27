@@ -1317,10 +1317,20 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     <div className="relative flex min-h-0 flex-1 flex-col">
       <ChatUtilityDock fileTransfer={{
         canInsert: !current && !pending && !send.isPending && transferCount < 8,
+        insertDisabledReason: transferCount >= 8
+          ? '单次最多引用 8 个中转箱文件，请先移除部分后再添加'
+          : (current || pending || send.isPending)
+            ? '任务运行或提交中，暂不可插入中转文件'
+            : undefined,
         source: { engine: 'anti', sessionId: sid, ...(project ? { project } : {}) },
         onInsert: (file: TransferredFile) => {
           const currentDraft = useDraftStore.getState().attachments[draftKey] ?? []
           if (currentDraft.some(item => item.path === file.path)) return
+          const currentTransferCount = currentDraft.filter(item => item.file_id.startsWith(TRANSFER_PREFIX)).length
+          if (currentTransferCount >= 8) {
+            toast.warning('单次最多引用 8 个中转箱文件，请先移除部分后再添加')
+            return
+          }
           useDraftStore.getState().setAttachments(draftKey, [...currentDraft, {
             file_id: `${TRANSFER_PREFIX}${file.id}`,
             url: '',

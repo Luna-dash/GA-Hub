@@ -3,8 +3,9 @@
 // follow the live edge only while the reader is at the bottom); the refs are
 // owned by the page because the data hook also consults the scroll position
 // right before a background refetch.
-import { useLayoutEffect, useEffect, useRef, type ReactNode } from 'react'
-import { ArrowUp, MessageSquare, Plus } from 'lucide-react'
+import { useLayoutEffect, useEffect, useRef, useState, type ReactNode } from 'react'
+import { ArrowDownToLine, ArrowUp, MessageSquare, Plus } from 'lucide-react'
+import { useImeCompositionGuard } from '@/hooks/useImeCompositionGuard'
 import { MessageContent } from '@/components/MessageContent'
 import { UserPromptContent } from '@/components/UserPromptContent'
 import { collapseBlankLines, isNearScrollBottom } from './presentation'
@@ -37,6 +38,8 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const restoredRef = useRef(false)
+  const [stuckBottom, setStuckBottom] = useState(true)
+  const ime = useImeCompositionGuard(80)
 
   // Retry prefill asks for the composer.
   useEffect(() => {
@@ -53,7 +56,9 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
       el.scrollTop = rememberedTop === null
         ? el.scrollHeight
         : Math.min(rememberedTop, el.scrollHeight)
-      followRef.current = isNearScrollBottom(el)
+      const near = isNearScrollBottom(el)
+      followRef.current = near
+      setStuckBottom(near)
       restoredRef.current = true
     })
     return () => cancelAnimationFrame(frame)
@@ -87,6 +92,13 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
   }, [userMsg])
 
   const canSend = Boolean(userMsg.trim()) && llmReady && !sending
+  const jumpToBottom = () => {
+    followRef.current = true
+    setStuckBottom(true)
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+    endRef.current?.scrollIntoView({ behavior: 'auto' })
+  }
 
   return (
     <section aria-label="任务对话" className="conductor-main-chat">
@@ -94,7 +106,9 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
         ref={scrollRef}
         data-chat-scope
         onScroll={() => {
-          followRef.current = isNearScrollBottom(scrollRef.current)
+          const near = isNearScrollBottom(scrollRef.current)
+          followRef.current = near
+          setStuckBottom(near)
           scrollMemory.chatTop = scrollRef.current?.scrollTop ?? scrollMemory.chatTop
         }}
         className={`min-h-0 flex-1 overflow-y-auto text-sm ${messages.length > 0 ? 'divide-y divide-line' : 'flex flex-col justify-center'}`}
@@ -140,8 +154,20 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
           event.preventDefault()
           onSubmit(appendMode ? 'append' : 'new')
         }}
-        className="border-t border-line bg-bg-soft/75 px-3 py-2"
+        className="relative border-t border-line bg-bg-soft/75 px-3 py-2"
       >
+        {!stuckBottom && messages.length > 0 && (
+          <button
+            type="button"
+            onClick={jumpToBottom}
+            aria-label="跳到底部"
+            title="跳到底部"
+            className="ga-btn-sm absolute -top-10 right-4 z-10 shadow-md"
+          >
+            <ArrowDownToLine size={13} aria-hidden="true" />
+            <span>跳到底部</span>
+          </button>
+        )}
         {appendMode && (
           <div className="mb-1.5 flex items-center justify-between gap-2">
             <span className="truncate text-xs text-ink-muted">
@@ -173,8 +199,11 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
             ref={inputRef}
             value={userMsg}
             onChange={(e) => onUserMsgChange(e.target.value)}
+            onCompositionStart={ime.onCompositionStart}
+            onCompositionEnd={ime.onCompositionEnd}
             onKeyDown={(e) => {
-              if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+              if (ime.isImeEnterOrComposing(e)) return
+              if (e.key !== 'Enter' || e.shiftKey) return
               e.preventDefault()
               e.currentTarget.form?.requestSubmit()
             }}

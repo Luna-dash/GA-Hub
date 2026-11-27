@@ -36,6 +36,7 @@ import {
   type SlashCommand,
 } from '@/components/slashCommands'
 import { guessTransferMime, type TransferredFile } from '@/components/FileTransferBox'
+import { MAX_ATTACHMENTS } from '@/components/ImagePasteInput'
 import { PageShell } from '@/components/PageShell'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
@@ -798,6 +799,10 @@ export default function LiveChat() {
     const drafts = useDraftStore.getState()
     const existing = drafts.attachments[draftKey] ?? []
     if (existing.some(item => item.path === file.path)) return
+    if (existing.length >= MAX_ATTACHMENTS) {
+      toast.warning(`一次最多添加 ${MAX_ATTACHMENTS} 个附件，请移除多余附件后重试`)
+      return
+    }
     drafts.setAttachments(draftKey, [...existing, {
       file_id: `transfer:${file.id}`, url: '',
       path: file.path, name: file.name, size: file.size, mime: guessTransferMime(file.name), source: 'local_ref',

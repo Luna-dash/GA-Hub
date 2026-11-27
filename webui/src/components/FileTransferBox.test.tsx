@@ -258,3 +258,46 @@ it('toasts on clearList success and surfaces specific clear error details', asyn
     vi.unstubAllGlobals()
   }
 })
+
+it('displays insertDisabledReason banner and disabled file button title when insertion is blocked', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const file: TransferredFile = { id: 1, path: 'D:/project/final.md', name: 'final.md', size: 1, engine: 'anti', project: 'Alpha', available: true }
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => [file] })))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const settle = (assertion: () => void) => vi.waitFor(async () => {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    assertion()
+  })
+  const reason = '单次最多引用 8 个中转箱文件，请先移除部分后再添加'
+  try {
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <FileTransferBox
+            canInsert={false}
+            insertDisabledReason={reason}
+            onInsert={vi.fn()}
+            source={{ engine: 'anti', sessionId: 's1', project: 'Alpha' }}
+          />
+        </QueryClientProvider>,
+      )
+    })
+    await settle(() => expect(host.querySelector('[aria-label="中转箱"]')?.textContent).toBe('1'))
+    await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="中转箱"]')!.click() })
+    await settle(() => expect(host.querySelector('[role="dialog"]')).not.toBeNull())
+
+    const statuses = Array.from(host.querySelectorAll('[role="dialog"] [role="status"]')).map(el => el.textContent)
+    expect(statuses).toContain(reason)
+    const fileBtn = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find(b => b.textContent?.includes('final.md'))!
+    expect(fileBtn.disabled).toBe(true)
+    expect(fileBtn.title).toBe(reason)
+  } finally {
+    await act(async () => root.unmount())
+    client.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})

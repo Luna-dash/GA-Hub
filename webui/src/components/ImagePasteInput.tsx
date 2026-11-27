@@ -15,6 +15,7 @@ import { AttachmentImage, isImageAttachment } from './AttachmentImage'
 import type { PasteAttachment, UploadResult } from '@/api/types'
 import { canReferenceLocalFiles, selectAttachmentPaths, clipboardAttachmentPaths, referenceAttachments } from '@/utils/desktop'
 import { Z_LAYERS } from '@/config/zLayers'
+import { useImeCompositionGuard } from '@/hooks/useImeCompositionGuard'
 import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
 import { hasActiveOverlay } from '@/utils/overlayStack'
 import { errorMessageFromError } from '@/utils/sessionUi'
@@ -24,7 +25,7 @@ import {
   type SlashCommand,
 } from '@/components/slashCommands'
 
-const MAX_ATTACHMENTS = 256
+export const MAX_ATTACHMENTS = 256
 const ATTACHMENT_LIMIT_HINT = `一次最多添加${MAX_ATTACHMENTS}个附件，请移除多余附件后重试`
 
 interface Props {
@@ -100,19 +101,11 @@ export function ImagePasteInput({
   inputLabel, readOnly, maxLength, disabled, submitDisabled, scheduleDisabled = submitDisabled, acceptFiles = true, autoFocus = true,
 }: Props) {
   const taRef = useRef<HTMLTextAreaElement>(null)
-  // IME guard: a state mirror keeps render in sync, but the source of truth
-  // for the keydown handler is `composingRef` — state updates are batched
-  // and the keydown can fire in the same tick as compositionend before the
-  // re-render lands.
-  const [composing, setComposing] = useState(false)
-  const composingRef = useRef(false)
-  // macOS WKWebView + 中文输入法 occasionally fires keydown(Enter) AFTER
-  // compositionend within the same microtask — at that point isComposing
-  // is already false and `composing` state has flipped, so an Enter that
-  // was meant to commit IME selection slips through and submits the half-
-  // typed message. We record the last compositionend timestamp and reject
-  // any Enter that lands within ~80ms of it.
-  const lastCompEndRef = useRef(0)
+  const {
+    onCompositionStart,
+    onCompositionEnd,
+    isImeEnterOrComposing,
+  } = useImeCompositionGuard(80)
   const [dragOver, setDragOver] = useState(false)
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
   const pendingUploadsRef = useRef<PendingUpload[]>([])
@@ -607,15 +600,8 @@ export function ImagePasteInput({
           rows={1}
           placeholder={placeholder}
           onChange={(e) => onText(e.target.value)}
-          onCompositionStart={() => {
-            composingRef.current = true
-            setComposing(true)
-          }}
-          onCompositionEnd={() => {
-            composingRef.current = false
-            lastCompEndRef.current = Date.now()
-            setComposing(false)
-          }}
+          onCompositionStart={onCompositionStart}
+          onCompositionEnd={onCompositionEnd}
           onPaste={(e) => {
             if (attachmentLocked || !acceptFiles) return
             const items = Array.from(e.clipboardData.items || [])
@@ -635,9 +621,7 @@ export function ImagePasteInput({
             }
           }}
           onKeyDown={(e) => {
-            const isComposing = composing || composingRef.current || e.nativeEvent.isComposing || e.keyCode === 229
-            const isRecentImeEnter = e.key === 'Enter' && Date.now() - lastCompEndRef.current < 80
-            if (isComposing || isRecentImeEnter) return
+            if (isImeEnterOrComposing(e)) return
 
             // Autocomplete must not intercept native modified Enter/Tab actions.
             if ((slashAutocomplete?.open || slashCommands.length > 0)
@@ -817,6 +801,7 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
   const [turns, setTurns] = useState<BtwTurn[]>([])
   const [loading, setLoading] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const btwIme = useImeCompositionGuard(80)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [dragging, setDragging] = useState(false)
   const dragOriginRef = useRef<{
@@ -978,8 +963,11 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
           disabled={loading}
           placeholder="输入旁路问题…"
           onChange={(e) => setText(e.target.value)}
+          onCompositionStart={btwIme.onCompositionStart}
+          onCompositionEnd={btwIme.onCompositionEnd}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
+            if (btwIme.isImeEnterOrComposing(e)) return
+            if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
               ask()
             }

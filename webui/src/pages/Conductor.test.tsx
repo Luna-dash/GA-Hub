@@ -2095,4 +2095,48 @@ describe('Conductor chat scroll restoration', () => {
     expect(contextTabs[0].getAttribute('aria-selected')).toBe('true')
     expect(document.activeElement).toBe(contextTabs[0])
   })
+
+  it('guards TaskConversation Enter within 80ms after compositionend and shows jump-to-bottom when scrolled up', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{ request_id: 'request-1', status: 'supervising', stage: 'supervising', subagents: {}, created_at: 1, completed_at: null }],
+    })
+    mocks.conductorChat.mockResolvedValue({
+      items: [{ id: 'm1', role: 'conductor', msg: 'hello', ts: 1, request_id: 'request-1' }],
+    })
+    renderPage()
+    await waitForInitialScrollFrame()
+    runAnimationFrames()
+
+    const scroller = chatScroller()
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 300 })
+    Object.defineProperty(scroller, 'scrollTop', { configurable: true, writable: true, value: 100 })
+    act(() => { scroller.dispatchEvent(new Event('scroll', { bubbles: true })) })
+
+    const jumpBtn = host.querySelector<HTMLButtonElement>('button[aria-label="跳到底部"]')!
+    expect(jumpBtn).not.toBeNull()
+    expect(jumpBtn.type).toBe('button')
+    act(() => { jumpBtn.click() })
+    expect(scroller.scrollTop).toBe(1000)
+    expect(host.querySelector('button[aria-label="跳到底部"]')).toBeNull()
+
+    // 80ms IME guard on TaskConversation composer
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-28T00:00:00Z'))
+    const ta = host.querySelector<HTMLTextAreaElement>('form textarea')!
+    typeMessage('中文输入')
+    act(() => {
+      ta.dispatchEvent(new Event('compositionstart', { bubbles: true }))
+      ta.dispatchEvent(new Event('compositionend', { bubbles: true }))
+      vi.advanceTimersByTime(30)
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+    expect(mocks.conductorSendChat).not.toHaveBeenCalled()
+
+    act(() => {
+      vi.advanceTimersByTime(60)
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+    expect(mocks.conductorSendChat).toHaveBeenCalledTimes(1)
+  })
 })

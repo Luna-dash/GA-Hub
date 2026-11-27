@@ -322,4 +322,65 @@ describe('Goal Hive compact subagent settings', () => {
     expect(host.textContent).toContain('请先在 LLM 管理中配置可用模型')
     expect(button('启动 Goal').disabled).toBe(true)
   })
+
+  it('supports Ctrl/Cmd+Enter submit with 80ms IME guard on both textareas and renders jump-to-bottom when scrolled up', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-28T00:00:00Z'))
+    useGoalHiveStore.setState({
+      messages: [{ id: 'm1', role: 'assistant', content: 'line', ts: 1, streaming: true }],
+      conn: 'open',
+      mode: 'goal',
+    })
+    renderPage()
+
+    // Jump-to-bottom button appears when scrolled up and scrolls logEl on click
+    const logEl = host.querySelector<HTMLDivElement>('div.overflow-auto')!
+    const scrollToSpy = vi.mocked(logEl.scrollTo)
+    scrollToSpy.mockClear()
+    Object.defineProperty(logEl, 'scrollHeight', { configurable: true, value: 1200 })
+    Object.defineProperty(logEl, 'clientHeight', { configurable: true, value: 300 })
+    Object.defineProperty(logEl, 'scrollTop', { configurable: true, writable: true, value: 100 })
+    act(() => { logEl.dispatchEvent(new Event('scroll')) })
+
+    const jumpBtn = host.querySelector<HTMLButtonElement>('button[aria-label="回到底部"]')!
+    expect(jumpBtn).not.toBeNull()
+    expect(jumpBtn.type).toBe('button')
+    act(() => { jumpBtn.click() })
+    expect(scrollToSpy).toHaveBeenCalledWith({ top: 1200, behavior: 'smooth' })
+    expect(host.querySelector('button[aria-label="回到底部"]')).toBeNull()
+
+    // Finish streaming so form can submit
+    act(() => {
+      useGoalHiveStore.getState().setMessages([{ id: 'm1', role: 'assistant', content: 'done', ts: 1, streaming: false }])
+    })
+    const [targetTa, conditionTa] = Array.from(host.querySelectorAll<HTMLTextAreaElement>('form textarea'))
+    const setVal = (el: HTMLTextAreaElement, val: string) => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(el, val)
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    act(() => {
+      setVal(targetTa, '目标任务')
+      setVal(conditionTa, '补充约束')
+    })
+
+    // Within 80ms after compositionend -> blocked
+    act(() => {
+      targetTa.dispatchEvent(new Event('compositionstart', { bubbles: true }))
+      targetTa.dispatchEvent(new Event('compositionend', { bubbles: true }))
+      vi.advanceTimersByTime(30)
+      targetTa.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+    expect(mocks.socketSend).not.toHaveBeenCalled()
+
+    // After 80ms -> submits from conditionTa via Ctrl+Enter
+    act(() => {
+      vi.advanceTimersByTime(60)
+      conditionTa.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+    expect(mocks.socketSend).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'submit',
+      text: '目标任务\n补充约束',
+    }))
+    vi.useRealTimers()
+  })
 })
