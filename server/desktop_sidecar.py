@@ -247,6 +247,9 @@ def main(argv: list[str] | None = None) -> int:
     import logging
 
     from server import _paths
+    from server.process_utils import install_silent_subprocess_default
+
+    install_silent_subprocess_default()
     from server.instance_lock import (
         AdminDataLockBusyError,
         acquire_admin_data_lock,

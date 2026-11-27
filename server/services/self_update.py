@@ -26,6 +26,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from ..process_utils import hidden_process_kwargs
 from .update_lock import FileMutex
 
 EXECUTABLES = ("ga-hub-desktop.exe", "sidecar/ga-hub-sidecar.exe")
@@ -262,14 +263,11 @@ class UpdateStore:
                 "close_fds": True,
             }
             if os.name == "nt":
-                detached = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
                 breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
-                kwargs["creationflags"] = detached | breakaway
                 try:
-                    spawn(cmd, **kwargs)
+                    spawn(cmd, **kwargs, **hidden_process_kwargs(existing_creationflags=breakaway))
                 except PermissionError:
-                    kwargs["creationflags"] = detached
-                    spawn(cmd, **kwargs)
+                    spawn(cmd, **kwargs, **hidden_process_kwargs())
             else:
                 spawn(cmd, **kwargs)
             return self.transition(plan_id, {"prepared"}, "switching", switch_started=False)

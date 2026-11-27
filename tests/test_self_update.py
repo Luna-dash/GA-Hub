@@ -151,11 +151,17 @@ def test_apply_launches_detached_rust_updater(tmp_path):
     result = store.apply(plan["id"], tmp_path / "admin", old_pid=4242, old_exe=old_exe, spawn=fake_spawn)
     assert result["state"] == "switching"
     assert len(launched) == 1
-    cmd = launched[0][0]
+    cmd, spawn_kwargs = launched[0]
     assert cmd[0].endswith("ga-hub-update.exe")
     assert "switch" in cmd
     assert "--plan" in cmd and plan["id"] in cmd
     assert "--wait-pid" in cmd and "4242" in cmd
+    import os
+    import subprocess
+    if os.name == "nt":
+        flags = spawn_kwargs.get("creationflags", 0)
+        assert flags & subprocess.CREATE_NO_WINDOW
+        assert not (flags & subprocess.DETACHED_PROCESS)
 
 
 def test_instances_share_lock(tmp_path):

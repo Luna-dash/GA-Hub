@@ -44,7 +44,7 @@ def test_runtime_status_start_stop_restart_without_external_daemon(tmp_path, mon
     assert restarted["state"] == "ready"
 
 
-def test_first_status_version_probe_is_detached_on_windows(tmp_path, monkeypatch):
+def test_first_status_version_probe_uses_create_no_window_on_windows(tmp_path, monkeypatch):
     monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
     monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
     calls = []
@@ -63,7 +63,8 @@ def test_first_status_version_probe_is_detached_on_windows(tmp_path, monkeypatch
     assert cmd == ["C:/fake/agy.exe", "--version"]
     assert kwargs["capture_output"] and kwargs["stdin"] == subprocess.DEVNULL
     if sys.platform == "win32":
-        assert kwargs["creationflags"] == subprocess.DETACHED_PROCESS
+        assert kwargs["creationflags"] & subprocess.CREATE_NO_WINDOW
+        assert not (kwargs["creationflags"] & subprocess.DETACHED_PROCESS)
     else:
         assert "creationflags" not in kwargs
 
@@ -589,7 +590,8 @@ def test_models_parses_agy_tsv_without_json_flag_and_default_env_preserves_keyri
         captured_cmd.append(cmd)
         assert kw["capture_output"] and kw["stdin"] == subprocess.DEVNULL
         if sys.platform == "win32":
-            assert kw["creationflags"] == subprocess.DETACHED_PROCESS
+            assert kw["creationflags"] & subprocess.CREATE_NO_WINDOW
+            assert not (kw["creationflags"] & subprocess.DETACHED_PROCESS)
         else:
             assert "creationflags" not in kw
         return SimpleNamespace(

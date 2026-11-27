@@ -42,7 +42,7 @@ def test_hidden_process_kwargs_suppress_console_and_hide_window():
     assert kwargs["startupinfo"].wShowWindow == 0
 
 
-def test_windows_mykey_open_uses_startfile_without_command_shell(tmp_path):
+def test_windows_mykey_open_uses_edit_verb_without_command_shell(tmp_path):
     target = tmp_path / "mykey.py"
     target.write_text("# config", encoding="utf-8")
     startfile = mock.Mock()
@@ -56,8 +56,30 @@ def test_windows_mykey_open_uses_startfile_without_command_shell(tmp_path):
         result = asyncio.run(mykey_routes.open_mykey_file())
 
     assert result == {"ok": True, "path": str(target)}
-    startfile.assert_called_once_with(str(target))
+    startfile.assert_called_once_with(str(target), "edit")
     popen.assert_not_called()
+
+
+def test_windows_mykey_open_falls_back_to_notepad_when_no_edit_association(tmp_path):
+    target = tmp_path / "mykey.py"
+    target.write_text("# config", encoding="utf-8")
+    startfile = mock.Mock(side_effect=OSError("No application is associated"))
+
+    with (
+        mock.patch.object(mykey_service, "_mykey_path", return_value=target),
+        mock.patch.object(mykey_service.sys, "platform", "win32"),
+        mock.patch.object(mykey_service.os, "startfile", startfile, create=True),
+        mock.patch.object(mykey_service.subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True),
+        mock.patch.object(mykey_service.subprocess, "Popen") as popen,
+    ):
+        result = asyncio.run(mykey_routes.open_mykey_file())
+
+    assert result == {"ok": True, "path": str(target)}
+    startfile.assert_called_once_with(str(target), "edit")
+    popen.assert_called_once()
+    assert popen.call_args.args[0] == ["notepad.exe", str(target)]
+    assert popen.call_args.kwargs["creationflags"] == 0x08000000
+    assert "startupinfo" not in popen.call_args.kwargs
 
 
 def test_windows_mykey_sync_uses_hidden_process_policy(tmp_path):

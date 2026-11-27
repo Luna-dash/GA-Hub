@@ -58,6 +58,9 @@ def _ensure_single_instance(admin_data: Path):
 def main():
     from server import _paths
     from server.logging_config import configure_application_logging
+    from server.process_utils import install_silent_subprocess_default
+
+    install_silent_subprocess_default()
 
     log_path = configure_application_logging(_paths.ADMIN_DATA / "logs")
     logging.getLogger(__name__).info("backend log file: %s", log_path)

@@ -27,8 +27,25 @@ _WEB_TOOL_WORKER_SCRIPT = r"""
 import importlib
 import json
 import os
+import subprocess
 import sys
 import traceback
+
+if os.name == "nt":
+    _orig_popen_init = subprocess.Popen.__init__
+    _no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    _explicit_console = (
+        getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
+        | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+    )
+
+    def _silent_popen_init(self, *args, **kwargs):
+        flags = kwargs.get("creationflags", 0) or 0
+        if not (flags & _explicit_console):
+            kwargs["creationflags"] = flags | _no_window
+        _orig_popen_init(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = _silent_popen_init
 
 protocol_out = sys.stdout
 sys.stdout = sys.stderr

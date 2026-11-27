@@ -1873,7 +1873,7 @@ class AgyRuntimeManager:
                 encoding="utf-8",
                 errors="replace",
                 timeout=8,
-                **hidden_process_kwargs(detach_console=True),
+                **hidden_process_kwargs(),
             )
             if res.returncode == 0:
                 m = re.search(r"(\d+\.\d+\.\d+)", res.stdout or res.stderr or "")
@@ -2716,7 +2716,7 @@ class AgyRuntimeManager:
                 errors="replace",
                 timeout=24,
                 check=False,
-                **hidden_process_kwargs(detach_console=True),
+                **hidden_process_kwargs(),
                 env=env,
             )
             if result.returncode != 0:

@@ -131,9 +131,9 @@ fn spawn_detached(exe: &Path, extra_envs: &[(&str, String)]) -> Result<Child, St
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-        cmd.creation_flags(DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB);
+        cmd.creation_flags(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB);
         match cmd.spawn() {
             Ok(child) => return Ok(child),
             Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -148,7 +148,7 @@ fn spawn_detached(exe: &Path, extra_envs: &[(&str, String)]) -> Result<Child, St
                 for (k, v) in extra_envs {
                     fallback.env(k, v);
                 }
-                fallback.creation_flags(DETACHED_PROCESS);
+                fallback.creation_flags(CREATE_NO_WINDOW);
                 return fallback
                     .spawn()
                     .map_err(|e| format!("spawn {} failed: {e}", exe.display()));

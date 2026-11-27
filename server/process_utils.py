@@ -17,6 +17,48 @@ from typing import Any
 
 _CREATE_NO_WINDOW = 0x08000000
 _DETACHED_PROCESS = 0x00000008
+_CREATE_NEW_CONSOLE = 0x00000010
+
+
+def install_silent_subprocess_default() -> bool:
+    """Ensure every Windows ``subprocess.Popen`` in this process defaults to ``CREATE_NO_WINDOW``.
+
+    The packaged desktop sidecar (PyInstaller ``--noconsole``) and ``pythonw.exe``
+    launches have no attached console. Any in-process GA module, plugin, stdlib
+    helper, or third-party package that calls ``subprocess.Popen`` / ``run``
+    without ``CREATE_NO_WINDOW`` would otherwise flash a black ``conhost.exe``
+    window.
+
+    Only ``CREATE_NO_WINDOW`` is added (never ``SW_HIDE`` in ``STARTUPINFO``),
+    so GUI-subsystem binaries such as ``explorer.exe`` remain visible while all
+    console binaries (``powershell.exe``, ``pwsh.exe``, ``cmd.exe``, ``python.exe``,
+    ``git.exe``, ``agy.exe``) run silently. Callers that explicitly pass
+    ``CREATE_NEW_CONSOLE`` or ``DETACHED_PROCESS`` are left untouched.
+
+    Idempotent; returns ``True`` when the guard is active on Windows.
+    """
+    if os.name != "nt":
+        return False
+    current_init = subprocess.Popen.__init__
+    if getattr(current_init, "_ga_hub_silent_default", False):
+        return True
+
+    no_window = getattr(subprocess, "CREATE_NO_WINDOW", _CREATE_NO_WINDOW)
+    explicit_console_modes = (
+        getattr(subprocess, "CREATE_NEW_CONSOLE", _CREATE_NEW_CONSOLE)
+        | getattr(subprocess, "DETACHED_PROCESS", _DETACHED_PROCESS)
+    )
+
+    def _silent_popen_init(self, *args: Any, **kwargs: Any) -> None:
+        flags = kwargs.get("creationflags", 0) or 0
+        if not (flags & explicit_console_modes):
+            kwargs["creationflags"] = flags | no_window
+        current_init(self, *args, **kwargs)
+
+    _silent_popen_init._ga_hub_silent_default = True  # type: ignore[attr-defined]
+    _silent_popen_init._ga_hub_orig_init = current_init  # type: ignore[attr-defined]
+    subprocess.Popen.__init__ = _silent_popen_init  # type: ignore[method-assign]
+    return True
 
 
 def hidden_process_kwargs(

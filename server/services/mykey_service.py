@@ -615,16 +615,30 @@ def sync_fetch(*, expected_sha256: str | None = None) -> dict:
 
 
 def open_mykey_file() -> dict:
-    """Open mykey.py in system default editor."""
+    """Open mykey.py in an editor without ever executing it."""
     p = _mykey_path()
     if not p.is_file():
         raise MykeyHttpError(404, "mykey.py 不存在")
 
     try:
         if sys.platform == "win32":
-            os.startfile(str(p))  # type: ignore[attr-defined]
+            # Always use the explicit "edit" verb on Windows: the default "open"
+            # verb on .py files runs python.exe/py.exe in a flashing console.
+            # When no "edit" verb is registered, fall back to GUI Notepad
+            # (with CREATE_NO_WINDOW and without SW_HIDE so Notepad is visible).
+            try:
+                os.startfile(str(p), "edit")  # type: ignore[attr-defined]
+            except OSError:
+                subprocess.Popen(
+                    ["notepad.exe", str(p)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    close_fds=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+                )
         elif sys.platform == "darwin":
-            subprocess.Popen(["open", str(p)], **hidden_process_kwargs())
+            subprocess.Popen(["open", "-t", str(p)], **hidden_process_kwargs())
         else:
             subprocess.Popen(["xdg-open", str(p)], **hidden_process_kwargs())
         return {"ok": True, "path": str(p)}

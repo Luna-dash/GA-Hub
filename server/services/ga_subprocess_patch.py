@@ -23,13 +23,15 @@ class _GaSubprocessProxy:
     GA commonly holds a reference to the standard-library subprocess module
     itself.  Replacing Popen on that module would leak the GA compatibility
     rewrite into every later subprocess in GA-Hub.  This facade keeps the real
-    module untouched while exposing the patched constructor at GA's existing
-    ga.subprocess.Popen call site.
+    module untouched while exposing the patched constructors/helpers at GA's
+    existing ``ga.subprocess.*`` call sites.
     """
 
-    def __init__(self, original: subprocess, popen):
+    def __init__(self, original: subprocess, popen, *, helpers: dict | None = None):
         object.__setattr__(self, "_original", original)
         object.__setattr__(self, "Popen", popen)
+        for name, fn in (helpers or {}).items():
+            object.__setattr__(self, name, fn)
 
     def __getattr__(self, name: str):
         return getattr(self._original, name)
@@ -91,6 +93,16 @@ def _patch_ga_subprocess() -> None:
 
     _orig_popen = _sp.Popen
     _current_exe = os.path.abspath(sys.executable)
+    def _with_windows_hidden(kwargs: dict) -> dict:
+        if os.name == "nt":
+            existing_startupinfo = kwargs.get("startupinfo")
+            kwargs.update(hidden_process_kwargs(
+                existing_creationflags=kwargs.get("creationflags") or 0,
+            ))
+            if existing_startupinfo is not None:
+                kwargs["startupinfo"] = existing_startupinfo
+        return kwargs
+
     def _admin_popen(*args, **kwargs):
         cmd = args[0] if args else kwargs.get("args")
         if real_python and isinstance(cmd, (list, tuple)) and cmd:
@@ -118,17 +130,24 @@ def _patch_ga_subprocess() -> None:
                 else:
                     kwargs["args"] = new_cmd
 
-        if os.name == "nt":
-            existing_startupinfo = kwargs.get("startupinfo")
-            kwargs.update(hidden_process_kwargs(
-                existing_creationflags=kwargs.get("creationflags") or 0,
-            ))
-            if existing_startupinfo is not None:
-                kwargs["startupinfo"] = existing_startupinfo
+        _with_windows_hidden(kwargs)
         return _orig_popen(*args, **kwargs)
 
+    def _wrap_helper(orig_fn):
+        def _wrapped(*args, **kwargs):
+            _with_windows_hidden(kwargs)
+            return orig_fn(*args, **kwargs)
+        _wrapped._admin_wrapped = True  # type: ignore[attr-defined]
+        return _wrapped
+
+    helpers = {
+        name: _wrap_helper(getattr(_sp, name))
+        for name in ("run", "call", "check_call", "check_output")
+        if hasattr(_sp, name)
+    }
+
     _admin_popen._admin_wrapped = True  # type: ignore[attr-defined]
-    _ga.subprocess = _GaSubprocessProxy(_sp, _admin_popen)
+    _ga.subprocess = _GaSubprocessProxy(_sp, _admin_popen, helpers=helpers)
     log.info(
         "patched ga.subprocess.Popen for code_run python=%s no_window=%s",
         real_python or sys.executable,
