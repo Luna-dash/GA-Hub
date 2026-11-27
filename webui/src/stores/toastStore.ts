@@ -40,7 +40,7 @@ const timers = new Map<number, TimerEntry>()
 function clearTimer(id: number) {
   const entry = timers.get(id)
   if (entry?.timerId !== null && entry?.timerId !== undefined) {
-    window.clearTimeout(entry.timerId)
+    globalThis.clearTimeout(entry.timerId)
   }
   timers.delete(id)
 }
@@ -49,7 +49,7 @@ export const useToastStore = create<ToastState>((set, get) => {
   const scheduleTimer = (id: number, ms: number) => {
     clearTimer(id)
     if (ms <= 0) return
-    const timerId = window.setTimeout(() => {
+    const timerId = globalThis.setTimeout(() => {
       get().dismiss(id)
     }, ms)
     timers.set(id, {
@@ -110,7 +110,7 @@ export const useToastStore = create<ToastState>((set, get) => {
       }
       const entry = timers.get(id)
       if (!entry || entry.paused || entry.timerId === null) return
-      window.clearTimeout(entry.timerId)
+      globalThis.clearTimeout(entry.timerId)
       const elapsed = Math.max(0, Date.now() - entry.startedAt)
       entry.timerId = null
       entry.remainingMs = Math.max(0, entry.remainingMs - elapsed)

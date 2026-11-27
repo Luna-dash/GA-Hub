@@ -62,4 +62,22 @@ describe('toastStore', () => {
     vi.advanceTimersByTime(10000)
     expect(useToastStore.getState().items).toHaveLength(0)
   })
+
+  it('auto-dismisses and cleans up timers safely even when window is undefined', () => {
+    vi.stubGlobal('window', undefined)
+    try {
+      const id = toast.info('环境销毁保护', 1000)
+      expect(useToastStore.getState().items).toHaveLength(1)
+      vi.advanceTimersByTime(1100)
+      expect(useToastStore.getState().items).toHaveLength(0)
+
+      const id2 = toast.error('手动关闭保护', 5000)
+      useToastStore.getState().pause(id2)
+      useToastStore.getState().dismiss(id2)
+      expect(useToastStore.getState().items).toHaveLength(0)
+      expect(id).not.toBe(id2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })
