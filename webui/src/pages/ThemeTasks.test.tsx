@@ -619,4 +619,14 @@ it('shows conditional clear button in picking search and resets search on clear 
   await click('取消')
   await click('从会话转入')
   expect(host.querySelector<HTMLInputElement>('input[aria-label="搜索会话"]')!.value).toBe('')
+
+  // Whitespace-only search trims consistently and keeps pickable sessions visible
+  const reopenedSearch = host.querySelector<HTMLInputElement>('input[aria-label="搜索会话"]')!
+  act(() => {
+    setInput.call(reopenedSearch, '   ')
+    reopenedSearch.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(host.textContent).toContain('Alpha 会话')
+  expect(host.textContent).toContain('Beta 会话')
+  expect(host.textContent).not.toContain('暂无可转入的普通会话')
 })

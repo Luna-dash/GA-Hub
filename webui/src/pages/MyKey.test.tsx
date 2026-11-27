@@ -542,4 +542,84 @@ describe('MyKey upload button visibility', () => {
     expect(document.activeElement).toBe(varInput)
     expect(dlg.querySelector('[role="alert"]')?.textContent).toContain('请填写变量名')
   })
+
+  it('syncs default 32768 thinking_budget_tokens when switching to enabled and rejects scientific notation inline', async () => {
+    const data = fixture()
+    data.structured.sessions = [
+      { var: 'native_claude_a', type: 'native_claude', lineno: 2, fields: { name: 'Claude', thinking_type: 'adaptive' } },
+    ]
+    await mountFixture(data)
+    act(() => host.querySelector<HTMLButtonElement>('.mykey-card__toggle')!.click())
+    click('编辑')
+
+    const dlg = host.querySelector('[role="dialog"]')!
+    const thinkingSelect = dlg.querySelector<HTMLSelectElement>('select')!
+    act(() => {
+      thinkingSelect.value = 'enabled'
+      thinkingSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    const budgetInput = dlg.querySelector<HTMLInputElement>('input[aria-label="thinking_budget_tokens"]')!
+    expect(budgetInput.value).toBe('32768')
+
+    // Reject scientific notation ('1e4') inline instead of coercing via parseInt
+    input(budgetInput, '1e4')
+    click('保存并应用')
+    await settle()
+    expect(apiMock.mutateMyKey).not.toHaveBeenCalled()
+    expect(budgetInput.getAttribute('aria-invalid')).toBe('true')
+    expect(document.activeElement).toBe(budgetInput)
+    expect(dlg.querySelector('[role="alert"]')?.textContent).toContain('thinking_budget_tokens')
+
+    // Clear budget while mounted, switch away and back to enabled -> seeds 32768 and submits it untouched
+    input(budgetInput, '')
+    act(() => {
+      thinkingSelect.value = 'adaptive'
+      thinkingSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    act(() => {
+      thinkingSelect.value = 'enabled'
+      thinkingSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    const refreshedBudgetInput = dlg.querySelector<HTMLInputElement>('input[aria-label="thinking_budget_tokens"]')!
+    expect(refreshedBudgetInput.value).toBe('32768')
+    click('保存并应用')
+    await settle()
+    expect(apiMock.mutateMyKey).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'update',
+      var: 'native_claude_a',
+      fields: expect.objectContaining({
+        thinking_type: 'enabled',
+        thinking_budget_tokens: 32768,
+      }),
+    }))
+  })
+
+  it('submits 32768 immediately when switching thinking_type from adaptive to enabled without touching budget', async () => {
+    const data = fixture()
+    data.structured.sessions = [
+      { var: 'native_claude_a', type: 'native_claude', lineno: 2, fields: { name: 'Claude', thinking_type: 'adaptive' } },
+    ]
+    await mountFixture(data)
+    act(() => host.querySelector<HTMLButtonElement>('.mykey-card__toggle')!.click())
+    click('编辑')
+
+    const dlg = host.querySelector('[role="dialog"]')!
+    const thinkingSelect = dlg.querySelector<HTMLSelectElement>('select')!
+    act(() => {
+      thinkingSelect.value = 'enabled'
+      thinkingSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    click('保存并应用')
+    await settle()
+    expect(apiMock.mutateMyKey).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'update',
+      var: 'native_claude_a',
+      fields: expect.objectContaining({
+        thinking_type: 'enabled',
+        thinking_budget_tokens: 32768,
+      }),
+    }))
+  })
 })

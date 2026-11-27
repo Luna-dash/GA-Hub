@@ -430,8 +430,9 @@ export default function ThemeTasks() {
   ]
   const llms = useQuery({ queryKey: queryKeys.llms, queryFn: api.llms })
   const modelName = (key?: string | null) => key ? llms.data?.llms.find(m => m.key === key)?.name ?? key : '未绑定模型'
+  const q = search.trim().toLowerCase()
   const pickable = sessions
-    .filter(s => !s.theme_task && `${s.title} ${s.project_name ?? ''}`.toLowerCase().includes(search.toLowerCase()))
+    .filter(s => !s.theme_task && `${s.title} ${s.project_name ?? ''}`.toLowerCase().includes(q))
     .sort((a, b) => (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0))
   const [params, setParams] = useSearchParams()
   const openId = params.get('open')

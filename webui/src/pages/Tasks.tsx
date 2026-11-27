@@ -410,8 +410,8 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
       }
     } else if (type === 'interval') {
       const mins = Number(s.interval_minutes)
-      if (!Number.isFinite(mins) || mins < 1) {
-        nextErrors.interval_minutes = '执行周期必须为不小于 1 的分钟数。'
+      if (!Number.isInteger(mins) || mins < 1) {
+        nextErrors.interval_minutes = '执行周期必须为不小于 1 的整数分钟数。'
         firstInvalid ??= intervalRef.current
       }
     }

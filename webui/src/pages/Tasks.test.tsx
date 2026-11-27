@@ -390,3 +390,38 @@ it('shows accessible inline field errors instead of dialog.alert and focuses fir
   expect(host.querySelector('[role="dialog"]')).toBeNull()
   alertSpy.mockRestore()
 })
+
+it('rejects non-integer interval_minutes inline in TaskDialog', async () => {
+  act(() => root.render(<QueryClientProvider client={client}><Tasks /></QueryClientProvider>))
+  const newBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.includes('新建任务'))!
+  act(() => newBtn.click())
+
+  const dlg = host.querySelector('[role="dialog"]')!
+  const nameInput = dlg.querySelector<HTMLInputElement>('input[placeholder="每日早报"]')!
+  const typeSelect = dlg.querySelector<HTMLSelectElement>('select')!
+  const promptInput = dlg.querySelector<HTMLTextAreaElement>('textarea')!
+  const saveBtn = Array.from(dlg.querySelectorAll('button')).find((b) => b.textContent?.trim() === '保存')!
+
+  const setInput = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  const setTextarea = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+  act(() => {
+    setInput.call(nameInput, '整数校验任务')
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+    typeSelect.value = 'interval'
+    typeSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    setTextarea.call(promptInput, '检查周期')
+    promptInput.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+
+  const intervalInput = dlg.querySelector<HTMLInputElement>('input[type="number"]')!
+  act(() => {
+    setInput.call(intervalInput, '1.5')
+    intervalInput.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => { saveBtn.click() })
+
+  expect(api.upsertTaskSchedule).not.toHaveBeenCalled()
+  expect(intervalInput.getAttribute('aria-invalid')).toBe('true')
+  expect(document.activeElement).toBe(intervalInput)
+  expect(dlg.querySelector('[role="alert"]')?.textContent).toContain('整数')
+})

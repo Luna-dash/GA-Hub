@@ -461,14 +461,14 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
     let firstInvalid: HTMLElement | null = null
     if (type === 'idle') {
       const mins = Number(s.idle_minutes)
-      if (!Number.isFinite(mins) || mins < 1) {
-        nextErrors.idle_minutes = '空闲时间无效：空闲分钟数必须为不小于 1 的数字。'
+      if (!Number.isInteger(mins) || mins < 1) {
+        nextErrors.idle_minutes = '空闲时间无效：空闲分钟数必须为不小于 1 的整数。'
         firstInvalid ??= idleRef.current
       }
     } else if (type === 'interval') {
       const mins = Number(s.interval_minutes)
-      if (!Number.isFinite(mins) || mins < 1) {
-        nextErrors.interval_minutes = '间隔分钟数必须为不小于 1 的数字。'
+      if (!Number.isInteger(mins) || mins < 1) {
+        nextErrors.interval_minutes = '间隔分钟数必须为不小于 1 的整数。'
         firstInvalid ??= intervalRef.current
       }
     } else if (type === 'cron') {

@@ -633,12 +633,15 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
       nextVarError = '请填写变量名。'
       firstInvalid ??= varRef.current
     }
+    let validatedBudget: number | undefined
     if (s.fields.thinking_type === 'enabled') {
       const trimmedBudget = budgetDraft.trim()
-      const parsedBudget = Number(trimmedBudget)
-      if (!trimmedBudget || !Number.isInteger(parsedBudget) || parsedBudget < 1024) {
+      const parsedBudget = /^\d+$/.test(trimmedBudget) ? Number(trimmedBudget) : Number.NaN
+      if (!Number.isInteger(parsedBudget) || parsedBudget < 1024) {
         nextBudgetError = 'thinking_budget_tokens 需为不小于 1024 的整数。'
         firstInvalid ??= budgetRef.current
+      } else {
+        validatedBudget = parsedBudget
       }
     }
     if (nextVarError || nextBudgetError) {
@@ -654,6 +657,9 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
     try {
       // Normalize empty strings to undefined for non-required fields.
       const fields = stripUiOnly(s.fields)
+      if (s.fields.thinking_type === 'enabled' && validatedBudget !== undefined) {
+        fields.thinking_budget_tokens = validatedBudget
+      }
       const trimmedVar = s.var.trim()
       const action = mode === 'duplicate'
         ? 'duplicate'
@@ -759,12 +765,25 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
               value={s.fields.thinking_type ?? ''}
               onChange={(e) => {
                 const nextType = e.target.value || undefined
-                setField('thinking_type', nextType)
-                if (nextType === 'enabled' && !budgetDraft.trim()) {
-                  setBudgetDraft(String(s.fields.thinking_budget_tokens ?? 32768))
-                }
-                if (nextType !== 'enabled' && budgetError) {
-                  setBudgetError('')
+                if (nextType === 'enabled') {
+                  const trimmed = budgetDraft.trim()
+                  const seededBudget = s.fields.thinking_budget_tokens ?? (/^\d+$/.test(trimmed) ? Number(trimmed) : 32768)
+                  if (!trimmed) {
+                    setBudgetDraft(String(seededBudget))
+                  }
+                  setS(prev => ({
+                    ...prev,
+                    fields: {
+                      ...prev.fields,
+                      thinking_type: nextType,
+                      thinking_budget_tokens: prev.fields.thinking_budget_tokens ?? seededBudget,
+                    },
+                  }))
+                } else {
+                  setField('thinking_type', nextType)
+                  if (budgetError) {
+                    setBudgetError('')
+                  }
                 }
               }}
               className={`${inp} ga-select`}
@@ -789,12 +808,14 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
                   const raw = e.target.value
                   setBudgetDraft(raw)
                   if (budgetError) setBudgetError('')
-                  if (raw.trim() === '') {
+                  const trimmed = raw.trim()
+                  if (trimmed === '') {
                     setField('thinking_budget_tokens', undefined)
                     return
                   }
-                  const parsed = Number.parseInt(raw, 10)
-                  if (Number.isFinite(parsed)) setField('thinking_budget_tokens', parsed)
+                  if (/^\d+$/.test(trimmed)) {
+                    setField('thinking_budget_tokens', Number(trimmed))
+                  }
                 }}
                 className={inp}
               />

@@ -284,4 +284,37 @@ describe('Autonomous schedule dialog & report drawer', () => {
     confirmSpy.mockRestore()
     alertSpy.mockRestore()
   })
+
+  it('rejects non-integer idle_minutes and interval_minutes inline in ScheduleDialog', async () => {
+    await renderPage()
+    await act(async () => button('新建计划').click())
+    const dlg = host.querySelector('[role="dialog"]')!
+
+    const idleInput = dlg.querySelector<HTMLInputElement>('input[type="number"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(idleInput, '1.5')
+      idleInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => button('保存', dlg).click())
+    expect(apiMock.upsertSchedule).not.toHaveBeenCalled()
+    expect(idleInput.getAttribute('aria-invalid')).toBe('true')
+    expect(document.activeElement).toBe(idleInput)
+    expect(dlg.querySelector('[role="alert"]')?.textContent).toContain('整数')
+
+    const typeSelect = dlg.querySelector<HTMLSelectElement>('select')!
+    await act(async () => {
+      typeSelect.value = 'interval'
+      typeSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    const intervalInput = dlg.querySelector<HTMLInputElement>('input[type="number"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(intervalInput, '2.5')
+      intervalInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => button('保存', dlg).click())
+    expect(apiMock.upsertSchedule).not.toHaveBeenCalled()
+    expect(intervalInput.getAttribute('aria-invalid')).toBe('true')
+    expect(document.activeElement).toBe(intervalInput)
+    expect(dlg.querySelector('[role="alert"]')?.textContent).toContain('整数')
+  })
 })
