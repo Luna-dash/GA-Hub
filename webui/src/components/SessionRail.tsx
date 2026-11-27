@@ -140,7 +140,8 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
     [displayState, sessions],
   )
 
-  // 项目抽屉：自由会话一组，其余按 project_name 分组；组间按置顶、未读/运行优先与最近活动排序。
+  // 项目抽屉：自由会话一组，其余按 project_name 分组；组间按置顶、运行中优先与最近活动排序，
+  // 未读完成/异常仅用于状态点提醒与防折叠，不改变空间排序以避免点击即跳位。
   const sessionGroups = useMemo<SessionGroup[]>(() => {
     const free: HubSession[] = []
     const projects = new Map<string, HubSession[]>()

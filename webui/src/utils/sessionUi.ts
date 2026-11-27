@@ -252,9 +252,11 @@ export function isProtectedRailState(state: SessionRailDisplayState): boolean {
   return state === 'completed' || state === 'error' || state === 'active'
 }
 
-/** Intra-group and inter-group attention rank (lower = higher priority).
+/** Visual attention priority (lower = higher prominence for collapsed badges/dots).
  *
  * Order: unread completed (0) < unread error (1) < active (2) < idle (3).
+ * Used ONLY for attention indicators (e.g. collapsed group dot), NOT for rail
+ * spatial sorting — unread acknowledgement must never make rows jump.
  */
 export function sessionAttentionTier(state: SessionRailDisplayState | SessionActivity): number {
   switch (state) {
@@ -269,12 +271,21 @@ export function sessionAttentionTier(state: SessionRailDisplayState | SessionAct
   }
 }
 
+/** Spatial sort tier in the rail (lower = higher): only running sessions pin to top.
+ *
+ * Completed, error, and idle sessions all share tier 1 and sort purely by recency,
+ * so clicking an unread session to acknowledge it never moves the row or its group.
+ */
+export function sessionSortTier(state: SessionRailDisplayState | SessionActivity): number {
+  return state === 'active' ? 0 : 1
+}
+
 export function sortRailSessions<T extends Pick<HubSession, 'id' | 'updated_at' | 'created_at'>>(
   sessions: readonly T[],
   stateOf: (session: T) => SessionRailDisplayState,
 ): T[] {
   return [...sessions].sort((a, b) => {
-    const tierDiff = sessionAttentionTier(stateOf(a)) - sessionAttentionTier(stateOf(b))
+    const tierDiff = sessionSortTier(stateOf(a)) - sessionSortTier(stateOf(b))
     if (tierDiff !== 0) return tierDiff
     return sessionRecencyMs(b) - sessionRecencyMs(a)
   })
@@ -312,10 +323,8 @@ export function sortRailGroups<G extends { key: string; sessions: readonly HubSe
 ): G[] {
   const groupRecency = (list: readonly HubSession[]) =>
     list.reduce((latest, session) => Math.max(latest, sessionRecencyMs(session)), 0)
-  const groupTier = (list: readonly HubSession[]) => {
-    const best = groupBestAttentionState(list, stateOf)
-    return best ? sessionAttentionTier(best) : 3
-  }
+  const groupHasActive = (list: readonly HubSession[]) =>
+    list.some((session) => stateOf(session) === 'active')
   return [...groups].sort((a, b) => {
     const aIndex = pinnedGroups.indexOf(a.key)
     const bIndex = pinnedGroups.indexOf(b.key)
@@ -323,14 +332,16 @@ export function sortRailGroups<G extends { key: string; sessions: readonly HubSe
     const bPinned = bIndex !== -1
     if (aPinned !== bPinned) return aPinned ? -1 : 1
     if (aPinned && bPinned) return aIndex - bIndex
-    const tierDiff = groupTier(a.sessions) - groupTier(b.sessions)
-    if (tierDiff !== 0) return tierDiff
+    const aActive = groupHasActive(a.sessions)
+    const bActive = groupHasActive(b.sessions)
+    if (aActive !== bActive) return aActive ? -1 : 1
     return groupRecency(b.sessions) - groupRecency(a.sessions)
   })
 }
 
 /** Rail 分组默认态（v3 三态之 D）的预览切片：取最近 `limit` 条，并豁免活跃/未读完成/异常会话。
  *
+ * 严格保持入参 `sessions` 的相对顺序（绝不因是否豁免而二次重排，防止点击已读时发生跳位）。
  * 当前会话在前 limit 条之外时不能被藏掉（它正是用户眼前在用的那条）：
  * 有空闲名额时替换最后一个空闲槽位；若槽位已全被豁免会话占满，则额外追加而不挤掉豁免会话。
  * 入参应已按 sortRailSessions 排好序。
@@ -348,16 +359,25 @@ export function sessionPreview<T extends { id: string }>(
     if (!current) return preview
     return [...preview.slice(0, limit - 1), current]
   }
-  const protectedRows = sessions.filter((session) => isProtected(session))
-  const normalRows = sessions.filter((session) => !isProtected(session))
-  if (limit < 1) return protectedRows
-  const remainingSlots = Math.max(0, limit - protectedRows.length)
-  const selected = [...protectedRows, ...normalRows.slice(0, remainingSlots)]
-  if (!currentId || selected.some((session) => session.id === currentId)) return selected
-  const current = sessions.find((session) => session.id === currentId)
-  if (!current) return selected
-  if (remainingSlots > 0) {
-    return [...selected.slice(0, -1), current]
+  const keep = new Set<number>()
+  const normalIndices: number[] = []
+  sessions.forEach((session, idx) => {
+    if (isProtected(session)) keep.add(idx)
+    else normalIndices.push(idx)
+  })
+  if (limit < 1) return sessions.filter((_, idx) => keep.has(idx))
+  const remainingSlots = Math.max(0, limit - keep.size)
+  const chosenNormal = normalIndices.slice(0, remainingSlots)
+  for (const idx of chosenNormal) keep.add(idx)
+
+  if (currentId) {
+    const curIdx = sessions.findIndex((session) => session.id === currentId)
+    if (curIdx !== -1 && !keep.has(curIdx)) {
+      if (chosenNormal.length > 0) {
+        keep.delete(chosenNormal[chosenNormal.length - 1])
+      }
+      keep.add(curIdx)
+    }
   }
-  return [...selected, current]
+  return sessions.filter((_, idx) => keep.has(idx))
 }

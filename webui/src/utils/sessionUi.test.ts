@@ -18,6 +18,7 @@ import {
   sessionChatHref,
   sessionPreview,
   sessionRecencyMs,
+  sessionSortTier,
   sessionStatusLabel,
   sortRailGroups,
   sortRailSessions,
@@ -215,6 +216,10 @@ describe('session UI contracts', () => {
       // If currentId is idle when slots are full of protected rows, append without evicting protected rows
       expect(sessionPreview(rows, 'e', 3, (item) => manyProtected.has(item.id)).map((item) => item.id))
         .toEqual(['a', 'b', 'c', 'd', 'e'])
+      // When protected rows sit later in the list, preview preserves their original relative order
+      const lateProtected = new Set(['d'])
+      expect(sessionPreview(rows, 'a', 3, (item) => lateProtected.has(item.id)).map((item) => item.id))
+        .toEqual(['a', 'b', 'd'])
     })
   })
 
@@ -229,10 +234,10 @@ describe('session UI contracts', () => {
       expect(resolveSessionRailState(undefined, { runId: 'r2', kind: 'error' }, 'r2')).toBe('idle')
     })
 
-    it('orders sessions as completed > error > active > idle and ties by recency', () => {
-      const sCompleted = { ...session('c'), updated_at: '2026-08-04T08:00:00Z' }
+    it('pins only active sessions to top and sorts all non-active sessions purely by recency', () => {
+      const sCompleted = { ...session('c'), updated_at: '2026-08-04T11:00:00Z' }
       const sError = { ...session('e'), updated_at: '2026-08-04T09:00:00Z' }
-      const sActive = { ...session('a'), updated_at: '2026-08-04T10:00:00Z' }
+      const sActive = { ...session('a'), updated_at: '2026-08-04T08:00:00Z' }
       const sIdle = { ...session('i'), updated_at: '2026-08-04T12:00:00Z' }
       const states = new Map([
         ['c', 'completed' as const],
@@ -240,11 +245,22 @@ describe('session UI contracts', () => {
         ['a', 'active' as const],
         ['i', 'idle' as const],
       ])
+      expect(sessionSortTier('active')).toBe(0)
+      expect(sessionSortTier('completed')).toBe(1)
+      expect(sessionSortTier('error')).toBe(1)
+      expect(sessionSortTier('idle')).toBe(1)
       expect(sessionAttentionTier('completed')).toBeLessThan(sessionAttentionTier('error'))
       expect(sessionAttentionTier('error')).toBeLessThan(sessionAttentionTier('active'))
       expect(sessionAttentionTier('active')).toBeLessThan(sessionAttentionTier('idle'))
-      expect(sortRailSessions([sIdle, sActive, sError, sCompleted], (row) => states.get(row.id)!).map((row) => row.id))
-        .toEqual(['c', 'e', 'a', 'i'])
+
+      const beforeAck = sortRailSessions([sIdle, sActive, sError, sCompleted], (row) => states.get(row.id)!).map((row) => row.id)
+      expect(beforeAck).toEqual(['a', 'i', 'c', 'e'])
+
+      // Marking completed/error as idle must NOT move any session
+      states.set('c', 'idle')
+      states.set('e', 'idle')
+      const afterAck = sortRailSessions([sIdle, sActive, sError, sCompleted], (row) => states.get(row.id)!).map((row) => row.id)
+      expect(afterAck).toEqual(beforeAck)
     })
 
     it('switches group preview limit from 5 (<3 projects) to 3 (>=3 projects)', () => {
@@ -255,7 +271,7 @@ describe('session UI contracts', () => {
       expect(resolveGroupPreviewLimit(5)).toBe(3)
     })
 
-    it('sorts groups by pin order, then attention tier, then recency', () => {
+    it('sorts groups by pin order, then active running presence, then recency (unread never shifts groups)', () => {
       const groups = [
         { key: 'project:idle', sessions: [{ ...session('1'), updated_at: '2026-08-04T12:00:00Z' }] },
         { key: 'project:active', sessions: [{ ...session('2'), updated_at: '2026-08-04T08:00:00Z' }] },
@@ -269,7 +285,7 @@ describe('session UI contracts', () => {
         ['4', 'idle' as const],
       ])
       expect(sortRailGroups(groups, ['project:pinned'], (row) => states.get(row.id)!).map((g) => g.key))
-        .toEqual(['project:pinned', 'project:completed', 'project:active', 'project:idle'])
+        .toEqual(['project:pinned', 'project:active', 'project:idle', 'project:completed'])
       expect(groupBestAttentionState(groups[2].sessions, (row) => states.get(row.id)!)).toBe('completed')
       expect(groupBestAttentionState(groups[0].sessions, (row) => states.get(row.id)!)).toBeNull()
       expect(isProtectedRailState('error')).toBe(true)

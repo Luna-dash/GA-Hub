@@ -396,52 +396,58 @@ describe('SessionRail', () => {
     expect(firstCard?.textContent).toContain('未命名会话 · dddddddd')
   })
 
-  it('orders sessions by completed > error > active > idle and returns cancelled runs to idle', () => {
+  it('pins only active sessions to top, sorts non-active by recency, and never jumps on click-to-read', () => {
     const orderOf = () => Array.from(host.querySelectorAll('[data-activity]'))
       .map((card) => card.getAttribute('data-session-id'))
     const freeSessions: HubSession[] = [
       { ...sessions[1], id: 's-idle-newest', title: '空闲最新', updated_at: '2026-08-05T12:00:00Z' },
       { ...sessions[1], id: 's-active', title: '运行中', updated_at: '2026-08-05T09:00:00Z' },
       { ...sessions[1], id: 's-error', title: '异常失败', updated_at: '2026-08-05T08:00:00Z' },
-      { ...sessions[1], id: 's-completed', title: '完成未读', updated_at: '2026-08-05T07:00:00Z' },
+      { ...sessions[1], id: 's-completed', title: '完成未读', updated_at: '2026-08-05T10:00:00Z' },
       { ...sessions[1], id: 's-cancelled', title: '手动中止', updated_at: '2026-08-05T11:00:00Z' },
     ]
+    const activeRuntimes: Record<string, SessionRuntime> = {
+      's-idle-newest': { session_id: 's-idle-newest', status: 'idle', run_id: null, stream_id: null },
+      's-active': { session_id: 's-active', status: 'running', run_id: 'run-act', stream_id: null },
+      's-error': { session_id: 's-error', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-err', outcome: 'failed' },
+      's-completed': { session_id: 's-completed', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-ok', outcome: 'completed' },
+      's-cancelled': { session_id: 's-cancelled', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-can', outcome: 'cancelled' },
+    }
 
     act(() => root.render(
       <SessionRail
         sessions={freeSessions}
-        runtimes={{
-          's-idle-newest': { session_id: 's-idle-newest', status: 'idle', run_id: null, stream_id: null },
-          's-active': { session_id: 's-active', status: 'running', run_id: 'run-act', stream_id: null },
-          's-error': { session_id: 's-error', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-err', outcome: 'failed' },
-          's-completed': { session_id: 's-completed', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-ok', outcome: 'completed' },
-          's-cancelled': { session_id: 's-cancelled', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-can', outcome: 'cancelled' },
-        }}
+        runtimes={activeRuntimes}
         currentId="s-idle-newest"
         onSelect={vi.fn()}
       />,
     ))
 
-    expect(orderOf()).toEqual(['s-completed', 's-error', 's-active', 's-idle-newest', 's-cancelled'])
+    // Active pins to top; non-active (idle/cancelled/completed/error) sort strictly by updated_at
+    expect(orderOf()).toEqual(['s-active', 's-idle-newest', 's-cancelled', 's-completed', 's-error'])
     expect(host.querySelector('[data-session-id="s-cancelled"]')?.getAttribute('data-activity')).toBe('idle')
+    expect(host.querySelector('[data-session-id="s-completed"]')?.getAttribute('data-activity')).toBe('completed')
 
-    // Running -> cancelled returns to idle sorted by recency.
+    // Clicking completed session acknowledges its green dot without shifting row position
+    const completedBtn = host.querySelector('[data-session-id="s-completed"] button') as HTMLButtonElement
+    act(() => { completedBtn.click() })
+    expect(host.querySelector('[data-session-id="s-completed"]')?.getAttribute('data-activity')).toBe('idle')
+    expect(orderOf()).toEqual(['s-active', 's-idle-newest', 's-cancelled', 's-completed', 's-error'])
+
+    // Running -> cancelled returns to non-active sorted by recency.
     act(() => root.render(
       <SessionRail
         sessions={freeSessions}
         runtimes={{
-          's-idle-newest': { session_id: 's-idle-newest', status: 'idle', run_id: null, stream_id: null },
+          ...activeRuntimes,
           's-active': { session_id: 's-active', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-act', outcome: 'cancelled' },
-          's-error': { session_id: 's-error', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-err', outcome: 'failed' },
-          's-completed': { session_id: 's-completed', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-ok', outcome: 'completed' },
-          's-cancelled': { session_id: 's-cancelled', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'run-can', outcome: 'cancelled' },
         }}
-        currentId="s-idle-newest"
+        currentId="s-completed"
         onSelect={vi.fn()}
       />,
     ))
 
-    expect(orderOf()).toEqual(['s-completed', 's-error', 's-idle-newest', 's-cancelled', 's-active'])
+    expect(orderOf()).toEqual(['s-idle-newest', 's-cancelled', 's-completed', 's-active', 's-error'])
   })
 
   it('lifts a session to the top as soon as its activity stamp moves', () => {
@@ -581,19 +587,33 @@ describe('SessionRail', () => {
     // many[6] 是组内最旧：默认态把它顶入第 5 位，而不是整组跟着跳位
     expect(shownInDrawer('alpha')).toEqual(['0', '1', '2', '3', '6'])
 
-    // Older completed/error/active sessions jump to the front and never get collapsed (Option A fills to 5)
+    // Active pins to top; older unread completed session stays visible in its natural slot without jumping ahead
+    const protectedRuntimes: Record<string, SessionRuntime> = {
+      [many[6].id]: { session_id: many[6].id, status: 'idle', run_id: null, stream_id: null, completed_run_id: 'r6', outcome: 'completed' },
+      [many[5].id]: { session_id: many[5].id, status: 'running', run_id: 'r5', stream_id: null },
+    }
     act(() => root.render(
       <SessionRail
         sessions={[...many, sessions[1]]}
-        runtimes={{
-          [many[6].id]: { session_id: many[6].id, status: 'idle', run_id: null, stream_id: null, completed_run_id: 'r6', outcome: 'completed' },
-          [many[5].id]: { session_id: many[5].id, status: 'running', run_id: 'r5', stream_id: null },
-        }}
+        runtimes={protectedRuntimes}
         currentId={many[1].id}
         onSelect={vi.fn()}
       />,
     ))
-    expect(shownInDrawer('alpha')).toEqual(['6', '5', '0', '1', '2'])
+    expect(shownInDrawer('alpha')).toEqual(['5', '0', '1', '2', '6'])
+
+    // Clicking many[6] acknowledges it and selects it -> stays in the exact same slot (no jump!)
+    const sixthBtn = host.querySelector(`[data-session-id="${many[6].id}"] button`) as HTMLButtonElement
+    act(() => { sixthBtn.click() })
+    act(() => root.render(
+      <SessionRail
+        sessions={[...many, sessions[1]]}
+        runtimes={protectedRuntimes}
+        currentId={many[6].id}
+        onSelect={vi.fn()}
+      />,
+    ))
+    expect(shownInDrawer('alpha')).toEqual(['5', '0', '1', '2', '6'])
   })
 
   it('shows a group header dot when a collapsed project group holds protected sessions', () => {
