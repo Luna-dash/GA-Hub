@@ -249,4 +249,67 @@ describe('AntiModelSelector helpers and component', () => {
     })
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
   })
+
+  it('returns focus to trigger on Shift+Tab from non-first effort radio and resets typeahead on arrow nav', () => {
+    const families = buildSelectorFamilies(SAMPLE_ITEMS, DEFAULT_ORCHESTRATOR_PRESETS, ['gpt-oss-120b', 'gemini-3.8-flash'])
+    const onSelectFamily = vi.fn()
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+
+    act(() => {
+      root!.render(
+        <AntiModelSelector
+          families={families}
+          selectedFamilyKey="gemini-4-neon"
+          effort="high"
+          effortOptions={[{ key: 'low', name: 'low' }, { key: 'medium', name: 'medium' }, { key: 'high', name: 'high' }]}
+          isOrchestrator={false}
+          onSelectFamily={onSelectFamily}
+          onSelectEffort={vi.fn()}
+          onOpenOrchestratorSettings={vi.fn()}
+        />,
+      )
+    })
+
+    const trigger = host.querySelector<HTMLButtonElement>('button[role="combobox"]')!
+    const pressTrigger = (key: string, opts: Partial<KeyboardEventInit> = {}) => {
+      let ev!: KeyboardEvent
+      act(() => {
+        ev = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...opts })
+        trigger.dispatchEvent(ev)
+      })
+      return ev
+    }
+
+    // Tab into high radio (index 2, after low/medium), then Shift+Tab returns to trigger
+    trigger.focus()
+    pressTrigger('ArrowDown')
+    pressTrigger('Tab')
+    const highRadio = document.body.querySelector<HTMLButtonElement>('[data-anti-effort-option="high"]')!
+    expect(document.activeElement).toBe(highRadio)
+
+    let shiftTabEv!: KeyboardEvent
+    act(() => {
+      shiftTabEv = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })
+      highRadio.dispatchEvent(shiftTabEv)
+    })
+    expect(shiftTabEv.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(trigger)
+
+    // Typeahead 'c' -> ArrowDown -> Space within <700ms selects navigated option instead of typing 'c '
+    pressTrigger('c')
+    const opusIdx = families.findIndex(f => f.key === 'claude-opus-5-5')
+    expect(trigger.getAttribute('aria-activedescendant')).toBe(
+      document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')[opusIdx].id,
+    )
+    pressTrigger('ArrowDown')
+    const sonnetIdx = families.findIndex(f => f.key === 'claude-sonnet-5-5')
+    expect(trigger.getAttribute('aria-activedescendant')).toBe(
+      document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')[sonnetIdx].id,
+    )
+    pressTrigger(' ')
+    expect(onSelectFamily).toHaveBeenCalledWith('claude-sonnet-5-5')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  })
 })

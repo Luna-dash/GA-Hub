@@ -355,4 +355,55 @@ describe('Overlay stack arbitration across ModalOverlay, CommandPalette, and Dia
     pressWindowKey('Escape')
     expect(document.getElementById('nested-modal-title')).toBeNull()
   })
+
+  it('closes open AntiModelSelector without dropping focus to body on Shift+Tab when first focusable in ModalOverlay', () => {
+    function FirstFocusableHarness() {
+      const [modalOpen, setModalOpen] = useState(true)
+      const [familyKey, setFamilyKey] = useState('gemini-4-hydrogen')
+      return (
+        modalOpen ? (
+          <ModalOverlay onClose={() => setModalOpen(false)} labelledBy="first-selector-modal-title">
+            <h2 id="first-selector-modal-title">First Selector Modal</h2>
+            <AntiModelSelector
+              families={[
+                { key: 'gemini-4-hydrogen', name: 'Gemini 4 Hydrogen', variants: { high: 'gemini-4-hydrogen-high' } },
+                { key: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', variants: { high: 'claude-sonnet-5-5-high' } },
+              ]}
+              selectedFamilyKey={familyKey}
+              effort="high"
+              effortOptions={[{ key: 'low', name: 'low' }, { key: 'high', name: 'high' }]}
+              isOrchestrator={false}
+              onSelectFamily={setFamilyKey}
+              onSelectEffort={vi.fn()}
+              onOpenOrchestratorSettings={vi.fn()}
+            />
+            <button id="first-modal-tail" type="button" onClick={() => setModalOpen(false)}>Tail</button>
+          </ModalOverlay>
+        ) : null
+      )
+    }
+
+    act(() => root.render(<FirstFocusableHarness />))
+
+    const triggerBtn = document.querySelector<HTMLButtonElement>('button[role="combobox"][aria-label="模型"]')!
+    const tailBtn = document.getElementById('first-modal-tail') as HTMLButtonElement
+    triggerBtn.focus()
+    act(() => triggerBtn.click())
+    expect(document.querySelector('.model-select-menu')).not.toBeNull()
+
+    // Shift+Tab on open trigger inside ModalOverlay closes menu and keeps focus on trigger (never body)
+    let firstShiftTab!: KeyboardEvent
+    act(() => {
+      firstShiftTab = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })
+      triggerBtn.dispatchEvent(firstShiftTab)
+    })
+    expect(firstShiftTab.defaultPrevented).toBe(true)
+    expect(document.querySelector('.model-select-menu')).toBeNull()
+    expect(document.activeElement).toBe(triggerBtn)
+    expect(document.activeElement).not.toBe(document.body)
+
+    // Next Shift+Tab while closed wraps cleanly to modal tail button
+    pressWindowKey('Tab', { shiftKey: true })
+    expect(document.activeElement).toBe(tailBtn)
+  })
 })

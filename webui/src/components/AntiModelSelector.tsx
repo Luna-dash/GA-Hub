@@ -471,6 +471,9 @@ export function AntiModelSelector({
       if (!event.shiftKey && focusFooterControl()) {
         event.preventDefault()
       } else {
+        if (isInsideTrappedOverlay(triggerRef.current)) {
+          event.preventDefault()
+        }
         searchRef.current = { text: '', time: 0 }
         setOpen(false)
       }
@@ -478,6 +481,7 @@ export function AntiModelSelector({
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
       event.preventDefault()
+      searchRef.current = { text: '', time: 0 }
       if (!open) {
         const initial = event.key === 'Home'
           ? 0
@@ -569,9 +573,10 @@ export function AntiModelSelector({
             }
             if (event.key === 'Tab' && event.shiftKey) {
               const footer = menuRef.current?.querySelector<HTMLElement>('[data-anti-model-footer]')
-              const firstFooterFocusable = footer?.querySelector<HTMLElement>(
-                '[role="radio"][tabindex="0"]:not([disabled]), [data-anti-open-model-settings]:not([disabled]), button:not([disabled])',
-              )
+              const firstFooterFocusable =
+                footer?.querySelector<HTMLElement>('[role="radio"][tabindex="0"]:not([disabled])')
+                ?? footer?.querySelector<HTMLElement>('[data-anti-open-model-settings]:not([disabled])')
+                ?? footer?.querySelector<HTMLElement>('button:not([disabled])')
               if (firstFooterFocusable && document.activeElement === firstFooterFocusable) {
                 event.preventDefault()
                 triggerRef.current?.focus()
