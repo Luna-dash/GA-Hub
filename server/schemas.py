@@ -449,6 +449,12 @@ class TokenThreadStatsResp(TokenTotalsResp):
     title: str
     elapsed_seconds: float = 0.0
     updated_at: int = 0
+    engine: Literal["ga", "anti"] | None = None
+
+
+class TokenEngineBreakdownResp(BaseModel):
+    ga: TokenTotalsResp = Field(default_factory=TokenTotalsResp)
+    anti: TokenTotalsResp = Field(default_factory=TokenTotalsResp)
 
 
 class TokenWeekStatsResp(TokenTotalsResp):
@@ -469,6 +475,7 @@ class TokenStatsResp(BaseModel):
     current_week: TokenWeekStatsResp
     weeks: list[TokenWeekStatsResp]
     days: list[TokenDayStatsResp]
+    by_engine: TokenEngineBreakdownResp | None = None
 
 
 class SessionUpdate(BaseModel):

@@ -129,6 +129,22 @@ describe('TokenStats dashboard', () => {
     expect(host.querySelector('.token-metric-value')?.textContent).toBe('0')
     expect(host.innerHTML).not.toMatch(/NaN|Infinity/)
   })
+  it('renders engine breakdown and GA/Agy badges when available', async () => {
+    mocks.tokenStats.mockResolvedValue({
+      ...fixture,
+      by_engine: {
+        ga: { ...today, total: 700, requests: 2 },
+        anti: { ...today, total: 300, requests: 1 },
+      },
+      threads: [
+        { ...today, thread: 'ga-1', title: 'GA 会话', total: 700, elapsed_seconds: 0, engine: 'ga' },
+        { ...previous, thread: 'anti:a1', title: 'Agy 会话', total: 300, elapsed_seconds: 0, engine: 'anti' },
+      ],
+    })
+    await render()
+    expect(host.querySelector('.token-engine-split')?.textContent).toContain('GA 700 · Agy 300')
+    expect([...host.querySelectorAll('.token-engine-tag')].map(el => el.textContent)).toEqual(['GA', 'Agy'])
+  })
   it('shows unavailable and failed states instead of a blank page', async () => {
     mocks.tokenStats.mockResolvedValue({ ...fixture, available: false })
     await render()

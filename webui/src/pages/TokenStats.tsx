@@ -106,7 +106,7 @@ function SessionUsage({ rows, allTime }: { rows: TokenThreadStats[]; allTime: nu
     <header className="token-section-header"><div><h2>累计高用量会话</h2><p className="token-note">不随上方区间筛选</p></div><span className="token-note">Top {leading.length}</span></header>
     {leading.length ? <div className="token-session-list">{leading.map((row, index) => <article className="token-session-row" key={row.thread}>
       <span className="token-session-rank">{String(index + 1).padStart(2, '0')}</span>
-      <div className="token-session-main"><h3 title={`${sessionTitle(row)} · ${row.thread}`}>{sessionTitle(row)}</h3><div className="token-session-track"><div style={{ width: `${row.total / maximum * 100}%` }} /></div><p className="token-note">{exact(row.requests)} 次请求 · 缓存命中 {percent(row.cache_hit_rate)}</p></div>
+      <div className="token-session-main"><div className="token-session-title"><h3 title={`${sessionTitle(row)} · ${row.thread}`}>{sessionTitle(row)}</h3>{row.engine && <span className={`token-engine-tag token-engine-${row.engine}`}>{row.engine === 'anti' ? 'Agy' : 'GA'}</span>}</div><div className="token-session-track"><div style={{ width: `${row.total / maximum * 100}%` }} /></div><p className="token-note">{exact(row.requests)} 次请求 · 缓存命中 {percent(row.cache_hit_rate)}</p></div>
       <div className="token-session-value"><strong title={exact(row.total)}>{compactTokens(row.total)}</strong><span className="token-note">占累计 {percent(allTime > 0 ? row.total / allTime * 100 : 0)}</span></div>
     </article>)}</div> : <div className="token-empty">暂无会话数据</div>}
   </section>
@@ -123,6 +123,8 @@ export default function TokenStats() {
   const totals = sumUsage(shown)
   const selectedDay = shown.find(row => row.date === activeDate)
   const today = shown[shown.length - 1]?.date ?? ''
+  const gaTotal = data?.by_engine?.ga?.total ?? 0
+  const antiTotal = data?.by_engine?.anti?.total ?? 0
   return <PageShell title="用量统计">
     <div className="token-stats">
       {stats.isLoading && <div className="token-card token-empty" role="status">正在读取用量统计…</div>}
@@ -136,7 +138,7 @@ export default function TokenStats() {
           <Metric label="日均用量" value={compactTokens(totals.total / Math.max(shown.length, 1))} title={`按 ${shown.length} 个日历日计算 · 含今日`} />
           <Metric label="缓存命中率" value={percent(totals.cache_hit_rate)} title="读取 ÷（输入 + 缓存读写）" />
         </div>
-        <div className="token-cumulative"><span>累计概览</span><strong title={exact(data.all_time.total)}>{compactTokens(data.all_time.total)} Tokens</strong><span>{exact(data.all_time.requests)} 次请求</span><span>缓存命中 {percent(data.all_time.cache_hit_rate)}</span></div>
+        <div className="token-cumulative"><span>累计概览</span><strong title={exact(data.all_time.total)}>{compactTokens(data.all_time.total)} Tokens</strong><span>{exact(data.all_time.requests)} 次请求</span><span>缓存命中 {percent(data.all_time.cache_hit_rate)}</span>{data.by_engine && (gaTotal > 0 || antiTotal > 0) && <span className="token-engine-split" title={`GA ${exact(gaTotal)} · Agy ${exact(antiTotal)}`}>GA {compactTokens(gaTotal)} · Agy {compactTokens(antiTotal)}</span>}</div>
         <div className="token-chart-layout"><UsageTrend rows={shown} today={today} activeDate={selectedDay?.date ?? null} onSelect={setActiveDate} /><Composition data={selectedDay ?? totals} date={selectedDay?.date} onReset={() => setActiveDate(null)} /></div>
         <WeeklyTable data={data} />
         <SessionUsage rows={data.threads} allTime={data.all_time.total} />

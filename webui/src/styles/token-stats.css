@@ -72,7 +72,11 @@
 .token-session-row { display: flex; align-items: center; gap: 14px; padding: 11px 0; border-top: 1px solid rgb(var(--c-line-rgb) / .27); }
 .token-session-rank { font-size: 13px; color: var(--c-text-faint); font-variant-numeric: tabular-nums; }
 .token-session-main { flex: 1; min-width: 0; }
-.token-session-main h3 { margin: 0 0 7px; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.token-session-title { display: flex; align-items: center; gap: 7px; min-width: 0; margin: 0 0 7px; }
+.token-session-main h3 { margin: 0; min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.token-engine-tag { flex-shrink: 0; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: .02em; background: rgb(var(--c-bg-soft-rgb) / .75); color: var(--c-text-muted); border: 1px solid rgb(var(--c-line-rgb) / .5); }
+.token-engine-anti { color: var(--c-accent); background: rgb(var(--c-accent-soft-rgb) / .55); border-color: rgb(var(--c-accent-soft-rgb) / .8); }
+.token-engine-split { color: var(--c-text-muted); }
 .token-session-track { height: 4px; max-width: 480px; border-radius: 4px; background: rgb(var(--c-bg-soft-rgb) / .6); overflow: hidden; }
 .token-session-track > div { height: 100%; background: #87927d; border-radius: 4px; }
 .token-session-main .token-note { margin-top: 5px; font-size: 11px; }

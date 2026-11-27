@@ -159,9 +159,12 @@ def test_conversations_and_tokens_routes_resolve_app_owned_metadata_store(tmp_pa
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    from server import _paths
     from server.routes import conversations, tokens
     from server.services.session_lifecycle import SessionLifecycle
     from server.services.session_metadata import SessionMetadataStore
+
+    monkeypatch.setattr(_paths, "ADMIN_DATA", tmp_path)
 
     archive = tmp_path / "bound.txt"
     archive.write_text("hello", encoding="utf-8")

@@ -1,8 +1,12 @@
 """Token usage persistence and natural-week aggregation tests."""
 from __future__ import annotations
 
+from contextlib import closing
+import sqlite3
+import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 from unittest import mock
 
 from server import _paths
@@ -101,7 +105,9 @@ class TokenPersistenceTests(unittest.TestCase):
             {"id": "chat-b", "title": "并行会话 B"},
         ]
 
-        with mock.patch.object(tokens.usage_bridge, "read_usage_ledger", return_value=ledger), \
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             mock.patch.object(tokens._paths, "ADMIN_DATA", Path(tmpdir)), \
+             mock.patch.object(tokens.usage_bridge, "read_usage_ledger", return_value=ledger), \
              mock.patch.object(tokens, "_SESSION_METADATA", metadata), \
              mock.patch.object(tokens.time, "time", return_value=timestamp + 3):
             result = tokens.token_stats()
@@ -123,7 +129,9 @@ class TokenPersistenceTests(unittest.TestCase):
         metadata = mock.Mock()
         metadata.list.return_value = []
 
-        with mock.patch.object(tokens.usage_bridge, "read_usage_ledger", return_value=ledger), \
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             mock.patch.object(tokens._paths, "ADMIN_DATA", Path(tmpdir)), \
+             mock.patch.object(tokens.usage_bridge, "read_usage_ledger", return_value=ledger), \
              mock.patch.object(tokens, "_SESSION_METADATA", metadata), \
              mock.patch.object(tokens.time, "time", return_value=timestamp + 3):
             result = tokens.token_stats()
@@ -174,7 +182,9 @@ class TokenPersistenceTests(unittest.TestCase):
             {"id": "chat-b", "title": "并行会话 B"},
         ]
 
-        with mock.patch.object(tokens.usage_bridge, "read_usage_ledger", return_value=ledger), \
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             mock.patch.object(tokens._paths, "ADMIN_DATA", Path(tmpdir)), \
+             mock.patch.object(tokens.usage_bridge, "read_usage_ledger", return_value=ledger), \
              mock.patch.object(tokens, "_SESSION_METADATA", metadata), \
              mock.patch.object(tokens.time, "time", return_value=timestamp + 3):
             result = tokens.token_stats()
@@ -184,6 +194,121 @@ class TokenPersistenceTests(unittest.TestCase):
         by_id = {row["thread"]: row for row in result["threads"]}
         self.assertEqual(by_id["chat-a"]["requests"], 2)
         self.assertEqual(by_id["chat-b"]["requests"], 1)
+
+
+    def test_token_stats_merges_ga_and_agy_ledgers(self) -> None:
+        timestamp = int(datetime(2026, 7, 6, 9, 0).timestamp())
+        agy_dt_1 = datetime(2026, 7, 6, 10, 0, tzinfo=datetime.now().astimezone().tzinfo).astimezone(timezone.utc)
+        agy_dt_2 = datetime(2026, 7, 7, 11, 0, tzinfo=datetime.now().astimezone().tzinfo).astimezone(timezone.utc)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            admin_dir = Path(tmpdir)
+            db_path = admin_dir / "anti_sessions.sqlite3"
+            with closing(sqlite3.connect(db_path)) as conn:
+                conn.executescript("""
+                    CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '');
+                    CREATE TABLE runs (id TEXT PRIMARY KEY, session_id TEXT NOT NULL);
+                    CREATE TABLE usage_ledger (
+                        run_id TEXT PRIMARY KEY,
+                        profile_id TEXT NOT NULL DEFAULT 'default',
+                        model TEXT NOT NULL,
+                        model_group TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        input_tokens INTEGER NOT NULL DEFAULT 0,
+                        output_tokens INTEGER NOT NULL DEFAULT 0,
+                        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                        thinking_tokens INTEGER NOT NULL DEFAULT 0,
+                        model_calls INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL
+                    );
+                """)
+                conn.execute("INSERT INTO sessions (id, title) VALUES (?, ?)", ("anti-1", "Agy 代码排查"))
+                conn.execute("INSERT INTO runs (id, session_id) VALUES (?, ?)", ("run-1", "anti-1"))
+                # input_tokens=1000 includes cache_read=400 & cache_write=100 -> fresh_in=500;
+                # output_tokens=200 > thinking_tokens=80 -> output=200 (no double count).
+                conn.execute(
+                    "INSERT INTO usage_ledger VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    ("run-1", "default", "gemini-3", "gemini", "completed", 1000, 200, 400, 100, 80, 3, agy_dt_1.isoformat()),
+                )
+                # Deleted/orphaned Agy session run should still contribute to global totals & days,
+                # without leaking an orphan thread row.
+                conn.execute(
+                    "INSERT INTO usage_ledger VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    ("run-deleted", "custom-p1", "claude-4", "claude", "completed", 50, 25, 0, 0, 40, 0, agy_dt_2.isoformat()),
+                )
+                conn.commit()
+
+            metadata = mock.Mock()
+            metadata.list.return_value = [{"id": "ga-1", "title": "GA 主会话"}]
+            ga_ledger = [
+                {"k": "GA-ga-1", "t": timestamp, "i": 100, "o": 50, "cc": 20, "cr": 30},
+            ]
+            read_ctx = (
+                mock.patch.object(tokens.usage_bridge, "read_usage_ledger", return_value=ga_ledger)
+                if tokens.usage_bridge is not None
+                else mock.patch.object(tokens, "usage_bridge", None)
+            )
+            with mock.patch.object(tokens._paths, "ADMIN_DATA", admin_dir), \
+                 mock.patch.object(tokens, "_SESSION_METADATA", metadata), \
+                 mock.patch.object(tokens.time, "time", return_value=timestamp + 90_000), \
+                 read_ctx:
+                result = tokens.token_stats()
+
+        self.assertTrue(result["available"])
+        agy_expected_total = (500 + 200 + 100 + 400) + (50 + 40)
+        ga_expected_total = 200 if tokens.usage_bridge is not None else 0
+        self.assertEqual(result["all_time"]["total"], ga_expected_total + agy_expected_total)
+        self.assertEqual(result["by_engine"]["anti"]["total"], agy_expected_total)
+        self.assertEqual(result["by_engine"]["anti"]["input"], 550)
+        self.assertEqual(result["by_engine"]["anti"]["output"], 240)
+        self.assertEqual(result["by_engine"]["anti"]["cache_create"], 100)
+        self.assertEqual(result["by_engine"]["anti"]["cache_read"], 400)
+        self.assertEqual(result["by_engine"]["anti"]["requests"], 4)
+
+        threads = {row["thread"]: row for row in result["threads"]}
+        self.assertIn("anti:anti-1", threads)
+        self.assertEqual(threads["anti:anti-1"]["title"], "Agy 代码排查")
+        self.assertEqual(threads["anti:anti-1"]["engine"], "anti")
+        self.assertEqual(threads["anti:anti-1"]["total"], 1200)
+        self.assertEqual(len([t for t in threads if t.startswith("anti:")]), 1)
+
+    def test_token_stats_stays_available_with_agy_only_when_ga_bridge_missing(self) -> None:
+        now = int(datetime(2026, 7, 8, 12, 0).timestamp())
+        agy_dt = datetime(2026, 7, 8, 9, 0, tzinfo=datetime.now().astimezone().tzinfo).astimezone(timezone.utc)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "anti_sessions.sqlite3"
+            with closing(sqlite3.connect(db_path)) as conn:
+                conn.executescript("""
+                    CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '');
+                    CREATE TABLE runs (id TEXT PRIMARY KEY, session_id TEXT NOT NULL);
+                    CREATE TABLE usage_ledger (
+                        run_id TEXT PRIMARY KEY,
+                        created_at TEXT NOT NULL,
+                        input_tokens INTEGER NOT NULL DEFAULT 0,
+                        output_tokens INTEGER NOT NULL DEFAULT 0,
+                        cache_read_tokens INTEGER NOT NULL DEFAULT 0
+                    );
+                """)
+                conn.execute("INSERT INTO sessions VALUES ('s1', '')")
+                conn.execute("INSERT INTO runs VALUES ('r1', 's1')")
+                conn.execute("INSERT INTO usage_ledger VALUES ('r1', ?, 120, 30, 20)", (agy_dt.isoformat(),))
+                conn.commit()
+
+            metadata = mock.Mock()
+            metadata.list.return_value = []
+            with mock.patch.object(tokens._paths, "ADMIN_DATA", Path(tmpdir)), \
+                 mock.patch.object(tokens, "_SESSION_METADATA", metadata), \
+                 mock.patch.object(tokens, "usage_bridge", None), \
+                 mock.patch.object(tokens.time, "time", return_value=now):
+                result = tokens.token_stats()
+
+        self.assertTrue(result["available"])
+        self.assertEqual(result["all_time"]["total"], 150)
+        self.assertEqual(result["by_engine"]["ga"]["total"], 0)
+        self.assertEqual(result["by_engine"]["anti"]["total"], 150)
+        self.assertEqual(result["threads"][0]["title"], "未命名会话")
+        self.assertEqual(result["threads"][0]["engine"], "anti")
 
 
 if __name__ == "__main__":

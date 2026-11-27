@@ -1,7 +1,9 @@
 """Live LLM token usage and lightweight history."""
 from __future__ import annotations
 
+from contextlib import closing
 import logging
+import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta
@@ -12,6 +14,7 @@ from fastapi import APIRouter, Request
 
 from .. import _paths
 from ..schemas import TokenStatsResp
+from ..services.agy_usage import normalize_ledger_input
 from ..services.session_metadata import SessionMetadataStore
 
 log = logging.getLogger(__name__)
@@ -52,6 +55,8 @@ _SESSION_METADATA: Any = _DEFAULT_SESSION_METADATA
 _TOTAL_KEYS = ("requests", "input", "output", "cache_create", "cache_read", "total")
 _LEDGER_CACHE_LOCK = threading.Lock()
 _LEDGER_CACHE: tuple[tuple[int, str, int, int], dict[str, Any]] | None = None
+_AGY_LEDGER_CACHE_LOCK = threading.Lock()
+_AGY_LEDGER_CACHE: tuple[tuple[str, int, int, int, int], dict[str, Any]] | None = None
 
 
 def _resolve_session_metadata(request: Request | None = None) -> Any:
@@ -180,6 +185,7 @@ def _aggregate_ledger() -> dict[str, Any]:
         sessions[session_id] = {
             "totals": _add_totals(current.get("totals", {}), totals),
             "updated_at": max(int(current.get("updated_at", 0) or 0), timestamp),
+            "engine": "ga",
         }
 
     usage = {"days": days, "all_time": all_time, "sessions": sessions}
@@ -189,19 +195,185 @@ def _aggregate_ledger() -> dict[str, Any]:
     return usage
 
 
+def _agy_ledger_db_path() -> Path:
+    return _paths.ADMIN_DATA / "anti_sessions.sqlite3"
+
+
+def _agy_cache_key(db_path: Path) -> tuple[str, int, int, int, int] | None:
+    try:
+        st = db_path.stat()
+    except OSError:
+        return None
+    wal_path = db_path.with_name(db_path.name + "-wal")
+    try:
+        wal_st = wal_path.stat()
+        wal_mtime, wal_size = int(wal_st.st_mtime_ns), int(wal_st.st_size)
+    except OSError:
+        wal_mtime, wal_size = 0, 0
+    return (str(db_path), int(st.st_mtime_ns), int(st.st_size), wal_mtime, wal_size)
+
+
+def _parse_iso_timestamp(raw: Any) -> tuple[int, str] | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone()
+    return int(dt.timestamp()), dt.date().isoformat()
+
+
+def _aggregate_agy_ledger(db_path: Path | None = None) -> dict[str, Any]:
+    global _AGY_LEDGER_CACHE
+    target = db_path if db_path is not None else _agy_ledger_db_path()
+    empty = {"available": False, "days": {}, "all_time": _normalise_totals({}), "sessions": {}}
+    if not target.is_file():
+        return empty
+
+    cache_key = _agy_cache_key(target)
+    if cache_key is not None:
+        with _AGY_LEDGER_CACHE_LOCK:
+            if _AGY_LEDGER_CACHE is not None and _AGY_LEDGER_CACHE[0] == cache_key:
+                return _AGY_LEDGER_CACHE[1]
+
+    days: dict[str, dict[str, int]] = {}
+    sessions: dict[str, dict[str, Any]] = {}
+    all_time = _normalise_totals({})
+
+    try:
+        with closing(sqlite3.connect(target, timeout=5.0)) as conn:
+            conn.row_factory = sqlite3.Row
+            tables = {
+                str(row[0])
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            if "usage_ledger" not in tables:
+                return empty
+            cols = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(usage_ledger)")
+            }
+            cw_col = "l.cache_write_tokens" if "cache_write_tokens" in cols else "0"
+            thinking_col = "l.thinking_tokens" if "thinking_tokens" in cols else "0"
+            calls_col = "l.model_calls" if "model_calls" in cols else "0"
+            has_sessions = "runs" in tables and "sessions" in tables
+            query = (
+                "SELECT l.created_at, l.input_tokens, l.output_tokens, "
+                "l.cache_read_tokens, "
+                f"{cw_col} AS cache_write_tokens, "
+                f"{thinking_col} AS thinking_tokens, "
+                f"{calls_col} AS model_calls, "
+                + (
+                    "r.session_id AS session_id, s.id AS session_exists, s.title AS session_title "
+                    "FROM usage_ledger l "
+                    "LEFT JOIN runs r ON r.id = l.run_id "
+                    "LEFT JOIN sessions s ON s.id = r.session_id"
+                    if has_sessions
+                    else "NULL AS session_id, NULL AS session_exists, NULL AS session_title FROM usage_ledger l"
+                )
+            )
+            rows = conn.execute(query).fetchall()
+    except (sqlite3.Error, OSError):
+        log.warning("could not read Agy usage ledger", exc_info=True)
+        return empty
+
+    for row in rows:
+        parsed_ts = _parse_iso_timestamp(row["created_at"])
+        if parsed_ts is None:
+            continue
+        timestamp, date_key = parsed_ts
+        raw_in = max(0, int(row["input_tokens"] or 0))
+        raw_cr = max(0, int(row["cache_read_tokens"] or 0))
+        raw_cw = max(0, int(row["cache_write_tokens"] or 0))
+        _, fresh_in, cr, cw = normalize_ledger_input(raw_in, raw_cr, raw_cw)
+        out = max(
+            max(0, int(row["output_tokens"] or 0)),
+            max(0, int(row["thinking_tokens"] or 0)),
+        )
+        calls = max(0, int(row["model_calls"] or 0))
+        has_tokens = bool(fresh_in or out or cw or cr)
+        requests = calls if calls > 0 else (1 if has_tokens else 0)
+        totals = {
+            "requests": requests,
+            "input": fresh_in,
+            "output": out,
+            "cache_create": cw,
+            "cache_read": cr,
+            "total": fresh_in + out + cw + cr,
+        }
+        all_time = _add_totals(all_time, totals)
+        days[date_key] = _add_totals(days.get(date_key, {}), totals)
+
+        session_id = str(row["session_id"] or "").strip()
+        if session_id and row["session_exists"] is not None:
+            thread_key = f"anti:{session_id}"
+            title = str(row["session_title"] or "").strip() or "未命名会话"
+            current = sessions.get(thread_key, {})
+            sessions[thread_key] = {
+                "totals": _add_totals(current.get("totals", {}), totals),
+                "updated_at": max(int(current.get("updated_at", 0) or 0), timestamp),
+                "title": title,
+                "engine": "anti",
+            }
+
+    usage = {"available": True, "days": days, "all_time": all_time, "sessions": sessions}
+    if cache_key is not None:
+        with _AGY_LEDGER_CACHE_LOCK:
+            _AGY_LEDGER_CACHE = (cache_key, usage)
+    return usage
+
+
+def _merge_usage_sources(ga_usage: dict[str, Any], agy_usage: dict[str, Any]) -> dict[str, Any]:
+    days: dict[str, dict[str, int]] = {
+        date: _normalise_totals(totals)
+        for date, totals in (ga_usage.get("days") or {}).items()
+    }
+    for date, totals in (agy_usage.get("days") or {}).items():
+        days[date] = _add_totals(days.get(date, {}), totals)
+
+    sessions: dict[str, Any] = dict(ga_usage.get("sessions") or {})
+    sessions.update(agy_usage.get("sessions") or {})
+    return {
+        "days": days,
+        "all_time": _add_totals(ga_usage.get("all_time"), agy_usage.get("all_time")),
+        "sessions": sessions,
+    }
+
+
 def _native_ledger_usage(metadata: Any = None) -> dict[str, Any]:
-    """Read GA's official ledger and adapt it to the existing WebUI schema."""
+    """Read GA and Agy ledgers and adapt merged totals to the WebUI schema."""
     now = int(time.time())
-    if usage_bridge is None:
-        empty = _normalise_totals({})
+    empty = _normalise_totals({})
+    ga_available = usage_bridge is not None
+    ga_usage = _aggregate_ledger() if ga_available else {"days": {}, "all_time": empty, "sessions": {}}
+    agy_usage = _aggregate_agy_ledger()
+    agy_available = bool(agy_usage.get("available"))
+
+    if not ga_available and not agy_available:
         usage = {"days": {}, "all_time": empty, "sessions": {}}
-        result = {"available": False, "totals": _with_rate(empty), "timestamp": now}
+        result = {
+            "available": False,
+            "totals": _with_rate(empty),
+            "timestamp": now,
+            "by_engine": {"ga": _with_rate(empty), "anti": _with_rate(empty)},
+        }
         result.update(_weekly_response(usage, now, metadata=metadata))
         return result
 
-    usage = _aggregate_ledger()
+    usage = _merge_usage_sources(ga_usage, agy_usage)
     all_time = usage["all_time"]
-    result = {"available": True, "totals": _with_rate(all_time), "timestamp": now}
+    result = {
+        "available": True,
+        "totals": _with_rate(all_time),
+        "timestamp": now,
+        "by_engine": {
+            "ga": _with_rate(ga_usage["all_time"]),
+            "anti": _with_rate(agy_usage["all_time"]),
+        },
+    }
     result.update(_weekly_response(usage, now, metadata=metadata))
     return result
 
@@ -239,18 +411,24 @@ def _session_rows(data: dict[str, Any], metadata: Any = None) -> list[dict[str, 
     rows = []
     for session_id, value in source.items():
         session_id = str(session_id)
+        if not isinstance(value, dict):
+            continue
         metadata = metadata_by_id.get(session_id)
+        engine: str | None = value.get("engine") if isinstance(value.get("engine"), str) else None
         if metadata is not None:
             title = _session_title(metadata)
+            engine = engine or "ga"
         elif session_id == "conductor":
             title = "Conductor"
+            engine = engine or "ga"
         elif session_id.startswith("conductor-subagent-"):
             title = f"Conductor Subagent {session_id.removeprefix('conductor-subagent-')}"
+            engine = engine or "ga"
+        elif engine == "anti":
+            title = str(value.get("title") or "").strip() or "未命名会话"
         else:
             # Ordinary sessions without metadata are stale/orphaned and remain
-            # hidden; conductor workers are stable native-ledger identities.
-            continue
-        if not isinstance(value, dict):
+            # hidden; conductor workers and active Agy sessions keep explicit identities.
             continue
         totals = _with_rate(_normalise_totals(value.get("totals")))
         rows.append({
@@ -259,6 +437,7 @@ def _session_rows(data: dict[str, Any], metadata: Any = None) -> list[dict[str, 
             **totals,
             "elapsed_seconds": 0.0,
             "updated_at": int(value.get("updated_at") or 0),
+            "engine": engine,
         })
     rows.sort(key=lambda row: (row["total"], row["updated_at"]), reverse=True)
     return rows

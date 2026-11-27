@@ -6591,6 +6591,11 @@ export interface components {
             /** Date */
             date: string;
         };
+        /** TokenEngineBreakdownResp */
+        TokenEngineBreakdownResp: {
+            ga?: components["schemas"]["TokenTotalsResp"];
+            anti?: components["schemas"]["TokenTotalsResp"];
+        };
         /** TokenStatsResp */
         TokenStatsResp: {
             /** Available */
@@ -6606,6 +6611,7 @@ export interface components {
             weeks: components["schemas"]["TokenWeekStatsResp"][];
             /** Days */
             days: components["schemas"]["TokenDayStatsResp"][];
+            by_engine?: components["schemas"]["TokenEngineBreakdownResp"] | null;
         };
         /** TokenThreadStatsResp */
         TokenThreadStatsResp: {
@@ -6658,6 +6664,8 @@ export interface components {
              * @default 0
              */
             updated_at: number;
+            /** Engine */
+            engine?: ("ga" | "anti") | null;
         };
         /** TokenTotalsResp */
         TokenTotalsResp: {

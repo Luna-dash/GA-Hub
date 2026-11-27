@@ -17415,6 +17415,18 @@
         ],
         "title": "TokenDayStatsResp"
       },
+      "TokenEngineBreakdownResp": {
+        "properties": {
+          "ga": {
+            "$ref": "#/components/schemas/TokenTotalsResp"
+          },
+          "anti": {
+            "$ref": "#/components/schemas/TokenTotalsResp"
+          }
+        },
+        "type": "object",
+        "title": "TokenEngineBreakdownResp"
+      },
       "TokenStatsResp": {
         "properties": {
           "available": {
@@ -17454,6 +17466,16 @@
             },
             "type": "array",
             "title": "Days"
+          },
+          "by_engine": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenEngineBreakdownResp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -17523,6 +17545,21 @@
             "type": "integer",
             "title": "Updated At",
             "default": 0
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ga",
+                  "anti"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
           }
         },
         "type": "object",
