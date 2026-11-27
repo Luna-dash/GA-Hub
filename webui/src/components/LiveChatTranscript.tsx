@@ -808,6 +808,9 @@ function estimateChatMessageSize(message: ChatMsg): number {
   const base = message.role === 'user' ? 52 : 94
   const lineHeight = message.role === 'user' ? 24 : 22
   const attachmentExtra = message.attachments?.length ? 120 : 0
+  if (message.role === 'user') {
+    return Math.min(248, base + Math.min(8, lineCount) * lineHeight + attachmentExtra + 8)
+  }
   return Math.min(820, base + Math.min(28, lineCount) * lineHeight + attachmentExtra + 8)
 }
 

@@ -27,6 +27,7 @@ import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/util
 import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { FILE_HINT } from '@/utils/sessionPrompt'
 import { MessageContent } from './MessageContent'
+import { UserPromptContent } from './UserPromptContent'
 import { FileLinkContext, FileTransferConclusion } from './FileCitation'
 import { TranscriptRecordContent } from './TranscriptRecordContent'
 import { AskUserCard } from './AskUserCard'
@@ -252,7 +253,11 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
                 )}
                 style={messageFontStyle}
               >
-                <MessageContent content={cleaned} format="text" />
+                <UserPromptContent
+                  content={cleaned}
+                  compact={compact}
+                  fontScalePercent={compact ? 100 : chatFontPercent(fontScale)}
+                />
               </div>
             )}
           </div>

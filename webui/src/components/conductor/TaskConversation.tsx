@@ -6,6 +6,7 @@
 import { useLayoutEffect, useEffect, useRef, type ReactNode } from 'react'
 import { ArrowUp, MessageSquare, Plus } from 'lucide-react'
 import { MessageContent } from '@/components/MessageContent'
+import { UserPromptContent } from '@/components/UserPromptContent'
 import { collapseBlankLines, isNearScrollBottom } from './presentation'
 
 type ChatMessage = { id: string; role: string; msg: string }
@@ -121,7 +122,7 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
                   markdown pipeline; only the blank-line runs of a pasted
                   block collapse. */}
               <div data-chat-box className="rounded-md bg-accent-soft px-3 py-1.5 text-sm leading-[1.45] [overflow-wrap:anywhere]">
-                <MessageContent content={collapseBlankLines(msg.msg)} format="text" />
+                <UserPromptContent content={collapseBlankLines(msg.msg)} compact fadeBg="var(--c-accent-soft)" />
               </div>
             </div>
           ) : (

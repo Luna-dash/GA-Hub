@@ -36,6 +36,7 @@ import { AntiIcon } from '@/components/AntiMark'
 import { MessageContent } from '@/components/MessageContent'
 import { FileLinkContext, FileTransferConclusion } from '@/components/FileCitation'
 import { UserAttachments } from '@/components/MessageBubble'
+import { UserPromptContent } from '@/components/UserPromptContent'
 import { ReplyActions } from '@/components/ReplyActions'
 import { PageShell } from '@/components/PageShell'
 import { ProjectSelect } from '@/components/ProjectSelect'
@@ -1523,7 +1524,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
                     {userAttachments.length > 0 && <UserAttachments atts={userAttachments} />}
                     {displayRun.prompt && (
                       <div data-chat-box className={`min-w-0 max-w-full rounded-lg px-3.5 py-2.5 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.16)] ${bubbleTone('user').surfaceClass}`} style={messageFontStyle}>
-                        <MessageContent format="text" content={displayRun.prompt} />
+                        <UserPromptContent content={displayRun.prompt} fontScalePercent={chatFontPercent(fontScale)} />
                       </div>
                     )}
                   </div>
