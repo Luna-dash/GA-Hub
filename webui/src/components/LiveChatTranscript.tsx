@@ -628,6 +628,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         <div
           ref={scrollRef}
           data-live-chat-scroll
+          data-chat-scope
           tabIndex={-1}
           className={chatTranscriptClass}
         >

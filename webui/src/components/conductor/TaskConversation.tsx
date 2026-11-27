@@ -91,6 +91,7 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
     <section aria-label="任务对话" className="conductor-main-chat">
       <div
         ref={scrollRef}
+        data-chat-scope
         onScroll={() => {
           followRef.current = isNearScrollBottom(scrollRef.current)
           scrollMemory.chatTop = scrollRef.current?.scrollTop ?? scrollMemory.chatTop
@@ -119,13 +120,13 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
                   angle-bracket tokens must survive verbatim, so no
                   markdown pipeline; only the blank-line runs of a pasted
                   block collapse. */}
-              <div className="rounded-md bg-accent-soft px-3 py-1.5 text-sm leading-[1.45] [overflow-wrap:anywhere]">
+              <div data-chat-box className="rounded-md bg-accent-soft px-3 py-1.5 text-sm leading-[1.45] [overflow-wrap:anywhere]">
                 <MessageContent content={collapseBlankLines(msg.msg)} format="text" />
               </div>
             </div>
           ) : (
             <div key={msg.id} className="px-4 py-1.5">
-              <div className="min-w-0 text-sm leading-[1.45] text-ink">
+              <div data-chat-box className="min-w-0 text-sm leading-[1.45] text-ink">
                 <MessageContent content={msg.msg} format="markdown" markdownMode="plain" />
               </div>
             </div>

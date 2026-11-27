@@ -6,6 +6,7 @@ import { useDesktopNotifyEffects } from '@/hooks/useDesktopNotifyEffects'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 import { useSessionUnreadEffects } from '@/hooks/useSessionUnreadEffects'
 import { useThemeCompletionEffects } from '@/hooks/useThemeCompletionEffects'
+import { installChatSelectionGuard } from '@/utils/chatSelection'
 
 /** Long-lived effects isolated from the visual application shell. */
 export function RuntimeEffects() {
@@ -15,6 +16,8 @@ export function RuntimeEffects() {
   useSessionUnreadEffects()
   useThemeCompletionEffects()
   useConductorRuntimeEffects()
+
+  useEffect(() => installChatSelectionGuard(), [])
 
   useEffect(() => {
     let hasOpened = false

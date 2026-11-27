@@ -51,7 +51,7 @@ function ProcessSummary({ message }: { message: ChatMsg }) {
       return [{ label: turn != null ? `Turn ${turn}` : '', summary: node.raw.replace(/^<summary>|<\/summary>$/gi, '').trim() }]
     })
   }, [message.content, message.streaming])
-  return <article className="min-w-0">
+  return <article data-chat-box className="min-w-0">
     <ol className="space-y-2 text-sm leading-relaxed">
       {rows.map((row, index) => <li key={index} className="flex items-baseline gap-3">
         <span aria-hidden="true" className="shrink-0 text-xs text-ink-faint">{row.label || '·'}</span>

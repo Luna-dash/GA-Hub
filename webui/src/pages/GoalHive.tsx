@@ -340,13 +340,13 @@ export default function GoalHive() {
               <span>清空历史</span>
             </button>
           </div>
-          <div ref={logRef} onScroll={handleLogScroll} className="flex-1 min-h-0 overflow-auto p-5 space-y-4">
+          <div ref={logRef} data-chat-scope onScroll={handleLogScroll} className="flex-1 min-h-0 overflow-auto p-5 space-y-4">
             {msgs.length === 0 ? (
               <div className="h-full min-h-64 grid place-items-center text-sm text-ink-faint">尚无 Goal / Hive 输出。</div>
             ) : (
               msgs.map((msg) => (
-                <article key={msg.id} className={clsx('rounded-xl px-4 py-3', bubbleTone(msg.role, 'card').surfaceClass)}>
-                  <div className="mb-1.5 flex items-center gap-2 text-xs font-medium text-ink-muted">
+                <article key={msg.id} data-chat-box className={clsx('rounded-xl px-4 py-3', bubbleTone(msg.role, 'card').surfaceClass)}>
+                  <div data-chat-box-chrome className="mb-1.5 flex select-none items-center gap-2 text-xs font-medium text-ink-muted">
                     <span>{msg.role === 'user' ? '你' : mode === 'hive' ? 'Hive 主控' : 'Goal Agent'}</span>
                     {msg.streaming && (
                       <span className="inline-flex items-center gap-1 text-[11px] font-normal text-accent">

@@ -816,28 +816,30 @@ export default function Conversations() {
                   </div>
                 </header>
 
-                {viewMode === 'round'
-                  ? (
-                    <RoundView
-                      key={`round:${detail.id}`}
-                      convId={detail.id}
-                      rounds={rounds}
-                      scrollRef={detailScrollRef}
-                      listRef={detailListRef}
-                      openConclusion={openConclusion}
-                      setOpenConclusion={setOpenConclusion}
-                      messageFontStyle={messageFontStyle}
-                    />
-                  )
-                  : (
-                    <FlatView
-                      key={`flat:${detail.id}`}
-                      messages={detail.messages || []}
-                      scrollRef={detailScrollRef}
-                      listRef={detailListRef}
-                      messageFontStyle={messageFontStyle}
-                    />
-                  )}
+                <div data-chat-scope>
+                  {viewMode === 'round'
+                    ? (
+                      <RoundView
+                        key={`round:${detail.id}`}
+                        convId={detail.id}
+                        rounds={rounds}
+                        scrollRef={detailScrollRef}
+                        listRef={detailListRef}
+                        openConclusion={openConclusion}
+                        setOpenConclusion={setOpenConclusion}
+                        messageFontStyle={messageFontStyle}
+                      />
+                    )
+                    : (
+                      <FlatView
+                        key={`flat:${detail.id}`}
+                        messages={detail.messages || []}
+                        scrollRef={detailScrollRef}
+                        listRef={detailListRef}
+                        messageFontStyle={messageFontStyle}
+                      />
+                    )}
+                </div>
               </div>
             )
           })()}
@@ -918,6 +920,7 @@ function RoundView({
           {r.user && (
             <div className="flex justify-start">
               <div
+                data-chat-box
                 className={`group/msg relative max-w-[88%] rounded-lg px-3.5 py-2.5 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.16)] ${bubbleTone('user').surfaceClass}`}
                 style={messageFontStyle}
               >
@@ -928,10 +931,11 @@ function RoundView({
 
           <div className="flex justify-start">
             <div
+              data-chat-box
               className={`group/msg relative min-w-0 max-w-[92%] rounded-lg px-4 py-3 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.12)] ${bubbleTone('assistant').surfaceClass}`}
               style={messageFontStyle}
             >
-              <div className="mb-2 flex min-h-6 items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
+              <div data-chat-box-chrome className="mb-2 flex min-h-6 select-none items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
                 <span className="inline-flex shrink-0 items-center gap-2">
                   <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
                   GA Agent
@@ -1094,11 +1098,12 @@ function MessageBlock({
   const displayText = isUser ? cleanArchiveUserText(m.content || '') : (m.content || '')
   return (
     <div
+      data-chat-box
       className={`group/msg rounded-lg px-3.5 py-2.5 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.13)] ${bubbleTone(tone).surfaceClass}`}
       style={messageFontStyle}
     >
       {isAssistant && (
-        <div className="mb-1.5 flex min-h-6 items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
+        <div data-chat-box-chrome className="mb-1.5 flex min-h-6 select-none items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
           <span className="inline-flex shrink-0 items-center gap-2">
             <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
             {label}
@@ -1109,7 +1114,7 @@ function MessageBlock({
         </div>
       )}
       {tone === 'other' && (
-        <div className="mb-1 text-[11px] font-medium text-ink-faint">{label}</div>
+        <div data-chat-box-chrome className="mb-1 select-none text-[11px] font-medium text-ink-faint">{label}</div>
       )}
       {/* User prompts are literal input everywhere (live chat, round view);
           the flat view previously markdown-rendered them — converge on text. */}

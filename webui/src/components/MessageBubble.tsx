@@ -244,6 +244,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
             )}
             {cleaned && (
               <div
+                data-chat-box
                 className={clsx(
                   "min-w-0 max-w-full rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.16)]",
                   tone.surfaceClass,
@@ -256,7 +257,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
             )}
           </div>
           {timeLabel && (
-            <span className="mb-1 shrink-0 whitespace-nowrap text-[10px] leading-none text-ink-faint">
+            <span className="mb-1 shrink-0 select-none whitespace-nowrap text-[10px] leading-none text-ink-faint">
               {timeLabel}
             </span>
           )}
@@ -290,7 +291,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
   ) : null
   const hasHeader = !compact && !isSystem
   const toolbar = (
-    <div className="pointer-events-none flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+    <div data-chat-box-chrome className="pointer-events-none flex select-none shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
       {streamId && onRewind && !streaming && (
         <RewindChip onClick={() => onRewind(streamId)} />
       )}
@@ -341,12 +342,15 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
   return (
     <div className="flex justify-start">
       <div className={clsx("max-w-full min-w-0 flex flex-col items-start gap-1.5", runningTask && "w-full")}>
-        <div className={clsx(
-          runningTask && "w-full",
-          "group/msg min-w-0 max-w-full relative rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.13)]",
-          compact ? "px-3 py-2 text-xs" : "px-3.5 py-3",
-          tone.surfaceClass
-        )}>
+        <div
+          data-chat-box
+          className={clsx(
+            runningTask && "w-full",
+            "group/msg min-w-0 max-w-full relative rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.13)]",
+            compact ? "px-3 py-2 text-xs" : "px-3.5 py-3",
+            tone.surfaceClass
+          )}
+        >
           {/* 2026-09 user ruling: the concentric dot straddling the left border
               is the sole system marker — the in-bubble "• system" header row
               duplicated it and was removed. Pure CSS discs (no emoji) so the
@@ -360,7 +364,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
             </div>
           )}
           {hasHeader && (
-            <div className="mb-2 flex min-h-6 items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
+            <div data-chat-box-chrome className="mb-2 flex min-h-6 select-none items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
               <span className="inline-flex shrink-0 items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
                 GA Agent
@@ -369,7 +373,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
             </div>
           )}
           {tagLabel && (
-            <div className="mb-1.5 text-[11px] font-medium leading-4 text-ink-faint">{tagLabel}</div>
+            <div data-chat-box-chrome className="mb-1.5 select-none text-[11px] font-medium leading-4 text-ink-faint">{tagLabel}</div>
           )}
           {hasHeader ? body : (
             <div className="flex min-w-0 items-start justify-between gap-2">
@@ -385,7 +389,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
           )}
         </div>
         {(timeLabel || startedAt) && (
-          <span className={clsx("shrink-0 whitespace-nowrap px-0.5 text-[10px] leading-4 tabular-nums", isSystem ? "text-status-warning-muted" : "text-ink-faint")}>
+          <span className={clsx("shrink-0 select-none whitespace-nowrap px-0.5 text-[10px] leading-4 tabular-nums", isSystem ? "text-status-warning-muted" : "text-ink-faint")}>
             {timeLabel}
             {timeLabel && startedAt && ' · '}
             {startedAt && <MessageDuration streaming={streaming} startedAt={startedAt} finishedAt={finishedAt} timestamp={timestamp} />}

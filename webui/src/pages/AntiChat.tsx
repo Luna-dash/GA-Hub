@@ -1334,7 +1334,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
         )}
       </ChatUtilityDock>
       <ConversationCollapseControl />
-      <div ref={transcript} tabIndex={-1} className={chatTranscriptClass} data-anti-chat-scroll>
+      <div ref={transcript} tabIndex={-1} className={chatTranscriptClass} data-anti-chat-scroll data-chat-scope>
         {!history.data?.length && !history.error && <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-ink-faint">
           <AntiIcon className="h-11 w-11 text-accent" />
           {history.isPending ? '正在加载 Agy 会话…' : '想让 Agy 为这个项目做什么？'}
@@ -1372,13 +1372,13 @@ function Conversation({ session, headerActions, profileId, profilesData, support
                   <div className="min-w-0 flex flex-col items-start gap-2">
                     {userAttachments.length > 0 && <UserAttachments atts={userAttachments} />}
                     {displayRun.prompt && (
-                      <div className={`min-w-0 max-w-full rounded-lg px-3.5 py-2.5 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.16)] ${bubbleTone('user').surfaceClass}`} style={messageFontStyle}>
+                      <div data-chat-box className={`min-w-0 max-w-full rounded-lg px-3.5 py-2.5 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.16)] ${bubbleTone('user').surfaceClass}`} style={messageFontStyle}>
                         <MessageContent format="text" content={displayRun.prompt} />
                       </div>
                     )}
                   </div>
                   {userTimeLabel && (
-                    <span className="mb-1 shrink-0 whitespace-nowrap text-[10px] leading-none text-ink-faint">
+                    <span className="mb-1 shrink-0 select-none whitespace-nowrap text-[10px] leading-none text-ink-faint">
                       {userTimeLabel}
                     </span>
                   )}
@@ -1387,12 +1387,15 @@ function Conversation({ session, headerActions, profileId, profilesData, support
               <div className="flex justify-start">
                 <div className={clsx('max-w-full min-w-0 flex flex-col items-start gap-1.5', isRunActive && 'w-full')}>
                   <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, project, engine: 'anti' }}>
-                    <div className={clsx(
-                      isRunActive && 'w-full',
-                      'group/msg min-w-0 max-w-full relative rounded-lg px-3.5 py-3 shadow-[0_2px_6px_rgba(45,34,22,0.13)]',
-                      bubbleTone('assistant').surfaceClass,
-                    )}>
-                      <div className="mb-2 flex min-h-6 items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
+                    <div
+                      data-chat-box
+                      className={clsx(
+                        isRunActive && 'w-full',
+                        'group/msg min-w-0 max-w-full relative rounded-lg px-3.5 py-3 shadow-[0_2px_6px_rgba(45,34,22,0.13)]',
+                        bubbleTone('assistant').surfaceClass,
+                      )}
+                    >
+                      <div data-chat-box-chrome className="mb-2 flex min-h-6 select-none items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
                         <span className="inline-flex shrink-0 items-center gap-2">
                           <span className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
                           Agy Agent
@@ -1527,7 +1530,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
                     </div>
                   </FileLinkContext.Provider>
                   {(metaParts.length > 0 || usageInfo) && (
-                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-0.5 text-[10px] leading-4 tabular-nums text-ink-faint">
+                    <div className="flex select-none flex-wrap items-center gap-x-1.5 gap-y-0.5 px-0.5 text-[10px] leading-4 tabular-nums text-ink-faint">
                       {metaParts.length > 0 && <span>{metaParts.join(' · ')}</span>}
                       {metaParts.length > 0 && usageInfo && <span aria-hidden="true">·</span>}
                       {usageInfo && (

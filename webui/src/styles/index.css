@@ -1178,3 +1178,35 @@ html[data-theme="dark-forest"] .ga-select {
     box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.24);
   }
 }
+
+/* 会话消息框选择隔离：禁止跨框拖选，单框 Ctrl+A 仅选中当前消息正文 */
+[data-chat-scope] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+[data-chat-box] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+[data-chat-box-chrome],
+.prose-chat .md-code-copy {
+  user-select: none;
+  -webkit-user-select: none;
+}
+html[data-chat-drag-lock="true"],
+html[data-chat-drag-lock="true"] * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+html[data-chat-drag-lock="true"] [data-chat-box][data-chat-drag-active="true"],
+html[data-chat-drag-lock="true"] [data-chat-box][data-chat-drag-active="true"] * {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+html[data-chat-drag-lock="true"] [data-chat-box][data-chat-drag-active="true"] [data-chat-box-chrome],
+html[data-chat-drag-lock="true"] [data-chat-box][data-chat-drag-active="true"] [data-chat-box-chrome] *,
+html[data-chat-drag-lock="true"] [data-chat-box][data-chat-drag-active="true"] .md-code-copy,
+html[data-chat-drag-lock="true"] [data-chat-box][data-chat-drag-active="true"] .select-none {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
