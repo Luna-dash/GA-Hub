@@ -71,7 +71,7 @@ describe('App setup mode notifications', () => {
       toast.error('路径校验请求失败：network error')
     })
 
-    const status = host.querySelector('[role="status"]')
-    expect(status?.textContent).toContain('路径校验请求失败：network error')
+    const alert = host.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('路径校验请求失败：network error')
   })
 })

@@ -3,6 +3,7 @@
 // doesn't touch the shared index.css that other work may be editing.
 
 import { CheckCircle2, Info, XCircle, type LucideIcon } from 'lucide-react'
+import { CloseIconButton } from '@/components/ActionIcons'
 import { useToastStore, type ToastKind } from '@/stores/toastStore'
 import { Z_LAYERS } from '@/config/zLayers'
 
@@ -15,6 +16,8 @@ const TONE: Record<ToastKind, { ring: string; Icon: LucideIcon; iconCls: string 
 export function ToastHost() {
   const items = useToastStore((s) => s.items)
   const dismiss = useToastStore((s) => s.dismiss)
+  const pause = useToastStore((s) => s.pause)
+  const resume = useToastStore((s) => s.resume)
 
   if (items.length === 0) return null
 
@@ -32,14 +35,25 @@ export function ToastHost() {
         return (
           <div
             key={t.id}
-            role="status"
-            onClick={() => dismiss(t.id)}
+            role={t.kind === 'error' ? 'alert' : 'status'}
+            onMouseEnter={() => pause(t.id)}
+            onMouseLeave={() => resume(t.id)}
+            onFocus={() => pause(t.id)}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                resume(t.id)
+              }
+            }}
             style={{ animation: 'ga-toast-in 160ms ease-out' }}
-            className={`ga-paper-popover pointer-events-auto cursor-pointer max-w-md w-fit flex items-start gap-2.5 rounded-xl border ${tone.ring} px-4 py-2.5 text-sm text-ink`}
-            title="点击关闭"
+            className={`ga-paper-popover pointer-events-auto select-text max-w-md w-fit flex items-start gap-2.5 rounded-xl border ${tone.ring} pl-4 pr-2.5 py-2.5 text-sm text-ink`}
           >
             <tone.Icon className={`mt-0.5 h-4 w-4 shrink-0 ${tone.iconCls}`} strokeWidth={2} aria-hidden="true" />
-            <span className="whitespace-pre-line leading-5 break-words">{t.message}</span>
+            <span className="min-w-0 flex-1 whitespace-pre-line leading-5 break-words">{t.message}</span>
+            <CloseIconButton
+              label="关闭提示"
+              className="-mr-0.5 -mt-0.5 shrink-0"
+              onClick={() => dismiss(t.id)}
+            />
           </div>
         )
       })}

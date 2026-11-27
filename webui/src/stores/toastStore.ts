@@ -23,30 +23,115 @@ interface ToastState {
   items: ToastItem[]
   push: (kind: ToastKind, message: string, duration?: number) => number
   dismiss: (id: number) => void
+  pause: (id: number) => void
+  resume: (id: number) => void
+}
+
+interface TimerEntry {
+  timerId: number | null
+  remainingMs: number
+  startedAt: number
+  paused: boolean
 }
 
 let seq = 1
+const timers = new Map<number, TimerEntry>()
 
-export const useToastStore = create<ToastState>((set, get) => ({
-  items: [],
+function clearTimer(id: number) {
+  const entry = timers.get(id)
+  if (entry?.timerId !== null && entry?.timerId !== undefined) {
+    window.clearTimeout(entry.timerId)
+  }
+  timers.delete(id)
+}
 
-  push: (kind, message, duration) => {
-    const id = seq++
-    const ms = duration ?? (kind === 'error' ? 5000 : 2600)
-    set((s) => {
-      // Cap the visible stack so a burst of events can't bury the screen.
-      const next = [...s.items, { id, kind, message, duration: ms }]
-      return { items: next.slice(-4) }
+export const useToastStore = create<ToastState>((set, get) => {
+  const scheduleTimer = (id: number, ms: number) => {
+    clearTimer(id)
+    if (ms <= 0) return
+    const timerId = window.setTimeout(() => {
+      get().dismiss(id)
+    }, ms)
+    timers.set(id, {
+      timerId,
+      remainingMs: ms,
+      startedAt: Date.now(),
+      paused: false,
     })
-    if (ms > 0) {
-      window.setTimeout(() => get().dismiss(id), ms)
-    }
-    return id
-  },
+  }
 
-  dismiss: (id) =>
-    set((s) => ({ items: s.items.filter((t) => t.id !== id) })),
-}))
+  return {
+    items: [],
+
+    push: (kind, message, duration) => {
+      const ms = duration ?? (kind === 'error' ? 5000 : 2600)
+      const existing = get().items.find((t) => t.kind === kind && t.message === message)
+      if (existing) {
+        set((s) => ({
+          items: s.items.map((t) => (t.id === existing.id ? { ...t, duration: ms } : t)),
+        }))
+        const currentTimer = timers.get(existing.id)
+        if (currentTimer?.paused) {
+          currentTimer.remainingMs = ms
+          currentTimer.startedAt = Date.now()
+        } else {
+          scheduleTimer(existing.id, ms)
+        }
+        return existing.id
+      }
+
+      const id = seq++
+      let evictedIds: number[] = []
+      set((s) => {
+        // Cap the visible stack so a burst of events can't bury the screen.
+        const next = [...s.items, { id, kind, message, duration: ms }]
+        if (next.length > 4) {
+          evictedIds = next.slice(0, next.length - 4).map((t) => t.id)
+          return { items: next.slice(-4) }
+        }
+        return { items: next }
+      })
+      for (const evictedId of evictedIds) {
+        clearTimer(evictedId)
+      }
+      scheduleTimer(id, ms)
+      return id
+    },
+
+    dismiss: (id) => {
+      clearTimer(id)
+      set((s) => ({ items: s.items.filter((t) => t.id !== id) }))
+    },
+
+    pause: (id) => {
+      if (!get().items.some((t) => t.id === id)) {
+        clearTimer(id)
+        return
+      }
+      const entry = timers.get(id)
+      if (!entry || entry.paused || entry.timerId === null) return
+      window.clearTimeout(entry.timerId)
+      const elapsed = Math.max(0, Date.now() - entry.startedAt)
+      entry.timerId = null
+      entry.remainingMs = Math.max(0, entry.remainingMs - elapsed)
+      entry.paused = true
+    },
+
+    resume: (id) => {
+      if (!get().items.some((t) => t.id === id)) {
+        clearTimer(id)
+        return
+      }
+      const entry = timers.get(id)
+      if (!entry || !entry.paused) return
+      if (entry.remainingMs <= 0) {
+        get().dismiss(id)
+        return
+      }
+      scheduleTimer(id, entry.remainingMs)
+    },
+  }
+})
 
 // ── Imperative helpers (use these from anywhere) ──────────────────
 export const toast = {

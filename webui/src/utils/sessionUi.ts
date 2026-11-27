@@ -1,6 +1,7 @@
 import type { AntiSession } from '@/api/client'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import { storageKeys } from '@/config/storageKeys'
+import { extractErrorMessage } from '@/utils/errors'
 import { writePageState } from '@/utils/pageState'
 
 export type SessionActivity = 'active' | 'idle' | 'error' | 'unknown'
@@ -121,24 +122,7 @@ export function antiSessionToRuntime(row: AntiSession): SessionRuntime {
 }
 
 export function errorMessageFromError(error: unknown, fallback = '请求失败'): string {
-  if (typeof error === 'string' && error.trim()) return error
-  const value = error as { body?: { detail?: unknown }; message?: unknown } | null
-  const detail = value?.body?.detail
-  if (typeof detail === 'string' && detail.trim()) return detail
-  if (detail && typeof detail === 'object') {
-    const payload = detail as Record<string, unknown>
-    for (const key of ['message', 'detail', 'error', 'code']) {
-      const candidate = payload[key]
-      if (typeof candidate === 'string' && candidate.trim()) return candidate
-    }
-    try {
-      return JSON.stringify(detail)
-    } catch {
-      // Fall through to the ordinary Error message or the stable fallback.
-    }
-  }
-  if (typeof value?.message === 'string' && value.message.trim()) return value.message
-  return fallback
+  return extractErrorMessage(error, fallback)
 }
 
 /** Structured failure text for mykey sync (upload/fetch) dialogs: the sync
