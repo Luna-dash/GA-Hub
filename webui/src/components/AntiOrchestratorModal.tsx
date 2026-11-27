@@ -236,8 +236,6 @@ export function AntiOrchestratorModal({
 
   if (!open) return null
 
-  const compactBtn = 'ga-btn-sm h-7 shrink-0 px-2 py-0 text-[11px]'
-  const compactPrimaryBtn = 'ga-btn-sm-primary h-7 shrink-0 px-2.5 py-0 text-[11px]'
   const formDisabled = modelsConfigQuery.isPending || saveConfig.isPending
 
   const updatePreset = (index: 0 | 1, patch: Partial<AntiOrchestratorPreset>) => {
@@ -264,7 +262,7 @@ export function AntiOrchestratorModal({
           </div>
           <button
             type="button"
-            className={compactBtn}
+            className="ga-btn-sm shrink-0 px-2 text-[11px]"
             onClick={close}
             disabled={syncModels.isPending || saveConfig.isPending}
           >
@@ -296,7 +294,7 @@ export function AntiOrchestratorModal({
             </div>
             <button
               type="button"
-              className={compactBtn}
+              className="ga-btn-sm shrink-0 px-2 text-[11px]"
               disabled={syncModels.isPending}
               aria-label="同步上游模型"
               onClick={() => syncModels.mutate()}
@@ -428,7 +426,7 @@ export function AntiOrchestratorModal({
           <div className="flex items-center justify-end gap-1.5 border-t border-line/50 pt-2.5">
             <button
               type="button"
-              className={compactBtn}
+              className="ga-btn-sm shrink-0 px-2 text-[11px]"
               disabled={formDisabled}
               onClick={() => saveConfig.mutate({
                 presets: [...DEFAULT_ORCHESTRATOR_PRESETS],
@@ -439,7 +437,7 @@ export function AntiOrchestratorModal({
             </button>
             <button
               type="button"
-              className={compactPrimaryBtn}
+              className="ga-btn-sm-primary shrink-0 text-[11px]"
               disabled={formDisabled}
               onClick={() => saveConfig.mutate({
                 presets: presetDrafts,

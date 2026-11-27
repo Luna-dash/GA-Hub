@@ -473,11 +473,11 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
             ) : null}
           </div>
           <div className="mt-3 flex gap-2 flex-wrap">
-            <button type="button" onClick={onEdit} className="mykey-card__action mykey-card__action--primary"><Pencil className="h-3 w-3" aria-hidden="true" /><span>编辑</span></button>
-            <button type="button" onClick={onDuplicate} className="mykey-card__action"><CopyIcon size={12} /><span>复制</span></button>
-            <button type="button" onClick={onDelete} className="mykey-card__action mykey-card__action--danger"><Trash2 className="h-3 w-3" aria-hidden="true" /><span>删除</span></button>
+            <button type="button" onClick={onEdit} className="ga-btn-sm-primary"><Pencil className="h-3 w-3" aria-hidden="true" /><span>编辑</span></button>
+            <button type="button" onClick={onDuplicate} className="ga-btn-sm"><CopyIcon size={12} /><span>复制</span></button>
+            <button type="button" onClick={onDelete} className="ga-btn-sm-danger"><Trash2 className="h-3 w-3" aria-hidden="true" /><span>删除</span></button>
             {canTest && (
-              <button type="button" onClick={runTest} disabled={testing} className="mykey-card__action mykey-card__action--success">
+              <button type="button" onClick={runTest} disabled={testing} className="ga-btn-sm border-status-success-line/85 text-status-success hover:border-status-success/60 hover:bg-status-success-soft hover:text-status-success">
                 <Play className="h-3 w-3" aria-hidden="true" />
                 <span>{testing ? '测试中…' : '测 ping'}</span>
               </button>

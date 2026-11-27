@@ -111,7 +111,7 @@ export function LiveChatComposer({
             : '未发送内容已保留；当前草稿不会被覆盖。'}</span>
           <button
             type="button"
-            className="shrink-0 text-accent disabled:opacity-40"
+            className="ga-btn-link shrink-0 px-1 py-0 text-[11px]"
             disabled={disabled || text !== '' || attachments.length > 0}
             onClick={() => {
               if (useDraftStore.getState().restoreSubmission(item.id) && item.stageId) {
@@ -121,7 +121,7 @@ export function LiveChatComposer({
           >恢复未发送内容</button>
           <button
             type="button"
-            className="shrink-0 text-ink-muted hover:text-ink disabled:opacity-40"
+            className="ga-btn-link-muted shrink-0 px-1 py-0 text-[11px]"
             disabled={disabled}
             onClick={() => {
               const dismissed = useDraftStore.getState().dismissSubmission(item.id)

@@ -155,7 +155,7 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
               type="button"
               onClick={() => onSubmit('new')}
               disabled={!userMsg.trim() || !llmReady || sending}
-              className="ga-btn shrink-0 px-2.5 py-1 text-xs"
+              className="ga-btn-sm shrink-0"
               title="放弃当前任务并新开一个任务（运行中的 worker 会先被中止）"
             >
               <Plus size={13} />新开任务

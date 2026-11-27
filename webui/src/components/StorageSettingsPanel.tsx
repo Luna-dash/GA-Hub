@@ -369,9 +369,7 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
                     type="button"
                     onClick={() => void cleanCategories([category], category.label)}
                     disabled={loading || busy || category.bytes <= 0}
-                    className={category.caution
-                      ? 'ga-btn-sm shrink-0 text-status-danger hover:border-status-danger/60 hover:bg-status-danger-soft disabled:opacity-45'
-                      : 'ga-btn-sm shrink-0 disabled:opacity-45'}
+                    className={category.caution ? 'ga-btn-sm-danger shrink-0' : 'ga-btn-sm shrink-0'}
                   >
                     <Trash2 className="h-3 w-3" aria-hidden="true" />
                     <span>{busy ? '清理中…' : '清理'}</span>

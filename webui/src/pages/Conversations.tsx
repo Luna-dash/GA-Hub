@@ -649,7 +649,7 @@ export default function Conversations() {
                 title="上一页"
                 disabled={page === 0}
                 onClick={() => setPage(page - 1)}
-                className="ga-btn h-7 px-2 text-[11px]"
+                className="ga-btn-sm px-2 text-[11px]"
               >
                 <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
                 <span>上页</span>
@@ -666,7 +666,7 @@ export default function Conversations() {
                 title="下一页"
                 disabled={(page + 1) * limit >= total}
                 onClick={() => setPage(page + 1)}
-                className="ga-btn h-7 px-2 text-[11px]"
+                className="ga-btn-sm px-2 text-[11px]"
               >
                 <span>下页</span>
                 <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />

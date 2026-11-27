@@ -94,7 +94,7 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
         <button type="button" disabled={busy} onClick={() => void act(status.paused ? 'resume' : 'pause')} className="ga-btn">
           <span>{status.paused ? '恢复连接' : '暂停连接'}</span>
         </button>
-        <button type="button" disabled={busy} onClick={() => { setRevoking(!revoking); setConfirmed(false) }} className={revoking ? 'ga-btn' : 'ga-btn text-status-danger hover:border-status-danger/60 hover:bg-status-danger-soft'}>
+        <button type="button" disabled={busy} onClick={() => { setRevoking(!revoking); setConfirmed(false) }} className={revoking ? 'ga-btn' : 'ga-btn-danger-outline'}>
           {revoking ? <X className="h-3.5 w-3.5" aria-hidden="true" /> : <Unlink className="h-3.5 w-3.5" aria-hidden="true" />}
           <span>{revoking ? '取消撤销' : '撤销账号关联'}</span>
         </button>

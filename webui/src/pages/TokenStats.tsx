@@ -37,7 +37,7 @@ function Composition({ data, date, onReset }: { data: TokenTotals; date?: string
     return `${part.color} ${start}% ${cursor}%`
   })
   return <section className="token-card token-composition" aria-label={`${date ?? '所选区间'} Token 构成`}>
-    <header className="token-section-header"><div className="token-composition-heading"><h2>Token 构成</h2><span className="token-note">{date ?? '区间汇总'}</span></div>{date && <button type="button" className="token-text-button" onClick={onReset}>区间汇总</button>}</header>
+    <header className="token-section-header"><div className="token-composition-heading"><h2>Token 构成</h2><span className="token-note">{date ?? '区间汇总'}</span></div>{date && <button type="button" className="ga-btn-link shrink-0" onClick={onReset}>区间汇总</button>}</header>
     <div className="token-donut" role="img" aria-label={componentTotal ? parts.map(p => `${p.label} ${exact(data[p.key])}`).join('，') : '暂无用量'} style={{ background: componentTotal ? `conic-gradient(${stops.join(',')})` : 'var(--c-bg-soft)' }}>
       <div className="token-donut-center"><strong>{compactTokens(data.total)}</strong><span>总 Tokens</span></div>
     </div>
@@ -89,7 +89,7 @@ function WeeklyTable({ data }: { data: TokenStatsResponse }) {
   const [expanded, setExpanded] = useState(false)
   const rows = visibleWeeks(data.weeks, expanded)
   return <section className="token-card token-weekly">
-    <header className="token-section-header"><h2>自然周统计</h2>{data.weeks.length > 6 && <button type="button" className="token-text-button" onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : `全部 ${data.weeks.length} 周`}</button>}</header>
+    <header className="token-section-header"><h2>自然周统计</h2>{data.weeks.length > 6 && <button type="button" className="ga-btn-link shrink-0" onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : `全部 ${data.weeks.length} 周`}</button>}</header>
     <div className="token-table-scroll"><table className="token-table"><thead><tr><th>周期</th><th>请求</th><th>输入</th><th>输出</th><th>缓存写入</th><th>缓存读取</th><th>总 Tokens</th><th>缓存命中率</th></tr></thead>
       <tbody>{rows.length ? rows.map(row => <tr key={row.week_start} className={row.week_start === data.current_week.week_start ? 'token-week-current' : ''}>
         <td><span>{row.week_start} — {row.week_end}</span>{row.week_start === data.current_week.week_start && <small className="token-badge">进行中</small>}</td>
@@ -128,10 +128,10 @@ export default function TokenStats() {
   return <PageShell title="用量统计">
     <div className="token-stats">
       {stats.isLoading && <div className="token-card token-empty" role="status">正在读取用量统计…</div>}
-      {stats.isError && <div className="token-card token-error" role="alert"><span>用量统计加载失败，请稍后重试。</span><button type="button" className="token-text-button inline-flex items-center gap-1.5" onClick={() => void stats.refetch()}><RefreshIcon size={12} /><span>重新加载</span></button></div>}
+      {stats.isError && <div className="token-card token-error" role="alert"><span>用量统计加载失败，请稍后重试。</span><button type="button" className="ga-btn-link shrink-0" onClick={() => void stats.refetch()}><RefreshIcon size={12} /><span>重新加载</span></button></div>}
       {data?.available === false && <div className="token-card token-empty">Token 统计尚未就绪，发生请求后会在这里显示。</div>}
       {data?.available && <>
-        <div className="token-toolbar"><div><span className="token-eyebrow">用量概览</span><p className="token-note">{shown[0]?.date} — {today} · 更新于 {new Date(data.timestamp * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</p></div><div className="token-range-control" role="group" aria-label="统计区间">{ranges.map(item => <button key={item.value} type="button" aria-pressed={range === item.value} onClick={() => { setRange(item.value); setActiveDate(null) }}>{item.label}</button>)}</div></div>
+        <div className="token-toolbar"><div><span className="token-eyebrow">用量概览</span><p className="token-note">{shown[0]?.date} — {today} · 更新于 {new Date(data.timestamp * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</p></div><div className="ga-segmented shrink-0 max-sm:w-full" role="group" aria-label="统计区间">{ranges.map(item => <button key={item.value} type="button" className={`ga-segmented-btn max-sm:flex-1 ${range === item.value ? 'ga-segmented-btn-active' : ''}`} aria-pressed={range === item.value} onClick={() => { setRange(item.value); setActiveDate(null) }}>{item.label}</button>)}</div></div>
         <div className="token-metrics">
           <Metric label="总 Tokens" value={compactTokens(totals.total)} title={`${exact(totals.total)} · 含缓存读写`} />
           <Metric label="请求次数" value={exact(totals.requests)} />

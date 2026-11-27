@@ -71,22 +71,22 @@ export function TaskCard({
             reviews, retry. Absent actions leave no residue. */}
         <span className="conductor-current-actions">
           {!started && workflow && !isWorkflowClosed(workflow) && (
-            <button type="button" className="ga-btn conductor-action-btn" disabled={isResuming}
+            <button type="button" className="ga-btn-xs" disabled={isResuming}
               title="只恢复这一个任务：拉起监督者并重放它的原始指令，其他未闭合任务不受影响"
               onClick={onResume}>
-              <RotateCcw size={14} />{isResuming ? '恢复中…' : '恢复此任务'}
+              <RotateCcw size={13} />{isResuming ? '恢复中…' : '恢复此任务'}
             </button>
           )}
           {pendingReview.length > 0 && (
-            <button type="button" className="ga-btn conductor-action-btn conductor-action-strong"
+            <button type="button" className="ga-btn-xs border-accent/70 text-accent hover:border-accent hover:text-accent"
               title="打开右侧交付详情进行验收"
               onClick={() => onSelectWorker(pendingReview[0].id)}>
-              <CheckCircle2 size={14} />{pendingReview.length} 个待验收
+              <CheckCircle2 size={13} />{pendingReview.length} 个待验收
             </button>
           )}
           {view.tone === 'error' && (
-            <button type="button" className="ga-btn-danger conductor-action-btn" onClick={onRetry}>
-              <RotateCcw size={14} />重新发起
+            <button type="button" className="ga-btn-xs-solid-danger" onClick={onRetry}>
+              <RotateCcw size={13} />重新发起
             </button>
           )}
         </span>

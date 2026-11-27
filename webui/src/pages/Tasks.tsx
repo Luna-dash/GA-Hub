@@ -188,7 +188,7 @@ export default function Tasks() {
                             {inlinePreview || preview || '—'}
                           </span>
                           {r.has_result && (
-                            <button type="button" className="shrink-0 rounded border border-line px-2 py-0.5 text-[11px] text-ink hover:bg-bg-soft" onClick={() => setSelectedRun(r)}>
+                            <button type="button" className="ga-btn-xs shrink-0" onClick={() => setSelectedRun(r)}>
                               详情
                             </button>
                           )}
@@ -467,7 +467,7 @@ function TaskResultDialog({ run, onClose }: { run: TaskRun; onClose: () => void 
       <div className="min-h-0 min-w-0 overflow-auto text-sm text-ink">
         {result.isPending ? <p role="status">正在加载结论…</p> : result.isError ? (
           <div role="alert">
-            无法加载完整结论。<button type="button" className="ml-2 underline" onClick={() => { void result.refetch() }}>重试</button>
+            无法加载完整结论。<button type="button" className="ga-btn-link ml-1" onClick={() => { void result.refetch() }}>重试</button>
           </div>
         ) : <MarkdownView>{result.data.result_text}</MarkdownView>}
       </div>

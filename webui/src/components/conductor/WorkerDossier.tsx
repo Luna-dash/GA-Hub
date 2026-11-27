@@ -288,7 +288,7 @@ export function WorkerDossier({
             <>
               <button
                 type="button"
-                className="ga-btn-primary px-3 py-1 text-xs"
+                className="ga-btn-sm-primary"
                 disabled={control.busy}
                 onClick={control.onAccept}
               >
@@ -296,7 +296,7 @@ export function WorkerDossier({
               </button>
               <button
                 type="button"
-                className="ga-btn px-3 py-1 text-xs"
+                className="ga-btn-sm"
                 disabled={control.busy}
                 onClick={control.onReworkOpen}
               >
@@ -307,7 +307,7 @@ export function WorkerDossier({
           {abortable && (
             <button
               type="button"
-              className="ga-btn px-3 py-1 text-xs text-status-danger"
+              className="ga-btn-sm-danger"
               disabled={control.busy}
               onClick={control.onAbort}
             >
@@ -326,10 +326,10 @@ export function WorkerDossier({
               onChange={(event) => control.onReworkReasonChange(event.target.value)}
             />
             <div className="mt-1.5 flex justify-end gap-2">
-              <button type="button" className="ga-btn px-3 py-1 text-xs" onClick={control.onReworkCancel}>取消</button>
+              <button type="button" className="ga-btn-sm" onClick={control.onReworkCancel}>取消</button>
               <button
                 type="button"
-                className="ga-btn-primary px-3 py-1 text-xs"
+                className="ga-btn-sm-primary"
                 disabled={!control.reworkReason.trim() || control.busy}
                 onClick={control.onReworkSubmit}
               >
@@ -348,7 +348,7 @@ export function WorkerDossier({
               <span className="font-medium text-status-danger">机器验收未通过 · 证据</span>
               <button
                 type="button"
-                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-bg-soft"
+                className="ga-btn-link-muted shrink-0 text-[11px]"
                 onClick={control.onEvidenceDismiss}
               >
                 收起
@@ -374,7 +374,7 @@ export function WorkerDossier({
             <div className="mt-1.5 flex flex-wrap gap-2">
               <button
                 type="button"
-                className="ga-btn px-3 py-1 text-xs"
+                className="ga-btn-sm"
                 disabled={control.busy}
                 onClick={control.onForceAccept}
               >
@@ -382,7 +382,7 @@ export function WorkerDossier({
               </button>
               <button
                 type="button"
-                className="ga-btn px-3 py-1 text-xs"
+                className="ga-btn-sm"
                 disabled={control.busy}
                 onClick={control.onReworkOpen}
               >
