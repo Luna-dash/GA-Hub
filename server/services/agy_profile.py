@@ -461,6 +461,36 @@ def rename(profile_id: str, name: str) -> Profile:
         return renamed
 
 
+VALID_ACCOUNT_TIERS = frozenset({"ultra", "pro", "plus", "enterprise", "free"})
+
+
+def set_account_tier(profile_id: str, account_tier: str | None) -> dict[str, Any]:
+    if not re.fullmatch(PROFILE_ID, profile_id):
+        raise AgyProfileError(404, "找不到 Agy 账号")
+    cleaned = (account_tier or "").strip().lower()
+    if cleaned and cleaned not in VALID_ACCOUNT_TIERS:
+        raise AgyProfileError(422, "不支持的账号档位")
+    with _profile_metadata_lock:
+        active, profiles, meta = _load_raw()
+        target = next((p for p in profiles if p.id == profile_id), None)
+        if target is None:
+            raise AgyProfileError(404, "找不到 Agy 账号")
+        entry = dict(meta.get(profile_id) or {})
+        if cleaned:
+            entry["account_tier"] = cleaned
+            entry["account_tier_manual"] = True
+            entry.pop("account_tier_name", None)
+        else:
+            entry.pop("account_tier", None)
+            entry.pop("account_tier_name", None)
+            entry.pop("account_tier_manual", None)
+        meta[profile_id] = entry
+        _save(active, profiles, meta)
+    _, details = snapshot_details()
+    found = next((item for item in details if item["id"] == profile_id), None)
+    return found or {"id": target.id, "name": target.name}
+
+
 
 def select(profile_id: str) -> None:
     with _profile_metadata_lock:
@@ -652,7 +682,7 @@ def record_usage(
         entry = dict(meta.get(profile_id) or {})
         entry["auth_state"] = auth_state
         entry["auth_state_at"] = now_iso
-        if isinstance(account_tier, str) and account_tier.strip():
+        if isinstance(account_tier, str) and account_tier.strip() and not entry.get("account_tier_manual"):
             entry["account_tier"] = account_tier.strip().lower()
             if isinstance(account_tier_name, str) and account_tier_name.strip():
                 entry["account_tier_name"] = account_tier_name.strip()[:64]

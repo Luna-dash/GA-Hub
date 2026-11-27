@@ -3376,6 +3376,13 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** AgyProfilePatch */
+        AgyProfilePatch: {
+            /** Name */
+            name?: string | null;
+            /** Account Tier */
+            account_tier?: ("ultra" | "pro" | "plus" | "enterprise" | "free") | "" | null;
+        };
         /** AgyProfileUsageSnapshot */
         AgyProfileUsageSnapshot: {
             /** Checked At */
@@ -11131,7 +11138,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AgyProfileCreate"];
+                "application/json": components["schemas"]["AgyProfilePatch"];
             };
         };
         responses: {

@@ -112,14 +112,20 @@ describe('AntiModelSelector helpers and component', () => {
     expect(options.some(o => o.textContent?.includes('GPT-OSS 120B'))).toBe(false)
 
     const orchOption = options.find(o => o.textContent?.includes('Orch · Neon'))!
-    expect(orchOption.textContent).toContain('Neon High → Hydrogen High')
+    expect(orchOption.textContent).not.toContain('Neon High → Hydrogen High')
+    expect(orchOption.getAttribute('title')).toContain('规划：')
+    expect(orchOption.getAttribute('title')).toContain('执行：')
     act(() => { orchOption.click() })
 
     expect(onSelectFamily).toHaveBeenCalledWith(`${ORCH_PRESET_KEY_PREFIX}preset-1`)
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
 
     act(() => { trigger.click() })
-    const openSettingsBtn = document.body.querySelector<HTMLButtonElement>('[data-anti-open-model-settings]')!
+    const footer = document.body.querySelector<HTMLElement>('[data-anti-model-footer]')!
+    expect(footer).not.toBeNull()
+    expect(footer.querySelector('[role="radiogroup"][aria-label="思考等级"]')).not.toBeNull()
+    const openSettingsBtn = footer.querySelector<HTMLButtonElement>('[data-anti-open-model-settings]')!
+    expect(openSettingsBtn).not.toBeNull()
     act(() => { openSettingsBtn.click() })
     expect(onOpenSettings).toHaveBeenCalledTimes(1)
     expect(trigger.getAttribute('aria-expanded')).toBe('false')

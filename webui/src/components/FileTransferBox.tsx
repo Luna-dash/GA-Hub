@@ -102,7 +102,7 @@ async function request(method: 'GET' | 'DELETE', signal?: AbortSignal) {
   return response
 }
 
-/** 根据参考图 1 重绘的主题协调矢量图标：倾斜开启文件夹 + 双向流转弧形箭头 */
+/** 保留原倾斜开启文件夹 + 双向流转弧形箭头形象，优化亮/暗主题填色层次与线条克制度 */
 function FileTransferIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -114,41 +114,49 @@ function FileTransferIcon({ className }: { className?: string }) {
       {/* 文件夹后背片与标签 */}
       <path
         d="M5 11.2C5 9.43 6.43 8 8.2 8h5.2c.86 0 1.67.4 2.2 1.08l1.1 1.42c.38.49.96.78 1.58.78H31c1.38 0 2.5 1.12 2.5 2.5v14.2c0 1.66-1.34 3-3 3H8c-1.66 0-3-1.34-3-3V11.2Z"
-        style={{ fill: 'color-mix(in srgb, var(--c-accent) 44%, var(--c-bg-card))' }}
-        stroke="currentColor"
-        strokeWidth="1.75"
+        style={{
+          fill: 'color-mix(in srgb, var(--c-text-muted) 16%, var(--c-bg-soft))',
+          stroke: 'color-mix(in srgb, var(--c-text) 68%, var(--c-bg-card))',
+        }}
+        strokeWidth="1.45"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
       {/* 前侧开启斜翻盖 */}
       <path
         d="M5.4 30.2 8.2 17c.28-1.28 1.36-2.22 2.66-2.34l21.9-2.06c1.56-.15 2.83 1.24 2.49 2.77l-3.05 13.7c-.27 1.2-1.34 2.05-2.57 2.05H7.2c-1.15 0-2-.97-1.8-1.92Z"
-        style={{ fill: 'var(--c-accent-soft)' }}
-        stroke="currentColor"
-        strokeWidth="1.75"
+        style={{
+          fill: 'color-mix(in srgb, var(--c-bg-card) 86%, var(--c-bg-soft))',
+          stroke: 'color-mix(in srgb, var(--c-text) 68%, var(--c-bg-card))',
+        }}
+        strokeWidth="1.45"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      {/* 前盖底部微阴影层，还原参考图立体层次 */}
+      {/* 前盖底部微阴影层 */}
       <path
         d="M6.4 29.8h24.3c.7 0 1.32-.48 1.48-1.16l.65-2.84H7.25l-.85 4Z"
-        style={{ fill: 'color-mix(in srgb, var(--c-accent) 16%, var(--c-accent-soft))' }}
+        style={{ fill: 'color-mix(in srgb, var(--c-text) 9%, transparent)' }}
       />
       {/* 左下向上弯弧箭头 */}
       <path
         d="M16 14.6 19.8 20.8l-2.9-.25c-1.95 4.8-2.45 10.2-.4 14.65-5.6-3.7-5.55-10.55-2.7-15.1l-2.9-.32L16 14.6Z"
-        style={{ fill: 'color-mix(in srgb, var(--c-accent) 72%, var(--c-bg-card))' }}
-        stroke="currentColor"
-        strokeWidth="1.65"
+        style={{
+          fill: 'color-mix(in srgb, var(--c-accent) 44%, var(--c-bg-card))',
+          stroke: 'color-mix(in srgb, var(--c-accent) 52%, var(--c-text))',
+        }}
+        strokeWidth="1.35"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
       {/* 右上向下弯弧箭头 */}
       <path
         d="M24.8 26.8 21.1 20.55l2.85.25c2.05-5.05 1.55-11.2-1.45-16.1 6.75 3.35 7.7 10.9 5.05 16.5l2.85.4L24.8 26.8Z"
-        style={{ fill: 'color-mix(in srgb, var(--c-accent) 30%, var(--c-bg-card))' }}
-        stroke="currentColor"
-        strokeWidth="1.65"
+        style={{
+          fill: 'color-mix(in srgb, var(--c-accent) 22%, var(--c-bg-card))',
+          stroke: 'color-mix(in srgb, var(--c-accent) 42%, var(--c-text))',
+        }}
+        strokeWidth="1.35"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -302,10 +310,10 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
         aria-label="中转箱"
         aria-describedby={countText ? countId : undefined}
         aria-expanded={open}
-        className="pointer-events-auto relative grid size-[54px] place-items-center rounded-full border border-line bg-bg-card text-accent shadow-sm transition-colors hover:border-accent hover:bg-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 aria-expanded:border-accent aria-expanded:bg-accent-soft aria-expanded:text-[var(--c-accent-hover)]"
+        className="pointer-events-auto relative grid size-[50px] place-items-center rounded-full border border-line/90 bg-bg-card text-ink-muted shadow-sm transition-all hover:border-accent/65 hover:bg-bg-card hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/55 aria-expanded:border-accent/70 aria-expanded:bg-accent-soft/55"
         onClick={toggle}
       >
-        <FileTransferIcon className="h-9 w-9" />
+        <FileTransferIcon className="h-[34px] w-[34px]" />
         {fileCount > 0 && (
           <span
             aria-hidden="true"

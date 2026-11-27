@@ -513,6 +513,11 @@ class AgyProfileCreate(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 
 
+class AgyProfilePatch(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)] | None = None
+    account_tier: AgyAccountTier | Literal[""] | None = None
+
+
 class AgyCodeLoginState(BaseModel):
     flow_id: str
     profile_id: str
@@ -656,10 +661,20 @@ def switch_agy_profile(profile_id: str, request: Request):
 
 
 @router.patch("/profiles/{profile_id}", response_model=AgyProfile, response_model_exclude_none=True)
-def rename_agy_profile(profile_id: str, body: AgyProfileCreate, request: Request):
+def rename_agy_profile(profile_id: str, body: AgyProfilePatch, request: Request):
     _profile_action(request)
     try:
-        return asdict(daemon.rename_profile(profile_id, body.name))
+        if body.name is None and "account_tier" not in body.model_fields_set:
+            raise HTTPException(422, "请提供要修改的账号备注或档位")
+        result: dict | None = None
+        if body.name is not None:
+            result = asdict(daemon.rename_profile(profile_id, body.name))
+        if "account_tier" in body.model_fields_set:
+            tier_val = body.account_tier.strip() if isinstance(body.account_tier, str) else None
+            result = daemon.set_profile_tier(profile_id, tier_val or None)
+        if result is None:
+            raise HTTPException(404, "找不到 Agy 账号")
+        return result
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 

@@ -3313,3 +3313,64 @@ def test_ledger_split_models_quota_pools_and_legacy_backfill(tmp_path, monkeypat
     after = ledger.stats(window_hours=24, profile_id="default")
     assert after["total_runs"] == 0
     assert after["by_model"] == []
+
+
+def test_profile_manual_account_tier_patch_and_passive_protection(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
+    prof = agy_profile.add("工作号")
+    client = make_client(monkeypatch)
+    headers = {"X-GA-Hub-Action": "manage-agy-profiles"}
+
+    # Empty patch payload is rejected with 422
+    empty_resp = client.patch(f"/api/anti/profiles/{prof.id}", json={}, headers=headers)
+    assert empty_resp.status_code == 422
+
+    # Manually mark account tier as Ultra via PATCH
+    patched = client.patch(
+        f"/api/anti/profiles/{prof.id}",
+        json={"account_tier": "ultra"},
+        headers=headers,
+    )
+    assert patched.status_code == 200
+    entry = patched.json()
+    assert entry["id"] == prof.id
+    assert entry["account_tier"] == "ultra"
+    assert entry.get("account_tier_name") is None
+
+    # Passive record_usage must NOT overwrite manually tagged tier
+    agy_profile.record_usage(
+        prof.id,
+        "authenticated",
+        [{"model": "Gemini", "limit": "Five Hour Limit Remaining", "remaining_pct": 88.0}],
+        account_tier="free",
+        account_tier_name="Free",
+    )
+    listed = client.get("/api/anti/profiles").json()
+    entry_after_usage = next(p for p in listed["profiles"] if p["id"] == prof.id)
+    assert entry_after_usage["account_tier"] == "ultra"
+    assert entry_after_usage.get("account_tier_name") is None
+
+    # Clearing tier with empty string removes manual override and allows passive extraction again
+    cleared = client.patch(
+        f"/api/anti/profiles/{prof.id}",
+        json={"account_tier": ""},
+        headers=headers,
+    )
+    assert cleared.status_code == 200
+    entry_cleared = cleared.json()
+    assert entry_cleared["id"] == prof.id
+    assert entry_cleared.get("account_tier") is None
+    assert entry_cleared.get("account_tier_name") is None
+
+    agy_profile.record_usage(
+        prof.id,
+        "authenticated",
+        [{"model": "Gemini", "limit": "Five Hour Limit Remaining", "remaining_pct": 85.0}],
+        account_tier="pro",
+        account_tier_name="Google AI Pro",
+    )
+    listed_again = client.get("/api/anti/profiles").json()
+    entry_passive = next(p for p in listed_again["profiles"] if p["id"] == prof.id)
+    assert entry_passive["account_tier"] == "pro"
+    assert entry_passive["account_tier_name"] == "Google AI Pro"

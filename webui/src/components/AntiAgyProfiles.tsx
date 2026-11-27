@@ -10,14 +10,11 @@ import { ModalOverlay } from '@/components/ModalOverlay'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import {
   fiveHourRemainingPct,
-  formatQuotaPct,
-  geminiQuotaSummary,
-  quotaWindowShortLabel,
   resolveAccountTier,
   sortQuotaRows,
   type AgyAccountTier,
-  type QuotaWindowReading,
 } from '@/utils/antiUsage'
+import { AntiQuotaProgressList, formatQuotaTime, quotaTone } from './AntiQuotaProgressList'
 import type { useAntiDaemonStatus } from './AntiDaemonControl'
 
 type Profiles = components['schemas']['AgyProfiles']
@@ -32,17 +29,19 @@ type Action =
   | { kind: 'capture'; name: string }
   | { kind: 'switch' | 'login' | 'logout' | 'delete'; profile: Profile }
   | { kind: 'rename'; profile: Profile; name: string }
+  | { kind: 'set-tier'; profile: Profile; tier: AgyAccountTier | null }
   | { kind: 'check-usage'; profileId?: string; profileName?: string }
 
-const key = ['agy-profiles'] as const
+const ACCOUNT_TIER_OPTIONS: readonly { value: AgyAccountTier | ''; label: string }[] = [
+  { value: '', label: '不标记' },
+  { value: 'free', label: 'Free' },
+  { value: 'plus', label: 'Plus' },
+  { value: 'pro', label: 'Pro' },
+  { value: 'ultra', label: 'Ultra' },
+  { value: 'enterprise', label: 'Enterprise' },
+]
 
-const resetTimeFormat = new Intl.DateTimeFormat('zh-CN', {
-  month: 'numeric',
-  day: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-})
+const key = ['agy-profiles'] as const
 
 async function request<T>(suffix = '', init?: RequestInit): Promise<T> {
   const response = await fetch(resolveApiUrl(`/api/anti/profiles${suffix}`), init)
@@ -71,18 +70,6 @@ function authBadge(profile?: Profile, loggingIn?: boolean) {
   return { label: '未登录', tone: 'border-line bg-bg-soft text-ink-muted', healthy: false }
 }
 
-function quotaTone(pct: number) {
-  if (pct >= 50) return 'text-status-success'
-  if (pct >= 20) return 'text-status-warning'
-  return 'text-status-danger'
-}
-
-function quotaBarTone(pct: number) {
-  if (pct >= 50) return 'bg-status-success'
-  if (pct >= 20) return 'bg-status-warning'
-  return 'bg-status-danger'
-}
-
 function renderTierPillIcon(tier: AgyAccountTier | undefined, fallbackAccent: boolean) {
   switch (tier) {
     case 'ultra':
@@ -102,101 +89,6 @@ function formatIdleSeconds(seconds: number) {
   if (seconds < 60) return `${seconds}s`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
   return `${Math.floor(seconds / 3600)}h`
-}
-
-function formatTimeLabel(raw?: string | null) {
-  if (!raw) return null
-  const ms = Date.parse(raw)
-  return Number.isFinite(ms) ? resetTimeFormat.format(ms) : null
-}
-
-function QuotaMiniBar({
-  profileName,
-  label,
-  reading,
-}: {
-  profileName: string
-  label: '5h' | '周'
-  reading: QuotaWindowReading | null
-}) {
-  const pct = reading?.remaining_pct ?? null
-  const resetLabel = formatTimeLabel(reading?.resets_at)
-  return (
-    <div
-      className="flex min-w-0 items-center gap-1.5"
-      title={pct !== null
-        ? `Gemini ${label}：剩余 ${formatQuotaPct(pct)}${resetLabel ? ` · ${resetLabel} 重置` : ''}`
-        : `Gemini ${label}：暂无数据`}
-    >
-      <span className="w-5 shrink-0 text-[11px] font-medium text-ink-muted">{label}</span>
-      <div
-        role="progressbar"
-        aria-label={`${profileName} Gemini ${label} 额度`}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={pct ?? undefined}
-        className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-bg-soft ring-1 ring-line/45"
-      >
-        <div
-          className={clsx('h-full rounded-full transition-[width] duration-300', pct !== null ? quotaBarTone(pct) : 'bg-transparent')}
-          style={{ width: `${pct !== null ? Math.max(0, Math.min(100, pct)) : 0}%` }}
-        />
-      </div>
-      <span
-        className={clsx(
-          'w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums',
-          pct !== null ? quotaTone(pct) : 'text-ink-faint',
-        )}
-      >
-        {pct !== null ? formatQuotaPct(pct) : '—'}
-      </span>
-    </div>
-  )
-}
-
-function QuotaProgressRow({
-  profileName,
-  row,
-}: {
-  profileName: string
-  row: NonNullable<NonNullable<Profile['usage']>['rows']>[number]
-}) {
-  const pct = Math.max(0, Math.min(100, row.remaining_pct))
-  const winTag = quotaWindowShortLabel(row.limit)
-  const resetLabel = formatTimeLabel(row.resets_at)
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2 text-[11px]">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate font-medium text-ink">{row.model}</span>
-          <span className="shrink-0 rounded bg-bg-card px-1.5 py-0.5 text-[10px] leading-none text-ink-muted ring-1 ring-line/45">
-            {winTag ?? row.limit}
-          </span>
-        </div>
-        <div className="flex shrink-0 items-center gap-2 tabular-nums">
-          <span className="text-[10px] text-ink-muted">
-            {resetLabel ? `${resetLabel} 重置` : '满额未消耗'}
-          </span>
-          <span className={clsx('w-10 text-right font-semibold', quotaTone(pct))}>
-            {formatQuotaPct(pct)}
-          </span>
-        </div>
-      </div>
-      <div
-        role="progressbar"
-        aria-label={`${profileName} ${row.model} ${winTag ?? row.limit} 额度`}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={pct}
-        className="h-1.5 w-full overflow-hidden rounded-full bg-bg-card ring-1 ring-line/45"
-      >
-        <div
-          className={clsx('h-full rounded-full transition-[width] duration-300', quotaBarTone(pct))}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  )
 }
 
 export function useAgyProfiles() {
@@ -335,8 +227,27 @@ export function AntiAgyProfiles({
           headers: { ...write.headers, 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: args.name }),
         })
-        cache.setQueryData<Profiles>(key, old => old && ({ ...old, profiles: old.profiles.map(p => p.id === profile.id ? profile : p) }))
+        cache.setQueryData<Profiles>(key, old => old && ({ ...old, profiles: old.profiles.map(p => p.id === profile.id ? { ...p, ...profile } : p) }))
         setMessage(`已重命名为「${profile.name}」。`)
+      } else if (args.kind === 'set-tier') {
+        const profile = await request<Profile>(`/${encodeURIComponent(args.profile.id)}`, {
+          method: 'PATCH',
+          headers: { ...write.headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ account_tier: args.tier ?? '' }),
+        })
+        cache.setQueryData<Profiles>(key, old => old && ({
+          ...old,
+          profiles: old.profiles.map(p => (p.id === profile.id
+            ? {
+              ...p,
+              ...profile,
+              account_tier: profile.account_tier,
+              account_tier_name: profile.account_tier_name,
+            }
+            : p)),
+        }))
+        const tierLabel = ACCOUNT_TIER_OPTIONS.find(o => o.value === (args.tier ?? ''))?.label
+        setMessage(args.tier ? `已将「${args.profile.name}」档位标记为 ${tierLabel ?? args.tier}。` : `已清除「${args.profile.name}」的档位标记。`)
       } else if (args.kind === 'switch') {
         const data = await antiApi.switchProfile(args.profile.id)
         cache.setQueryData(key, data)
@@ -366,10 +277,13 @@ export function AntiAgyProfiles({
         setMessage(`已清除「${args.profile.name}」凭据（保留会话记录）。`)
       } else if (args.kind === 'check-usage') {
         const usage = await antiApi.accountUsage(args.profileId)
+        if (args.profileId) {
+          setExpandedIds(prev => ({ ...prev, [args.profileId!]: true }))
+        }
         const targetLabel = args.profileName ? `「${args.profileName}」` : ''
         setMessage(
           usage.rows.length > 0
-            ? `已刷新${targetLabel}额度（${usage.rows.length} 项模型）。`
+            ? `已查询${targetLabel}剩余额度。`
             : (usage.detail || '未读取到额度信息，请确认已登录后重试。'),
         )
       } else {
@@ -442,12 +356,17 @@ export function AntiAgyProfiles({
   }, [codeLogin, cache, refresh])
 
   const selected = profiles.data?.profiles.find(item => item.id === profiles.data?.active)
-  const others = profiles.data?.profiles.filter(item => item.id !== profiles.data?.active) ?? []
-  const orderedProfiles = useMemo(
-    () => [selected, ...others].filter((item): item is Profile => Boolean(item)),
-    [selected, others],
+  const visibleProfiles = useMemo(
+    () => (profiles.data?.profiles ?? []).filter(item => item.id !== 'default'),
+    [profiles.data?.profiles],
   )
-  const profileCount = profiles.data?.profiles.length ?? 0
+  const orderedProfiles = useMemo(() => {
+    const activeVisible = visibleProfiles.find(item => item.id === profiles.data?.active)
+    const rest = visibleProfiles.filter(item => item.id !== profiles.data?.active)
+    return activeVisible ? [activeVisible, ...rest] : rest
+  }, [profiles.data?.active, visibleProfiles])
+  const profileCount = orderedProfiles.length
+  const usingHiddenDefault = Boolean(profiles.data?.active === 'default')
   const loginProfile = profiles.data?.login_profile
   const cancelActiveCodeLogin = (flow: AgyCodeLoginState | null) => {
     if (!flow || (flow.phase !== 'starting' && flow.phase !== 'waiting_code')) return
@@ -490,9 +409,10 @@ export function AntiAgyProfiles({
     : action.variables?.kind === 'login' ? '正在打开官方登录窗口…'
     : action.variables?.kind === 'logout' ? '正在清除凭据…'
     : action.variables?.kind === 'rename' ? '正在保存备注…'
+    : action.variables?.kind === 'set-tier' ? '正在更新档位…'
     : action.variables?.kind === 'capture' ? '正在另存当前登录…'
     : action.variables?.kind === 'delete' ? '正在删除账号…'
-    : action.variables?.kind === 'check-usage' ? '正在刷新额度…'
+    : action.variables?.kind === 'check-usage' ? '正在查询额度…'
     : '正在添加账号…'
 
   const compactBtn = 'ga-btn-sm h-7 shrink-0 px-2 py-0 text-[11px]'
@@ -515,11 +435,12 @@ export function AntiAgyProfiles({
     const badge = authBadge(profile, loginProfile === profile.id)
     const cooldownSec = profile.cooldown_seconds ?? 0
     const isExpanded = Boolean(expandedIds[profile.id])
-    const gemini = geminiQuotaSummary(profile.usage)
     const detailRows = sortQuotaRows(profile.usage?.rows ?? [])
-    const checkedLabel = formatTimeLabel(profile.usage?.checked_at)
+    const checkedLabel = formatQuotaTime(profile.usage?.checked_at)
     const showStatusTag = !badge.healthy || cooldownSec > 0
     const tierInfo = resolveAccountTier(profile.account_tier, profile.account_tier_name)
+    const canQueryQuota = Boolean((!daemon || daemon.running) && (isActive || profile.has_credentials))
+    const queryingThis = action.isPending && action.variables?.kind === 'check-usage' && action.variables.profileId === profile.id
 
     return (
       <li
@@ -532,79 +453,97 @@ export function AntiAgyProfiles({
             : 'border-line/70 bg-bg-card/75 hover:border-line',
         )}
       >
-        <div className="flex items-stretch gap-2 p-2.5">
+        <div className="flex items-center justify-between gap-2 px-3 py-2.5">
           <button
             type="button"
             aria-expanded={isExpanded}
-            aria-label={`${isExpanded ? '收起' : '展开'}「${profile.name}」详细额度`}
+            aria-label={`${isExpanded ? '收起' : '展开'}「${profile.name}」额度`}
             onClick={() => toggleExpand(profile.id)}
-            className="flex min-w-0 flex-1 flex-col gap-2 rounded-lg px-1 py-0.5 text-left transition-colors hover:bg-bg-soft/45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1 py-0.5 text-left transition-colors hover:bg-bg-soft/45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           >
-            <div className="flex min-w-0 items-center gap-1.5">
-              {isExpanded
+            {detailRows.length > 0 && (
+              isExpanded
                 ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden="true" />
-                : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden="true" />}
+                : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden="true" />
+            )}
+            <span
+              className={clsx(
+                'h-1.5 w-1.5 shrink-0 rounded-full',
+                cooldownSec > 0
+                  ? 'bg-status-warning'
+                  : badge.healthy
+                    ? 'bg-status-success'
+                    : 'bg-status-danger',
+              )}
+              title={badge.label}
+              aria-hidden="true"
+            />
+            <span className="min-w-0 truncate text-sm font-medium text-ink" title={profile.name}>
+              {profile.name}
+            </span>
+            {tierInfo && (
               <span
+                data-account-tier-badge={tierInfo.tier}
+                title={tierInfo.fullLabel}
                 className={clsx(
-                  'h-1.5 w-1.5 shrink-0 rounded-full',
-                  cooldownSec > 0
-                    ? 'bg-status-warning'
-                    : badge.healthy
-                      ? 'bg-status-success'
-                      : 'bg-status-danger',
+                  'inline-flex shrink-0 items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none tracking-wide',
+                  tierInfo.cardBadgeClass,
                 )}
-                title={badge.label}
-                aria-hidden="true"
-              />
-              <span className="min-w-0 truncate text-sm font-medium text-ink" title={profile.name}>
-                {profile.name}
+              >
+                {tierInfo.glyph && <span aria-hidden="true">{tierInfo.glyph}</span>}
+                <span>{tierInfo.shortLabel}</span>
               </span>
-              {tierInfo && (
-                <span
-                  data-account-tier-badge={tierInfo.tier}
-                  title={tierInfo.fullLabel}
-                  className={clsx(
-                    'inline-flex shrink-0 items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none tracking-wide',
-                    tierInfo.cardBadgeClass,
-                  )}
-                >
-                  {tierInfo.glyph && <span aria-hidden="true">{tierInfo.glyph}</span>}
-                  <span>{tierInfo.shortLabel}</span>
+            )}
+            {isActive && (
+              <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-accent">
+                当前
+              </span>
+            )}
+            {showStatusTag && (
+              cooldownSec > 0 ? (
+                <span className="shrink-0 rounded border border-status-warning-line bg-status-warning-soft px-1.5 py-0.5 text-[10px] font-medium leading-none tabular-nums text-status-warning">
+                  风控冷却 {cooldownSec}s
                 </span>
-              )}
-              {isActive && (
-                <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-accent">
-                  当前
+              ) : (
+                <span className={clsx('shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none', badge.tone)}>
+                  {badge.label}
                 </span>
-              )}
-              {showStatusTag && (
-                cooldownSec > 0 ? (
-                  <span className="shrink-0 rounded border border-status-warning-line bg-status-warning-soft px-1.5 py-0.5 text-[10px] font-medium leading-none tabular-nums text-status-warning">
-                    风控冷却 {cooldownSec}s
-                  </span>
-                ) : (
-                  <span className={clsx('shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none', badge.tone)}>
-                    {badge.label}
-                  </span>
-                )
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 gap-x-4 gap-y-1.5 pl-5 sm:grid-cols-2">
-              <QuotaMiniBar profileName={profile.name} label="5h" reading={gemini.fiveHour} />
-              <QuotaMiniBar profileName={profile.name} label="周" reading={gemini.weekly} />
-            </div>
+              )
+            )}
           </button>
 
-          <div className="flex shrink-0 items-center border-l border-line/40 pl-2">
+          <div className="flex shrink-0 items-center gap-1.5">
+            {canQueryQuota && (
+              <button
+                type="button"
+                className={compactBtn}
+                disabled={disabled}
+                aria-label={`查询额度：${profile.name}`}
+                onClick={() => action.mutate({ kind: 'check-usage', profileId: profile.id, profileName: profile.name })}
+              >
+                <RefreshCw className={clsx('h-3 w-3', queryingThis && 'motion-safe:animate-spin')} aria-hidden="true" />
+                <span>{queryingThis ? '查询中' : '查询额度'}</span>
+              </button>
+            )}
+            {!isActive && (
+              <button
+                type="button"
+                className={compactPrimaryBtn}
+                disabled={disabled}
+                aria-label={`切换到${profile.name}`}
+                onClick={() => action.mutate({ kind: 'switch', profile })}
+              >
+                切换
+              </button>
+            )}
             <button
               type="button"
               aria-label={`账号设置：${profile.name}`}
               title={`账号设置：${profile.name}`}
               onClick={() => navigateTo({ kind: 'account', profileId: profile.id })}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-transparent text-ink-muted transition-colors hover:border-line/70 hover:bg-bg-soft hover:text-ink"
+              className="flex h-7 w-7 items-center justify-center rounded-lg border border-transparent text-ink-muted transition-colors hover:border-line/70 hover:bg-bg-soft hover:text-ink"
             >
-              <Settings2 className="h-4 w-4" aria-hidden="true" />
+              <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -617,18 +556,23 @@ export function AntiAgyProfiles({
             {detailRows.length > 0 ? (
               <>
                 <div className="flex items-center justify-between text-[11px] text-ink-muted">
-                  <span>详细额度</span>
-                  {checkedLabel && <span className="tabular-nums">检测于 {checkedLabel}</span>}
+                  <span>剩余额度</span>
+                  <div className="flex items-center gap-2">
+                    {checkedLabel && <span className="tabular-nums">更新于 {checkedLabel}</span>}
+                    <button
+                      type="button"
+                      className="ga-btn-link px-1 py-0 text-[11px] text-ink-muted hover:text-ink"
+                      onClick={() => toggleExpand(profile.id)}
+                    >
+                      收起
+                    </button>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  {detailRows.map(row => (
-                    <QuotaProgressRow key={`${row.model}-${row.limit}`} profileName={profile.name} row={row} />
-                  ))}
-                </div>
+                <AntiQuotaProgressList rows={detailRows} ariaPrefix={profile.name} />
               </>
             ) : (
               <p className="text-[11px] text-ink-muted">
-                暂无额度数据，请点击右侧设置图标进入账号详情后手动刷新额度。
+                尚未查询额度，点击「查询额度」按需获取。
               </p>
             )}
           </div>
@@ -641,15 +585,17 @@ export function AntiAgyProfiles({
     const isActive = profile.id === selected?.id
     const badge = authBadge(profile, loginProfile === profile.id)
     const cooldownSec = profile.cooldown_seconds ?? 0
-    const checkedLabel = formatTimeLabel(profile.usage?.checked_at)
+    const checkedLabel = formatQuotaTime(profile.usage?.checked_at)
+    const detailRows = sortQuotaRows(profile.usage?.rows ?? [])
     const tierInfo = resolveAccountTier(profile.account_tier, profile.account_tier_name)
     const canClearCredentials = (profile.has_credentials || profile.auth_state === 'authenticated')
       && !(isActive && (daemon?.status.data?.active_count ?? 0) > 0)
     const showCodeLoginForm = Boolean(codeLogin && codeLogin.profile_id === profile.id)
+    const currentTierValue: AgyAccountTier | '' = (profile.account_tier as AgyAccountTier | undefined) ?? ''
 
     return (
       <div data-account-settings-view={profile.id} className="space-y-3">
-        <div className="rounded-xl border border-line/70 bg-bg-card p-3">
+        <div className="space-y-2.5 rounded-xl border border-line/70 bg-bg-card p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               <span className={clsx('shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none', badge.tone)}>
@@ -674,21 +620,21 @@ export function AntiAgyProfiles({
               )}
               {checkedLabel && (
                 <span className="text-[11px] text-ink-muted tabular-nums">
-                  额度检测于 {checkedLabel}
+                  更新于 {checkedLabel}
                 </span>
               )}
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
-              {daemon?.running && (isActive || profile.has_credentials) && (
+              {(!daemon || daemon.running) && (isActive || profile.has_credentials) && (
                 <button
                   type="button"
                   className={compactBtn}
                   disabled={disabled}
-                  aria-label={`刷新额度：${profile.name}`}
+                  aria-label={`查询额度：${profile.name}`}
                   onClick={() => action.mutate({ kind: 'check-usage', profileId: profile.id, profileName: profile.name })}
                 >
                   <RefreshCw className="h-3 w-3" aria-hidden="true" />
-                  <span>刷新额度</span>
+                  <span>查询额度</span>
                 </button>
               )}
               {!isActive && (
@@ -703,6 +649,46 @@ export function AntiAgyProfiles({
                 </button>
               )}
             </div>
+          </div>
+          {detailRows.length > 0 && (
+            <div className="border-t border-line/50 pt-2">
+              <AntiQuotaProgressList rows={detailRows} ariaPrefix={profile.name} />
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-2 rounded-xl border border-line/70 bg-bg-card p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-ink">账号档位</span>
+            <span className="text-[11px] text-ink-muted">手动标记，用于卡片与顶部徽章显示</span>
+          </div>
+          <div role="radiogroup" aria-label="账号档位" className="flex flex-wrap items-center gap-1.5">
+            {ACCOUNT_TIER_OPTIONS.map(opt => {
+              const activeOpt = currentTierValue === opt.value
+              return (
+                <button
+                  key={opt.value || 'none'}
+                  type="button"
+                  role="radio"
+                  aria-checked={activeOpt}
+                  data-account-tier-option={opt.value || 'none'}
+                  disabled={disabled}
+                  onClick={() => {
+                    if (!activeOpt) {
+                      action.mutate({ kind: 'set-tier', profile, tier: opt.value || null })
+                    }
+                  }}
+                  className={clsx(
+                    'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
+                    activeOpt
+                      ? 'bg-accent text-[var(--c-accent-fg)] shadow-sm'
+                      : 'border border-line/70 bg-bg-soft/60 text-ink-muted hover:border-accent/60 hover:text-ink',
+                  )}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
           </div>
         </div>
 
@@ -1280,6 +1266,14 @@ export function AntiAgyProfiles({
                 </div>
               )}
               {profiles.isPending && <p role="status" className="text-xs text-ink-muted">正在加载账号…</p>}
+
+              {profiles.data && usingHiddenDefault && (
+                <div className="rounded-lg border border-line/60 bg-bg-soft/45 px-3 py-2 text-[11px] text-ink-muted">
+                  当前仍使用系统默认登录态
+                  {(selected?.cooldown_seconds ?? 0) > 0 ? `（风控冷却 ${selected!.cooldown_seconds}s）` : ''}
+                  {orderedProfiles.length > 0 ? '，点击下方账号即可切换管理。' : '，可点击右上角「设置」添加或另存账号。'}
+                </div>
+              )}
 
               {profiles.data && (
                 orderedProfiles.length > 0 ? (

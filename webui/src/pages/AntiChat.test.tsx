@@ -126,7 +126,7 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     expect(usageButton.closest('header')).not.toBeNull()
     expect(host.querySelector('[role=group][aria-label="Anti 状态"]')?.contains(usageButton)).toBe(false)
     await act(async () => usageButton.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
-    expect(quotaDialog()?.textContent).toContain('点击检测官方剩余额度。')
+    expect(quotaDialog()?.textContent).toContain('点击刷新查询剩余额度。')
     expect(usageRequests()).toHaveLength(0)
     usageButton.focus()
     expect(document.activeElement).toBe(usageButton)
@@ -136,7 +136,8 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     expect(quotaDialog()?.closest('header')).toBeNull()
     expect(usageRequests()).toHaveLength(1)
     expect(quotaDialog()?.textContent).toContain('Example Model')
-    expect(quotaDialog()?.textContent).toContain('每周额度')
+    expect(quotaDialog()?.textContent).toContain('周')
+    expect(quotaDialog()?.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('42.5')
     expect(quotaDialog()?.querySelector('time')?.dateTime).toBe('2026-11-20T08:00:00Z')
     expect(document.activeElement).toBe(quotaDialog())
     await act(async () => quotaDialog()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
@@ -549,7 +550,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
       expect(document.body.textContent).toContain('65%')
       expect(document.body.textContent).toContain('触发 429 冷却')
       expect(document.body.textContent).toContain('Gemini 4 30s')
-      expect(document.body.textContent).toContain('今日 5 轮 · 19 次调用（成功 4）')
+      expect(document.body.textContent).toContain('今日对话 5 (成功 4) · 调用 19')
       expect(document.body.textContent).toContain('12k tok · 72.4 tok/s · 缓存 40%')
     })
     expect(document.body.textContent).not.toContain('查看本地配额池')
@@ -559,18 +560,18 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await vi.waitFor(async () => {
       await flush()
       expect(document.body.querySelector('[data-anti-cooldown-alert]')).toBeNull()
-      expect(document.body.textContent).toContain('今日 5 轮 · 19 次调用（成功 4）')
+      expect(document.body.textContent).toContain('今日对话 5 (成功 4) · 调用 19')
     })
 
     await act(async () => { usageBtn.click() })
 
-    // Profile modal: layered account list + unified settings (logs & capture) + per-account settings (logout & delete)
+    // Profile modal: layered account list (system default omitted) + unified settings (logs & capture) + per-account settings (logout & delete)
     const accountsBtn = [...host.querySelectorAll('button')].find(b => b.getAttribute('aria-label')?.startsWith('Agy 账号：')) as HTMLButtonElement
     await act(async () => { accountsBtn.click() })
     await flush()
     expect(document.body.querySelector('[role="tab"]')).toBeNull()
-    expect(document.body.textContent).toContain('80%')
-    expect(document.body.textContent).toContain('65%')
+    expect(document.body.querySelector('[data-account-card="default"]')).toBeNull()
+    expect(document.body.querySelector('[data-account-card="work"]')).not.toBeNull()
 
     const settingsBtn = document.body.querySelector<HTMLButtonElement>('button[aria-label="账号管理设置"]')!
     await act(async () => { settingsBtn.click() })
@@ -632,7 +633,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     expect(host.textContent).toContain('启用 Agy')
     await act(async () => { usageBtn.click() })
     await flush()
-    expect(document.body.textContent).toContain('离线缓存')
+    expect(document.body.textContent).toContain('缓存 ')
     expect(document.body.textContent).toContain('65%')
   } finally {
     await act(async () => root.unmount())
@@ -991,7 +992,13 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
     if (path === '/api/anti/status') return reply({ state: 'ready', agy_available: true, auth_state: 'authenticated', version: '1.5.14' })
-    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认', has_credentials: true, auth_state: 'authenticated' }] })
+    if (path === '/api/anti/profiles') return reply({
+      active: 'work',
+      profiles: [
+        { id: 'default', name: '系统默认', has_credentials: true, auth_state: 'authenticated' },
+        { id: 'work', name: '工作', has_credentials: true, auth_state: 'authenticated' },
+      ],
+    })
     if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
     if (path === '/api/anti/commands') return reply({ items: commandItems })
     if (path === '/api/anti/sessions') return reply([session])
@@ -1072,10 +1079,10 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
         calibrated_remaining_pct: calibratedPct,
       })
     }
-    if (path === '/api/anti/profiles/default/login/start') {
+    if (path === '/api/anti/profiles/work/login/start') {
       return reply({
         flow_id: 'flow-1',
-        profile_id: 'default',
+        profile_id: 'work',
         phase: 'waiting_code',
         authorization_url: 'https://accounts.google.com/o/oauth2/auth?client_id=test',
         error: null,
@@ -1083,10 +1090,10 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     }
     if (path === '/api/anti/profiles/login/submit/flow-1') {
       codeSubmitted = JSON.parse(String(init?.body)).code
-      return reply({ flow_id: 'flow-1', profile_id: 'default', phase: 'completed', authorization_url: null, error: null })
+      return reply({ flow_id: 'flow-1', profile_id: 'work', phase: 'completed', authorization_url: null, error: null })
     }
     if (path === '/api/anti/profiles/login/status/flow-1') {
-      return reply({ flow_id: 'flow-1', profile_id: 'default', phase: 'waiting_code', authorization_url: 'https://accounts.google.com/o/oauth2/auth?client_id=test', error: null })
+      return reply({ flow_id: 'flow-1', profile_id: 'work', phase: 'waiting_code', authorization_url: 'https://accounts.google.com/o/oauth2/auth?client_id=test', error: null })
     }
     throw new Error(`Unexpected request: ${path}`)
   }))
@@ -1118,7 +1125,7 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     await act(async () => { usageBtn.click() })
     await flush()
     expect(document.body.textContent).toContain('满额未消耗')
-    expect(document.body.textContent).toContain('今日 2 轮（成功 2）')
+    expect(document.body.textContent).toContain('今日对话 2 (成功 2)')
     expect(document.body.textContent).toContain('150 tok · 缓存 50%')
     expect(document.body.querySelector('[data-anti-cooldown-alert]')).toBeNull()
     expect(document.body.textContent).not.toContain('查看本地配额池')
@@ -1221,10 +1228,10 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
     await act(async () => { accBtn.click() })
     await flush()
     await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：系统默认"]')!.click()
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：工作"]')!.click()
     })
     await flush()
-    const codeLoginBtn = document.body.querySelector<HTMLButtonElement>('button[aria-label="授权码登录：系统默认"]')!
+    const codeLoginBtn = document.body.querySelector<HTMLButtonElement>('button[aria-label="授权码登录：工作"]')!
     await act(async () => { codeLoginBtn.click() })
     await flush()
     expect(document.body.textContent).toContain('https://accounts.google.com/o/oauth2/auth?client_id=test')
@@ -2078,7 +2085,13 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
 
     if (path === '/api/projects') return reply({ items: [{ name: 'demo', display_name: 'Demo', path: 'D:/demo', dangling: false }] })
     if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated', version: '1.5.14', active_count: activeRun ? 1 : 0, supports_steering: supportsSteering })
-    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认', has_credentials: true, auth_state: 'authenticated' }] })
+    if (path === '/api/anti/profiles') return reply({
+      active: 'work',
+      profiles: [
+        { id: 'default', name: '系统默认', has_credentials: true, auth_state: 'authenticated' },
+        { id: 'work', name: '工作', has_credentials: true, auth_state: 'authenticated' },
+      ],
+    })
     if (path === '/api/anti/workers') {
       return reply({
         items: [{
@@ -2593,10 +2606,10 @@ it('converges UI to single-account mode with account pill, backup quota refresh,
     })
     await vi.waitFor(async () => {
       await flush()
-      expect(document.body.querySelector('button[aria-label="刷新额度：备用账号"]')).not.toBeNull()
+      expect(document.body.querySelector('button[aria-label="查询额度：备用账号"]')).not.toBeNull()
     })
     await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('button[aria-label="刷新额度：备用账号"]')!.click()
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="查询额度：备用账号"]')!.click()
     })
     await vi.waitFor(async () => {
       await flush()
@@ -3070,12 +3083,34 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
   const freshAt = new Date(Date.now() - 60_000).toISOString()
   const staleAt = new Date(Date.now() - 2 * 3_600_000).toISOString()
   const refreshCalls: string[] = []
-  let profilesPayload = {
-    active: 'default',
+  const tierPatches: Array<{ path: string; body: Record<string, unknown> }> = []
+  let profilesPayload: {
+    active: string
+    profiles: Array<{
+      id: string
+      name: string
+      has_credentials: boolean
+      auth_state: string
+      account_tier?: string
+      account_tier_name?: string
+      usage?: {
+        checked_at: string
+        min_remaining_pct: number
+        rows: Array<{ model: string; limit: string; remaining_pct: number; resets_at: string | null }>
+      }
+    }>
+  } = {
+    active: 'main',
     profiles: [
       {
         id: 'default',
         name: '系统默认',
+        has_credentials: true,
+        auth_state: 'authenticated',
+      },
+      {
+        id: 'main',
+        name: '主账号',
         has_credentials: true,
         auth_state: 'authenticated',
         account_tier: 'ultra',
@@ -3118,13 +3153,31 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
     })
     if (path === '/api/anti/status') return reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' })
     if (path === '/api/anti/profiles') return reply(profilesPayload)
+    if (path.startsWith('/api/anti/profiles/') && init?.method === 'PATCH') {
+      const body = JSON.parse(String(init.body || '{}')) as Record<string, unknown>
+      tierPatches.push({ path, body })
+      const targetId = path.split('/').pop()
+      profilesPayload = {
+        ...profilesPayload,
+        profiles: profilesPayload.profiles.map(p => (
+          p.id === targetId
+            ? {
+                ...p,
+                account_tier: (body.account_tier as string) || undefined,
+                account_tier_name: body.account_tier === 'pro' ? 'Google AI Pro' : undefined,
+              }
+            : p
+        )),
+      }
+      return reply(profilesPayload)
+    }
     if (path === '/api/projects') return reply({ items: [] })
     if (path.startsWith('/api/file-transfer')) return reply([])
     if (path === '/api/anti/sessions') return reply([])
     if (path === '/api/anti/workers') return reply({ items: [] })
     if (path.startsWith('/api/anti/account-usage') && init?.method === 'POST') {
       refreshCalls.push(path)
-      return reply({ state: 'authenticated', rows: profilesPayload.profiles[0].usage.rows })
+      return reply({ state: 'authenticated', rows: profilesPayload.profiles[1].usage!.rows })
     }
     return reply({})
   }))
@@ -3142,64 +3195,66 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
       expect(host.querySelector('[data-anti-account-pill]')).not.toBeNull()
     })
 
-    // Outer pill shows tier visual effect + full tier name in tooltip, WITHOUT adding tier text label (Option 2B)
+    // Outer pill keeps cached 5h percentage & tier visual effect without tier text label
     const outerPill = host.querySelector<HTMLButtonElement>('[data-anti-account-pill]')!
     expect(outerPill.dataset.accountTier).toBe('ultra')
     expect(outerPill.className).toContain('ga-account-pill--ultra')
     expect(outerPill.getAttribute('title')).toContain('Google AI Ultra')
+    expect(outerPill.textContent).toContain('40%')
     expect(outerPill.textContent).not.toMatch(/ultra/i)
 
-    // Open Account Management modal -> NO automatic refresh-all or quota probe is triggered
+    // Open Account Management modal -> NO automatic refresh-all or quota probe, and 'default' is excluded from cards
     await act(async () => { outerPill.click() })
     await vi.waitFor(async () => {
       await flush()
-      expect(document.body.querySelector('[data-account-card="default"]')).not.toBeNull()
+      expect(document.body.querySelector('[data-account-card="main"]')).not.toBeNull()
     })
     expect(refreshCalls).toEqual([])
 
     const dialog = document.body.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')!
     expect(dialog.querySelector('h2')?.textContent).toBe('账号管理')
     expect(dialog.querySelector('[role="tab"]')).toBeNull()
+    expect(dialog.querySelector('[data-account-card="default"]')).toBeNull()
     expect(dialog.textContent).not.toContain('所有会话共用上下文与配置')
     expect(dialog.querySelector('button[aria-label="刷新全部额度"]')).toBeNull()
 
-    // Layer 1 shows Gemini 5h & weekly progress bars + account tier badge, with ONLY two buttons per card
-    const defaultCard = dialog.querySelector('[data-account-card="default"]')!
+    // Account cards show clean identity + tier badge without proactive quota bars
+    const mainCard = dialog.querySelector('[data-account-card="main"]')!
     const backupCard = dialog.querySelector('[data-account-card="backup"]')!
-    expect(defaultCard.querySelector('[data-account-tier-badge="ultra"]')?.textContent).toContain('Ultra')
+    expect(mainCard.querySelector('[data-account-tier-badge="ultra"]')?.textContent).toContain('Ultra')
     expect(backupCard.querySelector('[data-account-tier-badge="pro"]')?.textContent).toContain('Pro')
-    expect(defaultCard.querySelector('[aria-label="系统默认 Gemini 5h 额度"]')?.getAttribute('aria-valuenow')).toBe('82')
-    expect(defaultCard.querySelector('[aria-label="系统默认 Gemini 周 额度"]')?.getAttribute('aria-valuenow')).toBe('64.5')
-    expect(defaultCard.textContent).toContain('82%')
-    expect(defaultCard.textContent).toContain('64.5%')
-    // Layer 2 detailed Claude & GPT rows are hidden until card is expanded
-    expect(defaultCard.querySelector('[data-account-quota-details="default"]')).toBeNull()
-    expect(defaultCard.textContent).not.toContain('Claude & GPT')
-    // Strictly one expand button + one settings button on the card
-    expect(defaultCard.querySelectorAll('button')).toHaveLength(2)
-    expect(defaultCard.querySelector('button[aria-label="账号设置：系统默认"]')).not.toBeNull()
+    expect(mainCard.querySelector('[role="progressbar"]')).toBeNull()
+    expect(mainCard.querySelector('[data-account-quota-details="main"]')).toBeNull()
+    expect(mainCard.querySelector('button[aria-label="查询额度：主账号"]')).not.toBeNull()
+    expect(mainCard.querySelector('button[aria-label="账号设置：主账号"]')).not.toBeNull()
+    expect(backupCard.querySelector('button[aria-label="切换到备用账号"]')).not.toBeNull()
 
-    // Click card summary to expand Layer 2 detailed progress bars
-    const expandBtn = defaultCard.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!
-    await act(async () => { expandBtn.click() })
-    await flush()
-    const details = defaultCard.querySelector('[data-account-quota-details="default"]')
-    expect(details).not.toBeNull()
-    expect(details?.textContent).toContain('Claude & GPT (shared)')
-    expect(details?.textContent).toContain('40%')
-    expect(details?.querySelectorAll('[role="progressbar"]')).toHaveLength(4)
+    // Click "查询额度" on card -> probes backend and expands shared quota progress bars (with '(shared)' stripped)
+    const queryBtn = mainCard.querySelector<HTMLButtonElement>('button[aria-label="查询额度：主账号"]')!
+    await act(async () => { queryBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(refreshCalls).toEqual(['/api/anti/account-usage?profile_id=main'])
+      expect(mainCard.querySelector('[data-account-quota-details="main"]')).not.toBeNull()
+    })
+    const details = mainCard.querySelector('[data-account-quota-details="main"]')!
+    expect(details.querySelector('[data-anti-quota-bars]')).not.toBeNull()
+    expect(details.textContent).toContain('Claude & GPT')
+    expect(details.textContent).not.toContain('(shared)')
+    expect(details.textContent).toContain('40%')
+    expect(details.querySelectorAll('[role="progressbar"]')).toHaveLength(4)
 
-    // Navigate into account settings -> manual single-account refresh works cleanly
+    // Navigate into account settings -> manual tier tagging works cleanly via PATCH
     await act(async () => {
-      defaultCard.querySelector<HTMLButtonElement>('button[aria-label="账号设置：系统默认"]')!.click()
+      mainCard.querySelector<HTMLButtonElement>('button[aria-label="账号设置：主账号"]')!.click()
     })
     await flush()
     expect(dialog.querySelector('[data-account-settings-tier="ultra"]')?.textContent).toContain('Google AI Ultra')
-    const singleRefreshBtn = dialog.querySelector<HTMLButtonElement>('button[aria-label="刷新额度：系统默认"]')!
-    await act(async () => { singleRefreshBtn.click() })
+    const proTierBtn = dialog.querySelector<HTMLButtonElement>('[data-account-tier-option="pro"]')!
+    await act(async () => { proTierBtn.click() })
     await vi.waitFor(async () => {
       await flush()
-      expect(refreshCalls).toEqual(['/api/anti/account-usage?profile_id=default'])
+      expect(tierPatches).toEqual([{ path: '/api/anti/profiles/main', body: { account_tier: 'pro' } }])
     })
     await act(async () => { dialog.querySelector<HTMLButtonElement>('button[aria-label="返回账号列表"]')!.click() })
     await flush()
@@ -3208,13 +3263,13 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
     profilesPayload = {
       ...profilesPayload,
       profiles: profilesPayload.profiles.map(p => (
-        p.id === 'default' ? { ...p, auth_state: 'login_required' } : p
+        p.id === 'main' ? { ...p, auth_state: 'login_required' } : p
       )),
     }
     await act(async () => { await cache.refetchQueries({ queryKey: ['agy-profiles'] }) })
     await vi.waitFor(async () => {
       await flush()
-      expect(host.querySelector<HTMLButtonElement>('[data-anti-account-pill]')?.className).not.toContain('ga-account-pill--ultra')
+      expect(host.querySelector<HTMLButtonElement>('[data-anti-account-pill]')?.className).not.toContain('ga-account-pill--pro')
     })
   } finally {
     await act(async () => root.unmount())
@@ -3280,7 +3335,7 @@ it('previews cached quota popover on hover without network refresh, keeps open o
     })
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     expect(usageCalls).toBe(0)
-    expect(dialog()?.textContent).toContain('缓存 ·')
+    expect(dialog()?.textContent).toContain('缓存 ')
     expect(dialog()?.textContent).toContain('82%')
     expect(dialog()?.textContent).toContain('64.5%')
 
@@ -3487,10 +3542,12 @@ it('keeps cached quota rows and layout stable while pending or failing, then syn
     const refreshBtn = dialog()!.querySelector<HTMLButtonElement>('button[aria-label="刷新反重力额度"]')!
     expect(refreshBtn.className).toContain('w-[4.25rem]')
     expect(refreshBtn.textContent).toBe('检测中')
-    // Status subline & sorted cached rows stay intact while refreshing (no hide/pop jump)
-    expect(dialog()!.querySelector('[data-anti-usage-status]')?.textContent).toContain('缓存 ·')
-    const pendingModels = [...dialog()!.querySelectorAll('ul > li')].map(li => li.querySelector('span')?.textContent)
-    expect(pendingModels).toEqual(['Gemini', 'Claude & GPT (shared)'])
+    // Status line & sorted cached progress bars stay intact while refreshing (no hide/pop jump, '(shared)' stripped)
+    expect(dialog()!.querySelector('[data-anti-usage-status]')?.textContent).toContain('缓存 ')
+    expect(dialog()!.querySelectorAll('[role="progressbar"]')).toHaveLength(2)
+    const pendingModels = [...dialog()!.querySelectorAll('[data-anti-quota-bars] > li')].map(li => li.querySelector('span')?.textContent)
+    expect(pendingModels).toEqual(['Gemini', 'Claude & GPT'])
+    expect(dialog()!.textContent).not.toContain('(shared)')
 
     // Empty probe failure keeps existing rows and shows detail message below
     await act(async () => {
@@ -3607,12 +3664,20 @@ it('renders per-model cost breakdown in AntiAccountUsageButton stats footer', as
     await flush()
     await flush()
 
+    // Per-model breakdown is collapsed by default behind the "明细" button, and strips (规划)/(执行) suffixes
+    expect(dialog()?.querySelector('[data-anti-usage-by-model]')).toBeNull()
+    const toggleBtn = dialog()?.querySelector<HTMLButtonElement>('[data-anti-usage-breakdown-toggle]')
+    expect(toggleBtn).not.toBeNull()
+    expect(toggleBtn!.textContent).toContain('明细')
+    await act(async () => { toggleBtn!.click() })
+    await flush()
+
     const byModelEl = dialog()?.querySelector('[data-anti-usage-by-model]')
     expect(byModelEl).not.toBeNull()
-    expect(byModelEl!.textContent).toContain('分模型明细')
-    expect(byModelEl!.textContent).toContain('按官方 API 价估算')
-    expect(byModelEl!.textContent).toContain('Gemini 4 Neon(规划)')
-    expect(byModelEl!.textContent).toContain('Claude Sonnet 5.5(执行)')
+    expect(byModelEl!.textContent).toContain('Gemini 4 Neon')
+    expect(byModelEl!.textContent).toContain('Claude Sonnet 5.5')
+    expect(byModelEl!.textContent).not.toContain('(规划)')
+    expect(byModelEl!.textContent).not.toContain('(执行)')
     expect(byModelEl!.textContent).toContain('~$0.003')
     expect(byModelEl!.textContent).toContain('~$0.0012')
   } finally {

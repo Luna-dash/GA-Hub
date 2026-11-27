@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown } from 'lucide-react'
+import { Check, ChevronDown, Settings2 } from 'lucide-react'
 import clsx from 'clsx'
 import type { AntiModels, AntiOrchestratorPreset } from '@/api/client'
 import { Z_LAYERS } from '@/config/zLayers'
@@ -456,25 +456,13 @@ export function AntiModelSelector({
                       triggerRef.current?.focus()
                     }}
                     className={clsx(
-                      'flex w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-sm text-ink transition-colors hover:bg-accent-soft/60',
-                      item.subtitle ? 'min-h-[40px]' : 'min-h-[32px]',
+                      'flex min-h-[32px] w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-sm text-ink transition-colors hover:bg-accent-soft/60',
                       isSelected && 'bg-accent-soft/75 font-medium',
                     )}
                   >
-                    {item.subtitle ? (
-                      <div className="min-w-0 flex-1">
-                        <div className="model-select-label truncate whitespace-nowrap">
-                          {item.name}
-                        </div>
-                        <div className="mt-0.5 truncate text-[11px] font-normal leading-tight text-ink-muted">
-                          {item.subtitle}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="model-select-label min-w-0 flex-1 truncate whitespace-nowrap">
-                        {item.name}
-                      </span>
-                    )}
+                    <span className="model-select-label min-w-0 flex-1 truncate whitespace-nowrap">
+                      {item.name}
+                    </span>
                     {item.isOrchestrator && (
                       <span className="shrink-0 rounded bg-bg-soft px-1.5 py-0.5 text-[10px] font-medium text-ink-muted">
                         Orch
@@ -486,52 +474,59 @@ export function AntiModelSelector({
               )
             })}
           </div>
-          {hasEffort && (
-            <div className="shrink-0 border-t border-line/60 bg-bg-soft/50 px-2.5 py-2">
-              <div role="radiogroup" aria-label="思考等级" className="flex flex-wrap items-center justify-center gap-1">
-                {effortOptions.map(option => {
-                  const active = option.key === effort
-                  return (
-                    <button
-                      key={option.key}
-                      type="button"
-                      role="radio"
-                      aria-checked={active}
-                      aria-label={option.name}
-                      title={option.name}
-                      data-anti-effort-option={option.key}
-                      onClick={() => {
-                        onSelectEffort(option.key)
-                        setOpen(false)
-                        triggerRef.current?.focus()
-                      }}
-                      className={clsx(
-                        'rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors',
-                        active
-                          ? 'bg-accent text-[var(--c-accent-fg)] shadow-sm'
-                          : 'border border-line/70 bg-bg-card text-ink-muted hover:border-accent/60 hover:text-ink',
-                      )}
-                    >
-                      {EFFORT_SHORT_LABELS[option.key] ?? option.name}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-          {onOpenOrchestratorSettings && (
-            <div className="shrink-0 border-t border-line/60 bg-bg-soft/50 px-2.5 py-1.5 text-center text-[11px]">
-              <button
-                type="button"
-                data-anti-open-model-settings
-                className="ga-btn-link px-1 py-0.5 text-[11px]"
-                onClick={() => {
-                  setOpen(false)
-                  onOpenOrchestratorSettings()
-                }}
-              >
-                模型筛选与 Orch 预设 →
-              </button>
+          {(hasEffort || onOpenOrchestratorSettings) && (
+            <div
+              data-anti-model-footer
+              className="flex shrink-0 items-center justify-between gap-2 border-t border-line/60 bg-bg-soft/50 px-2.5 py-1.5"
+            >
+              {hasEffort ? (
+                <div role="radiogroup" aria-label="思考等级" className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                  {effortOptions.map(option => {
+                    const active = option.key === effort
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        aria-label={option.name}
+                        title={option.name}
+                        data-anti-effort-option={option.key}
+                        onClick={() => {
+                          onSelectEffort(option.key)
+                          setOpen(false)
+                          triggerRef.current?.focus()
+                        }}
+                        className={clsx(
+                          'rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors',
+                          active
+                            ? 'bg-accent text-[var(--c-accent-fg)] shadow-sm'
+                            : 'border border-line/70 bg-bg-card text-ink-muted hover:border-accent/60 hover:text-ink',
+                        )}
+                      >
+                        {EFFORT_SHORT_LABELS[option.key] ?? option.name}
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : (
+                <span className="text-[11px] text-ink-muted">Orch 预设</span>
+              )}
+              {onOpenOrchestratorSettings && (
+                <button
+                  type="button"
+                  data-anti-open-model-settings
+                  aria-label="模型筛选与 Orch 预设"
+                  title="模型筛选与 Orch 预设"
+                  onClick={() => {
+                    setOpen(false)
+                    onOpenOrchestratorSettings()
+                  }}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line/70 bg-bg-card text-ink-muted transition-colors hover:border-accent/60 hover:text-ink"
+                >
+                  <Settings2 size={13} aria-hidden="true" />
+                </button>
+              )}
             </div>
           )}
         </div>,

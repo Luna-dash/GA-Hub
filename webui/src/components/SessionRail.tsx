@@ -29,8 +29,8 @@ import {
   CollapseChevronsIcon,
   Download,
   PinGlyph,
-  Plus,
   RailFoldGlyph,
+  SquarePen,
   Trash2,
 } from './ActionIcons'
 
@@ -405,14 +405,9 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                 disabled={creating}
                 aria-label="新建会话"
                 data-testid="create-session-empty"
-                className="group/new inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-[10px] border border-accent/35 bg-accent-soft/80 px-3 text-[13px] font-semibold tracking-wide text-accent shadow-[inset_0_1px_0_var(--c-inset-highlight),0_1px_2px_rgb(var(--c-accent-rgb)/0.10)] transition-all hover:border-accent hover:bg-accent hover:text-[var(--c-accent-fg)] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_2px_6px_rgb(var(--c-accent-rgb)/0.22)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:cursor-not-allowed disabled:opacity-50"
+                className="group/new inline-flex h-[34px] min-w-0 flex-1 items-center gap-2 rounded-[9px] border border-accent/35 bg-accent-soft/80 px-3 text-[13px] font-medium tracking-wide text-accent shadow-[inset_0_1px_0_var(--c-inset-highlight),0_1px_2px_rgb(var(--c-accent-rgb)/0.08)] transition-all hover:border-accent hover:bg-accent hover:text-[var(--c-accent-fg)] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_2px_6px_rgb(var(--c-accent-rgb)/0.20)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <span
-                  aria-hidden="true"
-                  className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-accent text-[var(--c-accent-fg)] shadow-[0_1px_2px_rgba(0,0,0,0.12)] transition-colors group-hover/new:bg-[color-mix(in_srgb,var(--c-accent-fg)_18%,transparent)] group-hover/new:text-[var(--c-accent-fg)]"
-                >
-                  <Plus className="h-3.5 w-3.5" strokeWidth={2.4} />
-                </span>
+                <SquarePen className="h-[15px] w-[15px] shrink-0" strokeWidth={1.85} aria-hidden="true" />
                 <span className="truncate">{creating ? '创建中…' : '新会话'}</span>
               </button>
             )}
@@ -423,9 +418,9 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                 aria-label="历史导入"
                 title="从历史导入…"
                 data-testid="create-session-import"
-                className="inline-flex h-9 w-9 flex-none items-center justify-center rounded-[10px] border border-line/80 bg-bg-card/90 text-ink-muted shadow-[inset_0_1px_0_var(--c-inset-highlight),0_1px_2px_rgba(45,34,22,0.05)] transition-all hover:border-accent/55 hover:bg-bg-card hover:text-ink active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                className="inline-flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[9px] border border-line/80 bg-bg-card/80 text-ink-muted shadow-[inset_0_1px_0_var(--c-inset-highlight),0_1px_2px_rgba(45,34,22,0.04)] transition-all hover:border-accent/55 hover:bg-bg-card hover:text-ink active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
               >
-                <Download className="h-4 w-4" strokeWidth={1.9} aria-hidden="true" />
+                <Download className="h-[14px] w-[14px]" strokeWidth={1.85} aria-hidden="true" />
               </button>
             )}
           </div>

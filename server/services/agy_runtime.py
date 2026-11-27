@@ -2821,6 +2821,10 @@ class AgyRuntimeManager:
         with self._lock:
             return agy_profile.rename(profile_id, name)
 
+    def set_profile_tier(self, profile_id: str, account_tier: str | None) -> dict[str, Any]:
+        with self._lock:
+            return agy_profile.set_account_tier(profile_id, account_tier)
+
     @contextmanager
     def _profile_change(self, profile_id: str):
         with self._lock:

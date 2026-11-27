@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Gauge, LoaderCircle, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronUp, Gauge, LoaderCircle, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
 import { Z_LAYERS } from '@/config/zLayers'
 import {
@@ -14,12 +14,10 @@ import {
 } from '@/api/client'
 import {
   formatCompactTokens,
-  formatQuotaPct,
   formatEstimatedUsd,
-  modelRoleLabel,
-  quotaLimitDisplayLabel,
   sortQuotaRows,
 } from '@/utils/antiUsage'
+import { AntiQuotaProgressList, formatQuotaTime } from './AntiQuotaProgressList'
 
 const HOVER_CLOSE_DELAY_MS = 150
 
@@ -42,16 +40,6 @@ async function checkUsage(profileId?: string): Promise<AntiAccountUsage> {
     }
     throw error
   }
-}
-
-const resetFormat = new Intl.DateTimeFormat('zh-CN', {
-  month: 'numeric', day: 'numeric',
-  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-})
-
-function formatReset(value: string) {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '时间未知' : resetFormat.format(date)
 }
 
 export function AntiAccountUsageButton({
@@ -114,6 +102,7 @@ export function AntiAccountUsageButton({
   }, [])
   const [pinned, setPinned] = useState(false)
   const [hovered, setHovered] = useState(false)
+  const [showBreakdown, setShowBreakdown] = useState(false)
   const open = pinned || hovered
   const hoveredRef = useRef(hovered)
   hoveredRef.current = hovered
@@ -220,24 +209,26 @@ export function AntiAccountUsageButton({
   )
   const rows = useLiveSnapshot ? liveSnapshot!.rows : cachedRows
   const displayCheckedAt = useLiveSnapshot ? liveSnapshot!.checkedAt : cachedUsage?.checked_at
-  const statusLine = !running
-    ? (cachedUsage?.checked_at ? `离线缓存 · ${formatReset(cachedUsage.checked_at)}` : null)
-    : useLiveSnapshot && displayCheckedAt
-      ? `更新于 ${formatReset(displayCheckedAt)}`
-      : cachedRows?.length && cachedUsage?.checked_at
-        ? `缓存 · ${formatReset(cachedUsage.checked_at)}`
-        : null
+  const checkedTimeText = formatQuotaTime(displayCheckedAt)
+  const statusLine = !checkedTimeText
+    ? null
+    : !running
+      ? `缓存 ${checkedTimeText}`
+      : useLiveSnapshot
+        ? `更新于 ${checkedTimeText}`
+        : `缓存 ${checkedTimeText}`
   const coolingPools = (pools.data ?? []).filter(
     p => p.status === 'cooling_down' || (p.cooldown_remaining_seconds ?? 0) > 0,
   )
   const message = !running ? '请先启用 Agy 运行时。'
-    : usage.isPending ? '正在检测官方额度…'
+    : usage.isPending ? '正在检测额度…'
       : usage.isError ? usage.error.message
         : usage.data?.detail ? usage.data.detail
-          : usage.data?.state === 'login_required' ? '请先登录 agy，再重新检测。'
-            : usage.data ? '未能读取官方额度，请重试。'
-              : '点击检测官方剩余额度。'
+          : usage.data?.state === 'login_required' ? '请先登录 agy 后再检测。'
+            : usage.data ? '未能读取剩余额度，请重试。'
+              : '点击刷新查询剩余额度。'
   const Icon = usage.isPending ? LoaderCircle : Gauge
+  const byModelItems = stats.data?.by_model ?? []
 
   return (
     <div className="relative inline-flex">
@@ -273,18 +264,18 @@ export function AntiAccountUsageButton({
       {open && position && createPortal(
         <div
           ref={panel}
-          className="fixed w-[min(20rem,calc(100vw-16px))] pt-2"
+          className="fixed w-[min(21rem,calc(100vw-16px))] pt-2"
           style={{ top: position.top, left: position.left, zIndex: Z_LAYERS.tooltip }}
           onMouseEnter={handlePointerEnter}
           onMouseLeave={handlePointerLeave}
         >
           <div id={popoverId} tabIndex={-1} role="dialog" aria-label="反重力剩余额度" className="ga-paper-popover overflow-y-auto overscroll-contain rounded-xl p-3 text-xs text-ink" style={{ maxHeight: position.maxHeight }}>
             <div className="flex items-center justify-between gap-2">
-              <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                <span className="shrink-0 font-semibold">反重力剩余额度</span>
-                {profileName && (
-                  <span className="truncate rounded bg-bg-soft px-1.5 py-0.5 text-[10px] font-medium text-ink-muted" title={profileName}>
-                    {profileName}
+              <div className="flex min-w-0 flex-1 items-baseline gap-2">
+                <span className="shrink-0 font-semibold text-ink">剩余额度</span>
+                {statusLine && (
+                  <span data-anti-usage-status className="min-w-0 truncate text-[11px] tabular-nums text-ink-muted" title={statusLine}>
+                    {statusLine}
                   </span>
                 )}
               </div>
@@ -293,7 +284,7 @@ export function AntiAccountUsageButton({
                   type="button"
                   className="ga-btn-link w-[4.25rem] shrink-0 justify-end whitespace-nowrap px-1 py-0 text-[11px]"
                   aria-label="刷新反重力额度"
-                  title="重新检测官方额度"
+                  title="刷新剩余额度"
                   disabled={usage.isPending}
                   onClick={() => {
                     cancelHoverClose()
@@ -308,42 +299,21 @@ export function AntiAccountUsageButton({
                 </button>
               )}
             </div>
-            {statusLine && (
-              <div data-anti-usage-status className="mt-0.5 text-[11px] tabular-nums text-ink-muted">
-                {statusLine}
-              </div>
-            )}
             {rows?.length ? (
-              <ul className="mt-1 divide-y divide-line/45">
-                {rows.map(row => (
-                  <li key={`${row.model}-${row.limit}`} className="space-y-0.5 py-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 flex-1 truncate font-medium" title={row.model}>{row.model}</span>
-                      <span className="w-12 shrink-0 text-right font-semibold tabular-nums">{formatQuotaPct(row.remaining_pct)}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 text-ink-muted">
-                      <span className="min-w-0 truncate">{quotaLimitDisplayLabel(row.limit)}</span>
-                      {row.resets_at ? (
-                        <time dateTime={row.resets_at} className="shrink-0 whitespace-nowrap text-right tabular-nums">{formatReset(row.resets_at)} 重置</time>
-                      ) : (
-                        <span className="shrink-0 whitespace-nowrap text-right">满额未消耗</span>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="mt-1 text-ink-muted">{message}</p>}
+              <AntiQuotaProgressList
+                rows={rows}
+                ariaPrefix={profileName || '剩余额度'}
+                className="mt-2.5"
+              />
+            ) : <p className="mt-2 text-ink-muted">{message}</p>}
             {running && usage.isError && rows && rows.length > 0 && (
-              <p className="mt-1 text-[11px] text-status-danger">{usage.error.message}</p>
+              <p className="mt-1.5 text-[11px] text-status-danger">{usage.error.message}</p>
             )}
             {running && !usage.isError && usage.data && !usage.data.rows.length && usage.data.detail && rows && rows.length > 0 && (
-              <p className="mt-1 text-[11px] text-status-danger">{usage.data.detail}</p>
-            )}
-            {!running && rows?.length && (
-              <p className="mt-1 text-[11px] text-ink-muted">Agy 运行时已停止；启用后点击图标即可刷新实时额度。</p>
+              <p className="mt-1.5 text-[11px] text-status-danger">{usage.data.detail}</p>
             )}
             {running && (coolingPools.length > 0 || resetBreaker.isError || stats.data) && (
-              <div className="mt-2 space-y-1.5 border-t border-line/70 pt-2">
+              <div className="mt-2.5 space-y-1.5 border-t border-line/65 pt-2">
                 {coolingPools.length > 0 && (
                   <div
                     data-anti-cooldown-alert
@@ -365,49 +335,50 @@ export function AntiAccountUsageButton({
                 )}
                 {resetBreaker.isError && <p className="text-[11px] text-status-danger">{resetBreaker.error.message}</p>}
                 {stats.data && (
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[11px] tabular-nums text-ink-muted">
-                    <span>
-                      今日 {stats.data.total_runs} 轮
-                      {(stats.data.model_calls ?? 0) > 0 ? ` · ${stats.data.model_calls} 次调用` : ''}
-                      （成功 {stats.data.success_runs}）
-                    </span>
-                    <span title={`${stats.data.total_tokens.toLocaleString('en-US')} tokens`}>
+                  <div className="space-y-1 text-[11px] tabular-nums text-ink-muted">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate">
+                        今日对话 {stats.data.total_runs} (成功 {stats.data.success_runs})
+                        {(stats.data.model_calls ?? 0) > 0 ? ` · 调用 ${stats.data.model_calls}` : ''}
+                      </span>
+                      {byModelItems.length > 0 && (
+                        <button
+                          type="button"
+                          data-anti-usage-breakdown-toggle
+                          aria-expanded={showBreakdown}
+                          onClick={() => setShowBreakdown(v => !v)}
+                          className="ga-btn-link inline-flex shrink-0 items-center gap-0.5 px-1 py-0 text-[11px] text-ink-muted hover:text-ink"
+                        >
+                          <span>明细</span>
+                          {showBreakdown
+                            ? <ChevronUp size={12} aria-hidden="true" />
+                            : <ChevronDown size={12} aria-hidden="true" />}
+                        </button>
+                      )}
+                    </div>
+                    <div title={`${stats.data.total_tokens.toLocaleString('en-US')} tokens`}>
                       {formatCompactTokens(stats.data.total_tokens)} tok
                       {(stats.data.tokens_per_sec ?? 0) > 0
                         ? ` · ${stats.data.tokens_per_sec! >= 100 ? Math.round(stats.data.tokens_per_sec!) : stats.data.tokens_per_sec!.toFixed(1)} tok/s`
                         : ''}
                       {' · '}缓存 {Math.min(100, Math.round(stats.data.cache_hit_ratio * 100))}%
                       {stats.data.estimated_cost_usd > 0 ? ` · ~${formatEstimatedUsd(stats.data.estimated_cost_usd)}` : ''}
-                    </span>
+                    </div>
                   </div>
                 )}
-                {stats.data && (stats.data.by_model?.length ?? 0) > 0 && (
+                {showBreakdown && byModelItems.length > 0 && (
                   <div
                     data-anti-usage-by-model
-                    className="mt-1.5 border-t border-border/50 pt-1.5 space-y-1 text-[10px]"
+                    className="mt-1.5 space-y-1 border-t border-line/45 pt-1.5 text-[10px]"
                   >
-                    <div className="flex items-center justify-between text-ink-muted/80">
-                      <span>分模型明细</span>
-                      <span title="按官方公开 API 定价估算，实际计费以账号订阅额度为准">
-                        按官方 API 价估算
-                      </span>
-                    </div>
-                    {stats.data.by_model!.map((item) => {
-                      const roles = (item.roles ?? []).filter((r) => r && r !== 'model' && r !== 'legacy')
+                    {byModelItems.map((item) => {
                       const totalTok = item.input_tokens + Math.max(item.output_tokens, item.thinking_tokens)
                       return (
                         <div
                           key={item.model}
                           className="flex items-center justify-between gap-2 tabular-nums text-ink-secondary"
                         >
-                          <span className="truncate">
-                            {item.display_name || item.model}
-                            {roles.length > 0 ? (
-                              <span className="ml-1 text-ink-muted">
-                                ({roles.map((r) => modelRoleLabel(r)).join('/')})
-                              </span>
-                            ) : null}
-                          </span>
+                          <span className="truncate">{item.display_name || item.model}</span>
                           <span className="shrink-0 text-ink-muted">
                             {item.calls > 0 ? `${item.calls}次 · ` : ''}
                             {formatCompactTokens(totalTok)} tok

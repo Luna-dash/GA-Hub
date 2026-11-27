@@ -3,6 +3,7 @@ import {
   currentHourStartMs,
   formatCompactTokens,
   formatEstimatedUsd,
+  formatQuotaModelName,
   formatQuotaPct,
   formatRunUsage,
   geminiQuotaSummary,
@@ -148,6 +149,9 @@ describe('quotaLimitDisplayLabel and sortQuotaRows', () => {
     expect(quotaLimitDisplayLabel('Pro Weekly Limit')).toBe('每周额度')
     expect(quotaLimitDisplayLabel('Reported Quota')).toBe('当前额度')
     expect(quotaLimitDisplayLabel('Custom Limit')).toBe('Custom Limit')
+    expect(formatQuotaModelName('Claude & GPT (shared)')).toBe('Claude & GPT')
+    expect(formatQuotaModelName('Claude & GPT (SHARED) ')).toBe('Claude & GPT')
+    expect(formatQuotaModelName('Gemini')).toBe('Gemini')
   })
 
   it('deduplicates display rows and orders families & windows deterministically', () => {

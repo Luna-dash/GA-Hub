@@ -5286,7 +5286,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AgyProfileCreate"
+                "$ref": "#/components/schemas/AgyProfilePatch"
               }
             }
           }
@@ -8325,6 +8325,47 @@
           "name"
         ],
         "title": "AgyProfileCreate"
+      },
+      "AgyProfilePatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "account_tier": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ultra",
+                  "pro",
+                  "plus",
+                  "enterprise",
+                  "free"
+                ]
+              },
+              {
+                "type": "string",
+                "const": ""
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Tier"
+          }
+        },
+        "type": "object",
+        "title": "AgyProfilePatch"
       },
       "AgyProfileUsageSnapshot": {
         "properties": {

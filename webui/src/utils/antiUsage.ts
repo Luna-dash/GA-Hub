@@ -58,6 +58,10 @@ export function quotaLimitDisplayLabel(limit: string): string {
   return limit
 }
 
+export function formatQuotaModelName(model: string): string {
+  return model.replace(/\s*\(shared\)\s*$/i, '').trim() || model
+}
+
 const QUOTA_MODEL_RANK: Record<string, number> = {
   gemini: 0,
   'gemini argon': 1,
