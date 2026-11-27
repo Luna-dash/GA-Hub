@@ -122,4 +122,35 @@ describe('Memory tab deep links', () => {
     await act(async () => tab('SKILL').click())
     expectSelected('SKILL')
   })
+
+  it('supports arrow-key, Home/End, and roving tabIndex navigation across Memory tabs', async () => {
+    await mount('/memory?tab=sop')
+    expect(tab('SOP').tabIndex).toBe(0)
+    expect(tab('SKILL').tabIndex).toBe(-1)
+    expect(tab('L1').tabIndex).toBe(-1)
+    expect(tab('L2').tabIndex).toBe(-1)
+
+    tab('SOP').focus()
+    await act(async () => tab('SOP').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
+    expectSelected('SKILL')
+    expect(tab('SKILL').tabIndex).toBe(0)
+    expect(tab('SOP').tabIndex).toBe(-1)
+    expect(document.activeElement).toBe(tab('SKILL'))
+
+    await act(async () => tab('SKILL').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })))
+    expectSelected('L2')
+    expect(document.activeElement).toBe(tab('L2'))
+
+    await act(async () => tab('L2').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
+    expectSelected('SOP')
+    expect(document.activeElement).toBe(tab('SOP'))
+
+    await act(async () => tab('SOP').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })))
+    expectSelected('L2')
+    expect(document.activeElement).toBe(tab('L2'))
+
+    await act(async () => tab('L2').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })))
+    expectSelected('SOP')
+    expect(document.activeElement).toBe(tab('SOP'))
+  })
 })

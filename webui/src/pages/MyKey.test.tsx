@@ -622,4 +622,39 @@ describe('MyKey upload button visibility', () => {
       }),
     }))
   })
+
+  it('supports arrow-key and roving tabIndex navigation on edit mode tablist and keeps focus on dirty cancel', async () => {
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    await mountFixture()
+    const tabs = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="tablist"][aria-label="编辑模式"] [role="tab"]'))
+    const [structuredTab, rawTab] = tabs
+    expect(structuredTab.tabIndex).toBe(0)
+    expect(rawTab.tabIndex).toBe(-1)
+
+    structuredTab.focus()
+    await act(async () => structuredTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
+    await settle()
+    expect(rawTab.getAttribute('aria-selected')).toBe('true')
+    expect(rawTab.tabIndex).toBe(0)
+    expect(structuredTab.tabIndex).toBe(-1)
+    expect(document.activeElement).toBe(rawTab)
+
+    const rawEditor = host.querySelector<HTMLTextAreaElement>('textarea')!
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(rawEditor, 'dirty = 1')
+      rawEditor.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    rawTab.focus()
+    await act(async () => rawTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })))
+    await settle()
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(rawTab.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(rawTab)
+
+    await act(async () => rawTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })))
+    await settle()
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(structuredTab.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(structuredTab)
+  })
 })

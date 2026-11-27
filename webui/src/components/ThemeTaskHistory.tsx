@@ -5,6 +5,7 @@ import { ChatSocket } from '@/runtime/chatSocket'
 import { applyEvent, historyToMessages, prependUniqueHistory, type ChatMsg } from '@/stores/chatStore'
 import { scanTranscript } from '@/utils/transcriptProtocol'
 import { errorMessageFromError } from '@/utils/sessionUi'
+import { handleTabListKeyDown } from '@/utils/tabListA11y'
 import { ThemeConversationHistory } from './ThemeConversationHistory'
 import { ArrowDown, ArrowRight, RefreshIcon, StatusIconBadge } from './ActionIcons'
 
@@ -12,16 +13,18 @@ const action = 'ga-btn-sm'
 
 /** Read-only session projection. Never activates or mutates the global chat store. */
 export type ThemeTaskTab = 'report' | 'current' | 'history'
+const THEME_TASK_TABS: readonly ThemeTaskTab[] = ['report', 'current', 'history']
 export function ThemeTaskTabs({ tab, onChange }: { tab: ThemeTaskTab; onChange: (tab: ThemeTaskTab) => void }) {
   return <div role="tablist" aria-label="任务内容" className="flex min-w-0 items-center gap-1">
-    {([['report', '结论'], ['current', '本次过程'], ['history', '会话历史']] as const).map(([key, label]) => <button key={key} type="button" role="tab" tabIndex={tab === key ? 0 : -1} aria-selected={tab === key} onKeyDown={event => {
-      const keys: ThemeTaskTab[] = ['report', 'current', 'history']
-      const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
-      if (!direction && event.key !== 'Home' && event.key !== 'End') return
-      event.preventDefault()
-      const index = event.key === 'Home' ? 0 : event.key === 'End' ? 2 : (keys.indexOf(key) + direction + 3) % 3
-      onChange(keys[index]); (event.currentTarget.parentElement?.children[index] as HTMLElement)?.focus()
-    }} className={`whitespace-nowrap rounded-md px-3 py-2 text-xs transition-colors ${tab === key ? 'bg-accent/10 font-medium text-accent' : 'text-ink-faint hover:bg-bg-soft hover:text-accent'}`} onClick={() => onChange(key)}>{label}</button>)}
+    {([['report', '结论'], ['current', '本次过程'], ['history', '会话历史']] as const).map(([key, label]) => <button key={key} type="button" role="tab" tabIndex={tab === key ? 0 : -1} aria-selected={tab === key} onKeyDown={event => handleTabListKeyDown({
+      event,
+      items: THEME_TASK_TABS,
+      current: tab,
+      onSelect: (next, focusTarget) => {
+        onChange(next)
+        focusTarget()
+      },
+    })} className={`whitespace-nowrap rounded-md px-3 py-2 text-xs transition-colors ${tab === key ? 'bg-accent/10 font-medium text-accent' : 'text-ink-faint hover:bg-bg-soft hover:text-accent'}`} onClick={() => onChange(key)}>{label}</button>)}
   </div>
 }
 export function ThemeTaskHistory({ sessionId, runId, active, children, expanded = true, selectedTab, onTabChange }: {

@@ -34,7 +34,11 @@ import { usePageState } from '@/utils/pageState'
 import { toast } from '@/stores/toastStore'
 import { extractErrorMessage } from '@/utils/errors'
 import { errorMessageFromError, structuredErrorDetailFromError } from '@/utils/sessionUi'
+import { handleTabListKeyDown } from '@/utils/tabListA11y'
 import { formatDurationSeconds } from '@/utils/timeFormat'
+
+const CONDUCTOR_MOBILE_TABS = ['board', 'context'] as const
+const CONDUCTOR_CONTEXT_TABS = ['delivery', 'activity'] as const
 
 const SUBAGENT_MODEL_LOCK_KEY = storageKeys.conductorSubagentModelLocked
 
@@ -769,8 +773,32 @@ export default function Conductor() {
           </div>
         )}
         <div className="conductor-mobile-tabs" role="tablist" aria-label="工作区视图">
-          <button type="button" role="tab" aria-selected={mobileView === 'board'} onClick={() => setMobileView('board')}>当前任务</button>
-          <button type="button" role="tab" aria-selected={mobileView === 'context'} onClick={() => setMobileView('context')}>详情</button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mobileView === 'board'}
+            tabIndex={mobileView === 'board' ? 0 : -1}
+            onClick={() => setMobileView('board')}
+            onKeyDown={(event) => handleTabListKeyDown({
+              event,
+              items: CONDUCTOR_MOBILE_TABS,
+              current: mobileView,
+              onSelect: (next, focusTarget) => { setMobileView(next); focusTarget() },
+            })}
+          >当前任务</button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mobileView === 'context'}
+            tabIndex={mobileView === 'context' ? 0 : -1}
+            onClick={() => setMobileView('context')}
+            onKeyDown={(event) => handleTabListKeyDown({
+              event,
+              items: CONDUCTOR_MOBILE_TABS,
+              current: mobileView,
+              onSelect: (next, focusTarget) => { setMobileView(next); focusTarget() },
+            })}
+          >详情</button>
         </div>
         <div className="conductor-layout" data-mobile-view={mobileView}>
           {/* Left column = the task narrative: the board (task card + worker
@@ -851,8 +879,36 @@ export default function Conductor() {
           </section>
           <aside className="conductor-context" aria-label="任务详情">
             <div className="conductor-context-tabs" role="tablist" aria-label="任务内容">
-              <button type="button" id="conductor-tab-delivery" role="tab" aria-controls="conductor-panel-delivery" aria-selected={contextTab === 'delivery'} onClick={() => setContextTab('delivery')}><FileCheck2 size={14} />交付详情</button>
-              <button type="button" id="conductor-tab-activity" role="tab" aria-controls="conductor-panel-activity" aria-selected={contextTab === 'activity'} onClick={() => setContextTab('activity')}><Activity size={14} />动态</button>
+              <button
+                type="button"
+                id="conductor-tab-delivery"
+                role="tab"
+                aria-controls="conductor-panel-delivery"
+                aria-selected={contextTab === 'delivery'}
+                tabIndex={contextTab === 'delivery' ? 0 : -1}
+                onClick={() => setContextTab('delivery')}
+                onKeyDown={(event) => handleTabListKeyDown({
+                  event,
+                  items: CONDUCTOR_CONTEXT_TABS,
+                  current: contextTab,
+                  onSelect: (next, focusTarget) => { setContextTab(next); focusTarget() },
+                })}
+              ><FileCheck2 size={14} />交付详情</button>
+              <button
+                type="button"
+                id="conductor-tab-activity"
+                role="tab"
+                aria-controls="conductor-panel-activity"
+                aria-selected={contextTab === 'activity'}
+                tabIndex={contextTab === 'activity' ? 0 : -1}
+                onClick={() => setContextTab('activity')}
+                onKeyDown={(event) => handleTabListKeyDown({
+                  event,
+                  items: CONDUCTOR_CONTEXT_TABS,
+                  current: contextTab,
+                  onSelect: (next, focusTarget) => { setContextTab(next); focusTarget() },
+                })}
+              ><Activity size={14} />动态</button>
             </div>
             <section role="tabpanel" id="conductor-panel-delivery" aria-labelledby="conductor-tab-delivery" hidden={contextTab !== 'delivery'} className="conductor-context-panel">
               {selectedWorker ? (

@@ -40,6 +40,7 @@ import { waitForDesktopRestart } from '@/utils/backendRestart'
 import { getMyKeyShowUpload, setMyKeyShowUpload } from '@/utils/mykeySyncUi'
 import { extractErrorMessage } from '@/utils/errors'
 import { errorMessageFromError } from '@/utils/sessionUi'
+import { handleTabListKeyDown } from '@/utils/tabListA11y'
 import { queryKeys } from '@/queries/queryKeys'
 const SETTINGS_TABS = [
   { id: 'general', label: '目录与环境', description: 'GenericAgent 项目目录与 Python 执行环境', icon: Settings2 },
@@ -55,6 +56,7 @@ const SETTINGS_TABS = [
 ] as const
 
 type SettingsTab = typeof SETTINGS_TABS[number]['id']
+const SETTINGS_TAB_IDS: readonly SettingsTab[] = SETTINGS_TABS.map((tab) => tab.id)
 
 function isSettingsTab(value: string | null): value is SettingsTab {
   return Boolean(value && SETTINGS_TABS.some((tab) => tab.id === value))
@@ -212,7 +214,7 @@ function SettingsInner({
       <div className={inSetup ? 'ga-page-dossier-narrow' : 'ga-page-dossier grid grid-cols-[5.5rem_minmax(0,1fr)] sm:grid-cols-[12rem_minmax(0,1fr)] items-start gap-5 sm:gap-6'}>
         {!inSetup && (
           <div role="tablist" aria-label="设置分类" aria-orientation="vertical" className="ga-paper-card sticky top-5 flex flex-col gap-0.5 p-1.5">
-            {SETTINGS_TABS.map(({ id, label, icon: Icon }, index) => (
+            {SETTINGS_TABS.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
                 type="button"
@@ -222,15 +224,16 @@ function SettingsInner({
                 aria-selected={activeTab === id}
                 tabIndex={activeTab === id ? 0 : -1}
                 onClick={() => selectTab(id)}
-                onKeyDown={(event) => {
-                  const next = event.key === 'ArrowDown' ? (index + 1) % SETTINGS_TABS.length
-                    : event.key === 'ArrowUp' ? (SETTINGS_TABS.length + index - 1) % SETTINGS_TABS.length
-                    : event.key === 'Home' ? 0 : event.key === 'End' ? SETTINGS_TABS.length - 1 : null
-                  if (next === null) return
-                  event.preventDefault()
-                  selectTab(SETTINGS_TABS[next].id)
-                  event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
-                }}
+                onKeyDown={(event) => handleTabListKeyDown({
+                  event,
+                  items: SETTINGS_TAB_IDS,
+                  current: activeTab,
+                  orientation: 'vertical',
+                  onSelect: (next, focusTarget) => {
+                    selectTab(next)
+                    focusTarget()
+                  },
+                })}
                 className={`flex flex-col sm:flex-row items-center gap-1 sm:gap-2.5 rounded-lg px-2 sm:px-3 py-2 text-xs sm:text-sm text-center sm:text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${activeTab === id ? 'bg-accent/15 text-accent font-medium' : 'text-ink-muted hover:bg-bg-soft hover:text-ink'}`}
               >
                 <Icon size={16} className="shrink-0" aria-hidden="true" />

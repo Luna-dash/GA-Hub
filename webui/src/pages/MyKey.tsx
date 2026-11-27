@@ -34,6 +34,7 @@ import { usePageState } from '@/utils/pageState'
 import { getMyKeyShowUpload, MYKEY_SHOW_UPLOAD_EVENT, MYKEY_SYNC_CONFIRM, myKeySyncSuccess, myKeySyncFailure } from '@/utils/mykeySyncUi'
 import { extractErrorMessage } from '@/utils/errors'
 import { errorMessageFromError, myKeyParseErrorFromError } from '@/utils/sessionUi'
+import { handleTabListKeyDown } from '@/utils/tabListA11y'
 import {
   ArrowDown,
   ArrowUp,
@@ -53,6 +54,7 @@ import {
 } from '@/components/ActionIcons'
 
 type Tab = 'structured' | 'raw'
+const MYKEY_TABS: readonly Tab[] = ['structured', 'raw']
 
 // One source of truth for channel order, icons, labels and accent colors.
 const SESSION_META = {
@@ -92,8 +94,8 @@ export default function MyKey() {
   const setRawDirty = useCallback((dirty: boolean) => { rawDirtyRef.current = dirty }, [])
   const setProxyDirty = useCallback((dirty: boolean) => { proxyDirtyRef.current = dirty }, [])
 
-  const switchTab = async (next: Tab) => {
-    if (next === tab) return
+  const switchTab = async (next: Tab): Promise<boolean> => {
+    if (next === tab) return true
     const dirtyMessage = tab === 'raw' && rawDirtyRef.current
       ? '原始视图有未保存的编辑，切换标签将丢失这些修改。'
       : tab === 'structured' && proxyDirtyRef.current
@@ -104,11 +106,12 @@ export default function MyKey() {
         confirmText: '放弃修改',
         tone: 'danger',
       })
-      if (!ok) return
+      if (!ok) return false
       rawDirtyRef.current = false
       proxyDirtyRef.current = false
     }
     setTab(next)
+    return true
   }
 
   const autoSync = useQuery({
@@ -227,13 +230,22 @@ export default function MyKey() {
       actions={
         <div className="flex flex-wrap items-center justify-end gap-2 text-sm">
           <div className="ga-segmented text-xs" role="tablist" aria-label="编辑模式">
-            {(['structured', 'raw'] as Tab[]).map((t) => (
+            {MYKEY_TABS.map((t) => (
               <button
                 key={t}
                 type="button"
                 role="tab"
                 aria-selected={tab === t}
+                tabIndex={tab === t ? 0 : -1}
                 onClick={() => { void switchTab(t) }}
+                onKeyDown={(event) => handleTabListKeyDown({
+                  event,
+                  items: MYKEY_TABS,
+                  current: tab,
+                  onSelect: async (next, focusTarget) => {
+                    if (await switchTab(next)) focusTarget()
+                  },
+                })}
                 className={`ga-segmented-btn ${tab === t ? 'ga-segmented-btn-active' : ''}`}
               >
                 {t === 'structured' ? '结构化' : '原始'}

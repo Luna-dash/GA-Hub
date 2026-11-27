@@ -13,8 +13,10 @@ import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
 import { writeClipboard } from '@/utils/clipboard'
 import { errorMessageFromError } from '@/utils/sessionUi'
+import { handleTabListKeyDown } from '@/utils/tabListA11y'
 
 type Tab = 'sop' | 'skill' | 'insight' | 'global'
+const MEMORY_TABS: readonly Tab[] = ['sop', 'skill', 'insight', 'global']
 
 export function filterSops<T extends { name: string }>(sops: T[], query: string): T[] {
   const needle = query.trim().toLowerCase()
@@ -97,14 +99,23 @@ export default function Memory() {
       title="记忆体系"
       actions={
         <div className="ga-segmented text-sm" role="tablist" aria-label="记忆层级">
-          {(['sop', 'skill', 'insight', 'global'] as Tab[]).map((t) => (
+          {MEMORY_TABS.map((t) => (
             <button
               key={t}
               type="button"
               role="tab"
               aria-selected={tab === t}
+              tabIndex={tab === t ? 0 : -1}
               title={tabTitle(t)}
               onClick={() => changeSelection(t)}
+              onKeyDown={(event) => handleTabListKeyDown({
+                event,
+                items: MEMORY_TABS,
+                current: tab,
+                onSelect: (next, focusTarget) => changeSelection(next, null, (accepted) => {
+                  if (accepted) focusTarget()
+                }),
+              })}
               className={`ga-segmented-btn w-16 text-sm ${tab === t ? 'ga-segmented-btn-active' : ''}`}
             >
               {t === 'sop' ? 'SOP' : t === 'skill' ? 'SKILL' : t === 'insight' ? 'L1' : 'L2'}

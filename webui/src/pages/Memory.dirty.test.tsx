@@ -195,4 +195,32 @@ describe('Memory unsaved draft guard', () => {
     expect(host.querySelector('[data-path]')?.textContent).toBe('/chat')
     expect(hasDirtyGuard()).toBe(false)
   })
+
+  it('keeps tab selection and focus on current tab when arrow-key switch is cancelled on dirty editor', async () => {
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    await act(async () => root.render(
+      <MemoryRouter initialEntries={['/memory?tab=insight']}>
+        <QueryClientProvider client={client}>
+          <Memory />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    ))
+    await vi.waitFor(() => expect(host.querySelector('textarea[aria-label="编辑器"]')).not.toBeNull())
+    setEditorText('unsaved insight')
+
+    const l1Tab = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((b) => b.textContent === 'L1')!
+    const l2Tab = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((b) => b.textContent === 'L2')!
+    l1Tab.focus()
+    await act(async () => l1Tab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
+    await settle()
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(l1Tab.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(l1Tab)
+
+    await act(async () => l1Tab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
+    await settle()
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(l2Tab.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(l2Tab)
+  })
 })
