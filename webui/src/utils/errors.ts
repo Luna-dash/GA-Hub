@@ -1,4 +1,6 @@
 const MAX_DEPTH = 4
+const ENVELOPE_KEYS = ['message', 'msg', 'detail', 'error', 'code'] as const
+const ENVELOPE_KEY_SET = new Set<string>(ENVELOPE_KEYS)
 
 function isEmptySerializedText(raw: string): boolean {
   const trimmed = raw.trim()
@@ -47,7 +49,7 @@ function extractFromArray(items: unknown[], depth = 0): string | null {
 
 function extractFromObject(payload: Record<string, unknown>, serializeFallback: boolean, depth = 0): string | null {
   if (depth > MAX_DEPTH) return null
-  for (const key of ['message', 'msg', 'detail', 'error', 'code']) {
+  for (const key of ENVELOPE_KEYS) {
     const candidate = payload[key]
     if (typeof candidate === 'string' && !isEmptySerializedText(candidate)) {
       const unwrapped = unwrapJsonString(candidate, depth + 1)
@@ -64,7 +66,8 @@ function extractFromObject(payload: Record<string, unknown>, serializeFallback: 
       if (nested) return nested
     }
   }
-  if (serializeFallback && Object.keys(payload).length > 0) {
+  const keys = Object.keys(payload)
+  if (serializeFallback && keys.some((key) => !ENVELOPE_KEY_SET.has(key))) {
     try {
       return JSON.stringify(payload)
     } catch {
