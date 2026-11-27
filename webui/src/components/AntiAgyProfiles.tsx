@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Building2, Crown, Gem, RefreshCw, Sparkles, UserRound } from 'lucide-react'
-import { ChevronDown, ChevronLeft, ChevronRight, RefreshIcon, Settings2, Trash2, X } from '@/components/ActionIcons'
+import { ChevronDown, ChevronLeft, ChevronRight, Plus, Settings2, Trash2, X } from '@/components/ActionIcons'
 import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
 import { antiApi, type AgyCodeLoginState } from '@/api/client'
-import { ModalOverlay } from '@/components/ModalOverlay'
+import { Z_LAYERS } from '@/config/zLayers'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import {
   fiveHourRemainingPct,
@@ -19,10 +19,10 @@ import type { useAntiDaemonStatus } from './AntiDaemonControl'
 
 type Profiles = components['schemas']['AgyProfiles']
 type Profile = components['schemas']['AgyProfile']
-type ModalView =
+type PanelView =
   | { kind: 'list' }
   | { kind: 'account'; profileId: string }
-  | { kind: 'settings' }
+  | { kind: 'add' }
 
 type Action =
   | { kind: 'create'; name: string }
@@ -85,12 +85,6 @@ function renderTierPillIcon(tier: AgyAccountTier | undefined, fallbackAccent: bo
   }
 }
 
-function formatIdleSeconds(seconds: number) {
-  if (seconds < 60) return `${seconds}s`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
-  return `${Math.floor(seconds / 3600)}h`
-}
-
 export function useAgyProfiles() {
   return useQuery({
     queryKey: key,
@@ -113,17 +107,17 @@ export function AntiAgyProfiles({
   daemon?: ReturnType<typeof useAntiDaemonStatus>
   open?: boolean
   onOpenChange?: (open: boolean) => void
-  initialView?: 'list' | 'settings'
+  initialView?: 'list' | 'add'
 }) {
   const cache = useQueryClient()
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
   const open = controlledOpen ?? uncontrolledOpen
-  const setOpen = (next: boolean) => {
+  const setOpen = useCallback((next: boolean) => {
     if (controlledOpen === undefined) setUncontrolledOpen(next)
     onOpenChange?.(next)
-  }
+  }, [controlledOpen, onOpenChange])
 
-  const [view, setView] = useState<ModalView>({ kind: initialView })
+  const [view, setView] = useState<PanelView>({ kind: initialView })
   const prevSyncKeyRef = useRef('')
   const syncKey = `${open}:${initialView}`
   if (prevSyncKeyRef.current !== syncKey) {
@@ -137,13 +131,14 @@ export function AntiAgyProfiles({
   const [name, setName] = useState('')
   const [renameDraft, setRenameDraft] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [showLogs, setShowLogs] = useState(false)
-  const [showWorkers, setShowWorkers] = useState(false)
-  const [resettingSid, setResettingSid] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [codeLogin, setCodeLogin] = useState<AgyCodeLoginState | null>(null)
   const [authCode, setAuthCode] = useState('')
   const prevLoginProfile = useRef<string | null | undefined>(undefined)
+  const popoverId = useId()
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState<{ top: number; left: number; width: number; maxHeight: number }>()
 
   const accountViewId = view.kind === 'account' ? view.profileId : null
   const viewedProfile = useMemo(
@@ -171,38 +166,6 @@ export function AntiAgyProfiles({
     }
     prevLoginProfile.current = current
   }, [profiles.data?.login_profile, refresh])
-
-  const logs = useQuery({
-    queryKey: ['anti-daemon-logs'],
-    enabled: open && view.kind === 'settings' && showLogs,
-    queryFn: ({ signal }) => antiApi.daemonLogs(80, signal),
-    retry: false,
-  })
-  const workers = useQuery({
-    queryKey: ['anti-workers'],
-    enabled: open && view.kind === 'settings',
-    queryFn: ({ signal }) => antiApi.workers(signal),
-    refetchInterval: open && view.kind === 'settings' ? 3_000 : false,
-    retry: false,
-  })
-  const workerItems = Array.isArray(workers.data?.items) ? workers.data.items : []
-  const resetWorker = useMutation({
-    mutationFn: ({ sid, force }: { sid: string; force: boolean }) => antiApi.resetSession(sid, force),
-    onMutate: ({ sid }) => {
-      setMessage('')
-      setResettingSid(sid)
-    },
-    onSuccess: (_, { sid, force }) => {
-      setMessage(force ? '已强制重连会话进程（保留上下文）。' : '已释放空闲会话进程。')
-      void cache.invalidateQueries({ queryKey: ['anti-workers'] })
-      void cache.invalidateQueries({ queryKey: ['anti-sessions'] })
-      void cache.invalidateQueries({ queryKey: ['anti-runs', sid] })
-      daemon?.refresh()
-    },
-    onSettled: () => {
-      setResettingSid(null)
-    },
-  })
 
   const action = useMutation({
     mutationFn: async (args: Action) => {
@@ -368,13 +331,13 @@ export function AntiAgyProfiles({
   const profileCount = orderedProfiles.length
   const usingHiddenDefault = Boolean(profiles.data?.active === 'default')
   const loginProfile = profiles.data?.login_profile
-  const cancelActiveCodeLogin = (flow: AgyCodeLoginState | null) => {
+  const cancelActiveCodeLogin = useCallback((flow: AgyCodeLoginState | null) => {
     if (!flow || (flow.phase !== 'starting' && flow.phase !== 'waiting_code')) return
     void antiApi.cancelCodeLogin(flow.flow_id).catch(() => undefined).finally(() => {
       void cache.invalidateQueries({ queryKey: key, exact: true })
     })
-  }
-  const navigateTo = (next: ModalView) => {
+  }, [cache])
+  const navigateTo = (next: PanelView) => {
     cancelActiveCodeLogin(codeLogin)
     setCodeLogin(null)
     setAuthCode('')
@@ -383,23 +346,68 @@ export function AntiAgyProfiles({
     action.reset()
     setView(next)
   }
-  const close = () => {
+  const close = useCallback(() => {
     if (action.isPending || codeLoginStart.isPending || codeLoginSubmit.isPending) return
     cancelActiveCodeLogin(codeLogin)
     setOpen(false)
     setView({ kind: 'list' })
     setConfirmDeleteId(null)
-    setShowLogs(false)
-    setShowWorkers(false)
-    setResettingSid(null)
     setCodeLogin(null)
     setAuthCode('')
     setMessage('')
     action.reset()
-    resetWorker.reset()
     codeLoginStart.reset()
     codeLoginSubmit.reset()
-  }
+  }, [action, cancelActiveCodeLogin, codeLogin, codeLoginStart, codeLoginSubmit, setOpen])
+  const closeRef = useRef(close)
+  closeRef.current = close
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const update = () => {
+      const anchor = triggerRef.current?.getBoundingClientRect()
+      if (!anchor) return
+      const width = Math.min(400, window.innerWidth - 16)
+      const next = {
+        top: anchor.bottom,
+        left: Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8)),
+        width,
+        maxHeight: Math.max(0, Math.min(window.innerHeight - anchor.bottom - 16, 480)),
+      }
+      setPosition(prev => (
+        prev
+        && prev.top === next.top
+        && prev.left === next.left
+        && prev.width === next.width
+        && prev.maxHeight === next.maxHeight
+          ? prev
+          : next
+      ))
+    }
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !triggerRef.current?.contains(event.target) && !panelRef.current?.contains(event.target)) {
+        closeRef.current()
+      }
+    }
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      closeRef.current()
+      triggerRef.current?.focus()
+    }
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    document.addEventListener('pointerdown', outside, true)
+    document.addEventListener('keydown', escape)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+      document.removeEventListener('pointerdown', outside, true)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [open])
+
   const disabled = action.isPending || profiles.isError
   const add = (event: FormEvent) => {
     event.preventDefault()
@@ -415,17 +423,7 @@ export function AntiAgyProfiles({
     : action.variables?.kind === 'check-usage' ? '正在查询额度…'
     : '正在添加账号…'
 
-  const compactBtn = 'ga-btn-sm h-7 shrink-0 px-2 py-0 text-[11px]'
-  const compactPrimaryBtn = 'ga-btn-sm-primary h-7 shrink-0 px-2.5 py-0 text-[11px]'
-  const compactDangerBtn = 'ga-btn-sm-danger h-7 shrink-0 px-2 py-0 text-[11px]'
-  const daemonError = daemon?.start.error ?? daemon?.stop.error ?? daemon?.restart.error
   const nonWindows = typeof navigator !== 'undefined' && /mac|linux|x11/i.test(navigator.platform)
-  const hasDaemonLifecycleBtns = Boolean(
-    daemon && (
-      (!daemon.running && daemon.state === 'stopped')
-      || ((daemon.running || daemon.state === 'unavailable') && daemon.managed)
-    ),
-  )
 
   const toggleExpand = (id: string) => {
     setExpandedIds(prev => ({ ...prev, [id]: !prev[id] }))
@@ -516,7 +514,7 @@ export function AntiAgyProfiles({
             {canQueryQuota && (
               <button
                 type="button"
-                className={compactBtn}
+                className="ga-btn-sm shrink-0 px-2 text-[11px]"
                 disabled={disabled}
                 aria-label={`查询额度：${profile.name}`}
                 onClick={() => action.mutate({ kind: 'check-usage', profileId: profile.id, profileName: profile.name })}
@@ -528,7 +526,7 @@ export function AntiAgyProfiles({
             {!isActive && (
               <button
                 type="button"
-                className={compactPrimaryBtn}
+                className="ga-btn-sm-primary shrink-0 text-[11px]"
                 disabled={disabled}
                 aria-label={`切换到${profile.name}`}
                 onClick={() => action.mutate({ kind: 'switch', profile })}
@@ -561,7 +559,7 @@ export function AntiAgyProfiles({
                     {checkedLabel && <span className="tabular-nums">更新于 {checkedLabel}</span>}
                     <button
                       type="button"
-                      className="ga-btn-link px-1 py-0 text-[11px] text-ink-muted hover:text-ink"
+                      className="ga-btn-link-muted px-1 py-0 text-[11px]"
                       onClick={() => toggleExpand(profile.id)}
                     >
                       收起
@@ -585,8 +583,6 @@ export function AntiAgyProfiles({
     const isActive = profile.id === selected?.id
     const badge = authBadge(profile, loginProfile === profile.id)
     const cooldownSec = profile.cooldown_seconds ?? 0
-    const checkedLabel = formatQuotaTime(profile.usage?.checked_at)
-    const detailRows = sortQuotaRows(profile.usage?.rows ?? [])
     const tierInfo = resolveAccountTier(profile.account_tier, profile.account_tier_name)
     const canClearCredentials = (profile.has_credentials || profile.auth_state === 'authenticated')
       && !(isActive && (daemon?.status.data?.active_count ?? 0) > 0)
@@ -594,74 +590,32 @@ export function AntiAgyProfiles({
     const currentTierValue: AgyAccountTier | '' = (profile.account_tier as AgyAccountTier | undefined) ?? ''
 
     return (
-      <div data-account-settings-view={profile.id} className="space-y-3">
-        <div className="space-y-2.5 rounded-xl border border-line/70 bg-bg-card p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <span className={clsx('shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none', badge.tone)}>
-                {badge.label}
-              </span>
-              {tierInfo && (
-                <span
-                  data-account-settings-tier={tierInfo.tier}
-                  className={clsx(
-                    'inline-flex shrink-0 items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none tracking-wide',
-                    tierInfo.cardBadgeClass,
-                  )}
-                >
-                  {tierInfo.glyph && <span aria-hidden="true">{tierInfo.glyph}</span>}
-                  <span>{tierInfo.fullLabel}</span>
-                </span>
+      <div data-account-settings-view={profile.id} className="space-y-2.5">
+        <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-line/65 bg-bg-card/80 px-2.5 py-2">
+          <span className={clsx('shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none', badge.tone)}>
+            {badge.label}
+          </span>
+          {tierInfo && (
+            <span
+              data-account-settings-tier={tierInfo.tier}
+              className={clsx(
+                'inline-flex shrink-0 items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none tracking-wide',
+                tierInfo.cardBadgeClass,
               )}
-              {cooldownSec > 0 && (
-                <span className="shrink-0 rounded border border-status-warning-line bg-status-warning-soft px-1.5 py-0.5 text-[10px] font-medium leading-none tabular-nums text-status-warning">
-                  风控冷却 {cooldownSec}s
-                </span>
-              )}
-              {checkedLabel && (
-                <span className="text-[11px] text-ink-muted tabular-nums">
-                  更新于 {checkedLabel}
-                </span>
-              )}
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {(!daemon || daemon.running) && (isActive || profile.has_credentials) && (
-                <button
-                  type="button"
-                  className={compactBtn}
-                  disabled={disabled}
-                  aria-label={`查询额度：${profile.name}`}
-                  onClick={() => action.mutate({ kind: 'check-usage', profileId: profile.id, profileName: profile.name })}
-                >
-                  <RefreshCw className="h-3 w-3" aria-hidden="true" />
-                  <span>查询额度</span>
-                </button>
-              )}
-              {!isActive && (
-                <button
-                  type="button"
-                  className={compactPrimaryBtn}
-                  disabled={disabled}
-                  aria-label={`切换到${profile.name}`}
-                  onClick={() => action.mutate({ kind: 'switch', profile })}
-                >
-                  设为当前账号
-                </button>
-              )}
-            </div>
-          </div>
-          {detailRows.length > 0 && (
-            <div className="border-t border-line/50 pt-2">
-              <AntiQuotaProgressList rows={detailRows} ariaPrefix={profile.name} />
-            </div>
+            >
+              {tierInfo.glyph && <span aria-hidden="true">{tierInfo.glyph}</span>}
+              <span>{tierInfo.fullLabel}</span>
+            </span>
+          )}
+          {cooldownSec > 0 && (
+            <span className="shrink-0 rounded border border-status-warning-line bg-status-warning-soft px-1.5 py-0.5 text-[10px] font-medium leading-none tabular-nums text-status-warning">
+              风控冷却 {cooldownSec}s
+            </span>
           )}
         </div>
 
-        <div className="space-y-2 rounded-xl border border-line/70 bg-bg-card p-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-ink">账号档位</span>
-            <span className="text-[11px] text-ink-muted">手动标记，用于卡片与顶部徽章显示</span>
-          </div>
+        <div className="space-y-2 rounded-xl border border-line/70 bg-bg-card p-2.5">
+          <span className="block text-xs font-semibold text-ink">账号档位</span>
           <div role="radiogroup" aria-label="账号档位" className="flex flex-wrap items-center gap-1.5">
             {ACCOUNT_TIER_OPTIONS.map(opt => {
               const activeOpt = currentTierValue === opt.value
@@ -679,7 +633,7 @@ export function AntiAgyProfiles({
                     }
                   }}
                   className={clsx(
-                    'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
+                    'rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
                     activeOpt
                       ? 'bg-accent text-[var(--c-accent-fg)] shadow-sm'
                       : 'border border-line/70 bg-bg-soft/60 text-ink-muted hover:border-accent/60 hover:text-ink',
@@ -692,12 +646,12 @@ export function AntiAgyProfiles({
           </div>
         </div>
 
-        <div className="space-y-2 rounded-xl border border-line/70 bg-bg-card p-3">
+        <div className="space-y-2 rounded-xl border border-line/70 bg-bg-card p-2.5">
           <span className="block text-xs font-semibold text-ink">授权与凭据</span>
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
-              className={compactBtn}
+              className="ga-btn-sm shrink-0 px-2 text-[11px]"
               disabled={disabled || codeLoginStart.isPending}
               aria-label={`授权码登录：${profile.name}`}
               onClick={() => codeLoginStart.mutate(profile.id)}
@@ -707,7 +661,7 @@ export function AntiAgyProfiles({
             {!nonWindows && (
               <button
                 type="button"
-                className={compactBtn}
+                className="ga-btn-sm shrink-0 px-2 text-[11px]"
                 disabled={disabled}
                 aria-label={`官方登录：${profile.name}`}
                 onClick={() => action.mutate({ kind: 'login', profile })}
@@ -718,7 +672,7 @@ export function AntiAgyProfiles({
             {canClearCredentials && (
               <button
                 type="button"
-                className={compactBtn}
+                className="ga-btn-sm-danger shrink-0 px-2 text-[11px]"
                 disabled={disabled}
                 aria-label={`清除凭据：${profile.name}`}
                 onClick={() => action.mutate({ kind: 'logout', profile })}
@@ -729,7 +683,7 @@ export function AntiAgyProfiles({
           </div>
           {nonWindows && (
             <p className="text-[11px] text-ink-muted">
-              当前系统请使用「授权码登录」，或到右上角「设置」中使用「从当前登录另存」。
+              当前系统请使用「授权码登录」，或到「添加账号」中使用「从当前登录另存」。
             </p>
           )}
           {showCodeLoginForm && codeLogin && (
@@ -765,12 +719,12 @@ export function AntiAgyProfiles({
                       aria-label="Google 授权码"
                       className="h-7 min-w-0 flex-1 rounded-md border border-line bg-bg-card px-2 text-xs text-ink outline-none focus:border-accent"
                     />
-                    <button type="submit" className={compactPrimaryBtn} disabled={!authCode.trim() || codeLoginSubmit.isPending}>
+                    <button type="submit" className="ga-btn-sm-primary shrink-0 text-[11px]" disabled={!authCode.trim() || codeLoginSubmit.isPending}>
                       {codeLoginSubmit.isPending ? '提交中…' : '提交授权码'}
                     </button>
                     <button
                       type="button"
-                      className={compactBtn}
+                      className="ga-btn-sm shrink-0 px-2 text-[11px]"
                       aria-label="刷新授权状态"
                       onClick={() => {
                         void antiApi.codeLoginStatus(codeLogin.flow_id).then(next => {
@@ -789,7 +743,7 @@ export function AntiAgyProfiles({
                     </button>
                     <button
                       type="button"
-                      className={compactBtn}
+                      className="ga-btn-sm shrink-0 px-2 text-[11px]"
                       onClick={() => {
                         cancelActiveCodeLogin(codeLogin)
                         setCodeLogin(null)
@@ -834,7 +788,7 @@ export function AntiAgyProfiles({
               />
               <button
                 type="submit"
-                className={compactPrimaryBtn}
+                className="ga-btn-sm-primary h-8 shrink-0 text-xs"
                 disabled={disabled || !renameDraft.trim() || renameDraft.trim() === profile.name}
               >
                 保存备注
@@ -850,7 +804,7 @@ export function AntiAgyProfiles({
               <div className="flex shrink-0 items-center gap-1.5">
                 <button
                   type="button"
-                  className="ga-btn-danger h-7 shrink-0 rounded-md px-2.5 py-0 text-[11px]"
+                  className="ga-btn-sm-solid-danger shrink-0 text-[11px]"
                   disabled={disabled}
                   aria-label={`确认删除：${profile.name}`}
                   onClick={() => action.mutate({ kind: 'delete', profile })}
@@ -859,7 +813,7 @@ export function AntiAgyProfiles({
                 </button>
                 <button
                   type="button"
-                  className={compactBtn}
+                  className="ga-btn-sm shrink-0 px-2 text-[11px]"
                   disabled={disabled}
                   onClick={() => setConfirmDeleteId(null)}
                 >
@@ -869,7 +823,7 @@ export function AntiAgyProfiles({
             ) : (
               <button
                 type="button"
-                className={compactDangerBtn}
+                className="ga-btn-sm-danger shrink-0 px-2 text-[11px]"
                 disabled={disabled}
                 aria-label={`删除账号：${profile.name}`}
                 onClick={() => setConfirmDeleteId(profile.id)}
@@ -884,182 +838,46 @@ export function AntiAgyProfiles({
     )
   }
 
-  const renderSharedSettings = () => {
+  const renderAddAccount = () => {
     return (
-      <div data-account-management-settings className="space-y-3">
-        <form onSubmit={add} className="rounded-xl border border-line/70 bg-bg-card p-3">
-          <div className="flex items-baseline justify-between gap-2">
-            <label htmlFor="agy-profile-name" className="text-xs font-semibold text-ink">添加账号</label>
-            <span id="agy-add-help" className="text-[11px] text-ink-muted">新建空白账号或复制当前登录</span>
-          </div>
-          <div className="mt-2 flex items-center gap-1.5">
-            <input
-              id="agy-profile-name"
-              value={name}
-              maxLength={64}
-              onChange={event => setName(event.target.value)}
-              disabled={disabled}
-              aria-label="账号备注"
-              aria-describedby="agy-add-help"
-              placeholder="输入备注，如：工作账号"
-              className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-bg-soft/50 px-2.5 text-xs text-ink outline-none focus:border-accent"
-            />
-            <button
-              type="submit"
-              className="ga-btn-sm h-8 shrink-0 px-2.5 py-0 text-xs"
-              disabled={disabled || !name.trim()}
-            >
-              添加
-            </button>
-            <button
-              type="button"
-              className="ga-btn-sm h-8 shrink-0 px-2.5 py-0 text-xs"
-              disabled={disabled || !name.trim()}
-              onClick={() => {
-                if (!disabled && profiles.data && name.trim()) {
-                  action.mutate({ kind: 'capture', name: name.trim() })
-                }
-              }}
-            >
-              从当前登录另存
-            </button>
-          </div>
-        </form>
-
-        <div className="rounded-xl border border-line/70 bg-bg-card p-3 text-xs">
-          <div className="font-semibold text-ink">额度查询方式</div>
-          <p className="mt-0.5 text-[11px] text-ink-muted">
-            为避免后台高频探测触发账号风控，已关闭整点自动与批量刷新；可在顶部额度按钮或单个账号详情页手动按需查询。
-          </p>
+      <form onSubmit={add} data-account-add-view className="space-y-2.5 rounded-xl border border-line/70 bg-bg-card p-3">
+        <div className="flex items-baseline justify-between gap-2">
+          <label htmlFor="agy-profile-name" className="text-xs font-semibold text-ink">账号备注</label>
+          <span id="agy-add-help" className="text-[11px] text-ink-muted">新建空白账号或复制当前登录</span>
         </div>
-
-        {daemon && (
-          <div className="rounded-xl border border-line/70 bg-bg-card p-3 text-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-1.5">
-                <span className={clsx('h-2 w-2 shrink-0 rounded-full', daemonDotClass)} aria-hidden="true" />
-                <span className="font-semibold text-ink">{daemonStateLabel}</span>
-                {daemon.running && daemon.status.data?.version && (
-                  <span className="font-mono text-[11px] text-ink-muted">v{daemon.status.data.version}</span>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  className={clsx(compactBtn, showWorkers && 'border-accent/60 bg-accent-soft/45 text-ink')}
-                  onClick={() => {
-                    setShowWorkers(v => !v)
-                    setShowLogs(false)
-                  }}
-                >
-                  {showWorkers ? '隐藏进程' : `活跃进程${workerItems.length > 0 ? ` (${workerItems.length})` : ''}`}
-                </button>
-                <button
-                  type="button"
-                  className={clsx(compactBtn, showLogs && 'border-accent/60 bg-accent-soft/45 text-ink')}
-                  onClick={() => {
-                    setShowLogs(v => !v)
-                    setShowWorkers(false)
-                  }}
-                >
-                  {showLogs ? '隐藏日志' : 'ACP 日志'}
-                </button>
-                {hasDaemonLifecycleBtns && <span aria-hidden="true" className="mx-0.5 h-3.5 w-px bg-line/70" />}
-                {!daemon.running && daemon.state === 'stopped' && (
-                  <button type="button" className={compactBtn} disabled={daemon.busy} onClick={() => daemon.start.mutate()}>启用 Agy</button>
-                )}
-                {(daemon.running || daemon.state === 'unavailable') && daemon.managed && (
-                  <button type="button" className={compactBtn} disabled={daemon.busy} onClick={() => daemon.restart.mutate(false)}>重置运行时</button>
-                )}
-                {daemon.running && daemon.managed && (
-                  <button type="button" className={compactBtn} disabled={daemon.busy} onClick={() => daemon.stop.mutate(false)}>停止运行时</button>
-                )}
-              </div>
-            </div>
-            {daemon.state === 'unavailable' && daemon.status.data?.detail && (
-              <p className="mt-1.5 text-[11px] text-status-danger">{daemon.status.data.detail}</p>
-            )}
-            {renderForceConflictBar('mt-2')}
-            {showWorkers && (
-              <div data-anti-workers-panel className="mt-2 space-y-1.5 border-t border-line/60 pt-2">
-                <div className="flex items-center justify-between text-[11px] text-ink-muted">
-                  <span>活跃会话进程（{workerItems.length}）</span>
-                  <button type="button" className="ga-btn-link" disabled={workers.isFetching} onClick={() => void workers.refetch()}>
-                    <RefreshIcon spinning={workers.isFetching} size={11} />
-                    <span>{workers.isFetching ? '刷新中…' : '刷新'}</span>
-                  </button>
-                </div>
-                {workers.error ? (
-                  <p className="text-[11px] text-status-danger">{workers.error.message}</p>
-                ) : workerItems.length > 0 ? (
-                  <ul className="space-y-1">
-                    {workerItems.map(worker => {
-                      const forceReset = worker.busy || worker.exit_pending || worker.dirty
-                      const stateLabel = worker.state === 'running' ? '运行中'
-                        : worker.state === 'retiring' ? '退出中'
-                        : worker.state === 'idle' ? `空闲 ${formatIdleSeconds(worker.idle_seconds)}`
-                        : '已停止'
-                      const stateTone = worker.state === 'running' ? 'text-accent font-medium'
-                        : worker.state === 'retiring' ? 'text-status-warning font-medium'
-                        : 'text-ink-muted'
-                      const isResetting = resetWorker.isPending && resettingSid === worker.session_id
-                      return (
-                        <li key={`${worker.profile_id}:${worker.session_id}`} className="flex items-center justify-between gap-2 rounded bg-bg-soft px-2.5 py-1.5">
-                          <div className="min-w-0 flex-1 space-y-0.5">
-                            <div className="flex items-center gap-1.5">
-                              <span className="truncate font-medium text-ink" title={worker.workspace}>
-                                {worker.session_title || worker.project || worker.session_id.slice(0, 8)}
-                              </span>
-                              {worker.project && worker.session_title && (
-                                <span className="shrink-0 rounded bg-bg-card px-1 py-0.5 text-[10px] text-ink-muted">{worker.project}</span>
-                              )}
-                              <span className="shrink-0 rounded bg-bg-card px-1 py-0.5 text-[10px] text-ink-muted">{worker.profile_name || worker.profile_id}</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-[11px] text-ink-muted tabular-nums">
-                              <span>PID {worker.pid ?? '—'}</span>
-                              <span className={stateTone}>{stateLabel}</span>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            className={forceReset ? compactDangerBtn : compactBtn}
-                            disabled={resetWorker.isPending}
-                            onClick={() => resetWorker.mutate({ sid: worker.session_id, force: forceReset })}
-                          >
-                            {isResetting ? '处理中…' : (forceReset ? '强制重连' : '释放进程')}
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                ) : (
-                  <p className="text-[11px] text-ink-muted">{workers.isPending ? '正在查询进程池…' : '当前没有常驻 Agy ACP 进程。'}</p>
-                )}
-              </div>
-            )}
-            {showLogs && (
-              <div className="mt-2 border-t border-line/60 pt-2">
-                <div className="mb-1 flex items-center justify-between text-[11px] text-ink-muted">
-                  <span className="truncate" title={logs.data?.log_path}>最近 Agy ACP 运行日志</span>
-                  <button type="button" className="ga-btn-link" disabled={logs.isFetching} onClick={() => void logs.refetch()}>
-                    <RefreshIcon spinning={logs.isFetching} size={11} />
-                    <span>{logs.isFetching ? '刷新中…' : '刷新'}</span>
-                  </button>
-                </div>
-                {logs.error ? (
-                  <p className="text-[11px] text-status-danger">{logs.error.message}</p>
-                ) : logs.data?.lines?.length ? (
-                  <pre className="max-h-36 overflow-auto rounded bg-bg-soft p-2 font-mono text-[11px] leading-4 text-ink whitespace-pre-wrap break-all">
-                    {logs.data.lines.join('\n')}
-                  </pre>
-                ) : (
-                  <p className="text-[11px] text-ink-muted">{logs.isPending ? '正在读取日志…' : '暂无 Agy ACP 运行日志。'}</p>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+        <input
+          id="agy-profile-name"
+          value={name}
+          maxLength={64}
+          onChange={event => setName(event.target.value)}
+          disabled={disabled}
+          aria-label="账号备注"
+          aria-describedby="agy-add-help"
+          placeholder="输入备注，如：工作账号"
+          className="h-8 w-full rounded-lg border border-line bg-bg-soft/50 px-2.5 text-xs text-ink outline-none focus:border-accent"
+        />
+        <div className="flex items-center justify-end gap-1.5">
+          <button
+            type="button"
+            className="ga-btn-sm shrink-0 px-2.5 text-[11px]"
+            disabled={disabled || !name.trim()}
+            onClick={() => {
+              if (!disabled && profiles.data && name.trim()) {
+                action.mutate({ kind: 'capture', name: name.trim() })
+              }
+            }}
+          >
+            从当前登录另存
+          </button>
+          <button
+            type="submit"
+            className="ga-btn-sm-primary shrink-0 px-2.5 text-[11px]"
+            disabled={disabled || !name.trim()}
+          >
+            添加
+          </button>
+        </div>
+      </form>
     )
   }
 
@@ -1081,58 +899,17 @@ export function AntiAgyProfiles({
   }
   const triggerTitle = triggerParts.join(' · ')
 
-  const daemonDotClass = daemon?.running
-    ? 'bg-status-success'
-    : daemon?.state === 'unavailable'
-      ? 'bg-status-danger'
-      : daemon?.busy
-        ? 'bg-accent animate-pulse'
-        : 'bg-ink-faint'
-  const daemonStateLabel = !daemon ? ''
-    : daemon.external ? '外部运行中'
-    : daemon.running ? 'ACP 就绪'
-    : daemon.busy ? '处理中'
-    : daemon.state === 'stopped' ? '已停止'
-    : '不可用'
-
-  const renderForceConflictBar = (className?: string) => (
-    daemon?.forceConflict && daemon.managed ? (
-      <div
-        data-anti-modal-force-bar
-        role="status"
-        className={clsx(
-          'flex flex-wrap items-center justify-between gap-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-[11px] text-status-danger',
-          className,
-        )}
-      >
-        <span>仍有活跃任务，常规{daemon.forceConflict === 'restart' ? '重置' : '停止'}已拦截；可强制中断。</span>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <button
-            type="button"
-            className={compactDangerBtn}
-            disabled={daemon.busy}
-            onClick={() => (daemon.forceConflict === 'restart' ? daemon.restart.mutate(true) : daemon.stop.mutate(true))}
-          >
-            {daemon.forceConflict === 'restart' ? '强制重置运行时' : '强制停止运行时'}
-          </button>
-          <button type="button" className={compactBtn} onClick={() => daemon.clearForceConflict()}>
-            取消
-          </button>
-        </div>
-      </div>
-    ) : null
-  )
-
   const headerTitle = view.kind === 'list'
     ? '账号管理'
-    : view.kind === 'settings'
-      ? '账号管理设置'
+    : view.kind === 'add'
+      ? '添加账号'
       : (viewedProfile?.name ?? '账号设置')
-  const activeError = action.error ?? daemonError ?? codeLoginStart.error ?? codeLoginSubmit.error ?? resetWorker.error
+  const activeError = action.error ?? codeLoginStart.error ?? codeLoginSubmit.error
   const statusText = action.isPending ? pendingLabel : message
 
   return <>
     <button
+      ref={triggerRef}
       type="button"
       data-anti-account-pill
       data-account-tier={activeTierInfo?.tier}
@@ -1152,7 +929,11 @@ export function AntiAgyProfiles({
       title={triggerTitle}
       aria-haspopup="dialog"
       aria-expanded={open}
-      onClick={() => setOpen(true)}
+      aria-controls={open ? popoverId : undefined}
+      onClick={() => {
+        if (open) close()
+        else setOpen(true)
+      }}
     >
       {renderTierPillIcon(showTierEffect ? activeTierInfo?.tier : undefined, customActive && !activeNeedLogin)}
       <span className="max-w-[7.5rem] truncate font-medium text-ink">{selected?.name ?? 'Agy 账号'}</span>
@@ -1166,141 +947,134 @@ export function AntiAgyProfiles({
         </span>
       ) : null}
     </button>
-    {open && createPortal(
-      <ModalOverlay
-        onClose={close}
-        labelledBy="agy-accounts-title"
-        panelClassName="flex max-h-[86vh] w-[38rem] max-w-[94vw] flex-col overflow-hidden p-0"
+    {open && position && createPortal(
+      <div
+        ref={panelRef}
+        className="fixed pt-2"
+        style={{ top: position.top, left: position.left, width: position.width, zIndex: Z_LAYERS.tooltip }}
       >
-        <div className="shrink-0 border-b border-line/60 px-4 py-3 sm:px-5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2">
-              {view.kind !== 'list' && (
-                <button
-                  type="button"
-                  aria-label="返回账号列表"
-                  title="返回账号列表"
-                  onClick={() => navigateTo({ kind: 'list' })}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-line/70 bg-bg-card text-ink-muted transition-colors hover:border-accent/50 hover:text-ink"
-                >
-                  <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-                </button>
-              )}
-              <h2 id="agy-accounts-title" className="truncate text-sm font-semibold text-ink">
-                {headerTitle}
-              </h2>
-              {view.kind === 'list' && profileCount > 0 && (
-                <span className="shrink-0 rounded bg-line/35 px-1.5 py-0.5 text-[10px] font-medium leading-none tabular-nums text-ink-muted">
-                  {profileCount}
-                </span>
-              )}
-              {view.kind === 'account' && viewedProfile?.id === selected?.id && (
-                <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-accent">
-                  当前
-                </span>
-              )}
-            </div>
-
-            <div className="flex shrink-0 items-center gap-1.5">
-              {view.kind === 'list' && (
-                <button
-                  type="button"
-                  className={compactBtn}
-                  aria-label="账号管理设置"
-                  title="账号管理设置"
-                  onClick={() => navigateTo({ kind: 'settings' })}
-                >
-                  <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>设置</span>
-                </button>
-              )}
-              <button type="button" className={compactBtn} onClick={close} disabled={action.isPending}>
-                <X className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>关闭</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 sm:px-5">
-          <div role="status" className="rounded-md bg-bg-card/80 px-2.5 py-1.5 text-xs text-ink-muted empty:hidden">
-            {statusText}
-          </div>
-          {activeError && (
-            <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-xs text-status-danger">
-              {activeError.message}
-            </p>
-          )}
-
-          {view.kind === 'list' ? (
-            <div className="space-y-3">
-              {renderForceConflictBar('px-3 py-2')}
-
-              {daemon && (daemon.state === 'stopped' || daemon.state === 'unavailable') && (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line/70 bg-bg-card px-3 py-2 text-xs">
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <span className={clsx('h-2 w-2 shrink-0 rounded-full', daemonDotClass)} aria-hidden="true" />
-                    <span className="font-medium text-ink">{daemonStateLabel}</span>
-                    {daemon.status.data?.detail && (
-                      <span className="truncate text-[11px] text-status-danger">{daemon.status.data.detail}</span>
-                    )}
-                  </div>
-                  {!daemon.running && daemon.state === 'stopped' ? (
-                    <button type="button" className={compactPrimaryBtn} disabled={daemon.busy} onClick={() => daemon.start.mutate()}>
-                      启用 Agy
-                    </button>
-                  ) : daemon.managed ? (
-                    <button type="button" className={compactBtn} disabled={daemon.busy} onClick={() => daemon.restart.mutate(false)}>
-                      重置运行时
-                    </button>
-                  ) : null}
-                </div>
-              )}
-
-              {profiles.isError && (
-                <div className="flex items-center justify-between gap-2 rounded-lg border border-line bg-bg-card px-3 py-2 text-xs">
-                  <p role="alert" className="text-status-danger">{profiles.error.message}</p>
-                  <button type="button" className={compactBtn} onClick={() => void profiles.refetch()} disabled={profiles.isFetching}>
-                    重试
+        <div
+          id={popoverId}
+          tabIndex={-1}
+          role="dialog"
+          aria-labelledby="agy-accounts-title"
+          className="ga-paper-popover flex flex-col overflow-hidden rounded-xl text-xs text-ink"
+          style={{ maxHeight: position.maxHeight }}
+        >
+          <div className="shrink-0 border-b border-line/60 px-3.5 py-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                {view.kind !== 'list' && (
+                  <button
+                    type="button"
+                    aria-label="返回账号列表"
+                    title="返回账号列表"
+                    onClick={() => navigateTo({ kind: 'list' })}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line/70 bg-bg-card text-ink-muted transition-colors hover:border-accent/50 hover:text-ink"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
-                </div>
-              )}
-              {profiles.isPending && <p role="status" className="text-xs text-ink-muted">正在加载账号…</p>}
+                )}
+                <h2 id="agy-accounts-title" className="truncate text-sm font-semibold text-ink">
+                  {headerTitle}
+                </h2>
+                {view.kind === 'list' && profileCount > 0 && (
+                  <span className="shrink-0 rounded bg-line/35 px-1.5 py-0.5 text-[10px] font-medium leading-none tabular-nums text-ink-muted">
+                    {profileCount}
+                  </span>
+                )}
+                {view.kind === 'account' && viewedProfile?.id === selected?.id && (
+                  <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-accent">
+                    当前
+                  </span>
+                )}
+              </div>
 
-              {profiles.data && usingHiddenDefault && (
-                <div className="rounded-lg border border-line/60 bg-bg-soft/45 px-3 py-2 text-[11px] text-ink-muted">
-                  当前仍使用系统默认登录态
-                  {(selected?.cooldown_seconds ?? 0) > 0 ? `（风控冷却 ${selected!.cooldown_seconds}s）` : ''}
-                  {orderedProfiles.length > 0 ? '，点击下方账号即可切换管理。' : '，可点击右上角「设置」添加或另存账号。'}
-                </div>
-              )}
+              <div className="flex shrink-0 items-center gap-1">
+                {view.kind === 'list' && (
+                  <button
+                    type="button"
+                    className="ga-btn-sm shrink-0 px-2 text-[11px]"
+                    aria-label="添加账号"
+                    title="添加账号"
+                    onClick={() => navigateTo({ kind: 'add' })}
+                  >
+                    <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>添加账号</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label="关闭"
+                  title="关闭"
+                  onClick={close}
+                  disabled={action.isPending}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-transparent text-ink-muted transition-colors hover:border-line/70 hover:bg-bg-soft hover:text-ink disabled:opacity-45"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span className="sr-only">关闭</span>
+                </button>
+              </div>
+            </div>
+          </div>
 
-              {profiles.data && (
-                orderedProfiles.length > 0 ? (
-                  <ul className="space-y-2" aria-label="账号列表">
-                    {orderedProfiles.map(profile => renderAccountCard(profile, profile.id === selected?.id))}
-                  </ul>
-                ) : (
-                  <div className="rounded-xl border border-dashed border-line/70 px-4 py-6 text-center text-xs text-ink-muted">
-                    <p>暂无账号</p>
-                    <button
-                      type="button"
-                      className={clsx(compactPrimaryBtn, 'mt-2')}
-                      onClick={() => navigateTo({ kind: 'settings' })}
-                    >
-                      去添加账号
+          <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3">
+            <div role="status" className="rounded-md bg-bg-card/80 px-2.5 py-1.5 text-xs text-ink-muted empty:hidden">
+              {statusText}
+            </div>
+            {activeError && (
+              <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-xs text-status-danger">
+                {activeError.message}
+              </p>
+            )}
+
+            {view.kind === 'list' ? (
+              <div className="space-y-2">
+                {profiles.isError && (
+                  <div className="flex items-center justify-between gap-2 rounded-lg border border-line bg-bg-card px-3 py-2 text-xs">
+                    <p role="alert" className="text-status-danger">{profiles.error.message}</p>
+                    <button type="button" className="ga-btn-sm shrink-0 px-2 text-[11px]" onClick={() => void profiles.refetch()} disabled={profiles.isFetching}>
+                      重试
                     </button>
                   </div>
-                )
-              )}
-            </div>
-          ) : view.kind === 'account' ? (
-            viewedProfile ? renderAccountSettings(viewedProfile) : null
-          ) : (
-            renderSharedSettings()
-          )}
+                )}
+                {profiles.isPending && <p role="status" className="text-xs text-ink-muted">正在加载账号…</p>}
+
+                {profiles.data && usingHiddenDefault && (
+                  <div className="rounded-lg border border-line/60 bg-bg-soft/45 px-2.5 py-1.5 text-[11px] text-ink-muted">
+                    当前仍使用系统默认登录态
+                    {(selected?.cooldown_seconds ?? 0) > 0 ? `（风控冷却 ${selected!.cooldown_seconds}s）` : ''}
+                    {orderedProfiles.length > 0 ? '，点击下方账号即可切换管理。' : '，可点击右上角「添加账号」新建或另存账号。'}
+                  </div>
+                )}
+
+                {profiles.data && (
+                  orderedProfiles.length > 0 ? (
+                    <ul className="space-y-1.5" aria-label="账号列表">
+                      {orderedProfiles.map(profile => renderAccountCard(profile, profile.id === selected?.id))}
+                    </ul>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-line/70 px-4 py-5 text-center text-xs text-ink-muted">
+                      <p>暂无账号</p>
+                      <button
+                        type="button"
+                        className="ga-btn-sm-primary mt-2 shrink-0 text-[11px]"
+                        onClick={() => navigateTo({ kind: 'add' })}
+                      >
+                        添加账号
+                      </button>
+                    </div>
+                  )
+                )}
+              </div>
+            ) : view.kind === 'account' ? (
+              viewedProfile ? renderAccountSettings(viewedProfile) : null
+            ) : (
+              renderAddAccount()
+            )}
+          </div>
         </div>
-      </ModalOverlay>,
+      </div>,
       document.body,
     )}
   </>

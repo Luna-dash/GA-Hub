@@ -120,7 +120,8 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     await wait(() => expect(button('Agy 启动中')?.disabled).toBe(true))
     expect(fetchMock.mock.calls.filter(([path]) => path === '/api/anti/start')).toHaveLength(1)
     await act(async () => cache.refetchQueries({ queryKey: ['anti-daemon-status'] }))
-    await wait(() => expect(button('Agy ACP 运行中')?.disabled).toBe(true))
+    await wait(() => expect(button('Agy ACP 运行中')?.disabled).toBe(false))
+    expect(button('Agy ACP 运行中')?.getAttribute('aria-haspopup')).toBe('dialog')
     expect(host.querySelector('[role=img][aria-label="agy 已验证登录"]')).not.toBeNull()
     expect(usageRequests()).toHaveLength(0)
     expect(usageButton.closest('header')).not.toBeNull()
@@ -152,9 +153,6 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     await act(async () => accountButton()!.click())
     const dialog = document.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')
     expect(dialog?.parentElement?.parentElement).toBe(document.body)
-    const workSettingsBtn = dialog?.querySelector<HTMLButtonElement>('button[aria-label="账号设置：工作"]')
-    expect(workSettingsBtn).toBeTruthy()
-    await act(async () => workSettingsBtn!.click())
     const switchButton = dialog?.querySelector<HTMLButtonElement>('button[aria-label="切换到工作"]')
     expect(switchButton).toBeDefined()
     await act(async () => switchButton!.click())
@@ -163,6 +161,9 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     rejectSwitch = false
     await act(async () => switchButton!.click())
     await wait(() => expect(accountButton()?.getAttribute('aria-label')).toBe('Agy 账号：工作'))
+    const workSettingsBtn = dialog?.querySelector<HTMLButtonElement>('button[aria-label="账号设置：工作"]')
+    expect(workSettingsBtn).toBeTruthy()
+    await act(async () => workSettingsBtn!.click())
     const nameField = dialog?.querySelector<HTMLInputElement>('#agy-edit-name')
     expect(nameField?.value).toBe('工作')
     await act(async () => {
@@ -565,22 +566,30 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
 
     await act(async () => { usageBtn.click() })
 
-    // Profile modal: layered account list (system default omitted) + unified settings (logs & capture) + per-account settings (logout & delete)
+    // Runtime diagnostics dropdown on top-left status badge hosts ACP 日志
+    const diagBtn = host.querySelector<HTMLButtonElement>('button[aria-label="Agy ACP 运行中"]')!
+    await act(async () => { diagBtn.click() })
+    await flush()
+    const logsBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === 'ACP 日志') as HTMLButtonElement
+    await act(async () => { logsBtn.click() })
+    await flush()
+    expect(document.body.textContent).toContain('[INFO] AntiCLI ready')
+    const closeDiagBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent?.trim() === '关闭') as HTMLButtonElement
+    await act(async () => { closeDiagBtn.click() })
+    await flush()
+
+    // Profile dropdown: layered account list (system default omitted) + top-right add view + per-account settings (logout & delete)
     const accountsBtn = [...host.querySelectorAll('button')].find(b => b.getAttribute('aria-label')?.startsWith('Agy 账号：')) as HTMLButtonElement
     await act(async () => { accountsBtn.click() })
     await flush()
     expect(document.body.querySelector('[role="tab"]')).toBeNull()
     expect(document.body.querySelector('[data-account-card="default"]')).toBeNull()
     expect(document.body.querySelector('[data-account-card="work"]')).not.toBeNull()
+    expect(document.body.querySelector('button[aria-label="账号管理设置"]')).toBeNull()
 
-    const settingsBtn = document.body.querySelector<HTMLButtonElement>('button[aria-label="账号管理设置"]')!
-    await act(async () => { settingsBtn.click() })
+    const addAccountBtn = document.body.querySelector<HTMLButtonElement>('button[aria-label="添加账号"]')!
+    await act(async () => { addAccountBtn.click() })
     await flush()
-
-    const logsBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === 'ACP 日志') as HTMLButtonElement
-    await act(async () => { logsBtn.click() })
-    await flush()
-    expect(document.body.textContent).toContain('[INFO] AntiCLI ready')
 
     const nameInput = document.body.querySelector('#agy-profile-name') as HTMLInputElement
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
@@ -626,8 +635,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     expect(stopBtn.closest('[data-anti-runtime-controls]')).not.toBeNull()
     expect(stopBtn.textContent?.trim()).toBe('')
     expect(stopBtn.querySelector('svg')).not.toBeNull()
-    expect(stopBtn.className).toContain('text-status-danger')
-    expect(stopBtn.className).toContain('bg-status-danger-soft')
+    expect(stopBtn.className).toContain('ga-btn-icon-danger')
     await act(async () => { stopBtn.click() })
     await flush()
     expect(host.textContent).toContain('启用 Agy')
@@ -822,12 +830,16 @@ it('shows external gateway lock and login_required / unavailable banners clearly
     const loginBtn = [...host.querySelectorAll('button')].find(b => b.textContent === '去登录账号') as HTMLButtonElement
     await act(async () => { loginBtn.click() })
     await flush()
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号管理设置"]')!.click()
-    })
+    expect(document.body.querySelector('[aria-labelledby="agy-accounts-title"]')).not.toBeNull()
+    const closeAccBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent?.trim() === '关闭') as HTMLButtonElement
+    await act(async () => { closeAccBtn.click() })
     await flush()
-    expect(document.body.textContent).toContain('外部运行中')
-    const closeBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '关闭') as HTMLButtonElement
+
+    const extBadgeBtn = host.querySelector<HTMLButtonElement>('button[aria-label="外部 Agy 运行中"]')!
+    await act(async () => { extBadgeBtn.click() })
+    await flush()
+    expect(document.body.querySelector('[role="dialog"][aria-label="Agy 运行时诊断"]')?.textContent).toContain('外部运行中')
+    const closeBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent?.trim() === '关闭') as HTMLButtonElement
     await act(async () => { closeBtn.click() })
     await flush()
 
@@ -2371,16 +2383,12 @@ it('escalates daemon 409 conflicts to force confirm, shows active workers, and s
       expect(host.querySelector('[data-anti-daemon-force-confirm]')).not.toBeNull()
     })
 
-    const accBtn = [...host.querySelectorAll('button')].find(b => b.getAttribute('aria-label')?.startsWith('Agy 账号：')) as HTMLButtonElement
-    await act(async () => { accBtn.click() })
+    const diagBtn = host.querySelector<HTMLButtonElement>('button[aria-label="Agy ACP 运行中"]')!
+    await act(async () => { diagBtn.click() })
     await vi.waitFor(async () => {
       await flush()
       expect(document.body.querySelector('[data-anti-modal-force-bar]')).not.toBeNull()
     })
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号管理设置"]')!.click()
-    })
-    await flush()
     const workersToggle = [...document.body.querySelectorAll('button')].find(b => b.textContent?.includes('活跃进程')) as HTMLButtonElement
     await act(async () => { workersToggle.click() })
     await vi.waitFor(async () => {
@@ -2595,15 +2603,8 @@ it('converges UI to single-account mode with account pill, backup quota refresh,
     expect(accountPill.textContent).toContain('12%')
     expect(accountPill.textContent).not.toContain('5%')
 
-    // Backup account quota refresh works from per-account settings inside modal
+    // Backup account quota refresh works from card list, and per-account settings avoids duplicate quota/switch/add controls
     await act(async () => { accountPill.click() })
-    await vi.waitFor(async () => {
-      await flush()
-      expect(document.body.querySelector('button[aria-label="账号设置：备用账号"]')).not.toBeNull()
-    })
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：备用账号"]')!.click()
-    })
     await vi.waitFor(async () => {
       await flush()
       expect(document.body.querySelector('button[aria-label="查询额度：备用账号"]')).not.toBeNull()
@@ -2615,6 +2616,16 @@ it('converges UI to single-account mode with account pill, backup quota refresh,
       await flush()
       expect(called.some(c => c.method === 'POST' && c.path === '/api/anti/account-usage?profile_id=backup')).toBe(true)
     })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：备用账号"]')!.click()
+    })
+    await flush()
+    const backupSettingsView = document.body.querySelector('[data-account-settings-view="backup"]')!
+    expect(backupSettingsView).not.toBeNull()
+    expect(backupSettingsView.querySelector('button[aria-label="查询额度：备用账号"]')).toBeNull()
+    expect(backupSettingsView.querySelector('button[aria-label="切换到备用账号"]')).toBeNull()
+    expect(backupSettingsView.querySelector('[role="progressbar"]')).toBeNull()
+    expect(backupSettingsView.querySelector('#agy-profile-name')).toBeNull()
     const closeModalBtn = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === '关闭')!
     await act(async () => { closeModalBtn.click() })
     await flush()
@@ -3212,11 +3223,22 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
     expect(refreshCalls).toEqual([])
 
     const dialog = document.body.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')!
+    const listWidth = dialog.parentElement!.style.width
     expect(dialog.querySelector('h2')?.textContent).toBe('账号管理')
     expect(dialog.querySelector('[role="tab"]')).toBeNull()
     expect(dialog.querySelector('[data-account-card="default"]')).toBeNull()
     expect(dialog.textContent).not.toContain('所有会话共用上下文与配置')
     expect(dialog.querySelector('button[aria-label="刷新全部额度"]')).toBeNull()
+    expect(dialog.querySelector('button[aria-label="添加账号"]')).not.toBeNull()
+    expect(dialog.querySelector('button[aria-label="账号管理设置"]')).toBeNull()
+
+    // Top-right button switches to compact add-account view with identical width
+    await act(async () => { dialog.querySelector<HTMLButtonElement>('button[aria-label="添加账号"]')!.click() })
+    await flush()
+    expect(dialog.querySelector('[data-account-add-view]')).not.toBeNull()
+    expect(dialog.parentElement!.style.width).toBe(listWidth)
+    await act(async () => { dialog.querySelector<HTMLButtonElement>('button[aria-label="返回账号列表"]')!.click() })
+    await flush()
 
     // Account cards show clean identity + tier badge without proactive quota bars
     const mainCard = dialog.querySelector('[data-account-card="main"]')!
@@ -3244,11 +3266,12 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
     expect(details.textContent).toContain('40%')
     expect(details.querySelectorAll('[role="progressbar"]')).toHaveLength(4)
 
-    // Navigate into account settings -> manual tier tagging works cleanly via PATCH
+    // Navigate into account settings -> uniform width, no duplicated quota/add blocks, manual tier tagging works cleanly via PATCH
     await act(async () => {
       mainCard.querySelector<HTMLButtonElement>('button[aria-label="账号设置：主账号"]')!.click()
     })
     await flush()
+    expect(dialog.parentElement!.style.width).toBe(listWidth)
     expect(dialog.querySelector('[data-account-settings-tier="ultra"]')?.textContent).toContain('Google AI Ultra')
     const proTierBtn = dialog.querySelector<HTMLButtonElement>('[data-account-tier-option="pro"]')!
     await act(async () => { proTierBtn.click() })
@@ -3258,6 +3281,22 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
     })
     await act(async () => { dialog.querySelector<HTMLButtonElement>('button[aria-label="返回账号列表"]')!.click() })
     await flush()
+
+    // Escape closes the dropdown and returns focus to trigger pill; outside pointerdown also dismisses it
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    await flush()
+    expect(document.body.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')).toBeNull()
+    expect(document.activeElement).toBe(outerPill)
+    await act(async () => { outerPill.click() })
+    await flush()
+    expect(document.body.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')).not.toBeNull()
+    await act(async () => {
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    })
+    await flush()
+    expect(document.body.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')).toBeNull()
 
     // Alert state suppresses tier shimmer class on outer pill so warning/login-required remains dominant
     profilesPayload = {

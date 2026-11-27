@@ -298,13 +298,9 @@ export default function AntiChat() {
   const [sid, setSid] = usePageState('antiChat.currentSession', '')
   const [creating, setCreating] = useState(false)
   const [profilesOpen, setProfilesOpen] = useState(false)
-  const [profilesInitialView, setProfilesInitialView] = useState<'list' | 'settings'>('list')
+  const [daemonDiagOpen, setDaemonDiagOpen] = useState(false)
   const [orchestratorOpen, setOrchestratorOpen] = useState(false)
   const [headerActions, setHeaderActions] = useState<HTMLDivElement | null>(null)
-  const openProfilesModal = useCallback((view: 'list' | 'settings' = 'list') => {
-    setProfilesInitialView(view)
-    setProfilesOpen(true)
-  }, [])
   const daemon = useAntiDaemonStatus()
   const profiles = useAgyProfiles()
   const projects = useQuery({ queryKey: queryKeys.projects, queryFn: api.projects })
@@ -355,7 +351,7 @@ export default function AntiChat() {
   const selectedProfile = profiles.data?.profiles.find(item => item.id === profiles.data?.active)
   const cachedUsage = selectedProfile?.usage
   return <PageShell title="Agy 会话" wrapHeader
-    titleExtra={<>{inRouter && <AntiRouteSessionSync onSession={setSid} />}<AntiDaemonControl {...daemon} /></>}
+    titleExtra={<>{inRouter && <AntiRouteSessionSync onSession={setSid} />}<AntiDaemonControl {...daemon} diagnosticsOpen={daemonDiagOpen} onDiagnosticsOpenChange={setDaemonDiagOpen} /></>}
     actions={<>
       <div ref={setHeaderActions} className="empty:hidden flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2" />
       <AntiAgyProfiles
@@ -363,11 +359,7 @@ export default function AntiChat() {
         refresh={daemon.refresh}
         daemon={daemon}
         open={profilesOpen}
-        onOpenChange={next => {
-          if (!next) setProfilesInitialView('list')
-          setProfilesOpen(next)
-        }}
-        initialView={profilesInitialView}
+        onOpenChange={setProfilesOpen}
       />
       <AntiOrchestratorModal
         open={orchestratorOpen}
@@ -409,8 +401,8 @@ export default function AntiChat() {
                   重置运行时
                 </button>
               )}
-              <button type="button" className="ga-btn shrink-0" onClick={() => openProfilesModal('settings')}>
-                诊断 / 账号设置
+              <button type="button" className="ga-btn shrink-0" onClick={() => setDaemonDiagOpen(true)}>
+                运行诊断
               </button>
             </div>
           </div>
@@ -418,7 +410,7 @@ export default function AntiChat() {
         {daemon.running && daemon.status.data?.agy_available === false && (
           <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-status-danger-line bg-status-danger-soft px-4 py-2 text-xs text-status-danger">
             <span>未找到官方 agy CLI。请安装 agy 并确保位于 PATH（或 ~/.gemini/bin）后重试。</span>
-            <button type="button" className="ga-btn shrink-0" onClick={() => openProfilesModal('settings')}>
+            <button type="button" className="ga-btn shrink-0" onClick={() => setDaemonDiagOpen(true)}>
               查看运行详情
             </button>
           </div>
@@ -426,7 +418,7 @@ export default function AntiChat() {
         {daemon.running && daemon.status.data?.agy_available && daemon.status.data?.auth_state === 'login_required' && (
           <div role="status" className="flex flex-wrap items-center justify-between gap-2 border-b border-status-warning-line bg-status-warning-soft px-4 py-2 text-xs text-status-warning">
             <span>当前 Agy 账号尚未登录或凭据已过期，请先完成官方登录后再发起对话。</span>
-            <button type="button" className="ga-btn shrink-0" onClick={() => openProfilesModal('list')}>
+            <button type="button" className="ga-btn shrink-0" onClick={() => setProfilesOpen(true)}>
               去登录账号
             </button>
           </div>
@@ -436,7 +428,7 @@ export default function AntiChat() {
           profileId={profiles.data?.active}
           profilesData={profiles.data}
           supportsSteering={daemon.status.data?.supports_steering}
-          onOpenProfiles={() => openProfilesModal('list')}
+          onOpenProfiles={() => setProfilesOpen(true)}
           onOpenOrchestratorSettings={() => setOrchestratorOpen(true)} /> :
           <div className="relative flex flex-1">
             <ChatUtilityDock fileTransfer={{ canInsert: false, onInsert: () => { } }} />
