@@ -39,6 +39,7 @@ class UpdatePlanResp(BaseModel):
     version: str | None = None
     commit: str | None = None
     error: str | None = None
+    switch_started: bool | None = None
 
 
 class UpdateReleaseResp(BaseModel):

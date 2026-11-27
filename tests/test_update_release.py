@@ -157,3 +157,30 @@ def test_real_session_proxy_choice_and_redirect_bypass(monkeypatch, tmp_path, pl
 def test_strict_stable_versions(version):
     with pytest.raises(ValueError):
         feed.version_tuple(version)
+
+
+def test_installed_version_frozen_fallback_without_build_info_or_pyproject(tmp_path, monkeypatch):
+    sidecar_dir = tmp_path / "install" / "sidecar"
+    internal_dir = sidecar_dir / "_internal"
+    internal_dir.mkdir(parents=True)
+    fake_exe = sidecar_dir / "ga-hub-sidecar.exe"
+    fake_exe.write_bytes(b"MZ")
+
+    monkeypatch.setattr(feed.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(feed.sys, "executable", str(fake_exe))
+    monkeypatch.setattr(feed.sys, "_MEIPASS", str(internal_dir), raising=False)
+
+    # 1. Bundled gahub_sidecar_bundle.json works for local build_all.py deliverables
+    sentinel = internal_dir / "gahub_sidecar_bundle.json"
+    sentinel.write_text(json.dumps({"app": "ga-hub-sidecar", "layout": "onedir", "version": "1.3.0"}), encoding="utf-8")
+    assert feed.installed_version() == "1.3.0"
+
+    # 2. Release build-info.json beside ga-hub-desktop.exe takes precedence when present
+    build_info = tmp_path / "install" / "build-info.json"
+    build_info.write_text(json.dumps({"version": "1.3.5"}), encoding="utf-8")
+    assert feed.installed_version() == "1.3.5"
+
+    # 3. Missing both build-info.json and sentinel still falls back cleanly (never FileNotFoundError)
+    build_info.unlink()
+    sentinel.unlink()
+    assert feed.version_tuple(feed.installed_version()) >= (1, 0, 0)

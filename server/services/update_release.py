@@ -32,14 +32,36 @@ def version_tuple(value: str) -> tuple[int, int, int]:
 
 def installed_version() -> str:
     # Frozen onedir sidecar lives at <install>/sidecar/ga-hub-sidecar.exe;
-    # build-info.json lives at <install>/build-info.json (or legacy beside exe).
+    # release ZIPs carry <install>/build-info.json, while local build_all.py
+    # builds carry version in bundled gahub_sidecar_bundle.json.
     if getattr(sys, "frozen", False):
         exe = Path(sys.executable).resolve()
-        for candidate in (exe.parent.parent / "build-info.json", exe.with_name("build-info.json")):
+        meipass = getattr(sys, "_MEIPASS", None)
+        candidates: list[Path] = [
+            exe.parent.parent / "build-info.json",
+            exe.with_name("build-info.json"),
+        ]
+        if meipass:
+            candidates.append(Path(meipass) / "gahub_sidecar_bundle.json")
+        candidates.extend([
+            exe.parent / "_internal" / "gahub_sidecar_bundle.json",
+            exe.parent / "gahub_sidecar_bundle.json",
+        ])
+        for candidate in candidates:
             if candidate.is_file():
-                return json.loads(candidate.read_text(encoding="utf8"))["version"]
-    import tomllib
-    return tomllib.loads((Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(encoding="utf8"))["project"]["version"]
+                try:
+                    data = json.loads(candidate.read_text(encoding="utf8"))
+                    ver = data.get("version") if isinstance(data, dict) else None
+                    if isinstance(ver, str) and ver.strip():
+                        return ver.strip()
+                except (OSError, ValueError):
+                    continue
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    if pyproject.is_file():
+        import tomllib
+        return tomllib.loads(pyproject.read_text(encoding="utf8"))["project"]["version"]
+    from ..main import app
+    return str(app.version)
 
 
 def asset_url(tag: str, name: str) -> str:

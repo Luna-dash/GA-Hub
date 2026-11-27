@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,10 +31,12 @@ MEI_BUNDLE_SENTINEL = "gahub_sidecar_bundle.json"
 
 
 def write_bundle_sentinel(staging_root: Path) -> Path:
-    """Write a marker file bundled into the sidecar root for diagnostics."""
+    """Write a marker file bundled into the sidecar root for diagnostics & version lookup."""
     staging_root.mkdir(parents=True, exist_ok=True)
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     sentinel = staging_root / MEI_BUNDLE_SENTINEL
-    sentinel.write_text('{"app":"ga-hub-sidecar","layout":"onedir"}\n', encoding="utf-8")
+    payload = {"app": "ga-hub-sidecar", "layout": "onedir", "version": version}
+    sentinel.write_text(json.dumps(payload, separators=(",", ":")) + "\n", encoding="utf-8")
     return sentinel
 
 

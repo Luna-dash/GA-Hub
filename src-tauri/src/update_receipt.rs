@@ -6,7 +6,10 @@ pub fn publish(port: u16) -> Result<(), String> {
         Ok(value) if value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()) => value,
         _ => return Ok(()),
     };
-    let path = PathBuf::from(env::var("GA_HUB_UPDATE_RECEIPT").map_err(|e| e.to_string())?);
+    let path = match env::var("GA_HUB_UPDATE_RECEIPT") {
+        Ok(raw) if !raw.trim().is_empty() => PathBuf::from(raw),
+        _ => return Ok(()),
+    };
     if !path.is_absolute() { return Err("Receipt path must be absolute".into()); }
     let parent = path.parent().ok_or("Receipt has no parent")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;

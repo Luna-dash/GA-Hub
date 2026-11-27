@@ -1,4 +1,4 @@
-//! Minimalist, self-contained Rust green updater for GA-Hub portable installs.
+//! Minimalist, self-contained Rust green updater for GA-Hub / Gyra portable installs.
 //!
 //! Replaces the legacy 10 MB PyInstaller updater + Windows Scheduled Task +
 //! 60-second countdown ceremony with a ~500 KB native executable supporting:
@@ -8,8 +8,10 @@
 //! - `--admin-data <dir> switch --plan <id> --wait-pid <pid> --old-exe <path>`:
 //!   verify SHA-256 of every staged file, wait for the old desktop to exit,
 //!   atomically switch `current.json`, start the new desktop, verify its
-//!   startup receipt + `/api/desktop/ready`, and automatically roll back to
-//!   `--old-exe` if health verification fails.
+//!   startup receipt + `/api/updates/ready` (with nonce), and automatically
+//!   roll back to `--old-exe` if health verification fails.
+//! - `--admin-data <dir> recover [--plan <id>]`: clear an unresolved update
+//!   state after confirming no old/candidate instances are still running.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -31,11 +33,12 @@ const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn print_usage() {
     println!(
-        "ga-hub-update (GA-Hub portable green updater)\n\
+        "ga-hub-update (Gyra / GA-Hub portable green updater)\n\
          Usage:\n\
          \tga-hub-update --help\n\
          \tga-hub-update --admin-data <dir> launch [--launcher-pid <pid>]\n\
-         \tga-hub-update --admin-data <dir> switch --plan <id> --wait-pid <pid> --old-exe <path>"
+         \tga-hub-update --admin-data <dir> switch --plan <id> --wait-pid <pid> --old-exe <path>\n\
+         \tga-hub-update --admin-data <dir> recover [--plan <id>]"
     );
 }
 
@@ -55,30 +58,69 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn atomic_write_json(path: &Path, value: &Value) -> Result<(), String> {
+#[cfg(windows)]
+fn replace_file_atomic(tmp: &Path, dst: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let src_w: Vec<u16> = tmp.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let dst_w: Vec<u16> = dst.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let ok = unsafe {
+        MoveFileExW(
+            src_w.as_ptr(),
+            dst_w.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if ok == 0 {
+        let err = std::io::Error::last_os_error();
+        return Err(format!("MoveFileExW failed: {err}"));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_file_atomic(tmp: &Path, dst: &Path) -> Result<(), String> {
+    fs::rename(tmp, dst).map_err(|e| format!("atomic replace failed: {e}"))
+}
+
+fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
     }
     let tmp = path.with_extension(format!("{}.tmp", Uuid::new_v4().simple()));
-    let bytes = serde_json::to_vec_pretty(value).map_err(|e| format!("json encode failed: {e}"))?;
     {
         let mut f = File::create(&tmp).map_err(|e| format!("create tmp failed: {e}"))?;
-        f.write_all(&bytes)
+        f.write_all(bytes)
             .map_err(|e| format!("write tmp failed: {e}"))?;
         let _ = f.sync_all();
     }
-    if path.exists() {
-        let _ = fs::remove_file(path);
-    }
-    fs::rename(&tmp, path).map_err(|e| {
+    if let Err(err) = replace_file_atomic(&tmp, path) {
         let _ = fs::remove_file(&tmp);
-        format!("atomic replace failed: {e}")
-    })
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn atomic_write_json(path: &Path, value: &Value) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(value).map_err(|e| format!("json encode failed: {e}"))?;
+    atomic_write_bytes(path, &bytes)
 }
 
 fn read_json(path: &Path) -> Result<Value, String> {
     let raw = fs::read(path).map_err(|e| format!("read {} failed: {e}", path.display()))?;
     serde_json::from_slice(&raw).map_err(|e| format!("parse {} failed: {e}", path.display()))
+}
+
+fn record_pre_switch_failure(state_path: &Path, plan: &mut Value, reason: &str) {
+    if let Some(obj) = plan.as_object_mut() {
+        obj.insert("state".to_string(), json!("failed"));
+        obj.insert("switch_started".to_string(), json!(false));
+        obj.insert("error".to_string(), json!(reason));
+    }
+    let _ = atomic_write_json(state_path, plan);
 }
 
 fn verify_candidate_hashes(candidate_dir: &Path, plan: &Value) -> Result<(), String> {
@@ -213,22 +255,15 @@ fn wait_for_pid_exit(_pid: u32, _timeout: Duration) -> bool {
     true
 }
 
-fn probe_ready_http(port: u16) -> bool {
+fn http_request_loopback(port: u16, req: &str) -> Option<String> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_secs(2)) else {
-        return false;
-    };
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2)).ok()?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-    let req = format!(
-        "GET /api/desktop/ready HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-    );
-    if stream.write_all(req.as_bytes()).is_err() {
-        return false;
-    }
+    stream.write_all(req.as_bytes()).ok()?;
     let mut response = String::new();
     let _ = stream.read_to_string(&mut response);
-    http_status_is_ok(&response)
+    Some(response)
 }
 
 fn http_status_is_ok(response: &str) -> bool {
@@ -236,6 +271,37 @@ fn http_status_is_ok(response: &str) -> bool {
         return false;
     };
     status_line.starts_with("HTTP/1.") && status_line.contains(" 200")
+}
+
+fn updates_ready_response_ok(response: &str, expected_nonce: &str) -> bool {
+    if !http_status_is_ok(response) {
+        return false;
+    }
+    let Some((_, body)) = response.split_once("\r\n\r\n") else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return false;
+    };
+    let nonce_ok = value.get("nonce").and_then(Value::as_str) == Some(expected_nonce);
+    let ready = value.get("ready").and_then(Value::as_bool).unwrap_or(false);
+    let diagnostic_ready = value
+        .get("diagnostic_ready")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    nonce_ok && (ready || diagnostic_ready)
+}
+
+fn probe_ready_http(port: u16, expected_nonce: &str) -> bool {
+    let req = format!(
+        "GET /api/updates/ready HTTP/1.1\r\n\
+         Host: 127.0.0.1:{port}\r\n\
+         X-Update-Nonce: {expected_nonce}\r\n\
+         Connection: close\r\n\r\n"
+    );
+    http_request_loopback(port, &req)
+        .map(|resp| updates_ready_response_ok(&resp, expected_nonce))
+        .unwrap_or(false)
 }
 
 fn wait_for_candidate_health(
@@ -253,7 +319,7 @@ fn wait_for_candidate_health(
             if let Ok(receipt) = read_json(receipt_path) {
                 let nonce_ok = receipt.get("nonce").and_then(Value::as_str) == Some(expected_nonce);
                 let port = receipt.get("port").and_then(Value::as_u64).unwrap_or(0);
-                if nonce_ok && port > 0 && port <= 65535 && probe_ready_http(port as u16) {
+                if nonce_ok && port > 0 && port <= 65535 && probe_ready_http(port as u16, expected_nonce) {
                     return Ok(());
                 }
             }
@@ -305,7 +371,39 @@ fn cmd_launch(admin_data: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_switch(admin_data: &Path, plan_id: &str, wait_pid: u32, old_exe: &Path) -> Result<(), String> {
+fn cmd_recover(admin_data: &Path, expected_plan_id: Option<&str>) -> Result<(), String> {
+    let updates_dir = admin_data.join("updates");
+    let state_path = updates_dir.join("state.json");
+    let _ = fs::remove_file(updates_dir.join("maintenance.json"));
+    if !state_path.is_file() {
+        return Ok(());
+    }
+    let mut plan = read_json(&state_path)?;
+    if let Some(expected) = expected_plan_id {
+        if plan.get("id").and_then(Value::as_str) != Some(expected) {
+            return Err("update plan id mismatch".to_string());
+        }
+    }
+    let state = plan.get("state").and_then(Value::as_str).unwrap_or("");
+    if matches!(state, "armed" | "switching" | "verifying" | "failed" | "prepared") {
+        if let Some(obj) = plan.as_object_mut() {
+            obj.insert("state".to_string(), json!("cancelled"));
+            obj.insert("switch_started".to_string(), json!(false));
+            obj.insert("error".to_string(), json!("recovered manually via ga-hub-update recover"));
+        }
+        atomic_write_json(&state_path, &plan)?;
+    }
+    Ok(())
+}
+
+fn cmd_switch_with_timeouts(
+    admin_data: &Path,
+    plan_id: &str,
+    wait_pid: u32,
+    old_exe: &Path,
+    exit_timeout: Duration,
+    health_timeout: Duration,
+) -> Result<(), String> {
     let updates_dir = admin_data.join("updates");
     let state_path = updates_dir.join("state.json");
     let current_path = updates_dir.join("current.json");
@@ -315,14 +413,19 @@ fn cmd_switch(admin_data: &Path, plan_id: &str, wait_pid: u32, old_exe: &Path) -
     if plan.get("id").and_then(Value::as_str) != Some(plan_id) {
         return Err("update plan id mismatch".to_string());
     }
-    verify_candidate_hashes(&candidate_dir, &plan)?;
+    if let Err(reason) = verify_candidate_hashes(&candidate_dir, &plan) {
+        record_pre_switch_failure(&state_path, &mut plan, &reason);
+        return Err(reason);
+    }
 
     let candidate_exe = candidate_dir.join("ga-hub-desktop.exe");
     if !candidate_exe.is_file() {
-        return Err("candidate ga-hub-desktop.exe missing".to_string());
+        let reason = "candidate ga-hub-desktop.exe missing".to_string();
+        record_pre_switch_failure(&state_path, &mut plan, &reason);
+        return Err(reason);
     }
 
-    // Mark switching before closing the old desktop.
+    // Ensure state is marked switching (pre-switch) before requesting old desktop closure.
     if let Some(obj) = plan.as_object_mut() {
         obj.insert("state".to_string(), json!("switching"));
         obj.insert("switch_started".to_string(), json!(false));
@@ -331,17 +434,10 @@ fn cmd_switch(admin_data: &Path, plan_id: &str, wait_pid: u32, old_exe: &Path) -
 
     if wait_pid > 0 {
         request_close_window(wait_pid);
-        if !wait_for_pid_exit(wait_pid, EXIT_WAIT_TIMEOUT) {
-            if let Some(obj) = plan.as_object_mut() {
-                obj.insert("state".to_string(), json!("failed"));
-                obj.insert("switch_started".to_string(), json!(false));
-                obj.insert(
-                    "error".to_string(),
-                    json!("old desktop did not exit within 15s"),
-                );
-            }
-            let _ = atomic_write_json(&state_path, &plan);
-            return Err("old desktop did not exit within timeout".to_string());
+        if !wait_for_pid_exit(wait_pid, exit_timeout) {
+            let reason = format!("old desktop did not exit within {}s", exit_timeout.as_secs());
+            record_pre_switch_failure(&state_path, &mut plan, &reason);
+            return Err(reason);
         }
     }
 
@@ -382,7 +478,7 @@ fn cmd_switch(admin_data: &Path, plan_id: &str, wait_pid: u32, old_exe: &Path) -
     let spawn_res = spawn_detached(&candidate_exe, &envs);
     let health_res = match spawn_res {
         Ok(mut child) => {
-            let verdict = wait_for_candidate_health(&mut child, &receipt_path, &nonce, HEALTH_TIMEOUT);
+            let verdict = wait_for_candidate_health(&mut child, &receipt_path, &nonce, health_timeout);
             if verdict.is_err() {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -405,9 +501,9 @@ fn cmd_switch(admin_data: &Path, plan_id: &str, wait_pid: u32, old_exe: &Path) -
             Ok(())
         }
         Err(reason) => {
-            // Roll back current.json and relaunch the known-good old executable.
+            // Roll back current.json atomically and relaunch the known-good old executable.
             if let Some(prev) = previous_current {
-                let _ = fs::write(&current_path, prev);
+                let _ = atomic_write_bytes(&current_path, &prev);
             } else {
                 let _ = fs::remove_file(&current_path);
             }
@@ -430,6 +526,17 @@ fn cmd_switch(admin_data: &Path, plan_id: &str, wait_pid: u32, old_exe: &Path) -
             Err(reason)
         }
     }
+}
+
+fn cmd_switch(admin_data: &Path, plan_id: &str, wait_pid: u32, old_exe: &Path) -> Result<(), String> {
+    cmd_switch_with_timeouts(
+        admin_data,
+        plan_id,
+        wait_pid,
+        old_exe,
+        EXIT_WAIT_TIMEOUT,
+        HEALTH_TIMEOUT,
+    )
 }
 
 fn run() -> Result<(), String> {
@@ -486,6 +593,7 @@ fn run() -> Result<(), String> {
             let old = old_exe.unwrap_or_default();
             cmd_switch(&admin, &id, wait_pid, &old)
         }
+        Some("recover") => cmd_recover(&admin, plan_id.as_deref()),
         other => Err(format!("unknown subcommand: {:?}", other)),
     }
 }
@@ -500,6 +608,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
 
     #[test]
     fn verifies_candidate_hashes_and_rejects_tampering() {
@@ -535,9 +644,179 @@ mod tests {
     }
 
     #[test]
-    fn parses_http_200_status_line() {
-        assert!(http_status_is_ok("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{}"));
-        assert!(!http_status_is_ok("HTTP/1.1 503 Service Unavailable\r\n\r\n"));
-        assert!(!http_status_is_ok(""));
+    fn parses_updates_ready_response_with_nonce_and_readiness() {
+        let nonce = "a".repeat(64);
+        let ok_ready = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"ready\":true,\"diagnostic_ready\":false,\"nonce\":\"{nonce}\"}}"
+        );
+        let ok_diag = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"ready\":false,\"diagnostic_ready\":true,\"nonce\":\"{nonce}\"}}"
+        );
+        let not_ready = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"ready\":false,\"diagnostic_ready\":false,\"nonce\":\"{nonce}\"}}"
+        );
+        let wrong_nonce = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"ready\":true,\"nonce\":\"wrong\"}";
+
+        assert!(updates_ready_response_ok(&ok_ready, &nonce));
+        assert!(updates_ready_response_ok(&ok_diag, &nonce));
+        assert!(!updates_ready_response_ok(&not_ready, &nonce));
+        assert!(!updates_ready_response_ok(wrong_nonce, &nonce));
+        assert!(!updates_ready_response_ok("HTTP/1.1 404 Not Found\r\n\r\n", &nonce));
+    }
+
+    #[test]
+    fn pre_switch_hash_failure_marks_failed_without_bricking_startup() {
+        let admin = env::temp_dir().join(format!("gahub-upd-preswitch-{}", Uuid::new_v4().simple()));
+        let updates = admin.join("updates");
+        let plan_id = "b".repeat(32);
+        let candidate_dir = updates.join("versions").join(&plan_id);
+        fs::create_dir_all(&candidate_dir).unwrap();
+        let desktop = candidate_dir.join("ga-hub-desktop.exe");
+        fs::write(&desktop, b"tampered-bytes").unwrap();
+
+        let state_path = updates.join("state.json");
+        atomic_write_json(
+            &state_path,
+            &json!({
+                "id": plan_id,
+                "state": "switching",
+                "switch_started": false,
+                "version": "1.3.0",
+                "data_epoch": DATA_EPOCH,
+                "sha256": {
+                    "ga-hub-desktop.exe": "0".repeat(64),
+                }
+            }),
+        )
+        .unwrap();
+
+        let err = cmd_switch_with_timeouts(
+            &admin,
+            &plan_id,
+            0,
+            &admin.join("nonexistent-old.exe"),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(err.contains("SHA-256 mismatch"), "unexpected err: {err}");
+
+        let saved = read_json(&state_path).unwrap();
+        assert_eq!(saved["state"], "failed");
+        assert_eq!(saved["switch_started"], false);
+        assert!(saved["error"].as_str().unwrap_or("").contains("SHA-256 mismatch"));
+
+        let _ = fs::remove_dir_all(&admin);
+    }
+
+    #[test]
+    fn cmd_switch_rolls_back_and_restores_previous_current_on_candidate_failure() {
+        let admin = env::temp_dir().join(format!("gahub-upd-rollback-{}", Uuid::new_v4().simple()));
+        let updates = admin.join("updates");
+        let plan_id = "c".repeat(32);
+        let candidate_dir = updates.join("versions").join(&plan_id);
+        fs::create_dir_all(&candidate_dir).unwrap();
+
+        // Non-executable bytes cause spawn_detached to fail cleanly on Windows (ERROR_BAD_EXE_FORMAT),
+        // exercising the full rollback path without spawning real processes.
+        let desktop = candidate_dir.join("ga-hub-desktop.exe");
+        fs::write(&desktop, b"not-a-valid-pe-binary").unwrap();
+        let prev_current = json!({
+            "plan_id": "prev",
+            "version": "1.2.0",
+            "executable": "D:/old/ga-hub-desktop.exe"
+        });
+        let current_path = updates.join("current.json");
+        atomic_write_json(&current_path, &prev_current).unwrap();
+
+        let state_path = updates.join("state.json");
+        atomic_write_json(
+            &state_path,
+            &json!({
+                "id": plan_id,
+                "state": "switching",
+                "switch_started": false,
+                "version": "1.3.0",
+                "data_epoch": DATA_EPOCH,
+                "sha256": {
+                    "ga-hub-desktop.exe": sha256_file(&desktop).unwrap(),
+                }
+            }),
+        )
+        .unwrap();
+
+        let result = cmd_switch_with_timeouts(
+            &admin,
+            &plan_id,
+            0,
+            &admin.join("missing-old.exe"),
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+        );
+        assert!(result.is_err());
+
+        let saved = read_json(&state_path).unwrap();
+        assert_eq!(saved["state"], "rolled_back");
+        assert_eq!(saved["switch_started"], true);
+        assert_eq!(read_json(&current_path).unwrap(), prev_current);
+
+        let _ = fs::remove_dir_all(&admin);
+    }
+
+    #[test]
+    fn wait_for_candidate_health_verifies_receipt_and_updates_ready_nonce() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let nonce = "d".repeat(64);
+        let expected = nonce.clone();
+
+        let server = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut req = [0u8; 1024];
+                let n = stream.read(&mut req).unwrap_or(0);
+                let text = String::from_utf8_lossy(&req[..n]);
+                let has_nonce = text.to_ascii_lowercase().contains(&format!("x-update-nonce: {expected}"));
+                let body = if has_nonce {
+                    format!("{{\"ready\":true,\"diagnostic_ready\":false,\"nonce\":\"{expected}\"}}")
+                } else {
+                    "{\"ready\":false}".to_string()
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+
+        assert!(probe_ready_http(port, &nonce));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn cmd_recover_unblocks_unresolved_switching_state() {
+        let admin = env::temp_dir().join(format!("gahub-upd-recover-{}", Uuid::new_v4().simple()));
+        let updates = admin.join("updates");
+        let plan_id = "e".repeat(32);
+        let state_path = updates.join("state.json");
+        atomic_write_json(
+            &state_path,
+            &json!({
+                "id": plan_id,
+                "state": "verifying",
+                "switch_started": true,
+            }),
+        )
+        .unwrap();
+        fs::write(updates.join("maintenance.json"), "{}").unwrap();
+
+        assert!(cmd_recover(&admin, Some(&plan_id)).is_ok());
+        assert!(!updates.join("maintenance.json").exists());
+        let saved = read_json(&state_path).unwrap();
+        assert_eq!(saved["state"], "cancelled");
+        assert_eq!(saved["switch_started"], false);
+
+        let _ = fs::remove_dir_all(&admin);
     }
 }

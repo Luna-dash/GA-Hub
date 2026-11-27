@@ -71,6 +71,40 @@ describe('UpdateSettingsPanel', () => {
     expect(button('校验并准备').disabled).toBe(false)
   })
 
+  it('clears a submitted local package and lets the user replace the prepared candidate', async () => {
+    const oldPlan = { id: 'old', state: 'prepared', version: '1.3.0' }
+    const newPlan = { id: 'new', state: 'prepared', version: '1.3.1' }
+    vi.mocked(updateApi.prepare).mockResolvedValueOnce(oldPlan).mockResolvedValueOnce(newPlan)
+    vi.mocked(updateApi.cancel).mockResolvedValue({ id: 'old', state: 'cancelled' })
+    vi.mocked(updateApi.status)
+      .mockResolvedValueOnce(idle)
+      .mockResolvedValueOnce({ ...idle, plan: oldPlan })
+      .mockResolvedValueOnce({ ...idle, plan: { id: 'old', state: 'cancelled' } })
+      .mockResolvedValueOnce({ ...idle, plan: newPlan })
+
+    await act(async () => root.render(<UpdateSettingsPanel />))
+    const [archive, sha256, trusted] = host.querySelectorAll('input')
+    await enter(archive, 'D:\\old.zip')
+    await enter(sha256, 'a'.repeat(64))
+    await act(async () => trusted.click())
+    await act(async () => button('校验并准备').click())
+    expect(updateApi.prepare).toHaveBeenCalledWith('D:\\old.zip', 'a'.repeat(64), true)
+    expect(archive.value).toBe('')
+    expect(sha256.value).toBe('')
+    expect(trusted.checked).toBe(false)
+    expect(button('校验并准备').disabled).toBe(true)
+
+    await act(async () => button('取消旧候选并更换本地包').click())
+    expect(updateApi.cancel).toHaveBeenCalledWith('old')
+    expect(updateApi.apply).not.toHaveBeenCalled()
+    expect(archive.disabled).toBe(false)
+    await enter(archive, 'D:\\new.zip')
+    await act(async () => trusted.click())
+    await act(async () => button('校验并准备').click())
+    expect(updateApi.prepare).toHaveBeenLastCalledWith('D:\\new.zip', '', true)
+    expect(host.textContent).toContain('候选包已就绪 · 1.3.1')
+  })
+
   it('cancels only the displayed plan', async () => {
     vi.mocked(updateApi.status).mockResolvedValue({ ...idle, plan: { state: 'prepared', id: 'abc' } })
     await act(async () => root.render(<UpdateSettingsPanel />))
@@ -78,6 +112,19 @@ describe('UpdateSettingsPanel', () => {
     vi.mocked(updateApi.status).mockResolvedValue({ ...idle, plan: { state: 'cancelled' } })
     await act(async () => button('取消候选更新').click())
     expect(updateApi.cancel).toHaveBeenCalledWith('abc')
+    expect(host.querySelector('[role="status"]')?.textContent).toContain('已取消')
+  })
+
+  it('allows clearing a pre-switch failed update plan', async () => {
+    vi.mocked(updateApi.status).mockResolvedValue({
+      ...idle,
+      plan: { state: 'failed', id: 'f01', switch_started: false, error: 'old desktop did not exit within 15s' },
+    })
+    await act(async () => root.render(<UpdateSettingsPanel />))
+    vi.mocked(updateApi.cancel).mockResolvedValue({ state: 'cancelled', id: 'f01' })
+    vi.mocked(updateApi.status).mockResolvedValue({ ...idle, plan: { state: 'cancelled', id: 'f01' } })
+    await act(async () => button('清除失败状态').click())
+    expect(updateApi.cancel).toHaveBeenCalledWith('f01')
     expect(host.querySelector('[role="status"]')?.textContent).toContain('已取消')
   })
 

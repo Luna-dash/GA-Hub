@@ -17932,6 +17932,17 @@
               }
             ],
             "title": "Error"
+          },
+          "switch_started": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Switch Started"
           }
         },
         "additionalProperties": true,

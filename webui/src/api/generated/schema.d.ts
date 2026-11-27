@@ -6828,6 +6828,8 @@ export interface components {
             commit?: string | null;
             /** Error */
             error?: string | null;
+            /** Switch Started */
+            switch_started?: boolean | null;
         } & {
             [key: string]: unknown;
         };

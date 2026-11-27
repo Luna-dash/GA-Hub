@@ -125,8 +125,14 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
   async function act(cancel = false) {
     setBusy(true); setError(null)
     try {
-      if (cancel) await updateApi.cancel(status!.plan.id!)
-      else await updateApi.prepare(archive.trim(), sha256.trim(), trusted)
+      if (cancel) {
+        await updateApi.cancel(status!.plan.id!)
+      } else {
+        await updateApi.prepare(archive.trim(), sha256.trim(), trusted)
+        setArchive('')
+        setSha256('')
+        setTrusted(false)
+      }
       setStatus(await updateApi.status())
     } catch (e) {
       setError(readableError(e))
@@ -151,7 +157,9 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
   const task = status?.download
   const downloading = !!task && activePhases.has(task.phase)
   const locked = busy || downloading || !!statusError
-  const onlinePrepared = status?.plan?.state === 'prepared' && status.plan?.version === release?.version
+  const prepared = status?.plan?.state === 'prepared'
+  const localLocked = locked || prepared
+  const onlinePrepared = prepared && status?.plan?.version === release?.version
   const taskError = task?.error && ['failed', 'interrupted'].includes(task.phase) ? task.error : null
   const shownError = error ?? taskError
   const received = task?.received_bytes ?? 0
@@ -233,7 +241,8 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
               value={archive}
               onChange={e => setArchive(e.target.value)}
               placeholder="D:\Downloads\GA-Hub-version-windows-x64.zip"
-              disabled={locked}
+              disabled={localLocked}
+              autoComplete="off"
             />
           </label>
           <label className="block text-sm">
@@ -244,17 +253,27 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
               onChange={e => setSha256(e.target.value)}
               placeholder="64 位校验和，可留空"
               spellCheck={false}
-              disabled={locked}
+              disabled={localLocked}
+              autoComplete="off"
             />
           </label>
           <label className="flex items-start gap-2 text-xs text-ink">
-            <input type="checkbox" checked={trusted} onChange={e => setTrusted(e.target.checked)} disabled={locked} />
+            <input type="checkbox" checked={trusted} onChange={e => setTrusted(e.target.checked)} disabled={localLocked} />
             <span>我已核实安装包来源可信</span>
           </label>
+          {prepared && (
+            <div className="space-y-1.5">
+              <p className="text-xs text-ink-muted">已有候选更新，取消后即可导入另一个 ZIP，不会重启应用。</p>
+              <button type="button" className="ga-btn" disabled={locked} onClick={() => void act(true)}>
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>取消旧候选并更换本地包</span>
+              </button>
+            </div>
+          )}
           <button
             type="button"
             className="ga-btn-primary"
-            disabled={locked || !status || !trusted || !archive.trim() || (!!sha256.trim() && !/^[a-fA-F0-9]{64}$/.test(sha256.trim()))}
+            disabled={localLocked || !status || !trusted || !archive.trim() || (!!sha256.trim() && !/^[a-fA-F0-9]{64}$/.test(sha256.trim()))}
             onClick={() => void act()}
           >
             <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
@@ -285,6 +304,22 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
             </button>
           </div>
         </>
+      )}
+
+      {status?.plan?.state === 'failed' && status.plan.switch_started === false && status.plan.id && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className="ga-btn" disabled={locked} onClick={() => void act(true)}>
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>清除失败状态</span>
+          </button>
+        </div>
+      )}
+
+      {status?.plan?.state === 'failed' && status.plan.switch_started !== false && (
+        <p role="alert" className="text-xs text-status-danger">
+          上次更新切换未正常结束；请确认无残留进程后，在终端运行更新助手恢复：
+          <code className="ml-1 font-mono">ga-hub-update.exe --admin-data %USERPROFILE%\.genericagent-admin recover</code>
+        </p>
       )}
 
       {status?.plan?.state === 'switching' && (

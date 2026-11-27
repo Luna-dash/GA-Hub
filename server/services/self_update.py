@@ -262,12 +262,27 @@ class UpdateStore:
                 "stderr": subprocess.DEVNULL,
                 "close_fds": True,
             }
-            if os.name == "nt":
-                breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+            # Persist `switching` BEFORE spawning the detached Rust helper so it
+            # never races against `self.transition()` or gets overwritten by us.
+            switching = self.transition(plan_id, {"prepared"}, "switching", switch_started=False)
+            try:
+                if os.name == "nt":
+                    breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+                    try:
+                        spawn(cmd, **kwargs, **hidden_process_kwargs(existing_creationflags=breakaway))
+                    except PermissionError:
+                        spawn(cmd, **kwargs, **hidden_process_kwargs())
+                else:
+                    spawn(cmd, **kwargs)
+            except BaseException:
+                # Roll state back to `prepared` if spawning the helper failed so
+                # startup is never locked out by an unstarted switch.
                 try:
-                    spawn(cmd, **kwargs, **hidden_process_kwargs(existing_creationflags=breakaway))
-                except PermissionError:
-                    spawn(cmd, **kwargs, **hidden_process_kwargs())
-            else:
-                spawn(cmd, **kwargs)
-            return self.transition(plan_id, {"prepared"}, "switching", switch_started=False)
+                    restored = dict(plan)
+                    restored["state"] = "prepared"
+                    restored.pop("switch_started", None)
+                    atomic_json(self.state_file, restored)
+                except OSError:
+                    pass
+                raise
+            return switching
