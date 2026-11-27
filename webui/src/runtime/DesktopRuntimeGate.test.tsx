@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DesktopRuntimeGate, LIVENESS_POLL_MS } from './DesktopRuntimeGate'
+import { ModalOverlay } from '@/components/ModalOverlay'
 import { Z_LAYERS } from '@/config/zLayers'
 import { registerOverlay } from '@/utils/overlayStack'
 
@@ -202,6 +203,62 @@ describe('DesktopRuntimeGate', () => {
       expect(underlyingEsc).not.toHaveBeenCalled()
     } finally {
       underlying.unregister()
+      vi.useRealTimers()
+    }
+  })
+
+  it('prevents an unmounting underlying ModalOverlay from stealing focus behind the lost gate', async () => {
+    vi.useFakeTimers()
+    let setModalOpen!: (open: boolean) => void
+    function AppWithModal() {
+      const [open, setOpen] = useState(false)
+      setModalOpen = setOpen
+      return (
+        <div>
+          <button id="bg-opener" type="button" onClick={() => setOpen(true)}>Open</button>
+          {open && (
+            <ModalOverlay onClose={() => setOpen(false)} labelledBy="under-modal-title">
+              <h2 id="under-modal-title">Under Modal</h2>
+              <button id="under-modal-btn" type="button">Inside Modal</button>
+            </ModalOverlay>
+          )}
+        </div>
+      )
+    }
+
+    try {
+      window.__TAURI_INTERNALS__ = {}
+      mockReadiness.mockResolvedValueOnce(true)
+      mockReadiness.mockRejectedValue('GA-Hub 后端进程已退出')
+
+      await act(async () => {
+        root.render(
+          <DesktopRuntimeGate><AppWithModal /></DesktopRuntimeGate>,
+        )
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      const opener = document.getElementById('bg-opener') as HTMLButtonElement
+      opener.focus()
+      act(() => opener.click())
+      expect(document.getElementById('under-modal-title')).not.toBeNull()
+
+      // Backend dies -> DesktopRuntimeGate enters lost phase above the ModalOverlay
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LIVENESS_POLL_MS + 10)
+      })
+      const gate = host.querySelector<HTMLElement>('[role="alertdialog"]')!
+      expect(gate).not.toBeNull()
+      expect(gate.contains(document.activeElement)).toBe(true)
+
+      // Underlying ModalOverlay unmounts while the gate is active -> focus must NOT jump to #bg-opener
+      act(() => setModalOpen(false))
+      expect(document.getElementById('under-modal-title')).toBeNull()
+      expect(document.activeElement).not.toBe(opener)
+      expect(gate.contains(document.activeElement)).toBe(true)
+    } finally {
       vi.useRealTimers()
     }
   })

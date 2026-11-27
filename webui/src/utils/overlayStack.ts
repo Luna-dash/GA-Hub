@@ -35,12 +35,18 @@ let scrollLocks = 0
 let previousBodyOverflow = ''
 let listenerInstalled = false
 
+function compareOverlayOrder(a: OverlayEntry, b: OverlayEntry): number {
+  return a.zIndex !== b.zIndex ? a.zIndex - b.zIndex : a.order - b.order
+}
+
+function getSortedOverlays(): OverlayEntry[] {
+  return [...stack].sort(compareOverlayOrder)
+}
+
 function pickTopOverlay(): OverlayEntry | null {
   if (stack.length === 0) return null
   return stack.reduce((best, entry) => (
-    entry.zIndex > best.zIndex || (entry.zIndex === best.zIndex && entry.order > best.order)
-      ? entry
-      : best
+    compareOverlayOrder(entry, best) > 0 ? entry : best
   ))
 }
 
@@ -60,21 +66,48 @@ function onWindowKeyDown(event: KeyboardEvent): void {
     return
   }
 
-  if (event.key !== 'Tab' || !top.trapFocus) return
-  const panel = top.getPanel()
-  if (!panel) return
+  if (event.key !== 'Tab') return
+  const sorted = getSortedOverlays()
+  let trapIndex = sorted.length - 1
+  if (!top.trapFocus) {
+    trapIndex = -1
+    for (let i = sorted.length - 1; i >= 0; i -= 1) {
+      if (sorted[i].trapFocus) {
+        trapIndex = i
+        break
+      }
+    }
+    if (trapIndex === -1) return
+  }
 
-  const focusable = getFocusableElements(panel)
+  const scopedEntries = sorted.slice(trapIndex)
+  const trapPanel = scopedEntries[0].getPanel()
+  const panels = scopedEntries
+    .map((entry) => entry.getPanel())
+    .filter((panel): panel is HTMLElement => panel !== null)
+  if (!trapPanel || panels.length === 0) return
+
+  const seen = new Set<HTMLElement>()
+  const focusable: HTMLElement[] = []
+  for (const panel of panels) {
+    for (const element of getFocusableElements(panel)) {
+      if (!seen.has(element)) {
+        seen.add(element)
+        focusable.push(element)
+      }
+    }
+  }
+
   if (focusable.length === 0) {
     event.preventDefault()
-    panel.focus()
+    trapPanel.focus()
     return
   }
 
   const first = focusable[0]
   const last = focusable[focusable.length - 1]
   const active = document.activeElement as HTMLElement | null
-  const insidePanel = active !== null && panel.contains(active) && active !== panel
+  const insidePanel = active !== null && panels.some((panel) => panel.contains(active) && active !== panel)
 
   if (!insidePanel) {
     event.preventDefault()
@@ -87,6 +120,18 @@ function onWindowKeyDown(event: KeyboardEvent): void {
   } else if (!event.shiftKey && active === last) {
     event.preventDefault()
     first.focus()
+  } else if (panels.length > 1) {
+    const activeIndex = focusable.indexOf(active)
+    if (activeIndex === -1) {
+      event.preventDefault()
+      ;(event.shiftKey ? last : first).focus()
+      return
+    }
+    const next = focusable[event.shiftKey ? activeIndex - 1 : activeIndex + 1]
+    if (next && !panels.some((panel) => panel.contains(active) && panel.contains(next))) {
+      event.preventDefault()
+      next.focus()
+    }
   }
 }
 
@@ -116,11 +161,23 @@ export function hasHigherLayerOverlay(zIndex: number): boolean {
 }
 
 export function restoreOverlayFocus(opener: HTMLElement | null): void {
+  const top = pickTopOverlay()
+  if (top && top.trapFocus) {
+    const panel = top.getPanel()
+    if (opener?.isConnected && !(opener as HTMLButtonElement).disabled && panel?.contains(opener)) {
+      opener.focus()
+      return
+    }
+    if (panel && !panel.contains(document.activeElement)) {
+      panel.focus()
+    }
+    return
+  }
   if (opener?.isConnected && !(opener as HTMLButtonElement).disabled) {
     opener.focus()
     return
   }
-  pickTopOverlay()?.getPanel()?.focus()
+  top?.getPanel()?.focus()
 }
 
 export function registerOverlay(options: OverlayOptions): { id: number; unregister: () => void } {

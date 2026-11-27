@@ -792,6 +792,26 @@ interface BtwTurn {
 
 const BTW_VIEWPORT_MARGIN = 8
 
+function clampBtwPosition(
+  rawX: number,
+  rawY: number,
+  baseLeft: number,
+  baseTop: number,
+  width: number,
+  height: number,
+): { x: number; y: number } {
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const minX = BTW_VIEWPORT_MARGIN - baseLeft
+  const maxX = Math.max(minX, vw - width - BTW_VIEWPORT_MARGIN - baseLeft)
+  const minY = BTW_VIEWPORT_MARGIN - baseTop
+  const maxY = Math.max(minY, vh - height - BTW_VIEWPORT_MARGIN - baseTop)
+  return {
+    x: Math.max(minX, Math.min(maxX, rawX)),
+    y: Math.max(minY, Math.min(maxY, rawY)),
+  }
+}
+
 function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const [text, setText] = useState('')
   const [turns, setTurns] = useState<BtwTurn[]>([])
@@ -852,18 +872,14 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
     const handleMouseMove = (e: MouseEvent) => {
       const origin = dragOriginRef.current
       if (!origin) return
-      const rawX = origin.posX + (e.clientX - origin.clientX)
-      const rawY = origin.posY + (e.clientY - origin.clientY)
-      const vw = window.innerWidth
-      const vh = window.innerHeight
-      const minX = BTW_VIEWPORT_MARGIN - origin.baseLeft
-      const maxX = Math.max(minX, vw - origin.width - BTW_VIEWPORT_MARGIN - origin.baseLeft)
-      const minY = BTW_VIEWPORT_MARGIN - origin.baseTop
-      const maxY = Math.max(minY, vh - origin.height - BTW_VIEWPORT_MARGIN - origin.baseTop)
-      setPosition({
-        x: Math.max(minX, Math.min(maxX, rawX)),
-        y: Math.max(minY, Math.min(maxY, rawY)),
-      })
+      setPosition(clampBtwPosition(
+        origin.posX + (e.clientX - origin.clientX),
+        origin.posY + (e.clientY - origin.clientY),
+        origin.baseLeft,
+        origin.baseTop,
+        origin.width,
+        origin.height,
+      ))
     }
     const handleMouseUp = () => {
       dragOriginRef.current = null
@@ -876,6 +892,21 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
       document.removeEventListener('mouseup', handleMouseUp)
     }
   }, [dragging])
+
+  useEffect(() => {
+    const handleResize = () => {
+      setPosition((prev) => {
+        const rect = dialogRef.current?.getBoundingClientRect()
+        if (!rect || (rect.width === 0 && rect.height === 0)) return prev
+        const baseLeft = rect.left - prev.x
+        const baseTop = rect.top - prev.y
+        const next = clampBtwPosition(prev.x, prev.y, baseLeft, baseTop, rect.width, rect.height)
+        return next.x === prev.x && next.y === prev.y ? prev : next
+      })
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   const ask = async () => {
     const q = text.trim()

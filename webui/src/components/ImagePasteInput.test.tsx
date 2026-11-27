@@ -573,4 +573,73 @@ describe('ImagePasteInput attachment presentation', () => {
       externalButton.remove()
     }
   })
+
+  it('re-clamps BtwDialog position when the window shrinks after dragging', () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    const origWidth = window.innerWidth
+    const origHeight = window.innerHeight
+    Object.defineProperty(window, 'innerWidth', { value: 1200, configurable: true })
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true })
+
+    try {
+      act(() => {
+        root?.render(
+          <ImagePasteInput
+            text="/btw"
+            onText={vi.fn()}
+            attachments={[]}
+            onAttachments={vi.fn()}
+            onSubmit={vi.fn()}
+            btwSessionId="s-resize"
+            onSlashCommand={vi.fn()}
+          />,
+        )
+      })
+
+      act(() => container!.querySelector<HTMLButtonElement>('[role="option"]')!.click())
+      const dialog = container.querySelector<HTMLElement>('[role="dialog"][aria-label="BTW 旁路提问"]')!
+      expect(dialog).not.toBeNull()
+
+      vi.spyOn(dialog, 'getBoundingClientRect').mockImplementation(() => {
+        const m = dialog.style.transform.match(/translate\((-?\d+(?:\.\d+)?)px,\s*(-?\d+(?:\.\d+)?)px\)/)
+        const tx = m ? Number(m[1]) : 0
+        const ty = m ? Number(m[2]) : 0
+        return {
+          left: 400 + tx, top: 300 + ty, right: 800 + tx, bottom: 550 + ty, width: 400, height: 250, x: 400 + tx, y: 300 + ty, toJSON: () => ({}),
+        }
+      })
+
+      // Drag to bottom-right in 1200x800 -> left: 792 (tx: 392), top: 542 (ty: 242)
+      act(() => {
+        dialog.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 500, clientY: 320 }))
+      })
+      act(() => {
+        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 5000, clientY: 5000 }))
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      })
+      expect(dialog.getBoundingClientRect().left).toBe(792)
+      expect(dialog.getBoundingClientRect().top).toBe(542)
+
+      // Shrink viewport to 480x320 and fire window resize -> dialog clamps back inside viewport
+      Object.defineProperty(window, 'innerWidth', { value: 480, configurable: true })
+      Object.defineProperty(window, 'innerHeight', { value: 320, configurable: true })
+      act(() => {
+        window.dispatchEvent(new Event('resize'))
+      })
+
+      const clampedRect = dialog.getBoundingClientRect()
+      expect(clampedRect.left).toBeLessThan(480)
+      expect(clampedRect.right).toBeLessThanOrEqual(480 - 8)
+      expect(clampedRect.top).toBeLessThan(320)
+      expect(clampedRect.bottom).toBeLessThanOrEqual(320 - 8)
+      expect(clampedRect.left).toBe(72)
+      expect(clampedRect.top).toBe(62)
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: origWidth, configurable: true })
+      Object.defineProperty(window, 'innerHeight', { value: origHeight, configurable: true })
+    }
+  })
 })

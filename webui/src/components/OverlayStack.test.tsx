@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalOverlay } from './ModalOverlay'
 import { DialogHost } from './DialogHost'
 import { CommandPalette } from './CommandPalette'
+import { AntiModelSelector } from './AntiModelSelector'
 import { dialog, useDialogStore } from '@/stores/dialogStore'
 import { useChatStore } from '@/stores/chatStore'
 import { Z_LAYERS } from '@/config/zLayers'
@@ -265,5 +266,93 @@ describe('Overlay stack arbitration across ModalOverlay, CommandPalette, and Dia
     // Now popover is top and handles Escape
     pressWindowKey('Escape')
     expect(document.getElementById('pop-panel')).toBeNull()
+  })
+
+  it('keeps Tab trapped across a ModalOverlay and a portaled trapFocus=false AntiModelSelector above it', () => {
+    function NestedSelectorHarness() {
+      const [modalOpen, setModalOpen] = useState(true)
+      const [familyKey, setFamilyKey] = useState('gemini-4-hydrogen')
+      return (
+        <>
+          <button id="bg-outside" type="button">Background</button>
+          {modalOpen && (
+            <ModalOverlay onClose={() => setModalOpen(false)} labelledBy="nested-modal-title">
+              <h2 id="nested-modal-title">Nested Modal</h2>
+              <button id="modal-first-btn" type="button">First</button>
+              <AntiModelSelector
+                families={[
+                  { key: 'gemini-4-hydrogen', name: 'Gemini 4 Hydrogen', variants: { high: 'gemini-4-hydrogen-high' } },
+                  { key: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', variants: { high: 'claude-sonnet-5-5-high' } },
+                ]}
+                selectedFamilyKey={familyKey}
+                effort="high"
+                effortOptions={[{ key: 'low', name: 'low' }, { key: 'high', name: 'high' }]}
+                isOrchestrator={false}
+                onSelectFamily={setFamilyKey}
+                onSelectEffort={vi.fn()}
+                onOpenOrchestratorSettings={vi.fn()}
+              />
+              <button id="modal-tail-btn" type="button" onClick={() => setModalOpen(false)}>Tail</button>
+            </ModalOverlay>
+          )}
+        </>
+      )
+    }
+
+    act(() => root.render(<NestedSelectorHarness />))
+
+    const bgOutside = document.getElementById('bg-outside') as HTMLButtonElement
+    const firstBtn = document.getElementById('modal-first-btn') as HTMLButtonElement
+    const triggerBtn = document.querySelector<HTMLButtonElement>('button[role="combobox"][aria-label="模型"]')!
+    const tailBtn = document.getElementById('modal-tail-btn') as HTMLButtonElement
+
+    // Open the portaled AntiModelSelector menu (zIndex = Z_LAYERS.contextMenu > Z_LAYERS.modal, trapFocus = false)
+    act(() => triggerBtn.click())
+    const menu = document.querySelector<HTMLElement>('.model-select-menu')!
+    expect(menu).not.toBeNull()
+    const firstOption = menu.querySelector<HTMLButtonElement>('[role="option"]')!
+    const settingsBtn = menu.querySelector<HTMLButtonElement>('[data-anti-open-model-settings]')!
+
+    // Tab from the last item in the portaled menu wraps to the first focusable in ModalOverlay without escaping
+    settingsBtn.focus()
+    let tabEv!: KeyboardEvent
+    act(() => {
+      tabEv = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+      window.dispatchEvent(tabEv)
+    })
+    expect(tabEv.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(firstBtn)
+    expect(document.activeElement).not.toBe(bgOutside)
+
+    // Shift+Tab from the first focusable in ModalOverlay wraps to the last item in the portaled menu
+    let shiftTabEv!: KeyboardEvent
+    act(() => {
+      shiftTabEv = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })
+      window.dispatchEvent(shiftTabEv)
+    })
+    expect(shiftTabEv.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(settingsBtn)
+
+    // Tab across the boundary from ModalOverlay's last button enters the portaled menu instead of document.body
+    tailBtn.focus()
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(firstOption)
+
+    // Shift+Tab from the first item of the portaled menu returns to ModalOverlay's tail button
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(tailBtn)
+
+    // Escape closes only the selector first, then Escape closes ModalOverlay
+    pressWindowKey('Escape')
+    expect(document.querySelector('.model-select-menu')).toBeNull()
+    expect(document.getElementById('nested-modal-title')).not.toBeNull()
+    expect(document.activeElement).toBe(triggerBtn)
+
+    pressWindowKey('Escape')
+    expect(document.getElementById('nested-modal-title')).toBeNull()
   })
 })
