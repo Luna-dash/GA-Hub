@@ -2942,6 +2942,63 @@ def test_worker_session_load_fallback_and_broken_thread_run_turn(tmp_path, monke
     assert res["error_code"] == "INVALID_THINKING_SIGNATURE"
     assert worker._dirty is True
 
+    # Also verify direct RPC error payload with Unsupported mime type triggers thread_broken reset.
+    worker2 = agy_runtime.AgySessionWorker(
+        profile_id="default",
+        session_id="sess-mime-rpc",
+        workspace=tmp_path,
+        executable="agy",
+        version="1.5.14",
+    )
+    worker2.init_result = {"agentInfo": {"version": "1.5.14"}}
+    worker2.setup_result = {"sessionId": "conv-mime-1"}
+    worker2.acp_session_id = "conv-mime-1"
+    worker2.proc = DummyProc()
+    monkeypatch.setattr(worker2, "ensure_started", lambda **kw: "conv-mime-1")
+
+    def fake_send_mime(frame):
+        rid = frame.get("id")
+        if frame.get("method") == "session/prompt":
+            with worker2._rpc_lock:
+                entry = worker2._pending_rpcs.pop(rid, None)
+            if entry is not None:
+                entry[1]["error"] = {
+                    "code": -32000,
+                    "message": "Unsupported mime type: image/x-icon in contents.function_response.inline_data.",
+                }
+                entry[0].set()
+                if len(entry) > 2 and entry[2] is not None:
+                    entry[2].set()
+        elif rid is not None:
+            with worker2._rpc_lock:
+                entry = worker2._pending_rpcs.pop(rid, None)
+            if entry is not None:
+                entry[1]["result"] = {}
+                entry[0].set()
+                if len(entry) > 2 and entry[2] is not None:
+                    entry[2].set()
+
+    monkeypatch.setattr(worker2, "_send_frame", fake_send_mime)
+    res_mime = worker2.run_turn(
+        run_id="r-mime-1",
+        prompt_text="hi",
+        model="gemini-4-hydrogen-high",
+        effort="high",
+        mode="plan",
+        permission_mode="approval-required",
+        resume_conversation="conv-mime-1",
+        add_dirs=(),
+        staged_paths=[],
+        attachments=[],
+        allowed_roots=[tmp_path],
+        on_event=lambda e: None,
+    )
+    assert res_mime["status"] == "cli_error"
+    assert res_mime["thread_broken"] is True
+    assert res_mime["error_code"] == "UNSUPPORTED_FUNCTION_MIME"
+    assert "image/x-icon" in res_mime["error"]
+    assert worker2._dirty is True
+
 
 def test_worker_run_turn_prefers_db_generation_ms_over_partial_stream(tmp_path, monkeypatch):
     import sqlite3

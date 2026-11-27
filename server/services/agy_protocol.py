@@ -1998,6 +1998,10 @@ _QUOTA_EXHAUSTED_RE = re.compile(r"\breason:QUOTA_EXHAUSTED\b")
 _INVALID_THINKING_SIGNATURE_RE = re.compile(
     r"\bmessages\.\d+\.content\.\d+(?:\.thinking\.signature: Field required|: Invalid `signature` in `thinking` block)"
 )
+_UNSUPPORTED_FUNCTION_MIME_RE = re.compile(
+    r"Unsupported mime type:\s*([^\s.,;]+)\s+in contents\.function_response\.inline_data\b",
+    re.IGNORECASE,
+)
 _RESET_TIMESTAMP_RE = re.compile(r"\bquotaResetTimeStamp:([^\s\]]+)")
 _RESET_DELAY_RE = re.compile(r"\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])")
 _RETRY_DELAY_RE = re.compile(r"\bretryDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])")
@@ -2088,6 +2092,36 @@ def _parse_reset_seconds(text: str, now_ts: float | None = None) -> int | None:
     return max(1, int(math.ceil(total_sec))) if total_sec > 0 else None
 
 
+def classify_poisoned_thread_error(text: str | None) -> dict[str, Any] | None:
+    """Classify unrecoverable thread-history errors requiring conversation reset."""
+    if not text:
+        return None
+    if _INVALID_THINKING_SIGNATURE_RE.search(text):
+        return {
+            "status": "cli_error",
+            "code": "INVALID_THINKING_SIGNATURE",
+            "error": "Antigravity 保存的会话 thinking 签名已失效，已自动重置会话映射，下一条消息将附带前文摘要开启新会话。",
+            "retryable": True,
+            "thread_broken": True,
+            "reset_seconds": None,
+        }
+    mime_match = _UNSUPPORTED_FUNCTION_MIME_RE.search(text)
+    if mime_match:
+        mime = mime_match.group(1)
+        return {
+            "status": "cli_error",
+            "code": "UNSUPPORTED_FUNCTION_MIME",
+            "error": (
+                f"Antigravity 工具返回了上游模型不支持的文件格式（{mime}），"
+                "已自动重置当前会话映射；下一条消息将附带前文摘要开启新会话（请避免直接读取 .ico 等图标文件）。"
+            ),
+            "retryable": True,
+            "thread_broken": True,
+            "reset_seconds": None,
+        }
+    return None
+
+
 def evaluate_turn_outcome(
     stop_reason: str | None,
     step_type: int | None,
@@ -2132,15 +2166,9 @@ def evaluate_turn_outcome(
             "reset_seconds": reset_sec,
         }
 
-    if _INVALID_THINKING_SIGNATURE_RE.search(text):
-        return {
-            "status": "cli_error",
-            "code": "INVALID_THINKING_SIGNATURE",
-            "error": "Antigravity 保存的会话 thinking 签名已失效，已自动重置会话映射，下一条消息将附带前文摘要开启新会话。",
-            "retryable": True,
-            "thread_broken": True,
-            "reset_seconds": None,
-        }
+    poisoned = classify_poisoned_thread_error(text)
+    if poisoned is not None:
+        return poisoned
 
     if api_match is None or not http_status or not message:
         return {

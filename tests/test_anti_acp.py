@@ -592,6 +592,20 @@ def test_prompt_outcome_watcher_and_evaluation(tmp_path):
     # 4. Typed refusal without DB error step still triggers rate_limited.
     assert watcher.check({"stopReason": "refusal"})["status"] == "rate_limited"
 
+    # 5. Unsupported MIME returned in tool inline_data poisons the thread and triggers thread_broken reset.
+    mime_msg = (
+        b"Error 400, Message: Unsupported mime type: image/x-icon in contents.function_response.inline_data. "
+        b"Only image/*, text/*, video/*, audio/*, and document MIME types are supported in function response parts., "
+        b"Status: INVALID_ARGUMENT"
+    )
+    ev_mime = proto.evaluate_turn_outcome("end_turn", 17, mime_msg, True)
+    assert ev_mime is not None
+    assert ev_mime["status"] == "cli_error"
+    assert ev_mime["code"] == "UNSUPPORTED_FUNCTION_MIME"
+    assert ev_mime["thread_broken"] is True
+    assert "image/x-icon" in ev_mime["error"]
+    assert proto.classify_poisoned_thread_error(mime_msg.decode("utf-8"))["code"] == "UNSUPPORTED_FUNCTION_MIME"
+
 
 def test_tool_sanitization_image_path_diff_omitted_and_mcp_subagent_guard(tmp_path):
     huge_payload = {

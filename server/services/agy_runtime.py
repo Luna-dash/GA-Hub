@@ -33,6 +33,7 @@ from .agy_protocol import (
     ReadRepair,
     SessionUpdateNormalizer,
     build_prompt_blocks,
+    classify_poisoned_thread_error,
     client_info_for_version,
     default_permission_mode,
     evaluate_permission,
@@ -1576,6 +1577,21 @@ class AgySessionWorker:
                         }
                     if refresh_outcome == "login_required":
                         agy_profile.record_auth_state(self.profile_id, "login_required")
+                poisoned = classify_poisoned_thread_error(str(msg))
+                if poisoned is not None:
+                    self._dirty = True
+                    return {
+                        "status": poisoned["status"],
+                        "conversation_id": acp_sid,
+                        "answer": answer or None,
+                        "progress_messages": progress_messages,
+                        "error": poisoned["error"],
+                        "error_code": poisoned["code"],
+                        "thread_broken": True,
+                        "effective_model": effective_model,
+                        "fallback_notice": notice_text,
+                        "usage": usage,
+                    }
                 return {
                     "status": "cli_error",
                     "conversation_id": acp_sid,
