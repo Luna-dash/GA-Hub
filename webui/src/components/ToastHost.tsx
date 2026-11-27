@@ -2,6 +2,7 @@
 // Mounted once at App root. Self-contained styling (scoped keyframes) so it
 // doesn't touch the shared index.css that other work may be editing.
 
+import { useEffect, useRef } from 'react'
 import { CheckCircle2, Info, XCircle, type LucideIcon } from 'lucide-react'
 import { CloseIconButton } from '@/components/ActionIcons'
 import { useToastStore, type ToastKind } from '@/stores/toastStore'
@@ -18,6 +19,18 @@ export function ToastHost() {
   const dismiss = useToastStore((s) => s.dismiss)
   const pause = useToastStore((s) => s.pause)
   const resume = useToastStore((s) => s.resume)
+  const hoveredIdsRef = useRef(new Set<number>())
+  const focusedIdsRef = useRef(new Set<number>())
+
+  useEffect(() => {
+    const liveIds = new Set(items.map((t) => t.id))
+    for (const id of hoveredIdsRef.current) {
+      if (!liveIds.has(id)) hoveredIdsRef.current.delete(id)
+    }
+    for (const id of focusedIdsRef.current) {
+      if (!liveIds.has(id)) focusedIdsRef.current.delete(id)
+    }
+  }, [items])
 
   if (items.length === 0) return null
 
@@ -36,12 +49,26 @@ export function ToastHost() {
           <div
             key={t.id}
             role={t.kind === 'error' ? 'alert' : 'status'}
-            onMouseEnter={() => pause(t.id)}
-            onMouseLeave={() => resume(t.id)}
-            onFocus={() => pause(t.id)}
+            onMouseEnter={() => {
+              hoveredIdsRef.current.add(t.id)
+              pause(t.id)
+            }}
+            onMouseLeave={() => {
+              hoveredIdsRef.current.delete(t.id)
+              if (!focusedIdsRef.current.has(t.id)) {
+                resume(t.id)
+              }
+            }}
+            onFocus={() => {
+              focusedIdsRef.current.add(t.id)
+              pause(t.id)
+            }}
             onBlur={(e) => {
               if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-                resume(t.id)
+                focusedIdsRef.current.delete(t.id)
+                if (!hoveredIdsRef.current.has(t.id)) {
+                  resume(t.id)
+                }
               }
             }}
             style={{ animation: 'ga-toast-in 160ms ease-out' }}

@@ -40,4 +40,40 @@ describe('extractErrorMessage', () => {
     expect(extractErrorMessage('   ', '默认提示')).toBe('默认提示')
     expect(extractErrorMessage({}, '默认提示')).toBe('默认提示')
   })
+
+  it('filters serialized null/empty HttpError bodies while preserving fallback messages', () => {
+    expect(extractErrorMessage(new HttpError(500, null), '服务失败')).toBe('服务失败')
+    expect(extractErrorMessage(new HttpError(500, {}), '服务失败')).toBe('服务失败')
+    expect(extractErrorMessage(new HttpError(500, []), '服务失败')).toBe('服务失败')
+    expect(extractErrorMessage(new HttpError(500, 'null'), '服务失败')).toBe('服务失败')
+    expect(extractErrorMessage({ body: { detail: {} }, message: 'transport down' })).toBe('transport down')
+  })
+
+  it('extracts FastAPI 422 validation detail arrays and nested error objects', () => {
+    expect(
+      extractErrorMessage(
+        new HttpError(422, {
+          detail: [{ loc: ['body', 'name'], msg: 'Field required', type: 'missing' }],
+        }),
+      ),
+    ).toBe('Field required')
+    expect(
+      extractErrorMessage(
+        new HttpError(422, {
+          detail: [
+            { loc: ['body', 'name'], msg: '名称不能为空' },
+            { loc: ['body', 'port'], msg: '端口无效' },
+          ],
+        }),
+      ),
+    ).toBe('名称不能为空；端口无效')
+    expect(
+      extractErrorMessage(new HttpError(502, { error: { message: 'upstream rate limit', type: 'rate_limit' } })),
+    ).toBe('upstream rate limit')
+    expect(
+      extractErrorMessage(new HttpError(500, { detail: { error: { message: 'nested upstream error' } } })),
+    ).toBe('nested upstream error')
+    expect(extractErrorMessage(new Error('{"detail":[{"msg":"invalid payload"}]}'))).toBe('invalid payload')
+    expect(extractErrorMessage(new Error('{"error":{"message":"json nested error"}}'))).toBe('json nested error')
+  })
 })

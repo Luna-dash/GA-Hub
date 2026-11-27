@@ -161,4 +161,28 @@ describe('Nova embedded settings', () => {
     expect(host.querySelector('[role="alert"]')).toBeNull()
     expect(host.textContent).toContain(status.device)
   })
+
+  it('does not erase an explicit action error when a background 5s status poll succeeds', async () => {
+    vi.useFakeTimers()
+    try {
+      const paired = { ...status, paired: true, running: true }
+      vi.mocked(novaApi.status).mockResolvedValue(paired)
+      vi.mocked(novaApi.action).mockRejectedValueOnce(new Error('重连失败'))
+
+      await act(async () => root.render(<NovaSettingsPanel />))
+      await act(async () => button('重新连接').click())
+
+      expect(host.querySelector('[role="alert"]')?.textContent).toBe('重连失败')
+      const pollsBefore = vi.mocked(novaApi.status).mock.calls.length
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+
+      expect(vi.mocked(novaApi.status).mock.calls.length).toBeGreaterThan(pollsBefore)
+      expect(host.querySelector('[role="alert"]')?.textContent).toBe('重连失败')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

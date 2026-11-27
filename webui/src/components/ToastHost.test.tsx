@@ -112,4 +112,52 @@ describe('ToastHost', () => {
     })
     expect(host.querySelector('[role="status"]')).toBeNull()
   })
+
+  it('keeps toast paused while focused even after mouse leaves, and resumes only after blur', async () => {
+    await act(async () => root.render(<ToastHost />))
+
+    act(() => {
+      toast.info('聚焦加悬停保持暂停', 2000)
+    })
+
+    const toastEl = host.querySelector<HTMLElement>('[role="status"]')!
+    act(() => {
+      vi.advanceTimersByTime(1000)
+      toastEl.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+      toastEl.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+      toastEl.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
+      vi.advanceTimersByTime(5000)
+    })
+    expect(host.querySelector('[role="status"]')).not.toBeNull()
+
+    act(() => {
+      toastEl.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
+      vi.advanceTimersByTime(1100)
+    })
+    expect(host.querySelector('[role="status"]')).toBeNull()
+  })
+
+  it('keeps toast paused while hovered even after focus leaves, and resumes only after mouseout', async () => {
+    await act(async () => root.render(<ToastHost />))
+
+    act(() => {
+      toast.info('悬停加聚焦保持暂停', 2000)
+    })
+
+    const toastEl = host.querySelector<HTMLElement>('[role="status"]')!
+    act(() => {
+      vi.advanceTimersByTime(1000)
+      toastEl.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+      toastEl.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+      toastEl.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
+      vi.advanceTimersByTime(5000)
+    })
+    expect(host.querySelector('[role="status"]')).not.toBeNull()
+
+    act(() => {
+      toastEl.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
+      vi.advanceTimersByTime(1100)
+    })
+    expect(host.querySelector('[role="status"]')).toBeNull()
+  })
 })

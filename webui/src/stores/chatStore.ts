@@ -30,6 +30,7 @@ import type {
 } from '@/api/types'
 import { api, ChatSocket } from '@/api/client'
 import type { PasteAttachment } from '@/api/types'
+import { extractErrorMessage } from '@/utils/errors'
 import { type ViewportResumePolicy } from '@/utils/conversationViewport'
 import { clearMarkdownRenderCache } from '@/utils/markdownRenderCache'
 
@@ -616,7 +617,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
         msgs: st.msgs,
         streaming: st.streaming,
         historyStatus: 'history_error',
-        historyError: error instanceof Error ? error.message : '历史消息加载失败',
+        historyError: extractErrorMessage(error, '历史消息加载失败'),
         historyRevision: null,
         historyHasMore: false,
         historyBefore: null,
@@ -688,7 +689,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       if (abort.signal.aborted || get().sessionId !== sessionId) return
       set({
         olderHistoryStatus: 'error',
-        olderHistoryError: error instanceof Error ? error.message : '更早的历史消息加载失败',
+        olderHistoryError: extractErrorMessage(error, '更早的历史消息加载失败'),
       })
     } finally {
       if (runtime.olderHistoryAbort === abort) runtime.olderHistoryAbort = null

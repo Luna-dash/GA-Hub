@@ -5,7 +5,8 @@ import { RefreshIcon, ShieldCheck, Unlink, X } from './ActionIcons'
 
 export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) {
   const [status, setStatus] = useState<NovaStatus | null>(null)
-  const [error, setError] = useState('')
+  const [statusError, setStatusError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [register, setRegister] = useState(false)
@@ -22,10 +23,10 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
       const next = await novaApi.status()
       if (!aliveRef.current) return
       setStatus(next)
-      setError('')
+      setStatusError('')
     } catch (e) {
       if (!aliveRef.current) return
-      setError(extractErrorMessage(e, '无法读取 Nova 本机状态'))
+      setStatusError(extractErrorMessage(e, '无法读取 Nova 本机状态'))
     }
   }, [])
 
@@ -50,7 +51,7 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
   }, [active, refreshStatus])
 
   const act = async (action: 'associate' | 'revoke' | 'reconnect' | 'pause' | 'resume') => {
-    setBusy(true); setError(''); setMessage('')
+    setBusy(true); setActionError(''); setMessage('')
     try {
       const result = await novaApi.action(
         action,
@@ -61,14 +62,14 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
             }
           : undefined,
       )
-      setStatus(result); setRevoking(false); setConfirmed(false)
+      setStatus(result); setStatusError(''); setRevoking(false); setConfirmed(false)
       setMessage(action === 'revoke' ? '云端授权已撤销，本机绑定已清除；固定设备码保留。'
         : action === 'associate' ? '账号关联完成。以后 Nova 将随 Gyra 自动启动。'
         : action === 'pause' ? '已暂停远程连接。'
         : action === 'resume' ? '已恢复远程连接。'
         : '已请求重连。')
     } catch (e) {
-      setError(extractErrorMessage(e, 'Nova 操作失败'))
+      setActionError(extractErrorMessage(e, 'Nova 操作失败'))
     } finally {
       setPassword(''); setInvite(''); setBusy(false)
     }
@@ -87,9 +88,9 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
       <p className="mt-1 text-xs leading-relaxed text-ink-muted">关联账号后，即可通过 Nova 远程访问这台电脑。</p>
     </header>
     {!status ? (
-      error ? (
+      statusError ? (
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span role="alert" className="break-words text-status-danger">{error}</span>
+          <span role="alert" className="break-words text-status-danger">{statusError}</span>
           <button type="button" className="ga-btn-sm" onClick={() => { void refreshStatus() }}>
             重试
           </button>
@@ -144,7 +145,8 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
           <p className="text-xs text-ink-faint">密码仅用于本次验证，不作保存。</p>
         </div>
       </form>}
-      {error && <p role="alert" className="break-words text-sm text-status-warning">{error}</p>}
+      {actionError && <p role="alert" className="break-words text-sm text-status-warning">{actionError}</p>}
+      {statusError && <p role="alert" className="break-words text-sm text-status-danger">{statusError}</p>}
       {message && <p role="status" className="text-sm text-status-success">{message}</p>}
       <details className="border-t border-line/40 pt-3 text-xs text-ink-faint">
         <summary className="w-fit cursor-pointer text-ink-muted hover:text-ink">连接与安全说明</summary>

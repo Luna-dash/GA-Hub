@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api } from '@/api/client'
+import { api, HttpError } from '@/api/client'
 import type { ConversationMessage, SessionMessagesResponse } from '@/api/types'
 import { noticeKeys, useChatStore, applyEvent, historyToMessages, pruneActiveMessagesWindow } from './chatStore'
 
@@ -676,6 +676,35 @@ describe('chatStore lifecycle', () => {
     await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
 
     expect(useChatStore.getState().sessionViews['session-a']).toBeUndefined()
+  })
+
+  it('extracts structured HttpError detail for historyError and olderHistoryError', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockRejectedValueOnce(
+      new HttpError(500, { detail: '存档索引损坏' }),
+    )
+
+    useChatStore.getState().start('session-err')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('history_error'))
+    expect(useChatStore.getState().historyError).toBe('存档索引损坏')
+
+    vi.spyOn(api, 'getSessionMessages')
+      .mockResolvedValueOnce({
+        session_id: 'session-older-err',
+        archive_bound: true,
+        revision: 'rev-1',
+        total: 4,
+        has_more: true,
+        next_before: 2,
+        items: [{ id: 'q2', role: 'user', content: 'q2', ordinal: 2 }],
+      })
+      .mockRejectedValueOnce(new HttpError(503, { detail: '分页服务忙' }))
+
+    useChatStore.getState().start('session-older-err')
+    await vi.waitFor(() => expect(useChatStore.getState().historyBefore).toBe(2))
+    await useChatStore.getState().loadOlderHistory()
+
+    expect(useChatStore.getState().olderHistoryStatus).toBe('error')
+    expect(useChatStore.getState().olderHistoryError).toBe('分页服务忙')
   })
 })
 

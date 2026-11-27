@@ -157,6 +157,8 @@ export function AntiAgyProfiles({
   )
   useEffect(() => {
     if (view.kind === 'account' && profiles.data && !viewedProfile) {
+      clearErrorsRef.current()
+      resetActionRef.current()
       setView({ kind: 'list' })
     }
   }, [view.kind, profiles.data, viewedProfile])
@@ -177,6 +179,7 @@ export function AntiAgyProfiles({
   }, [profiles.data?.login_profile, refresh])
 
   const clearErrorsRef = useRef<() => void>(() => {})
+  const resetActionRef = useRef<() => void>(() => {})
 
   const action = useMutation({
     mutationFn: async (args: Action) => {
@@ -366,6 +369,7 @@ export function AntiAgyProfiles({
     codeLoginSubmit.reset()
     setCodeLoginRefreshError('')
   }
+  resetActionRef.current = action.reset
   const hasActiveCodeLogin = Boolean(codeLogin && (codeLogin.phase === 'starting' || codeLogin.phase === 'waiting_code'))
   const addDirty = view.kind === 'add' && name.trim().length > 0
   const accountDirty = view.kind === 'account' && Boolean(
@@ -381,11 +385,11 @@ export function AntiAgyProfiles({
     cancelActiveCodeLogin(codeLogin)
     setCodeLogin(null)
     setAuthCode('')
-    setCodeLoginRefreshError('')
     setName('')
     if (viewedProfile) setRenameDraft(viewedProfile.name)
     setMessage('')
     action.reset()
+    clearErrorsRef.current()
     setView(next)
   }
   const navigateTo = (next: PanelView) => {

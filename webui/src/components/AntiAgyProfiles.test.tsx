@@ -129,4 +129,47 @@ describe('AntiAgyProfiles error surfacing & pinned feedback', () => {
       expect(pinned.querySelector('[role="alert"]')?.textContent).toBe('授权服务暂不可用')
     })
   })
+
+  it('resets codeLoginStart and codeLoginSubmit errors when navigating back to the list view', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        active: 'p1',
+        login_profile: null,
+        profiles: [{ id: 'p1', name: '主力', has_credentials: true, auth_state: 'authenticated' }],
+      }),
+    })))
+    antiApiMock.startCodeLogin.mockRejectedValueOnce(new HttpError(500, { detail: '生成链接失败' }))
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <Harness />
+        </QueryClientProvider>,
+      )
+    })
+
+    await vi.waitFor(() => {
+      expect(document.body.querySelector('button[aria-label="账号设置：主力"]')).not.toBeNull()
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="账号设置：主力"]')!.click()
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="授权码登录：主力"]')!.click()
+    })
+
+    await vi.waitFor(() => {
+      const pinned = document.body.querySelector('[data-anti-profiles-pinned-feedback]')!
+      expect(pinned.querySelector('[role="alert"]')?.textContent).toBe('生成链接失败')
+    })
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="返回账号列表"]')!.click()
+    })
+
+    expect(document.body.querySelector('ul[aria-label="账号列表"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-anti-profiles-pinned-feedback] [role="alert"]')).toBeNull()
+  })
 })
