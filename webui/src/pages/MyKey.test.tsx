@@ -513,4 +513,33 @@ describe('MyKey upload button visibility', () => {
     expect(autoSyncSection.querySelector('[role="alert"]')).toBeNull()
     expect(autoSyncSection.textContent).toContain('每日自动同步已开启')
   })
+
+  it('validates empty var inline and lets thinking_budget_tokens clear without snapping back', async () => {
+    const data = fixture()
+    data.structured.sessions = [
+      { var: 'native_claude_a', type: 'native_claude', lineno: 2, fields: { name: 'Claude', thinking_type: 'enabled', thinking_budget_tokens: 32768 } },
+    ]
+    await mountFixture(data)
+    act(() => host.querySelector<HTMLButtonElement>('.mykey-card__toggle')!.click())
+    click('编辑')
+
+    const dlg = host.querySelector('[role="dialog"]')!
+    const varInput = dlg.querySelector<HTMLInputElement>('input[placeholder="native_claude_xxx_config"]')!
+    const budgetInput = dlg.querySelector<HTMLInputElement>('input[aria-label="thinking_budget_tokens"]')!
+
+    // Clearing 32768 keeps empty draft instead of snapping back to 32768
+    input(budgetInput, '')
+    expect(budgetInput.value).toBe('')
+    input(budgetInput, '16384')
+    expect(budgetInput.value).toBe('16384')
+
+    // Empty var triggers inline role="alert" and focuses varInput
+    input(varInput, '   ')
+    click('保存并应用')
+    await settle()
+    expect(apiMock.mutateMyKey).not.toHaveBeenCalled()
+    expect(varInput.getAttribute('aria-invalid')).toBe('true')
+    expect(document.activeElement).toBe(varInput)
+    expect(dlg.querySelector('[role="alert"]')?.textContent).toContain('请填写变量名')
+  })
 })

@@ -514,3 +514,62 @@ it('never renders empty state alongside sessionsQuery error and offers retry in 
   expect(host.querySelector('[role="alert"]')).toBeNull()
   settingsClient.clear()
 })
+
+it('validates title, model key, and instruction inline on submit in ThemeTaskSettings without silently disabling Save', async () => {
+  const session = {
+    id: 'one', title: '签到', llm_key: 'stale-model', llm_index: null, archive_path: null,
+    project_name: null, project_path: null, created_at: '', updated_at: '', theme_task: null,
+    previous_theme_task: { instruction: '检查签到', description: '' },
+  }
+  const settingsClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  await act(async () => {
+    root.render(<QueryClientProvider client={settingsClient}><ThemeTaskSettings session={session} onClose={() => {}} onSaved={() => {}} /></QueryClientProvider>)
+  })
+  await wait()
+
+  const dlg = host.querySelector('[role="dialog"]')!
+  // Proactive stale-model warning remains visible
+  expect(dlg.textContent).toContain('模型已失效，请重新选择。')
+
+  const titleInput = dlg.querySelector<HTMLInputElement>('input')!
+  const modelSelect = dlg.querySelector<HTMLSelectElement>('select')!
+  const instructionArea = dlg.querySelector<HTMLTextAreaElement>('[aria-label="默认执行指令"]')!
+  const saveBtn = Array.from(dlg.querySelectorAll('button')).find(b => b.textContent?.trim() === '保存')!
+
+  const setInput = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  const setTextarea = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+  act(() => {
+    setInput.call(titleInput, '   ')
+    titleInput.dispatchEvent(new Event('input', { bubbles: true }))
+    setTextarea.call(instructionArea, '')
+    instructionArea.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(saveBtn.disabled).toBe(false)
+
+  await act(async () => { saveBtn.click() })
+  expect(api.themeConfig).not.toHaveBeenCalled()
+  expect(titleInput.getAttribute('aria-invalid')).toBe('true')
+  expect(modelSelect.getAttribute('aria-invalid')).toBe('true')
+  expect(instructionArea.getAttribute('aria-invalid')).toBe('true')
+  expect(document.activeElement).toBe(titleInput)
+  expect(dlg.querySelectorAll('[role="alert"]').length).toBe(3)
+
+  act(() => {
+    setInput.call(titleInput, '有效标题')
+    titleInput.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(titleInput.getAttribute('aria-invalid')).toBeNull()
+  await act(async () => { saveBtn.click() })
+  expect(document.activeElement).toBe(modelSelect)
+
+  act(() => {
+    modelSelect.value = 'model'
+    modelSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    setTextarea.call(instructionArea, '有效指令')
+    instructionArea.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => { saveBtn.click() })
+  expect(api.updateSessionModel).toHaveBeenCalledWith('one', 'model')
+  expect(api.themeConfig).toHaveBeenCalledWith('one', { instruction: '有效指令', description: '' }, '有效标题')
+  settingsClient.clear()
+})

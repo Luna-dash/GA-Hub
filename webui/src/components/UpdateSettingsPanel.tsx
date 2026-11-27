@@ -166,6 +166,7 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
   const total = task?.total_bytes ?? 0
   const percent = total > 0 ? Math.min(100, Math.floor(received / total * 100)) : undefined
   const inputClass = 'w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink'
+  const shaInvalid = Boolean(sha256.trim()) && !/^[a-fA-F0-9]{64}$/.test(sha256.trim())
 
   return (
     <section className="ga-paper-card p-4 space-y-3" aria-label="桌面程序更新">
@@ -254,8 +255,15 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
               placeholder="64 位校验和，可留空"
               spellCheck={false}
               disabled={localLocked}
+              aria-invalid={shaInvalid || undefined}
+              aria-describedby={shaInvalid ? 'update-sha256-error' : undefined}
               autoComplete="off"
             />
+            {shaInvalid && (
+              <p id="update-sha256-error" role="alert" className="ga-field-error">
+                SHA-256 需为 64 位十六进制字符，或留空跳过校验。
+              </p>
+            )}
           </label>
           <label className="flex items-start gap-2 text-xs text-ink">
             <input type="checkbox" checked={trusted} onChange={e => setTrusted(e.target.checked)} disabled={localLocked} />

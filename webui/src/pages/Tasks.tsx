@@ -378,6 +378,12 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
   }))
   const [s, setS] = useState<Partial<TaskSchedule>>(initialSnapshot)
   const [saving, setSaving] = useState(false)
+  const [errors, setErrors] = useState<Partial<Record<'name' | 'cron' | 'interval_minutes' | 'prompt', string>>>({})
+  const [submitError, setSubmitError] = useState('')
+  const nameRef = useRef<HTMLInputElement>(null)
+  const cronRef = useRef<HTMLInputElement>(null)
+  const intervalRef = useRef<HTMLInputElement>(null)
+  const promptRef = useRef<HTMLTextAreaElement>(null)
   const numEq = (a?: number, b?: number) => (Number.isNaN(a) && Number.isNaN(b)) || a === b
   const isDirty = (s.name ?? '') !== (initialSnapshot.name ?? '')
     || s.type !== initialSnapshot.type
@@ -389,28 +395,37 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
   const save = async () => {
     if (saving) return
     const type = (s.type ?? 'cron') as TaskScheduleType
+    const nextErrors: Partial<Record<'name' | 'cron' | 'interval_minutes' | 'prompt', string>> = {}
+    let firstInvalid: HTMLElement | null = null
     if (!(s.name || '').trim()) {
-      await dialog.alert('请填写名称', '任务名称不能为空。')
-      return
-    }
-    if (!(s.prompt || '').trim()) {
-      await dialog.alert('请填写 Prompt', '任务 Prompt 不能为空。')
-      return
+      nextErrors.name = '请填写任务名称。'
+      firstInvalid ??= nameRef.current
     }
     if (type === 'cron') {
       try {
         CronExpressionParser.parse((s.cron || '').trim())
       } catch {
-        await dialog.alert('cron 表达式无效', '请检查 cron 表达式格式，例如 0 8 * * *。')
-        return
+        nextErrors.cron = 'Cron 表达式无效，例如 0 8 * * *。'
+        firstInvalid ??= cronRef.current
       }
     } else if (type === 'interval') {
       const mins = Number(s.interval_minutes)
       if (!Number.isFinite(mins) || mins < 1) {
-        await dialog.alert('周期无效', '执行周期必须为不小于 1 的分钟数。')
-        return
+        nextErrors.interval_minutes = '执行周期必须为不小于 1 的分钟数。'
+        firstInvalid ??= intervalRef.current
       }
     }
+    if (!(s.prompt || '').trim()) {
+      nextErrors.prompt = '请填写任务 Prompt。'
+      firstInvalid ??= promptRef.current
+    }
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors)
+      firstInvalid?.focus()
+      return
+    }
+    setErrors({})
+    setSubmitError('')
     setSaving(true)
     try {
       await api.upsertTaskSchedule({
@@ -421,7 +436,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
       qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
       onClose()
     } catch (e: any) {
-      toast.error(extractErrorMessage(e, '保存失败'))
+      setSubmitError(extractErrorMessage(e, '保存失败'))
     } finally {
       setSaving(false)
     }
@@ -433,34 +448,84 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
         <CloseIconButton label="关闭弹窗" variant="ghost" iconSize={16} disabled={saving} onClick={requestClose} />
       </div>
       <Field label="名称">
-        <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="每日早报" />
+        <input
+          ref={nameRef}
+          value={s.name || ''}
+          onChange={(e) => {
+            setS({ ...s, name: e.target.value })
+            if (errors.name) setErrors(prev => ({ ...prev, name: undefined }))
+          }}
+          aria-invalid={Boolean(errors.name) || undefined}
+          aria-describedby={errors.name ? 'task-name-error' : undefined}
+          className={inp}
+          placeholder="每日早报"
+        />
+        {errors.name && <p id="task-name-error" role="alert" className="ga-field-error">{errors.name}</p>}
       </Field>
       <Field label="类型">
-        <select value={s.type} onChange={(e) => setS({ ...s, type: e.target.value as TaskScheduleType })} className={`${inp} ga-select`}>
+        <select
+          value={s.type}
+          onChange={(e) => {
+            setS({ ...s, type: e.target.value as TaskScheduleType })
+            setErrors(prev => ({ ...prev, cron: undefined, interval_minutes: undefined }))
+          }}
+          className={`${inp} ga-select`}
+        >
           <option value="cron">定时 (Cron)</option>
           <option value="interval">周期 (Interval)</option>
         </select>
       </Field>
       {s.type === 'cron' && (
         <Field label="Cron 表达式">
-          <input value={s.cron || ''} onChange={(e) => setS({ ...s, cron: e.target.value })} className={inp + ' font-mono'} placeholder="分 时 日 月 周（本地时区）" />
+          <input
+            ref={cronRef}
+            value={s.cron || ''}
+            onChange={(e) => {
+              setS({ ...s, cron: e.target.value })
+              if (errors.cron) setErrors(prev => ({ ...prev, cron: undefined }))
+            }}
+            aria-invalid={Boolean(errors.cron) || undefined}
+            aria-describedby={errors.cron ? 'task-cron-error' : undefined}
+            className={inp + ' font-mono'}
+            placeholder="分 时 日 月 周（本地时区）"
+          />
+          {errors.cron && <p id="task-cron-error" role="alert" className="ga-field-error">{errors.cron}</p>}
           <CronPreview expr={s.cron || ''} />
         </Field>
       )}
       {s.type === 'interval' && (
         <Field label="间隔分钟">
-          <input type="number" min={1} value={Number.isNaN(s.interval_minutes) ? '' : s.interval_minutes ?? 60}
-            onChange={(e) => setS({ ...s, interval_minutes: e.currentTarget.valueAsNumber })} className={inp} />
+          <input
+            ref={intervalRef}
+            type="number"
+            min={1}
+            value={Number.isNaN(s.interval_minutes) ? '' : s.interval_minutes ?? 60}
+            onChange={(e) => {
+              setS({ ...s, interval_minutes: e.currentTarget.valueAsNumber })
+              if (errors.interval_minutes) setErrors(prev => ({ ...prev, interval_minutes: undefined }))
+            }}
+            aria-invalid={Boolean(errors.interval_minutes) || undefined}
+            aria-describedby={errors.interval_minutes ? 'task-interval-error' : undefined}
+            className={inp}
+          />
+          {errors.interval_minutes && <p id="task-interval-error" role="alert" className="ga-field-error">{errors.interval_minutes}</p>}
         </Field>
       )}
       <Field label="任务 Prompt">
         <textarea
+          ref={promptRef}
           value={s.prompt || ''}
-          onChange={(e) => setS({ ...s, prompt: e.target.value })}
+          onChange={(e) => {
+            setS({ ...s, prompt: e.target.value })
+            if (errors.prompt) setErrors(prev => ({ ...prev, prompt: undefined }))
+          }}
+          aria-invalid={Boolean(errors.prompt) || undefined}
+          aria-describedby={errors.prompt ? 'task-prompt-error' : undefined}
           rows={5}
           className={inp + ' resize-none text-xs leading-relaxed'}
           placeholder="每天抓取 XXX 信息，总结成 5 条要点；如果有重要变化，请在结论里标出。"
         />
+        {errors.prompt && <p id="task-prompt-error" role="alert" className="ga-field-error">{errors.prompt}</p>}
       </Field>
       <Field label="启用">
         <label className="inline-flex items-center gap-2 text-sm">
@@ -468,6 +533,11 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
           <span className="text-ink">保存后立即生效</span>
         </label>
       </Field>
+      {submitError && (
+        <p role="alert" className="mt-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-xs text-status-danger">
+          {submitError}
+        </p>
+      )}
       <div className="flex justify-end gap-2 mt-4">
         <button type="button" onClick={requestClose} disabled={saving} className="ga-btn">取消</button>
         <button type="button" onClick={save} disabled={saving} className="ga-btn-primary">

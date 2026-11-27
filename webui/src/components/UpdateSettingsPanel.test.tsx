@@ -67,8 +67,12 @@ describe('UpdateSettingsPanel', () => {
     await act(async () => inputs[2].click())
     await enter(inputs[1], 'bad')
     expect(button('校验并准备').disabled).toBe(true)
+    expect(inputs[1].getAttribute('aria-invalid')).toBe('true')
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('64 位十六进制')
     await enter(inputs[1], 'a'.repeat(64))
     expect(button('校验并准备').disabled).toBe(false)
+    expect(inputs[1].getAttribute('aria-invalid')).toBeNull()
+    expect(host.querySelector('[role="alert"]')).toBeNull()
   })
 
   it('clears a submitted local package and lets the user replace the prepared candidate', async () => {

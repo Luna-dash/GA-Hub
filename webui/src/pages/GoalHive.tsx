@@ -330,7 +330,10 @@ export default function GoalHive() {
 
             <div className="shrink-0 bg-bg-soft/45 px-4 py-3 flex items-center justify-between gap-3 border-t border-line/40">
               <p
-                className="min-w-0 text-xs text-ink-muted truncate"
+                className={clsx(
+                  'min-w-0 text-xs truncate',
+                  !streaming && conn === 'open' && effectiveLlmIndex === null ? 'text-status-warning' : 'text-ink-muted',
+                )}
                 title={
                   streaming
                     ? '当前任务输出中，完成后可启动下一项。'
@@ -338,7 +341,9 @@ export default function GoalHive() {
                       ? '正在连接实时通道，完成后即可启动。'
                       : conn === 'closed'
                         ? '实时通道已断开，正在等待重连。'
-                        : '输出保留在本页面日志区，不混入普通聊天。'
+                        : effectiveLlmIndex === null
+                          ? '请先在 LLM 管理中配置可用模型。'
+                          : '输出保留在本页面日志区，不混入普通聊天。'
                 }
               >
                 {streaming
@@ -347,7 +352,9 @@ export default function GoalHive() {
                     ? '正在连接实时通道…'
                     : conn === 'closed'
                       ? '实时通道已断开，正在等待重连…'
-                      : '独立工作台输出，不混入普通聊天'}
+                      : effectiveLlmIndex === null
+                        ? '请先在 LLM 管理中配置可用模型'
+                        : '独立工作台输出，不混入普通聊天'}
               </p>
               <button
                 type="submit"

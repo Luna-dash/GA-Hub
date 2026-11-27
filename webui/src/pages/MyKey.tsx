@@ -601,12 +601,23 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
   onSaved: (r: MyKeyWriteResult) => void
 }) {
   const [s, setS] = useState<MyKeySession>(session)
+  const [budgetDraft, setBudgetDraft] = useState<string>(() => String(session.fields.thinking_budget_tokens ?? 32768))
+  const [varError, setVarError] = useState('')
+  const [budgetError, setBudgetError] = useState('')
+  const varRef = useRef<HTMLInputElement>(null)
+  const budgetRef = useRef<HTMLInputElement>(null)
   const [showKey, setShowKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const saveBusyRef = useRef(false)
   const [err, setErr] = useState<string | null>(null)
 
-  useEffect(() => setS(session), [session])
+  useEffect(() => {
+    setS(session)
+    setBudgetDraft(String(session.fields.thinking_budget_tokens ?? 32768))
+    setVarError('')
+    setBudgetError('')
+    setErr(null)
+  }, [session])
 
   const isDirty = s.var !== session.var || !fieldsEqual(s.fields, session.fields)
   const { requestClose } = useDirtyClose({ dirty: isDirty, busy: saving, onClose })
@@ -615,20 +626,44 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
 
   const save = async () => {
     if (saveBusyRef.current) return
+    let firstInvalid: HTMLElement | null = null
+    let nextVarError = ''
+    let nextBudgetError = ''
+    if (!s.var.trim()) {
+      nextVarError = '请填写变量名。'
+      firstInvalid ??= varRef.current
+    }
+    if (s.fields.thinking_type === 'enabled') {
+      const trimmedBudget = budgetDraft.trim()
+      const parsedBudget = Number(trimmedBudget)
+      if (!trimmedBudget || !Number.isInteger(parsedBudget) || parsedBudget < 1024) {
+        nextBudgetError = 'thinking_budget_tokens 需为不小于 1024 的整数。'
+        firstInvalid ??= budgetRef.current
+      }
+    }
+    if (nextVarError || nextBudgetError) {
+      setVarError(nextVarError)
+      setBudgetError(nextBudgetError)
+      firstInvalid?.focus()
+      return
+    }
+    setVarError('')
+    setBudgetError('')
     saveBusyRef.current = true
     setErr(null); setSaving(true)
     try {
       // Normalize empty strings to undefined for non-required fields.
       const fields = stripUiOnly(s.fields)
+      const trimmedVar = s.var.trim()
       const action = mode === 'duplicate'
         ? 'duplicate'
-        : mode === 'edit' && sourceVar && sourceVar !== s.var
+        : mode === 'edit' && sourceVar && sourceVar !== trimmedVar
           ? 'rename'
           : mode === 'create' ? 'create' : 'update'
       const r = await api.mutateMyKey({
         action,
-        var: action === 'duplicate' ? sourceVar ?? undefined : action === 'rename' ? sourceVar ?? undefined : s.var,
-        new_var: action === 'duplicate' || action === 'rename' ? s.var : undefined,
+        var: action === 'duplicate' ? sourceVar ?? undefined : action === 'rename' ? sourceVar ?? undefined : trimmedVar,
+        new_var: action === 'duplicate' || action === 'rename' ? trimmedVar : undefined,
         type: s.type,
         fields,
       })
@@ -659,8 +694,19 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
       </div>
 
       <Field label="变量名（mykey.py 里的 Python 变量）" hint="必须包含 api/config/cookie 之一及所选渠道关键字（oai、claude、mixin；原生渠道另需 native）。">
-        <input value={s.var} onChange={(e) => setS({ ...s, var: e.target.value })}
-          className={inp + ' font-mono'} placeholder="native_claude_xxx_config" />
+        <input
+          ref={varRef}
+          value={s.var}
+          onChange={(e) => {
+            setS({ ...s, var: e.target.value })
+            if (varError) setVarError('')
+          }}
+          aria-invalid={Boolean(varError) || undefined}
+          aria-describedby={varError ? 'mykey-var-error' : undefined}
+          className={inp + ' font-mono'}
+          placeholder="native_claude_xxx_config"
+        />
+        {varError && <p id="mykey-var-error" role="alert" className="ga-field-error">{varError}</p>}
       </Field>
 
       {s.type !== 'mixin' && (
@@ -709,7 +755,20 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
       {(s.type === 'native_claude' || s.type === 'claude') && (
         <>
           <Field label="thinking_type">
-            <select value={s.fields.thinking_type ?? ''} onChange={(e) => setField('thinking_type', e.target.value || undefined)} className={`${inp} ga-select`}>
+            <select
+              value={s.fields.thinking_type ?? ''}
+              onChange={(e) => {
+                const nextType = e.target.value || undefined
+                setField('thinking_type', nextType)
+                if (nextType === 'enabled' && !budgetDraft.trim()) {
+                  setBudgetDraft(String(s.fields.thinking_budget_tokens ?? 32768))
+                }
+                if (nextType !== 'enabled' && budgetError) {
+                  setBudgetError('')
+                }
+              }}
+              className={`${inp} ga-select`}
+            >
               <option value="">（不设置）</option>
               <option value="adaptive">adaptive（推荐）</option>
               <option value="enabled">enabled（需配 thinking_budget_tokens）</option>
@@ -719,16 +778,27 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
           {s.fields.thinking_type === 'enabled' && (
             <Field label="thinking_budget_tokens">
               <input
+                ref={budgetRef}
                 type="number"
                 min={1024}
-                value={s.fields.thinking_budget_tokens ?? 32768}
+                aria-label="thinking_budget_tokens"
+                value={budgetDraft}
+                aria-invalid={Boolean(budgetError) || undefined}
+                aria-describedby={budgetError ? 'mykey-budget-error' : undefined}
                 onChange={(e) => {
-                  if (e.target.value === '') { setField('thinking_budget_tokens', undefined); return }
-                  const parsed = parseInt(e.target.value, 10)
+                  const raw = e.target.value
+                  setBudgetDraft(raw)
+                  if (budgetError) setBudgetError('')
+                  if (raw.trim() === '') {
+                    setField('thinking_budget_tokens', undefined)
+                    return
+                  }
+                  const parsed = Number.parseInt(raw, 10)
                   if (Number.isFinite(parsed)) setField('thinking_budget_tokens', parsed)
                 }}
                 className={inp}
               />
+              {budgetError && <p id="mykey-budget-error" role="alert" className="ga-field-error">{budgetError}</p>}
             </Field>
           )}
           <Field label="fake_cc_system_prompt">
@@ -783,7 +853,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
         </div>
       </details>
 
-      {err && <div className="mt-3 text-xs text-status-danger bg-status-danger-soft border border-status-danger-line rounded p-2 break-words">{err}</div>}
+      {err && <div role="alert" className="mt-3 text-xs text-status-danger bg-status-danger-soft border border-status-danger-line rounded p-2 break-words">{err}</div>}
 
       <div className="mt-5 flex justify-end gap-2">
         <button type="button" onClick={requestClose} disabled={saving} className="ga-btn">取消</button>

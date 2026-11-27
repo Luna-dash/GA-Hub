@@ -15,6 +15,7 @@ import { resetPageState } from '@/utils/pageState'
 
 const mocks = vi.hoisted(() => ({
   llms: vi.fn(),
+  mainLlmIndex: 0 as number | null,
   selectMainLlm: vi.fn(),
   selectSubagentLlm: vi.fn(),
   socketOpen: vi.fn(),
@@ -65,10 +66,10 @@ vi.mock('@/components/ModelSelect', () => ({
 
 vi.mock('@/hooks/useSharedModelSelection', () => ({
   useSharedModelSelection: () => ({
-    mainLlmKey: 'main',
+    mainLlmKey: mocks.mainLlmIndex === null ? undefined : 'main',
     subagentLlmKey: null,
-    mainLlmIndex: 0,
-    subagentLlmIndex: 0,
+    mainLlmIndex: mocks.mainLlmIndex,
+    subagentLlmIndex: mocks.mainLlmIndex,
     selectedSubagentLlmIndex: null,
     selectMainLlm: mocks.selectMainLlm,
     selectSubagentLlm: mocks.selectSubagentLlm,
@@ -104,6 +105,7 @@ describe('Goal Hive compact subagent settings', () => {
   beforeEach(() => {
     resetPageState()
     vi.clearAllMocks()
+    mocks.mainLlmIndex = 0
     for (const item of useToastStore.getState().items) {
       useToastStore.getState().dismiss(item.id)
     }
@@ -310,5 +312,14 @@ describe('Goal Hive compact subagent settings', () => {
     act(() => { button('启动 Goal').click() })
     expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message.includes('实时通道未连接'))).toBe(true)
     expect(useDraftStore.getState().texts['goalHive:goal:target']).toBe('目标文本')
+  })
+
+  it('shows an inline warning hint in the footer when no LLM is configured', () => {
+    mocks.mainLlmIndex = null
+    useGoalHiveStore.setState({ messages: [], conn: 'open', mode: 'goal' })
+    renderPage()
+
+    expect(host.textContent).toContain('请先在 LLM 管理中配置可用模型')
+    expect(button('启动 Goal').disabled).toBe(true)
   })
 })

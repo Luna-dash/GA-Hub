@@ -73,8 +73,12 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
   const [instruction, setInstruction] = useState(initialInstruction)
   const [description, setDescription] = useState(initialDescription)
   const [key, setKey] = useState(initialKey)
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<'title' | 'key' | 'instruction', string>>>({})
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const titleRef = useRef<HTMLInputElement>(null)
+  const keyRef = useRef<HTMLSelectElement>(null)
+  const instructionRef = useRef<HTMLTextAreaElement>(null)
   const isDirty = title !== initialTitle
     || instruction !== initialInstruction
     || description !== initialDescription
@@ -82,9 +86,29 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
   const { requestClose } = useDirtyClose({ dirty: isDirty, busy: saving, onClose })
   const llms = useQuery({ queryKey: queryKeys.llms, queryFn: api.llms })
   async function save() {
+    if (saving) return
+    const nextErrors: Partial<Record<'title' | 'key' | 'instruction', string>> = {}
+    let firstInvalid: HTMLElement | null = null
+    if (!title.trim()) {
+      nextErrors.title = '请填写任务名称。'
+      firstInvalid ??= titleRef.current
+    }
+    if (!llms.data?.llms.some(m => m.key === key)) {
+      nextErrors.key = '请选择有效的执行模型。'
+      firstInvalid ??= keyRef.current
+    }
+    if (!instruction.trim()) {
+      nextErrors.instruction = '请填写默认执行指令。'
+      firstInvalid ??= instructionRef.current
+    }
+    if (Object.keys(nextErrors).length > 0) {
+      setFieldErrors(nextErrors)
+      firstInvalid?.focus()
+      return
+    }
+    setFieldErrors({})
     setSaving(true); setError('')
     try {
-      if (!llms.data?.llms.some(m => m.key === key)) throw new Error('请选择有效的执行模型。')
       if (key !== session.llm_key) await api.updateSessionModel(session.id, key)
       await api.themeConfig(session.id, { instruction: instruction.trim(), description }, title.trim())
       onSaved(); onClose()
@@ -99,15 +123,59 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
     <div className="min-h-0 overflow-y-auto px-5 pb-4">
       <fieldset disabled={saving} className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block min-w-0 text-xs font-medium">任务名称<input className={settingsField} value={title} maxLength={200} onChange={e => setTitle(e.target.value)} /></label>
-          <label className="block min-w-0 text-xs font-medium">执行模型<select className={`${settingsField} ga-select`} value={key} onChange={e => setKey(e.target.value)}>
-            <option value="">请选择模型</option>
-            {key && !llms.data?.llms.some(m => m.key === key) && <option value={key}>模型已失效，请重新选择</option>}
-            {llms.data?.llms.map(m => <option key={m.key} value={m.key}>{m.name}{llms.data.llms.filter(other => other.name === m.name).length > 1 ? ` · ${m.key}` : ''}</option>)}
-          </select></label>
+          <label className="block min-w-0 text-xs font-medium">
+            任务名称
+            <input
+              ref={titleRef}
+              className={settingsField}
+              value={title}
+              maxLength={200}
+              aria-invalid={Boolean(fieldErrors.title) || undefined}
+              aria-describedby={fieldErrors.title ? `theme-title-error-${session.id}` : undefined}
+              onChange={e => {
+                setTitle(e.target.value)
+                if (fieldErrors.title) setFieldErrors(prev => ({ ...prev, title: undefined }))
+              }}
+            />
+            {fieldErrors.title && <p id={`theme-title-error-${session.id}`} role="alert" className="ga-field-error font-normal">{fieldErrors.title}</p>}
+          </label>
+          <label className="block min-w-0 text-xs font-medium">
+            执行模型
+            <select
+              ref={keyRef}
+              className={`${settingsField} ga-select`}
+              value={key}
+              aria-invalid={Boolean(fieldErrors.key) || undefined}
+              aria-describedby={fieldErrors.key ? `theme-key-error-${session.id}` : undefined}
+              onChange={e => {
+                setKey(e.target.value)
+                if (fieldErrors.key) setFieldErrors(prev => ({ ...prev, key: undefined }))
+              }}
+            >
+              <option value="">请选择模型</option>
+              {key && !llms.data?.llms.some(m => m.key === key) && <option value={key}>模型已失效，请重新选择</option>}
+              {llms.data?.llms.map(m => <option key={m.key} value={m.key}>{m.name}{llms.data.llms.filter(other => other.name === m.name).length > 1 ? ` · ${m.key}` : ''}</option>)}
+            </select>
+            {fieldErrors.key && <p id={`theme-key-error-${session.id}`} role="alert" className="ga-field-error font-normal">{fieldErrors.key}</p>}
+          </label>
         </div>
         {key && llms.data && !llms.data.llms.some(m => m.key === key) && <p className="text-xs text-status-warning">模型已失效，请重新选择。</p>}
-        <label className="block text-xs font-medium">默认指令<textarea aria-label="默认执行指令" className={`${settingsField} min-h-48 max-h-[40dvh] resize-y leading-relaxed`} value={instruction} onChange={e => setInstruction(e.target.value)} /></label>
+        <label className="block text-xs font-medium">
+          默认指令
+          <textarea
+            ref={instructionRef}
+            aria-label="默认执行指令"
+            className={`${settingsField} min-h-48 max-h-[40dvh] resize-y leading-relaxed`}
+            value={instruction}
+            aria-invalid={Boolean(fieldErrors.instruction) || undefined}
+            aria-describedby={fieldErrors.instruction ? `theme-instruction-error-${session.id}` : undefined}
+            onChange={e => {
+              setInstruction(e.target.value)
+              if (fieldErrors.instruction) setFieldErrors(prev => ({ ...prev, instruction: undefined }))
+            }}
+          />
+          {fieldErrors.instruction && <p id={`theme-instruction-error-${session.id}`} role="alert" className="ga-field-error font-normal">{fieldErrors.instruction}</p>}
+        </label>
         <details className="text-xs text-ink-faint"><summary className="cursor-pointer hover:text-accent">任务描述{description ? ` · ${description.slice(0, 35)}${description.length > 35 ? '…' : ''}` : '（可选）'}</summary><textarea aria-label="任务描述" className={`${settingsField} min-h-20 resize-y`} value={description} onChange={e => setDescription(e.target.value)} /></details>
       </fieldset>
       <div className="mt-3">
@@ -115,7 +183,7 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
       </div>
       {error && <p role="alert" className="mt-4 rounded-xl bg-status-danger/10 p-3 text-sm text-status-danger">{error}</p>}
     </div>
-    <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line bg-bg-soft/50 px-5 py-3"><button type="button" className="ga-btn px-4" disabled={saving} onClick={requestClose}>取消</button><button type="button" className="ga-btn-primary px-5" disabled={saving || !instruction.trim() || !title.trim() || !llms.data?.llms.some(m => m.key === key)} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></footer>
+    <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line bg-bg-soft/50 px-5 py-3"><button type="button" className="ga-btn px-4" disabled={saving} onClick={requestClose}>取消</button><button type="button" className="ga-btn-primary px-5" disabled={saving} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></footer>
   </ModalOverlay>
 }
 

@@ -334,3 +334,59 @@ it('ignores backdrop clicks in TaskDialog and prompts only when dirty on close',
   expect(host.querySelector('[role="dialog"]')).toBeNull()
   confirmSpy.mockRestore()
 })
+
+it('shows accessible inline field errors instead of dialog.alert and focuses first invalid control', async () => {
+  const alertSpy = vi.spyOn(dialog, 'alert').mockResolvedValue(undefined)
+  act(() => root.render(<QueryClientProvider client={client}><Tasks /></QueryClientProvider>))
+
+  const newBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.includes('新建任务'))!
+  act(() => newBtn.click())
+
+  const dlg = host.querySelector('[role="dialog"]')!
+  const nameInput = dlg.querySelector<HTMLInputElement>('input[placeholder="每日早报"]')!
+  const cronInput = dlg.querySelector<HTMLInputElement>('input[placeholder*="分 时 日 月 周"]')!
+  const promptInput = dlg.querySelector<HTMLTextAreaElement>('textarea')!
+  const saveBtn = Array.from(dlg.querySelectorAll('button')).find((b) => b.textContent?.trim() === '保存')!
+
+  const setInput = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  const setTextarea = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+
+  // Set invalid cron as well, then submit with blank name and prompt
+  act(() => {
+    setInput.call(cronInput, 'not-a-cron')
+    cronInput.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => { saveBtn.click() })
+
+  expect(alertSpy).not.toHaveBeenCalled()
+  expect(api.upsertTaskSchedule).not.toHaveBeenCalled()
+  expect(nameInput.getAttribute('aria-invalid')).toBe('true')
+  expect(cronInput.getAttribute('aria-invalid')).toBe('true')
+  expect(promptInput.getAttribute('aria-invalid')).toBe('true')
+  expect(document.activeElement).toBe(nameInput)
+  expect(dlg.querySelectorAll('[role="alert"]').length).toBeGreaterThanOrEqual(3)
+
+  // Typing clears field-level error
+  act(() => {
+    setInput.call(nameInput, '日报')
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(nameInput.getAttribute('aria-invalid')).toBeNull()
+
+  // Submit again -> focuses invalid cron
+  await act(async () => { saveBtn.click() })
+  expect(document.activeElement).toBe(cronInput)
+
+  // Fix cron and prompt -> submits cleanly
+  act(() => {
+    setInput.call(cronInput, '0 8 * * *')
+    cronInput.dispatchEvent(new Event('input', { bubbles: true }))
+    setTextarea.call(promptInput, '总结今日工作')
+    promptInput.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  vi.mocked(api.upsertTaskSchedule).mockResolvedValueOnce({} as TaskSchedule)
+  await act(async () => { saveBtn.click(); await Promise.resolve() })
+  expect(api.upsertTaskSchedule).toHaveBeenCalledTimes(1)
+  expect(host.querySelector('[role="dialog"]')).toBeNull()
+  alertSpy.mockRestore()
+})

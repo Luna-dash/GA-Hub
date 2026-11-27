@@ -457,6 +457,10 @@
     background-color: var(--c-bg-card);
     color: var(--c-text);
   }
+
+  .ga-field-error {
+    @apply mt-1 text-xs text-status-danger;
+  }
 }
 
 html[data-theme="dark-forest"] .ga-select,
