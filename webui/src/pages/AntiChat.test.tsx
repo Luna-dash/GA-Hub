@@ -6,17 +6,12 @@ import { MemoryRouter, useLocation } from 'react-router-dom'
 import { expect, it, vi, beforeEach } from 'vitest'
 import AntiChat from './AntiChat'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
-import {
-  AntiAccountUsageButton,
-  AUTO_USAGE_REFRESH_INTERVAL_MS,
-  resetAntiUsageAutoRefreshForTests,
-} from '@/components/AntiAccountUsageButton'
+import { AntiAccountUsageButton } from '@/components/AntiAccountUsageButton'
 import { resetPageState } from '@/utils/pageState'
 
 beforeEach(() => {
   localStorage.clear()
   resetPageState()
-  resetAntiUsageAutoRefreshForTests()
 })
 
 vi.mock('@/api/client', async (importOriginal) => {
@@ -473,9 +468,6 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
       return reply({ state: 'ready', agy_available: true, auth_state: 'authenticated' })
     }
     if (path === '/api/anti/account-usage') return reply(profilesList[0].usage)
-    if (path.startsWith('/api/anti/account-usage/refresh-all')) {
-      return reply({ refreshed: 0, skipped: profilesList.length, failed: 0, active: 'default', profiles: profilesList })
-    }
     if (path === '/api/anti/workers') return reply({ items: [] })
     if (path === '/api/anti/profiles') {
       return reply({ active: 'default', profiles: profilesList })
@@ -1014,9 +1006,6 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
         rows: [],
         detail: '本地登录凭据已过期，请先发起一次对话或重新登录以续期。',
       })
-    }
-    if (path.startsWith('/api/anti/account-usage/refresh-all')) {
-      return reply({ refreshed: 0, skipped: 1, failed: 0, active: 'default', profiles: [{ id: 'default', name: '系统默认', has_credentials: true, auth_state: 'authenticated' }] })
     }
     if (path === `/api/anti/sessions/${session.id}/runs` && !init?.body) return reply([...runs])
     if (path === `/api/anti/sessions/${session.id}/runs` && init?.body) {
@@ -2848,16 +2837,10 @@ it('displays compact k/M usage units with exact breakdown tooltip and repairs le
   }
 })
 
-it('auto-refreshes usage after 10 minutes of visible dwell, pauses when hidden, and resets timer on manual refresh', async () => {
+it('never auto-refreshes usage on a timer and only queries on explicit manual click', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2026-11-25T10:00:00Z'))
-
-  let visibility: DocumentVisibilityState = 'visible'
-  Object.defineProperty(document, 'visibilityState', {
-    configurable: true,
-    get: () => visibility,
-  })
 
   let usageCalls = 0
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
@@ -2894,53 +2877,41 @@ it('auto-refreshes usage after 10 minutes of visible dwell, pauses when hidden, 
   try {
     await act(async () => root.render(
       <QueryClientProvider client={cache}>
-        <AntiAccountUsageButton running autoRefreshKey="default" onChecked={() => {}} />
+        <AntiAccountUsageButton running onChecked={() => {}} />
       </QueryClientProvider>,
     ))
 
-    // 4 minutes visible -> still no auto-refresh
-    await act(async () => { await vi.advanceTimersByTimeAsync(4 * 60 * 1000) })
+    // Even after 30 minutes of visible dwell, 0 automatic quota probes are fired
+    await act(async () => { await vi.advanceTimersByTimeAsync(30 * 60 * 1000) })
     expect(usageCalls).toBe(0)
 
-    // Hide page for 20 minutes -> paused, 0 requests while hidden
-    visibility = 'hidden'
-    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
-    await act(async () => { await vi.advanceTimersByTimeAsync(20 * 60 * 1000) })
-    expect(usageCalls).toBe(0)
-
-    // Resume visible -> accumulates 6 more minutes (4 + 6 = 10 min) -> fires once
-    visibility = 'visible'
-    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
-    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60 * 1000) })
-    expect(usageCalls).toBe(0)
-    await act(async () => { await vi.advanceTimersByTimeAsync(1 * 60 * 1000) })
-    expect(usageCalls).toBe(1)
-
-    // 5 minutes later user clicks icon manually -> fires immediately (call #2) and resets 10-min dwell timer
-    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60 * 1000) })
-    expect(usageCalls).toBe(1)
+    // Manual click on button triggers exactly 1 probe
     await act(async () => {
       host.querySelector<HTMLButtonElement>('button[aria-label="检测反重力额度"]')!.click()
     })
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-    expect(usageCalls).toBe(2)
+    expect(usageCalls).toBe(1)
 
-    // Next 9 minutes -> must NOT fire early; at 10 minutes after manual click -> fires call #3
-    await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_USAGE_REFRESH_INTERVAL_MS - 60 * 1000) })
+    // Another 30 minutes later -> still no automatic re-query
+    await act(async () => { await vi.advanceTimersByTimeAsync(30 * 60 * 1000) })
+    expect(usageCalls).toBe(1)
+
+    // Manual click on popover "刷新" button triggers call #2
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="刷新反重力额度"]')!.click()
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     expect(usageCalls).toBe(2)
-    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
-    expect(usageCalls).toBe(3)
   } finally {
     await act(async () => root.unmount())
     cache.clear()
     host.remove()
     vi.useRealTimers()
     vi.unstubAllGlobals()
-    delete (document as unknown as Record<string, unknown>).visibilityState
   }
 })
 
-it('renders layered account cards with Gemini 5h/weekly bars, single card settings entry, expandable details, and hourly refresh', async () => {
+it('renders layered account cards with Gemini 5h/weekly bars, single card settings entry, expandable details, and no bulk refresh-all', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const freshAt = new Date(Date.now() - 60_000).toISOString()
   const staleAt = new Date(Date.now() - 2 * 3_600_000).toISOString()
@@ -2997,17 +2968,9 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
     if (path.startsWith('/api/file-transfer')) return reply([])
     if (path === '/api/anti/sessions') return reply([])
     if (path === '/api/anti/workers') return reply({ items: [] })
-    if (path.startsWith('/api/anti/account-usage/refresh-all') && init?.method === 'POST') {
+    if (path.startsWith('/api/anti/account-usage') && init?.method === 'POST') {
       refreshCalls.push(path)
-      profilesPayload = {
-        ...profilesPayload,
-        profiles: profilesPayload.profiles.map(p => (
-          p.id === 'default'
-            ? { ...p, usage: { ...p.usage, checked_at: new Date().toISOString() } }
-            : p
-        )),
-      }
-      return reply({ refreshed: 1, skipped: 1, failed: 0, ...profilesPayload })
+      return reply({ state: 'authenticated', rows: profilesPayload.profiles[0].usage.rows })
     }
     return reply({})
   }))
@@ -3032,18 +2995,19 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
     expect(outerPill.getAttribute('title')).toContain('Google AI Ultra')
     expect(outerPill.textContent).not.toMatch(/ultra/i)
 
-    // Open Account Management modal -> stale default triggers hourly catch-up once
+    // Open Account Management modal -> NO automatic refresh-all or quota probe is triggered
     await act(async () => { outerPill.click() })
     await vi.waitFor(async () => {
       await flush()
       expect(document.body.querySelector('[data-account-card="default"]')).not.toBeNull()
-      expect(refreshCalls).toEqual(['/api/anti/account-usage/refresh-all?only_stale=true'])
     })
+    expect(refreshCalls).toEqual([])
 
     const dialog = document.body.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')!
     expect(dialog.querySelector('h2')?.textContent).toBe('账号管理')
     expect(dialog.querySelector('[role="tab"]')).toBeNull()
     expect(dialog.textContent).not.toContain('所有会话共用上下文与配置')
+    expect(dialog.querySelector('button[aria-label="刷新全部额度"]')).toBeNull()
 
     // Layer 1 shows Gemini 5h & weekly progress bars + account tier badge, with ONLY two buttons per card
     const defaultCard = dialog.querySelector('[data-account-card="default"]')!
@@ -3071,20 +3035,18 @@ it('renders layered account cards with Gemini 5h/weekly bars, single card settin
     expect(details?.textContent).toContain('40%')
     expect(details?.querySelectorAll('[role="progressbar"]')).toHaveLength(4)
 
-    // Manual "刷新全部额度" forces a non-stale-filtered refresh-all call
-    const refreshAllBtn = dialog.querySelector<HTMLButtonElement>('button[aria-label="刷新全部额度"]')!
-    await act(async () => { refreshAllBtn.click() })
-    await vi.waitFor(async () => {
-      await flush()
-      expect(refreshCalls).toContain('/api/anti/account-usage/refresh-all')
-    })
-
-    // Navigate into account settings -> displays full tier badge and suppresses pill effect when login_required
+    // Navigate into account settings -> manual single-account refresh works cleanly
     await act(async () => {
       defaultCard.querySelector<HTMLButtonElement>('button[aria-label="账号设置：系统默认"]')!.click()
     })
     await flush()
     expect(dialog.querySelector('[data-account-settings-tier="ultra"]')?.textContent).toContain('Google AI Ultra')
+    const singleRefreshBtn = dialog.querySelector<HTMLButtonElement>('button[aria-label="刷新额度：系统默认"]')!
+    await act(async () => { singleRefreshBtn.click() })
+    await vi.waitFor(async () => {
+      await flush()
+      expect(refreshCalls).toEqual(['/api/anti/account-usage?profile_id=default'])
+    })
     await act(async () => { dialog.querySelector<HTMLButtonElement>('button[aria-label="返回账号列表"]')!.click() })
     await flush()
 
@@ -3145,7 +3107,6 @@ it('previews cached quota popover on hover without network refresh, keeps open o
         <AntiAccountUsageButton
           running
           profileName="系统默认"
-          autoRefreshKey="default"
           cachedUsage={{
             checked_at: new Date(Date.now() - 3_600_000).toISOString(),
             min_remaining_pct: 64.5,
@@ -3358,7 +3319,6 @@ it('keeps cached quota rows and layout stable while pending or failing, then syn
         <AntiAccountUsageButton
           running
           profileName="系统默认"
-          autoRefreshKey="default"
           cachedUsage={{ checked_at: initialCheckedAt, min_remaining_pct: 70, rows: initialRows }}
           onChecked={() => {}}
         />

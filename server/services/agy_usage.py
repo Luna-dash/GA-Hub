@@ -1,9 +1,9 @@
-"""Official Antigravity quota probing & local SQLite usage ledger.
+"""Official Antigravity CLI quota probing & local SQLite usage ledger.
 
-Ports T3 Code's `antigravityUsageLimits.ts` CloudCode quota probe (including
-Windows Credential Manager CredReadW for `gemini:antigravity` via stdlib ctypes)
-and absorbs AntiCLI's 5h/7d quota pool, circuit-breaker, calibration, and stats
-bookkeeping directly into GA-Hub's SQLite store.
+Queries official quota via the Antigravity CLI (`agy -p /usage --output-format json`,
+manual single-account invocation only — zero direct calls to internal CloudCode or
+OAuth HTTP endpoints) and maintains GA-Hub's local SQLite 5h/7d quota pool,
+circuit-breaker, calibration, and token/cost bookkeeping.
 """
 from __future__ import annotations
 
@@ -11,21 +11,16 @@ import hashlib
 import json
 import logging
 import os
-import platform
 import re
 import shutil
 import sqlite3
 import subprocess
-import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
-
-import requests
+from typing import Any
 
 from .. import _paths
 from ..process_utils import hidden_process_kwargs
@@ -33,43 +28,20 @@ from . import agy_pricing, agy_profile, child_job
 
 log = logging.getLogger(__name__)
 
-
-def _antigravity_user_agent() -> str:
-    raw_platform = sys.platform
-    os_type = "win32" if raw_platform.startswith("win") else "darwin" if raw_platform == "darwin" else "linux"
-    raw_arch = platform.machine().lower()
-    if raw_arch in {"amd64", "x86_64", "x64"}:
-        arch = "x64"
-    elif raw_arch in {"arm64", "aarch64"}:
-        arch = "arm64"
-    else:
-        arch = raw_arch or "x64"
-    return f"antigravity/hub/2.24.0 (aidev_client; os_type={os_type}; arch={arch}; cl=963137146)"
-
-
-DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com"
-PROD_ENDPOINT = "https://cloudcode-pa.googleapis.com"
-USER_AGENT = _antigravity_user_agent()
-PROBE_CONNECT_TIMEOUT = 4.0
-PROBE_READ_TIMEOUT = 10.0
-PROBE_TIMEOUT: tuple[float, float] = (PROBE_CONNECT_TIMEOUT, PROBE_READ_TIMEOUT)
 CLI_REFRESH_TIMEOUT = 8.0
+CLI_USAGE_TIMEOUT = 18.0
+CLI_USAGE_PRINT_TIMEOUT = "15s"
 _SUMMARY_WINDOW_MINS = {"5h": 5 * 60, "weekly": 7 * 24 * 60}
-
-_token_cache_lock = threading.Lock()
-# fingerprint -> (access_token, project_id, expires_monotonic, profile_id)
-_acp_token_cache: dict[str, tuple[str, str | None, float, str]] = {}
-
-
-def clear_token_cache(profile_id: str | None = None) -> None:
-    """Clear cached CloudCode OAuth access tokens (on logout/delete)."""
-    with _token_cache_lock:
-        if profile_id is None:
-            _acp_token_cache.clear()
-            return
-        stale = [fp for fp, entry in _acp_token_cache.items() if entry[3] == profile_id]
-        for fp in stale:
-            _acp_token_cache.pop(fp, None)
+_AUTH_ERR_TOKENS = (
+    "authentication required",
+    "please visit the url to log in",
+    "waiting for authentication",
+    "invalid_grant",
+    "login required",
+    "please sign in",
+    "unauthenticated",
+    "token expired",
+)
 
 _QUOTA_GROUPS: dict[str, dict[str, Any]] = {
     "gemini-4": {
@@ -195,26 +167,6 @@ def _iso_utc(raw: str | None) -> str:
     return _iso_utc_optional(raw) or (datetime.now(timezone.utc) + timedelta(days=7)).isoformat().replace("+00:00", "Z")
 
 
-def _make_http_session() -> requests.Session:
-    """Create a requests session honoring both env and Windows manual proxy settings."""
-    session = requests.Session()
-    session.trust_env = True
-    try:
-        env = agy_profile.system_proxy_env(dict(os.environ))
-    except Exception:
-        env = {}
-    proxies: dict[str, str] = {}
-    http_proxy = env.get("HTTP_PROXY") or env.get("http_proxy")
-    https_proxy = env.get("HTTPS_PROXY") or env.get("https_proxy")
-    if isinstance(http_proxy, str) and http_proxy:
-        proxies["http"] = http_proxy
-    if isinstance(https_proxy, str) and https_proxy:
-        proxies["https"] = https_proxy
-    if proxies:
-        session.proxies.update(proxies)
-    return session
-
-
 def _profile_auth_type(profile_id: str) -> str:
     """Return `oauth-business` or `oauth-personal` from profile/workspace `settings.json`."""
     candidates = [agy_profile.profile_vault_app_data_dir(profile_id) / "settings.json"]
@@ -230,12 +182,6 @@ def _profile_auth_type(profile_id: str) -> str:
         except Exception:
             continue
     return "oauth-personal"
-
-
-def _probe_endpoints(profile_id: str) -> tuple[str, ...]:
-    """Match T3 Code ENDPOINTS priority (`oauth-business` -> prod first, else daily first)."""
-    auth_type = _profile_auth_type(profile_id)
-    return (PROD_ENDPOINT, DAILY_ENDPOINT) if auth_type == "oauth-business" else (DAILY_ENDPOINT, PROD_ENDPOINT)
 
 
 def workspace_token_fingerprint() -> str | None:
@@ -269,26 +215,6 @@ def _read_cli_token_raw(profile_id: str) -> bytes | None:
     return None
 
 
-def _read_cli_token_record(profile_id: str) -> tuple[str | None, datetime | None]:
-    """Read `(access_token, expiry)` from vault, workspace, or Windows keyring."""
-    raw_cli = _read_cli_token_raw(profile_id)
-    if not raw_cli:
-        return None, None
-    try:
-        text = raw_cli.decode("utf-8", errors="replace").strip("\x00 \t\r\n")
-        parsed = json.loads(text)
-    except Exception:
-        log.debug("Failed to parse CLI oauth token", exc_info=True)
-        return None, None
-    token_obj = parsed.get("token") if isinstance(parsed, dict) else None
-    if not isinstance(token_obj, dict):
-        return None, None
-    access = token_obj.get("access_token")
-    if not isinstance(access, str) or not access:
-        return None, None
-    return access, _parse_iso(token_obj.get("expiry") if isinstance(token_obj.get("expiry"), str) else None)
-
-
 def _has_cli_refresh_token(profile_id: str) -> bool:
     raw_cli = _read_cli_token_raw(profile_id)
     if not raw_cli:
@@ -306,7 +232,7 @@ def _has_cli_refresh_token(profile_id: str) -> bool:
 
 
 def _refresh_cli_token_status(profile_id: str, timeout: float = CLI_REFRESH_TIMEOUT) -> str:
-    """Refresh an expired 1.5.x CLI OAuth token via bounded `agy models` inside profile's vault.
+    """Refresh an expired CLI OAuth token via bounded official `agy models` inside profile's vault.
 
     Returns `"ok"`, `"exited_nonzero"`, `"timeout"`, or `"unavailable"`.
     """
@@ -355,103 +281,37 @@ def _refresh_cli_token_status(profile_id: str, timeout: float = CLI_REFRESH_TIME
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def _refresh_cli_token_via_models(profile_id: str, timeout: float = CLI_REFRESH_TIMEOUT) -> bool:
-    """Refresh an expired 1.5.x CLI OAuth token via bounded `agy models` inside profile's vault."""
-    return _refresh_cli_token_status(profile_id, timeout=timeout) == "ok"
-
-
-def _resolve_access_token(
-    profile_id: str,
-    *,
-    allow_cli_refresh: bool = True,
-) -> tuple[str | None, str | None, str, str]:
-    """Return `(access_token, project_id, source, status)` with T3 Code caching & CLI renewal."""
-    acp_tok_path = agy_profile.find_credential_file(profile_id, "acp_token.json")
-    if acp_tok_path is not None:
-        try:
-            tok = json.loads(acp_tok_path.read_text(encoding="utf-8"))
-            cid = tok.get("client_id")
-            csecret = tok.get("client_secret")
-            rtok = tok.get("refresh_token")
-            pid = tok.get("project_id") if isinstance(tok.get("project_id"), str) else None
-            if all(isinstance(v, str) and v for v in (cid, csecret, rtok)):
-                fp = hashlib.sha256(f"{cid}\0{rtok}\0{pid or ''}".encode("utf-8")).hexdigest()
-                now_mono = time.monotonic()
-                with _token_cache_lock:
-                    cached = _acp_token_cache.get(fp)
-                    if cached and cached[2] > now_mono + 60.0 and cached[3] == profile_id:
-                        return cached[0], cached[1], "acp_token", "ok"
-                session = _make_http_session()
-                res = session.post(
-                    "https://oauth2.googleapis.com/token",
-                    data={
-                        "client_id": cid,
-                        "client_secret": csecret,
-                        "refresh_token": rtok,
-                        "grant_type": "refresh_token",
-                    },
-                    timeout=PROBE_TIMEOUT,
-                    allow_redirects=False,
-                )
-                if res.status_code == 200:
-                    payload = res.json()
-                    access = payload.get("access_token")
-                    if isinstance(access, str) and access:
-                        try:
-                            expires_in = float(payload.get("expires_in") or 3600)
-                        except (TypeError, ValueError):
-                            expires_in = 3600.0
-                        with _token_cache_lock:
-                            _acp_token_cache[fp] = (access, pid, time.monotonic() + max(60.0, expires_in), profile_id)
-                        return access, pid, "acp_token", "ok"
-                elif res.status_code in (400, 401, 403):
-                    return None, None, "acp_token", "refresh_failed"
-        except requests.RequestException:
-            return None, None, "acp_token", "network_error"
-        except Exception:
-            log.debug("Failed to refresh acp_token.json", exc_info=True)
-
-    access, expiry = _read_cli_token_record(profile_id)
-    now = datetime.now(timezone.utc)
-    if access:
-        if expiry is None or expiry > now + timedelta(seconds=60):
-            return access, None, "cli_token", "ok"
-        if allow_cli_refresh:
-            refresh_status = _refresh_cli_token_status(profile_id)
-            if refresh_status == "ok":
-                refreshed_access, refreshed_expiry = _read_cli_token_record(profile_id)
-                now_after = datetime.now(timezone.utc)
-                if refreshed_access and (refreshed_expiry is None or refreshed_expiry > now_after + timedelta(seconds=60)):
-                    return refreshed_access, None, "cli_token", "ok"
-            if refresh_status == "exited_nonzero" and not _has_cli_refresh_token(profile_id):
-                return None, None, "cli_token", "refresh_failed"
-        return None, None, "cli_token", "expired"
-
-    return None, None, "none", "missing"
-
-
 def refresh_profile_token(profile_id: str) -> str:
-    """Attempt silent vault token renewal and classify outcome (`ok` | `login_required` | `transient_error`)."""
-    access, _, _, status = _resolve_access_token(profile_id, allow_cli_refresh=True)
-    if access:
+    """Attempt silent vault token renewal strictly via official `agy models` (`ok` | `login_required` | `transient_error`)."""
+    try:
+        agy_profile.sync_workspace_credentials_to_vault(profile_id)
+    except Exception:
+        pass
+    if profile_id == agy_profile.DEFAULT:
+        agy_profile._seed_default_vault_if_empty()
+    if not agy_profile.has_local_credentials(profile_id):
+        return "login_required"
+    status = _refresh_cli_token_status(profile_id)
+    if status == "ok":
         agy_profile.record_auth_state(profile_id, "authenticated")
         return "ok"
-    if status in {"refresh_failed", "missing"}:
+    if status == "exited_nonzero" and not _has_cli_refresh_token(profile_id):
         return "login_required"
     return "transient_error"
 
 
-def _extract_access_token(profile_id: str) -> tuple[str | None, str | None]:
-    """Return `(access_token, project_id)` for a profile without spawning CLI refresh."""
-    access, project_id, _, _ = _resolve_access_token(profile_id, allow_cli_refresh=False)
-    return access, project_id
+def _is_auth_error_text(text: str | None) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    return any(tok in lower for tok in _AUTH_ERR_TOKENS)
 
 
 def _summary_reset_time(bucket: dict[str, Any], window: str, requested_at: datetime) -> str | None:
-    """Suppress rolling full-window reset timestamps for untouched 100% buckets (T3 Code)."""
-    raw_reset = bucket.get("resetTime")
+    """Suppress rolling full-window reset timestamps for untouched 100% buckets."""
+    raw_reset = bucket.get("reset_time") if "reset_time" in bucket else bucket.get("resetTime")
     mins = _SUMMARY_WINDOW_MINS.get(window)
-    frac = bucket.get("remainingFraction")
+    frac = bucket.get("remaining_fraction") if "remaining_fraction" in bucket else bucket.get("remainingFraction")
     if (
         frac == 1
         and bucket.get("description") is None
@@ -464,13 +324,28 @@ def _summary_reset_time(bucket: dict[str, Any], window: str, requested_at: datet
     return _iso_utc_optional(raw_reset if isinstance(raw_reset, str) else None)
 
 
-def _parse_summary_rows(
+def _normalize_group_family(bid: str, group_name: str) -> str:
+    cleaned_group = re.sub(r"(?:^|\s+)models$", "", group_name.strip(), flags=re.IGNORECASE).strip()
+    low_bid = bid.lower()
+    low_group = cleaned_group.lower()
+    if low_bid.startswith("gemini-argon-") or "argon" in low_group:
+        return cleaned_group if "argon" in low_group else "Gemini Argon"
+    if low_bid.startswith("gemini-carbon-") or "carbon" in low_group:
+        return cleaned_group if "carbon" in low_group else "Gemini Carbon"
+    if low_bid.startswith("gemini-") or low_group == "gemini":
+        return "Gemini"
+    if low_bid.startswith("3p-") or ("claude" in low_group and "gpt" in low_group):
+        return "Claude & GPT (shared)"
+    return cleaned_group or bid
+
+
+def _parse_cli_usage_buckets(
     data: dict[str, Any],
     *,
     requested_at: datetime | None = None,
-) -> list[tuple[str, dict[str, Any]]]:
+) -> list[dict[str, Any]]:
     req_at = requested_at or datetime.now(timezone.utc)
-    rows: list[tuple[str, dict[str, Any]]] = []
+    raw_rows: list[tuple[str, dict[str, Any]]] = []
     seen_ids: set[str] = set()
     groups = data.get("groups")
     if not isinstance(groups, list) or not any(isinstance(g, dict) and g.get("buckets") for g in groups):
@@ -478,37 +353,32 @@ def _parse_summary_rows(
     for group in groups:
         if not isinstance(group, dict):
             continue
-        display_group = str(group.get("displayName") or "").strip()
+        display_group = str(group.get("name") or group.get("displayName") or "").strip()
         for bucket in group.get("buckets") or []:
             if not isinstance(bucket, dict) or bucket.get("disabled"):
                 continue
-            bid = str(bucket.get("bucketId") or "").strip()
-            frac = bucket.get("remainingFraction")
+            bid = str(bucket.get("id") or bucket.get("bucketId") or "").strip()
+            frac = (
+                bucket.get("remaining_fraction")
+                if "remaining_fraction" in bucket
+                else bucket.get("remainingFraction")
+            )
             if not bid or not isinstance(frac, (int, float)):
                 continue
             pct = round(max(0.0, min(1.0, float(frac))) * 100.0, 1)
-            if bid.startswith("gemini-argon-"):
-                family = display_group or "Gemini Argon"
-            elif bid.startswith("gemini-carbon-"):
-                family = display_group or "Gemini Carbon"
-            elif bid.startswith("gemini-"):
-                family = "Gemini"
-            elif bid.startswith("3p-"):
-                family = "Claude & GPT (shared)"
+            family = _normalize_group_family(bid, display_group)
+            win = str(bucket.get("window") or "").strip().lower()
+            bucket_label = str(bucket.get("name") or bucket.get("displayName") or "").strip()
+            if win == "weekly":
+                limit = "Weekly Limit Remaining"
+            elif win == "5h":
+                limit = "Five Hour Limit Remaining"
             else:
-                family = display_group or bid
-            win = str(bucket.get("window") or "")
-            limit = (
-                "Weekly Limit Remaining"
-                if win == "weekly"
-                else "Five Hour Limit Remaining"
-                if win == "5h"
-                else str(bucket.get("displayName") or "Quota").strip() or "Quota"
-            )
+                limit = bucket_label or "Quota"
             if bid in seen_ids:
                 continue
             seen_ids.add(bid)
-            rows.append((
+            raw_rows.append((
                 bid,
                 {
                     "model": family,
@@ -517,117 +387,14 @@ def _parse_summary_rows(
                     "resets_at": _summary_reset_time(bucket, win, req_at),
                 },
             ))
-    return rows
 
-
-def _parse_model_rows(
-    data: dict[str, Any],
-    *,
-    requested_at: datetime | None = None,  # noqa: ARG001
-) -> list[tuple[str, dict[str, Any]]]:
-    models = data.get("models")
-    if not isinstance(models, dict):
-        return []
-    merged: dict[str, dict[str, Any]] = {}
-    for model_id, info in models.items():
-        if not isinstance(info, dict):
-            continue
-        prov = str(info.get("modelProvider") or "")
-        if prov == "MODEL_PROVIDER_GOOGLE" or str(model_id).startswith("gemini-"):
-            family = "Gemini"
-        elif prov == "MODEL_PROVIDER_ANTHROPIC" or str(model_id).startswith("claude-"):
-            family = "Claude"
-        elif prov == "MODEL_PROVIDER_OPENAI" or str(model_id).startswith("gpt-"):
-            family = "GPT"
-        else:
-            continue
-        for suffix, label, quota in (
-            ("quota", "Reported Quota", info.get("quotaInfo")),
-            ("weekly", "Weekly Limit Remaining", info.get("weeklyQuotaInfo")),
-        ):
-            if not isinstance(quota, dict):
-                continue
-            frac = quota.get("remainingFraction")
-            if not isinstance(frac, (int, float)):
-                continue
-            pct = round(max(0.0, min(1.0, float(frac))) * 100.0, 1)
-            dedup_id = f"{family.lower()}-{suffix}"
-            prev = merged.get(dedup_id)
-            if prev is None or pct < prev["remaining_pct"]:
-                merged[dedup_id] = {
-                    "model": family,
-                    "limit": label,
-                    "remaining_pct": pct,
-                    "resets_at": _iso_utc_optional(quota.get("resetTime") if isinstance(quota.get("resetTime"), str) else None),
-                }
-    return list(merged.items())
-
-
-def _parse_available_model_catalog(data: dict[str, Any]) -> list[dict[str, Any]]:
-    models = data.get("models")
-    if not isinstance(models, dict):
-        return []
-    default_id = data.get("defaultAgentModelId") if isinstance(data.get("defaultAgentModelId"), str) else None
-    items: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for model_id, info in models.items():
-        if not isinstance(model_id, str) or not model_id.strip() or not isinstance(info, dict):
-            continue
-        if info.get("isInternal") is True:
-            continue
-        mid = model_id.strip()
-        if mid in seen:
-            continue
-        seen.add(mid)
-        entry: dict[str, Any] = {
-            "id": mid,
-            "display_name": str(info.get("displayName") or info.get("name") or mid).strip() or mid,
-        }
-        if "orchestrator" in mid.lower():
-            entry["is_orchestrator"] = True
-        else:
-            raw_levels = info.get("supportedThinkingLevels") or info.get("thinkingLevels") or info.get("supportedEfforts")
-            if isinstance(raw_levels, list):
-                efforts = [str(lvl).strip().lower() for lvl in raw_levels if isinstance(lvl, str) and str(lvl).strip()]
-                if efforts:
-                    entry["efforts"] = list(dict.fromkeys(efforts))
-            if isinstance(info.get("defaultThinkingLevel"), str) and info["defaultThinkingLevel"].strip():
-                entry["default_effort"] = info["defaultThinkingLevel"].strip().lower()
-        if mid == default_id or info.get("isDefault") is True:
-            entry["is_default"] = True
-        items.append(entry)
-    return items
-
-
-def probe_available_models(profile_id: str) -> dict[str, Any]:
-    """Fetch upstream model catalog directly via CloudCode `fetchAvailableModels`."""
-    access_token, project_id, _, _ = _resolve_access_token(profile_id, allow_cli_refresh=True)
-    if not access_token:
-        return {"state": "login_required", "items": []}
-    session = _make_http_session()
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "User-Agent": _antigravity_user_agent(),
-        "Content-Type": "application/json",
-    }
-    body = {"project": project_id} if project_id else {}
-    for endpoint in _probe_endpoints(profile_id):
-        try:
-            res = session.post(
-                f"{endpoint}/v1internal:fetchAvailableModels",
-                headers=headers,
-                json=body,
-                timeout=PROBE_TIMEOUT,
-                allow_redirects=False,
-            )
-            if res.status_code != 200:
-                continue
-            items = _parse_available_model_catalog(res.json())
-            if items:
-                return {"state": "authenticated", "items": items}
-        except Exception:
-            continue
-    return {"state": "authenticated", "items": []}
+    collapsed: dict[tuple[str, str], dict[str, Any]] = {}
+    for _, row in raw_rows:
+        disp_key = (str(row.get("model") or ""), str(row.get("limit") or ""))
+        prev = collapsed.get(disp_key)
+        if prev is None or _should_replace_display_row(prev, row):
+            collapsed[disp_key] = row
+    return sorted(collapsed.values(), key=_quota_row_sort_key)
 
 
 _MODEL_FAMILY_RANK = {
@@ -667,71 +434,6 @@ def _should_replace_display_row(prev: dict[str, Any], candidate: dict[str, Any])
     return False
 
 
-def _fetch_operation_rows(
-    access_token: str,
-    project_id: str | None,
-    endpoints: tuple[str, ...],
-    operation: str,
-    parser: Callable[..., list[tuple[str, dict[str, Any]]]],
-) -> tuple[list[dict[str, Any]], bool, bool]:
-    """Query `endpoints` concurrently in priority order (first endpoint wins per bucket ID)."""
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "User-Agent": _antigravity_user_agent(),
-        "Content-Type": "application/json",
-    }
-    body = {"project": project_id} if project_id else {}
-
-    def query_one(endpoint: str) -> tuple[list[tuple[str, dict[str, Any]]], bool, bool]:
-        session = _make_http_session()
-        requested_at = datetime.now(timezone.utc)
-        try:
-            res = session.post(
-                f"{endpoint}/v1internal:{operation}",
-                headers=headers,
-                json=body,
-                timeout=PROBE_TIMEOUT,
-                allow_redirects=False,
-            )
-        except requests.RequestException:
-            return [], False, True
-        if res.status_code in (401, 403):
-            return [], True, False
-        if res.status_code != 200:
-            return [], False, False
-        try:
-            return parser(res.json(), requested_at=requested_at), False, False
-        except Exception:
-            return [], False, False
-
-    if len(endpoints) == 1:
-        results = [query_one(endpoints[0])]
-    else:
-        with ThreadPoolExecutor(max_workers=len(endpoints)) as pool:
-            results = list(pool.map(query_one, endpoints))
-
-    merged: dict[str, dict[str, Any]] = {}
-    seen_display: set[tuple[str, str]] = set()
-    unauthorized = False
-    had_network_error = False
-    for rows, unauth, net_err in results:
-        unauthorized = unauthorized or unauth
-        had_network_error = had_network_error or net_err
-        ep_collapsed: dict[tuple[str, str], tuple[str, dict[str, Any]]] = {}
-        for dedup_id, row in rows:
-            disp_key = (str(row.get("model") or ""), str(row.get("limit") or ""))
-            existing = ep_collapsed.get(disp_key)
-            if existing is None or _should_replace_display_row(existing[1], row):
-                ep_collapsed[disp_key] = (dedup_id, row)
-        for disp_key, (dedup_id, row) in ep_collapsed.items():
-            if dedup_id in merged or disp_key in seen_display:
-                continue
-            merged[dedup_id] = row
-            seen_display.add(disp_key)
-    ordered = sorted(merged.values(), key=_quota_row_sort_key)
-    return ordered, unauthorized, had_network_error
-
-
 _TIER_GENERIC_NAMES = frozenset({
     "antigravity",
     "free-tier",
@@ -744,6 +446,8 @@ _TIER_GENERIC_NAMES = frozenset({
 
 
 def _classify_tier_entry(obj: Any) -> tuple[str | None, str | None]:
+    if isinstance(obj, str):
+        obj = {"id": obj, "name": obj}
     if not isinstance(obj, dict):
         return None, None
     tid = str(obj.get("id") or "").strip()
@@ -771,8 +475,10 @@ def _normalize_account_tier(
     auth_type: str = "oauth-personal",
 ) -> tuple[str | None, str | None]:
     if isinstance(data, dict):
-        paid_tier, paid_name = _classify_tier_entry(data.get("paidTier"))
-        cur_tier, cur_name = _classify_tier_entry(data.get("currentTier"))
+        paid_tier, paid_name = _classify_tier_entry(data.get("paidTier") or data.get("paid_tier"))
+        cur_tier, cur_name = _classify_tier_entry(
+            data.get("currentTier") or data.get("current_tier") or data.get("plan_tier") or data.get("tier")
+        )
         if paid_tier is not None and (paid_tier != "free" or cur_tier is None):
             return paid_tier, paid_name
         if cur_tier is not None:
@@ -784,175 +490,225 @@ def _normalize_account_tier(
     return None, None
 
 
-def _fetch_account_tier(
-    access_token: str,
-    project_id: str | None,
-    endpoints: tuple[str, ...],
-    *,
-    auth_type: str = "oauth-personal",
-) -> tuple[str | None, str | None]:
-    """Fetch subscription tier from CloudCode `loadCodeAssist`; never raises."""
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "User-Agent": _antigravity_user_agent(),
-        "Content-Type": "application/json",
-    }
-    body: dict[str, Any] = {"metadata": {"ideType": "ANTIGRAVITY"}}
-    if project_id:
-        body["cloudaicompanionProject"] = project_id
-    session = _make_http_session()
-    for endpoint in endpoints:
+def _extract_json_envelope(raw_stdout: str) -> dict[str, Any] | None:
+    text = (raw_stdout or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except ValueError:
+        pass
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
         try:
-            res = session.post(
-                f"{endpoint}/v1internal:loadCodeAssist",
-                headers=headers,
-                json=body,
-                timeout=PROBE_TIMEOUT,
-                allow_redirects=False,
-            )
-            if res.status_code != 200:
-                continue
-            tier, tier_name = _normalize_account_tier(res.json(), auth_type=auth_type)
-            if tier is not None:
-                return tier, tier_name
-        except Exception:
-            continue
-    return _normalize_account_tier(None, auth_type=auth_type)
+            parsed = json.loads(text[start : end + 1])
+            return parsed if isinstance(parsed, dict) else None
+        except ValueError:
+            return None
+    return None
 
 
-def probe_account_usage(
+def _run_cli_usage_command(
     profile_id: str,
     *,
-    allow_cli_fallback: bool | None = None,
-    allow_cli_refresh: bool = True,
-) -> dict[str, Any]:
-    """Query live official quota windows directly from CloudCode APIs (T3 Code method)."""
-    effective_refresh = allow_cli_refresh if allow_cli_fallback is None else bool(allow_cli_fallback)
-    access_token, project_id, source, token_status = _resolve_access_token(
-        profile_id,
-        allow_cli_refresh=effective_refresh,
-    )
-    if not access_token:
-        if token_status == "expired":
-            return {
-                "state": "unverified",
-                "rows": [],
-                "detail": "本地短效访问凭据已过期且后台静默续期未完成，请稍后重试；如多次失败再重新登录。",
-            }
-        if token_status == "refresh_failed":
-            agy_profile.record_auth_state(profile_id, "login_required")
-            return {
-                "state": "login_required",
-                "rows": [],
-                "detail": "当前账号登录态已失效，请重新登录 Agy 账号。",
-            }
-        if token_status == "network_error":
-            return {
-                "state": "unverified",
-                "rows": [],
-                "detail": "连接 Google 鉴权服务超时或网络不可达，请检查网络与代理设置后重试。",
-            }
-        state = "unverified" if agy_profile.has_local_credentials(profile_id) else "login_required"
-        if state == "login_required":
-            agy_profile.record_auth_state(profile_id, "login_required")
+    timeout: float = CLI_USAGE_TIMEOUT,
+) -> tuple[str, int | None, str, str]:
+    """Execute official `agy -p /usage --output-format json` inside the profile vault.
+
+    Returns `(outcome, returncode, stdout, stderr)` where `outcome` is one of
+    `"ok"`, `"auth_required"`, `"timeout"`, or `"unavailable"`.
+    """
+    executable = agy_profile.agy_executable_or_none()
+    if not executable:
+        return "unavailable", None, "", ""
+    temp_dir = agy_profile.make_runtime_temp_dir(profile_id)
+    gemini_dir = agy_profile.profile_vault_gemini_dir(profile_id)
+    proc: subprocess.Popen | None = None
+    group: child_job.ProcessGroupHandle | None = None
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    auth_triggered = threading.Event()
+    try:
+        gemini_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        env = agy_profile.clean_agy_env(profile_id, temp_dir=temp_dir, vault_only=True)
+        cmd = [
+            executable,
+            "-p",
+            "/usage",
+            "--output-format",
+            "json",
+            "--print-timeout",
+            CLI_USAGE_PRINT_TIMEOUT,
+        ]
+        proc = child_job.spawn(
+            cmd,
+            kind="agy-usage-probe",
+            marker=executable,
+            cwd=str(gemini_dir),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            errors="replace",
+            **hidden_process_kwargs(),
+        )
+        group = child_job.create_process_group(proc)
+
+        def _terminate_now() -> None:
+            if group is not None and proc is not None:
+                group.terminate(proc.pid)
+            elif proc is not None:
+                child_job.terminate_tree(proc.pid)
+
+        def _drain_stdout() -> None:
+            if proc is None or proc.stdout is None:
+                return
+            try:
+                stdout_chunks.append(proc.stdout.read())
+            except OSError:
+                pass
+
+        def _drain_stderr() -> None:
+            if proc is None or proc.stderr is None:
+                return
+            try:
+                for line in proc.stderr:
+                    stderr_chunks.append(line)
+                    if not auth_triggered.is_set() and _is_auth_error_text(line):
+                        auth_triggered.set()
+                        _terminate_now()
+            except OSError:
+                pass
+
+        t_out = threading.Thread(target=_drain_stdout, daemon=True)
+        t_err = threading.Thread(target=_drain_stderr, daemon=True)
+        t_out.start()
+        t_err.start()
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _terminate_now()
+            t_out.join(timeout=1.0)
+            t_err.join(timeout=1.0)
+            if auth_triggered.is_set():
+                return "auth_required", proc.returncode, "".join(stdout_chunks), "".join(stderr_chunks)
+            return "timeout", None, "".join(stdout_chunks), "".join(stderr_chunks)
+
+        t_out.join(timeout=1.5)
+        t_err.join(timeout=1.5)
+        stdout_text = "".join(stdout_chunks)
+        stderr_text = "".join(stderr_chunks)
+        if auth_triggered.is_set():
+            return "auth_required", proc.returncode, stdout_text, stderr_text
+        if proc.returncode == 0:
+            agy_profile.sync_vault_token_to_workspace_if_newer(profile_id)
+        return "ok", proc.returncode, stdout_text, stderr_text
+    except (OSError, subprocess.SubprocessError):
+        return "unavailable", None, "", ""
+    finally:
+        if group is not None:
+            group.close()
+        if proc is not None:
+            child_job.forget(proc.pid)
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def probe_account_usage(profile_id: str) -> dict[str, Any]:
+    """Query official quota windows strictly via local `agy -p /usage --output-format json`."""
+    try:
+        agy_profile.sync_workspace_credentials_to_vault(profile_id)
+    except Exception:
+        pass
+    if profile_id == agy_profile.DEFAULT:
+        agy_profile._seed_default_vault_if_empty()
+
+    if not agy_profile.has_local_credentials(profile_id):
+        agy_profile.record_auth_state(profile_id, "login_required")
         return {
-            "state": state,
+            "state": "login_required",
             "rows": [],
             "detail": "当前账号尚未登录或未找到可用凭据，请先完成登录后再检测额度。",
         }
 
-    endpoints = _probe_endpoints(profile_id)
-    auth_type = _profile_auth_type(profile_id)
-    tier: str | None = None
-    tier_name: str | None = None
+    requested_at = datetime.now(timezone.utc)
+    outcome, returncode, stdout_text, stderr_text = _run_cli_usage_command(profile_id)
+    if outcome == "unavailable":
+        return {
+            "state": "unverified",
+            "rows": [],
+            "detail": "未找到可用的官方 agy CLI，请先安装或检查 agy 路径后重试。",
+        }
+    if outcome == "timeout":
+        return {
+            "state": "unverified",
+            "rows": [],
+            "detail": "调用官方 agy /usage 超时，请检查网络与代理设置后重试。",
+        }
+    if outcome == "auth_required":
+        agy_profile.record_auth_state(profile_id, "login_required")
+        return {
+            "state": "login_required",
+            "rows": [],
+            "detail": "当前账号登录态已失效，请重新登录 Agy 账号。",
+        }
 
-    def with_tier(payload: dict[str, Any]) -> dict[str, Any]:
-        if tier:
-            payload["account_tier"] = tier
-            if tier_name:
-                payload["account_tier_name"] = tier_name
-        return payload
-
-    for attempt in range(2):
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            summary_future = pool.submit(
-                _fetch_operation_rows,
-                access_token,
-                project_id,
-                endpoints,
-                "retrieveUserQuotaSummary",
-                _parse_summary_rows,
-            )
-            tier_future = (
-                pool.submit(
-                    _fetch_account_tier,
-                    access_token,
-                    project_id,
-                    endpoints,
-                    auth_type=auth_type,
-                )
-                if tier is None
-                else None
-            )
-            summary_rows, sum_unauth, sum_net = summary_future.result()
-            if tier_future is not None:
-                try:
-                    tier, tier_name = tier_future.result()
-                except Exception:
-                    tier, tier_name = (None, None)
-        if not summary_rows and sum_net and not sum_unauth and attempt == 0:
-            summary_rows, retry_unauth, sum_net = _fetch_operation_rows(
-                access_token,
-                project_id,
-                endpoints,
-                "retrieveUserQuotaSummary",
-                _parse_summary_rows,
-            )
-            sum_unauth = sum_unauth or retry_unauth
-        if summary_rows:
-            agy_profile.record_auth_state(profile_id, "authenticated")
-            return with_tier({"state": "authenticated", "rows": summary_rows})
-        model_rows, mod_unauth, mod_net = _fetch_operation_rows(
-            access_token,
-            project_id,
-            endpoints,
-            "fetchAvailableModels",
-            _parse_model_rows,
-        )
-        if model_rows:
-            agy_profile.record_auth_state(profile_id, "authenticated")
-            return with_tier({"state": "authenticated", "rows": model_rows})
-
-        unauthorized = sum_unauth or mod_unauth
-        had_network_error = sum_net or mod_net
-        if attempt == 0 and unauthorized and source == "cli_token" and effective_refresh:
-            if _refresh_cli_token_via_models(profile_id):
-                new_access, new_expiry = _read_cli_token_record(profile_id)
-                now_after = datetime.now(timezone.utc)
-                if new_access and new_access != access_token and (new_expiry is None or new_expiry > now_after + timedelta(seconds=60)):
-                    access_token = new_access
-                    continue
-        if unauthorized:
+    envelope = _extract_json_envelope(stdout_text)
+    if envelope is None:
+        combined_err = f"{stderr_text}\n{stdout_text}"
+        if _is_auth_error_text(combined_err):
             agy_profile.record_auth_state(profile_id, "login_required")
             return {
                 "state": "login_required",
                 "rows": [],
                 "detail": "当前账号登录态已失效，请重新登录 Agy 账号。",
             }
-        if had_network_error:
-            return {
-                "state": "unverified",
-                "rows": [],
-                "detail": "连接 Google CloudCode 超时或网络不可达，请检查网络与代理设置后重试。",
-            }
-        break
+        return {
+            "state": "unverified",
+            "rows": [],
+            "detail": "官方 agy /usage 未返回有效额度数据，请检查网络或升级 agy CLI 后重试。",
+        }
 
+    status_str = str(envelope.get("status") or "").strip().upper()
+    err_text = str(envelope.get("error") or "").strip()
+    resp_text = str(envelope.get("response") or "").strip()
+    if returncode != 0 or (status_str and status_str != "SUCCESS"):
+        combined_err = f"{err_text}\n{resp_text}\n{stderr_text}"
+        if _is_auth_error_text(combined_err):
+            agy_profile.record_auth_state(profile_id, "login_required")
+            return {
+                "state": "login_required",
+                "rows": [],
+                "detail": "当前账号登录态已失效，请重新登录 Agy 账号。",
+            }
+        return {
+            "state": "unverified",
+            "rows": [],
+            "detail": err_text or "调用官方 agy /usage 失败，请检查网络与代理设置后重试。",
+        }
+
+    cmd_obj = envelope.get("command")
+    cmd_data = cmd_obj.get("data") if isinstance(cmd_obj, dict) and isinstance(cmd_obj.get("data"), dict) else None
+    rows = _parse_cli_usage_buckets(cmd_data, requested_at=requested_at) if cmd_data is not None else []
+    auth_type = _profile_auth_type(profile_id)
+    tier, tier_name = _normalize_account_tier(
+        cmd_data if isinstance(cmd_data, dict) else envelope,
+        auth_type=auth_type,
+    )
+    if tier is None:
+        tier, tier_name = _normalize_account_tier(envelope, auth_type=auth_type)
+
+    result: dict[str, Any] = {"state": "authenticated", "rows": rows}
+    if tier:
+        result["account_tier"] = tier
+        if tier_name:
+            result["account_tier_name"] = tier_name
     agy_profile.record_auth_state(profile_id, "authenticated")
-    return with_tier({
-        "state": "authenticated",
-        "rows": [],
-        "detail": "Google CloudCode 未返回该账号的可用额度窗口。",
-    })
+    if not rows:
+        result["detail"] = "官方 agy /usage 未返回该账号的可用额度窗口。"
+    return result
 
 
 def normalize_ledger_input(

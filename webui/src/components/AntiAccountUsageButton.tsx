@@ -21,30 +21,7 @@ import {
   sortQuotaRows,
 } from '@/utils/antiUsage'
 
-export const AUTO_USAGE_REFRESH_INTERVAL_MS = 10 * 60 * 1000
-const DWELL_TICK_MAX_MS = 60 * 1000
-const DWELL_CLAMP_SLACK_MS = 5 * 1000
 const HOVER_CLOSE_DELAY_MS = 150
-
-interface UsageDwellState {
-  elapsedMs: number
-  lastTriggeredMs: number
-}
-
-const usageDwellByKey = new Map<string, UsageDwellState>()
-
-export function resetAntiUsageAutoRefreshForTests() {
-  usageDwellByKey.clear()
-}
-
-function getDwellState(key: string): UsageDwellState {
-  let entry = usageDwellByKey.get(key)
-  if (!entry) {
-    entry = { elapsedMs: 0, lastTriggeredMs: 0 }
-    usageDwellByKey.set(key, entry)
-  }
-  return entry
-}
 
 async function checkUsage(profileId?: string): Promise<AntiAccountUsage> {
   try {
@@ -81,14 +58,12 @@ export function AntiAccountUsageButton({
   running,
   profileId,
   profileName,
-  autoRefreshKey,
   cachedUsage,
   onChecked,
 }: {
   running: boolean
   profileId?: string
   profileName?: string
-  autoRefreshKey?: string
   cachedUsage?: AgyProfileUsageSnapshot | null
   onChecked: () => void
 }) {
@@ -130,99 +105,13 @@ export function AntiAccountUsageButton({
     },
     onSettled: onChecked,
   })
-  const dwellKey = autoRefreshKey ?? profileId ?? '__active__'
   const usageMutateRef = useRef(usage.mutate)
   usageMutateRef.current = usage.mutate
-  const usagePendingRef = useRef(usage.isPending)
-  usagePendingRef.current = usage.isPending
   const cachedCheckedAtMs = cachedUsage?.checked_at ? Date.parse(cachedUsage.checked_at) : NaN
-  const cachedCheckedAtRef = useRef(Number.isFinite(cachedCheckedAtMs) ? cachedCheckedAtMs : 0)
-  cachedCheckedAtRef.current = Number.isFinite(cachedCheckedAtMs) ? cachedCheckedAtMs : 0
-  const [autoTimerEpoch, setAutoTimerEpoch] = useState(0)
 
   const triggerUsageRefresh = useCallback(() => {
-    const state = getDwellState(dwellKey)
-    state.elapsedMs = 0
-    state.lastTriggeredMs = Date.now()
-    setAutoTimerEpoch(n => n + 1)
     usageMutateRef.current()
-  }, [dwellKey])
-
-  useEffect(() => {
-    if (!running || typeof document === 'undefined') return
-    const state = getDwellState(dwellKey)
-    let timer: number | undefined
-    let segmentStart: number | null = document.visibilityState === 'visible' ? Date.now() : null
-
-    const commitSegment = () => {
-      if (segmentStart === null) return
-      const rawDelta = Math.max(0, Date.now() - segmentStart)
-      // Cap per-segment delta so OS sleep or background throttling never counts as active dwell.
-      state.elapsedMs = Math.min(
-        AUTO_USAGE_REFRESH_INTERVAL_MS,
-        state.elapsedMs + Math.min(rawDelta, DWELL_TICK_MAX_MS + DWELL_CLAMP_SLACK_MS),
-      )
-      segmentStart = Date.now()
-    }
-
-    const scheduleNext = () => {
-      if (timer !== undefined) {
-        window.clearTimeout(timer)
-        timer = undefined
-      }
-      if (document.visibilityState !== 'visible') {
-        segmentStart = null
-        return
-      }
-      if (segmentStart === null) segmentStart = Date.now()
-      const remainingDwell = Math.max(1_000, AUTO_USAGE_REFRESH_INTERVAL_MS - state.elapsedMs)
-      const waitMs = Math.min(DWELL_TICK_MAX_MS, remainingDwell)
-      timer = window.setTimeout(() => {
-        commitSegment()
-        if (document.visibilityState !== 'visible') {
-          segmentStart = null
-          return
-        }
-        const now = Date.now()
-        const latestCheck = Math.max(state.lastTriggeredMs, cachedCheckedAtRef.current)
-        const sinceLastCheck = latestCheck > 0 ? now - latestCheck : AUTO_USAGE_REFRESH_INTERVAL_MS
-        if (state.elapsedMs >= AUTO_USAGE_REFRESH_INTERVAL_MS && sinceLastCheck >= AUTO_USAGE_REFRESH_INTERVAL_MS) {
-          if (!usagePendingRef.current) {
-            state.elapsedMs = 0
-            state.lastTriggeredMs = now
-            usageMutateRef.current()
-          } else {
-            state.elapsedMs = AUTO_USAGE_REFRESH_INTERVAL_MS - 10_000
-          }
-        } else if (state.elapsedMs >= AUTO_USAGE_REFRESH_INTERVAL_MS && sinceLastCheck < AUTO_USAGE_REFRESH_INTERVAL_MS) {
-          state.elapsedMs = Math.max(0, sinceLastCheck)
-        }
-        scheduleNext()
-      }, waitMs)
-    }
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        commitSegment()
-        segmentStart = null
-        if (timer !== undefined) {
-          window.clearTimeout(timer)
-          timer = undefined
-        }
-      } else {
-        segmentStart = Date.now()
-        scheduleNext()
-      }
-    }
-
-    scheduleNext()
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => {
-      commitSegment()
-      if (timer !== undefined) window.clearTimeout(timer)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-    }
-  }, [running, dwellKey, autoTimerEpoch])
+  }, [])
   const [pinned, setPinned] = useState(false)
   const [hovered, setHovered] = useState(false)
   const open = pinned || hovered

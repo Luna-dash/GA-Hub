@@ -509,15 +509,6 @@ class AgyProfiles(BaseModel):
     login_profile: str | None = None
 
 
-class AgyUsageRefreshAllResult(BaseModel):
-    refreshed: int = 0
-    skipped: int = 0
-    failed: int = 0
-    active: str
-    profiles: list[AgyProfile]
-    login_profile: str | None = None
-
-
 class AgyProfileCreate(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 
@@ -678,7 +669,6 @@ def delete_agy_profile(profile_id: str, request: Request):
     _profile_action(request)
     try:
         daemon.delete_profile(profile_id)
-        agy_usage.clear_token_cache(profile_id)
         sessions_svc = AntiSessions()
         sessions_svc.delete_profile_conversations(profile_id)
         sessions_svc.ledger.delete_profile(profile_id)
@@ -752,7 +742,6 @@ def logout_agy_profile(profile_id: str, request: Request):
     _profile_action(request)
     try:
         res = daemon.clear_profile_credentials(profile_id)
-        agy_usage.clear_token_cache(profile_id)
         AntiSessions().ledger.clear_quota_state(profile_id)
         return res
     except AntiError as exc:
@@ -781,29 +770,6 @@ def check_account_usage(request: Request, profile_id: str | None = Query(default
         raise HTTPException(exc.status, str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(502, "返回了无法识别的额度报告。") from exc
-
-
-@router.post(
-    "/account-usage/refresh-all",
-    response_model=AgyUsageRefreshAllResult,
-    response_model_exclude_none=True,
-)
-def refresh_all_account_usage(
-    request: Request,
-    only_stale: bool = Query(default=False),
-):
-    _require_action(request, "check-anti-usage", "Missing Anti usage action")
-    try:
-        summary = daemon.refresh_all_profiles_usage(only_stale=only_stale)
-        snapshot = agy_profiles()
-        return {
-            "refreshed": int(summary.get("refreshed", 0)),
-            "skipped": int(summary.get("skipped", 0)),
-            "failed": int(summary.get("failed", 0)),
-            **snapshot,
-        }
-    except AntiError as exc:
-        raise HTTPException(exc.status, str(exc)) from exc
 
 
 @router.get("/quota", response_model=list[AntiQuotaPool])

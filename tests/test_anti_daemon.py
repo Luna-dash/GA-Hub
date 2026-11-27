@@ -1793,20 +1793,13 @@ def test_models_sync_cloudcode_merge_and_orchestrator_settings_endpoints(tmp_pat
         "run",
         lambda *a, **kw: SimpleNamespace(
             returncode=0,
-            stdout="gemini-4-neon-high\tGemini 4 Neon (High)\ngemini-pro-orchestrator-neon\tOrchestrator (Neon)\n",
+            stdout=(
+                "gemini-4-neon-high\tGemini 4 Neon (High)\n"
+                "gemini-4-hydrogen-high\tGemini 4 Hydrogen (High)\n"
+                "gemini-pro-orchestrator-neon\tOrchestrator (Neon)\n"
+            ),
             stderr="",
         ),
-    )
-    monkeypatch.setattr(
-        agy_usage,
-        "probe_available_models",
-        lambda pid: {
-            "state": "authenticated",
-            "items": [
-                {"id": "gemini-4-hydrogen", "display_name": "Gemini 4 Hydrogen", "efforts": ["low", "medium", "high"], "is_default": True},
-                {"id": "gemini-pro-orchestrator-neon", "display_name": "Orchestrator (Neon)", "is_orchestrator": True},
-            ],
-        },
     )
 
     client = make_client(monkeypatch)
@@ -1814,7 +1807,7 @@ def test_models_sync_cloudcode_merge_and_orchestrator_settings_endpoints(tmp_pat
     assert synced.status_code == 200
     body = synced.json()
     ids = [m["id"] for m in body["items"]]
-    assert "gemini-4-neon-high" in ids and "gemini-4-hydrogen" in ids and "gemini-pro-orchestrator-neon" in ids
+    assert "gemini-4-neon-high" in ids and "gemini-4-hydrogen-high" in ids and "gemini-pro-orchestrator-neon" in ids
     assert body["synced_at"] and body["next_sync_at"]
     assert agy_models.config_path().is_file()
 
@@ -1950,91 +1943,95 @@ def test_ensure_orchestrator_roles_recycles_mismatched_idle_workers_only(tmp_pat
         mgr.shutdown()
 
 
-def test_usage_probe_t3_code_endpoints_proxy_and_untouched_reset_suppression(tmp_path, monkeypatch):
+def test_usage_probe_uses_official_cli_json_and_suppresses_untouched_reset(tmp_path, monkeypatch):
+    import io
     import json
     from datetime import datetime, timedelta, timezone
 
+    assert not hasattr(agy_usage, "probe_available_models")
+    assert not hasattr(agy_usage, "DAILY_ENDPOINT")
+    assert not hasattr(agy_usage, "PROD_ENDPOINT")
+
     monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
     monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
-    agy_usage.clear_token_cache()
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
 
     work = agy_profile.add("Business Work")
     app_dir = agy_profile.profile_app_data_dir(work.id)
     app_dir.mkdir(parents=True, exist_ok=True)
     (app_dir / "settings.json").write_text(json.dumps({"auth": {"type": "oauth-business"}}), encoding="utf-8")
     (app_dir / "antigravity-oauth-token").write_text(
-        json.dumps({
-            "token": {
-                "access_token": "valid-business-token",
-                "expiry": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
-            }
-        }),
+        json.dumps({"token": {"access_token": "valid-business-token", "refresh_token": "rtok"}}),
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(
-        agy_profile,
-        "system_proxy_env",
-        lambda env: {**env, "HTTP_PROXY": "http://127.0.0.1:7890", "HTTPS_PROXY": "http://127.0.0.1:7890"},
-    )
-    proxied_session = agy_usage._make_http_session()
-    assert proxied_session.proxies.get("https") == "http://127.0.0.1:7890"
-
-    seen_calls = []
     now = datetime.now(timezone.utc)
+    spawned: list[tuple[list[str], dict]] = []
+    cli_payload = {
+        "status": "SUCCESS",
+        "command": {
+            "name": "usage",
+            "data": {
+                "groups": [
+                    {
+                        "name": "Gemini models",
+                        "buckets": [
+                            {
+                                "id": "gemini-5h",
+                                "name": "Five Hour Limit Remaining",
+                                "window": "5h",
+                                "remaining_fraction": 1.0,
+                                "reset_time": (now + timedelta(hours=5)).isoformat().replace("+00:00", "Z"),
+                            },
+                            {
+                                "id": "gemini-argon-weekly",
+                                "name": "Weekly Limit Remaining",
+                                "window": "weekly",
+                                "remaining_fraction": 0.55,
+                                "reset_time": "2026-11-29T00:00:00Z",
+                            },
+                        ],
+                    },
+                    {
+                        "name": "Claude & GPT models",
+                        "buckets": [
+                            {
+                                "id": "3p-weekly",
+                                "name": "Weekly Limit Remaining",
+                                "window": "weekly",
+                                "remaining_fraction": 0.72,
+                                "reset_time": "2026-11-30T08:00:00Z",
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+    }
 
-    class FakeResp:
-        def __init__(self, status_code, payload):
-            self.status_code = status_code
-            self._payload = payload
+    class FakeGroup:
+        def terminate(self, pid):
+            return True
 
-        def json(self):
-            return self._payload
+        def close(self):
+            pass
 
-    class FakeSession:
-        proxies = {}
-        trust_env = True
+    def fake_spawn(cmd, **kwargs):
+        spawned.append((cmd, kwargs))
+        assert cmd == ["C:/fake/agy.exe", "-p", "/usage", "--output-format", "json", "--print-timeout", "15s"]
+        assert kwargs["stdin"] == subprocess.DEVNULL
+        assert kwargs["env"]["GEMINI_HOME"] == str(agy_profile.profile_vault_gemini_dir(work.id))
+        return SimpleNamespace(
+            pid=8801,
+            returncode=0,
+            stdout=io.StringIO(json.dumps(cli_payload)),
+            stderr=io.StringIO(""),
+            wait=lambda timeout=None: 0,
+        )
 
-        def post(self, url, headers=None, json=None, timeout=None, allow_redirects=True):
-            seen_calls.append((url, timeout, allow_redirects))
-            if url.startswith(agy_usage.PROD_ENDPOINT) and url.endswith(":retrieveUserQuotaSummary"):
-                return FakeResp(200, {
-                    "buckets": [
-                        {
-                            "bucketId": "gemini-5h",
-                            "window": "5h",
-                            "remainingFraction": 1.0,
-                            "resetTime": (now + timedelta(hours=5)).isoformat().replace("+00:00", "Z"),
-                        },
-                        {
-                            "bucketId": "3p-weekly",
-                            "window": "weekly",
-                            "remainingFraction": 0.72,
-                            "resetTime": "2026-11-30T08:00:00Z",
-                        },
-                    ]
-                })
-            if url.startswith(agy_usage.DAILY_ENDPOINT) and url.endswith(":retrieveUserQuotaSummary"):
-                return FakeResp(200, {
-                    "buckets": [
-                        # Duplicate bucketId should lose to PROD_ENDPOINT priority for oauth-business
-                        {
-                            "bucketId": "gemini-5h",
-                            "window": "5h",
-                            "remainingFraction": 0.1,
-                            "resetTime": "2026-11-26T00:00:00Z",
-                        },
-                        {
-                            "bucketId": "gemini-argon-weekly",
-                            "window": "weekly",
-                            "remainingFraction": 0.55,
-                            "resetTime": "2026-11-29T00:00:00Z",
-                        },
-                    ]
-                })
-            return FakeResp(404, {})
-
-    monkeypatch.setattr(agy_usage, "_make_http_session", lambda: FakeSession())
+    monkeypatch.setattr(agy_usage.child_job, "spawn", fake_spawn)
+    monkeypatch.setattr(agy_usage.child_job, "create_process_group", lambda proc: FakeGroup())
+    monkeypatch.setattr(agy_usage.child_job, "forget", lambda pid: None)
 
     client = make_client(monkeypatch)
     resp = client.post(
@@ -2045,13 +2042,8 @@ def test_usage_probe_t3_code_endpoints_proxy_and_untouched_reset_suppression(tmp
     body = resp.json()
     assert body["state"] == "authenticated"
     assert body.get("account_tier") == "enterprise"
-    quota_calls = [c for c in seen_calls if c[0].endswith(":retrieveUserQuotaSummary")]
-    assert len(quota_calls) == 2
-    assert not any(c[0].endswith(":fetchAvailableModels") for c in seen_calls)
-    assert any(c[0].endswith(":loadCodeAssist") for c in seen_calls)
-    assert all(allow_redir is False and isinstance(to, tuple) for _, to, allow_redir in seen_calls)
+    assert len(spawned) == 1
     by_model = {(r["model"], r["limit"]): r for r in body["rows"]}
-    # PROD_ENDPOINT priority kept 100.0% and suppressed untouched 5h rolling resetTime -> omitted/None
     assert by_model[("Gemini", "Five Hour Limit Remaining")]["remaining_pct"] == 100.0
     assert by_model[("Gemini", "Five Hour Limit Remaining")].get("resets_at") is None
     assert by_model[("Claude & GPT (shared)", "Weekly Limit Remaining")]["remaining_pct"] == 72.0
@@ -2066,94 +2058,96 @@ def test_usage_probe_t3_code_endpoints_proxy_and_untouched_reset_suppression(tmp
     assert "usage" not in def_entry
 
 
-def test_account_tier_detection_paid_tier_override_persistence_and_clear(tmp_path, monkeypatch):
+def test_usage_probe_aborts_immediately_on_auth_required_and_timeout(tmp_path, monkeypatch):
+    import io
     import json
-    from datetime import datetime, timedelta, timezone
 
     monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
     monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
-    agy_usage.clear_token_cache()
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
 
-    prof = agy_profile.add("Ultra Account")
+    # 1. Profile with no local credentials short-circuits without spawning `agy`
+    no_cred = agy_profile.add("Unauthenticated")
+    spawn_count = 0
+
+    def forbid_spawn(*args, **kwargs):
+        nonlocal spawn_count
+        spawn_count += 1
+        raise AssertionError("Should not spawn agy when local credentials are missing")
+
+    monkeypatch.setattr(agy_usage.child_job, "spawn", forbid_spawn)
+    missing_report = agy_usage.probe_account_usage(no_cred.id)
+    assert missing_report["state"] == "login_required"
+    assert missing_report["rows"] == []
+    assert spawn_count == 0
+
+    # 2. Profile whose CLI prints `Authentication required` on stderr terminates immediately
+    prof = agy_profile.add("Revoked Token")
     app_dir = agy_profile.profile_app_data_dir(prof.id)
     app_dir.mkdir(parents=True, exist_ok=True)
     (app_dir / "antigravity-oauth-token").write_text(
-        json.dumps({
-            "token": {
-                "access_token": "valid-personal-token",
-                "expiry": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
-            }
-        }),
+        json.dumps({"token": {"access_token": "revoked", "refresh_token": "rtok"}}),
         encoding="utf-8",
     )
 
-    tier_payload: dict[str, object] = {
-        "currentTier": {"id": "free-tier", "name": "Antigravity"},
-        "paidTier": {"id": "g1-ultra-tier", "name": "Google AI Ultra"},
-    }
+    terminated: list[int] = []
 
-    class FakeSession:
-        def post(self, url, headers=None, json=None, timeout=None, allow_redirects=True):
-            if url.endswith(":retrieveUserQuotaSummary"):
-                return SimpleNamespace(
-                    status_code=200,
-                    json=lambda: {
-                        "buckets": [
-                            {
-                                "bucketId": "gemini-5h",
-                                "window": "5h",
-                                "remainingFraction": 0.88,
-                                "resetTime": "2026-11-26T12:00:00Z",
-                            }
-                        ]
-                    },
-                )
-            if url.endswith(":loadCodeAssist"):
-                assert json == {"metadata": {"ideType": "ANTIGRAVITY"}}
-                if not tier_payload:
-                    return SimpleNamespace(status_code=503, json=lambda: {})
-                return SimpleNamespace(status_code=200, json=lambda: tier_payload)
-            return SimpleNamespace(status_code=404, json=lambda: {})
+    class FakeGroup:
+        def terminate(self, pid):
+            terminated.append(pid)
+            return True
 
-    monkeypatch.setattr(agy_usage, "_make_http_session", lambda: FakeSession())
-    client = make_client(monkeypatch)
+        def close(self):
+            pass
 
-    # 1. paidTier overrides stale currentTier="free-tier" -> Ultra persisted on profile & API
-    resp = client.post(
-        f"/api/anti/account-usage?profile_id={prof.id}",
-        headers={"X-GA-Hub-Action": "check-anti-usage"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["account_tier"] == "ultra"
-    assert resp.json()["account_tier_name"] == "Google AI Ultra"
+    def spawn_auth_prompt(cmd, **kwargs):
+        return SimpleNamespace(
+            pid=8811,
+            returncode=1,
+            stdout=io.StringIO(""),
+            stderr=io.StringIO("Authentication required. Please visit the URL to log in:\nWaiting for authentication (timeout 60s)...\n"),
+            wait=lambda timeout=None: 1,
+        )
 
-    listed = client.get("/api/anti/profiles").json()
-    prof_entry = next(p for p in listed["profiles"] if p["id"] == prof.id)
-    assert prof_entry["account_tier"] == "ultra"
-    assert prof_entry["account_tier_name"] == "Google AI Ultra"
+    monkeypatch.setattr(agy_usage.child_job, "spawn", spawn_auth_prompt)
+    monkeypatch.setattr(agy_usage.child_job, "create_process_group", lambda proc: FakeGroup())
+    monkeypatch.setattr(agy_usage.child_job, "forget", lambda pid: None)
 
-    # 2. Transient loadCodeAssist failure keeps last known tier intact
-    tier_payload = {}
-    agy_profile.record_usage(prof.id, "authenticated", [{"model": "Gemini", "limit": "5h", "remaining_pct": 85.0}])
-    listed_after = client.get("/api/anti/profiles").json()
-    prof_after = next(p for p in listed_after["profiles"] if p["id"] == prof.id)
-    assert prof_after["account_tier"] == "ultra"
+    auth_report = agy_usage.probe_account_usage(prof.id)
+    assert auth_report["state"] == "login_required"
+    assert auth_report["rows"] == []
+    assert 8811 in terminated
 
-    # 3. Clearing credentials resets stored account_tier cleanly
-    agy_profile.clear_credentials(prof.id)
-    listed_cleared = client.get("/api/anti/profiles").json()
-    prof_cleared = next(p for p in listed_cleared["profiles"] if p["id"] == prof.id)
-    assert "account_tier" not in prof_cleared
+    # 3. Timeout kills process tree and returns `unverified`
+    terminated.clear()
+
+    def spawn_timeout(cmd, **kwargs):
+        def wait_timeout(timeout=None):
+            raise subprocess.TimeoutExpired(cmd, timeout or 18)
+
+        return SimpleNamespace(
+            pid=8822,
+            returncode=None,
+            stdout=io.StringIO(""),
+            stderr=io.StringIO(""),
+            wait=wait_timeout,
+        )
+
+    monkeypatch.setattr(agy_usage.child_job, "spawn", spawn_timeout)
+    timeout_report = agy_usage.probe_account_usage(prof.id)
+    assert timeout_report["state"] == "unverified"
+    assert timeout_report["rows"] == []
+    assert "超时" in (timeout_report.get("detail") or "")
+    assert terminated == [8822]
 
 
-def test_usage_probe_refreshes_expired_cli_token_safely_without_pipe_hang(tmp_path, monkeypatch):
+def test_refresh_profile_token_uses_official_agy_models_only(tmp_path, monkeypatch):
     import json
     from datetime import datetime, timedelta, timezone
 
     monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
     monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
     monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
-    agy_usage.clear_token_cache()
 
     prof = agy_profile.add("Expiring CLI")
     tok_path = agy_profile.profile_app_data_dir(prof.id) / "antigravity-oauth-token"
@@ -2162,6 +2156,7 @@ def test_usage_probe_refreshes_expired_cli_token_safely_without_pipe_hang(tmp_pa
         json.dumps({
             "token": {
                 "access_token": "expired-token",
+                "refresh_token": "rtok",
                 "expiry": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
             }
         }),
@@ -2192,6 +2187,7 @@ def test_usage_probe_refreshes_expired_cli_token_safely_without_pipe_hang(tmp_pa
             json.dumps({
                 "token": {
                     "access_token": "fresh-token",
+                    "refresh_token": "rtok",
                     "expiry": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
                 }
             }),
@@ -2203,40 +2199,10 @@ def test_usage_probe_refreshes_expired_cli_token_safely_without_pipe_hang(tmp_pa
     monkeypatch.setattr(agy_usage.child_job, "create_process_group", lambda proc: FakeGroup())
     monkeypatch.setattr(agy_usage.child_job, "forget", lambda pid: None)
 
-    class SuccessSession:
-        def post(self, url, headers=None, json=None, timeout=None, allow_redirects=True):
-            assert headers["Authorization"] == "Bearer fresh-token"
-            return SimpleNamespace(
-                status_code=200,
-                json=lambda: {
-                    "buckets": [
-                        {
-                            "bucketId": "gemini-weekly",
-                            "window": "weekly",
-                            "remainingFraction": 0.85,
-                            "resetTime": "2026-11-30T08:00:00Z",
-                        }
-                    ]
-                },
-            )
-
-    monkeypatch.setattr(agy_usage, "_make_http_session", lambda: SuccessSession())
-    report = agy_usage.probe_account_usage(prof.id)
-    assert report["state"] == "authenticated"
-    assert report["rows"][0]["remaining_pct"] == 85.0
+    assert agy_usage.refresh_profile_token(prof.id) == "ok"
     assert len(spawn_calls) == 1 and terminated == []
 
-    # Timeout during `agy models` must terminate Job Object tree and fail fast with clear detail
-    tok_path.write_text(
-        json.dumps({
-            "token": {
-                "access_token": "expired-token-2",
-                "expiry": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
-            }
-        }),
-        encoding="utf-8",
-    )
-
+    # Timeout during `agy models` terminates Job Object tree and classifies as transient_error
     def spawn_refresh_timeout(cmd, **kwargs):
         def wait_timeout(timeout=None):
             raise subprocess.TimeoutExpired(cmd, timeout or 8)
@@ -2244,68 +2210,17 @@ def test_usage_probe_refreshes_expired_cli_token_safely_without_pipe_hang(tmp_pa
         return SimpleNamespace(pid=7722, returncode=None, wait=wait_timeout)
 
     monkeypatch.setattr(agy_usage.child_job, "spawn", spawn_refresh_timeout)
-    expired_report = agy_usage.probe_account_usage(prof.id)
-    assert expired_report["state"] == "unverified"
-    assert expired_report["rows"] == []
-    assert "过期" in (expired_report.get("detail") or "")
+    assert agy_usage.refresh_profile_token(prof.id) == "transient_error"
     assert terminated == [7722]
 
-
-def test_usage_probe_acp_token_memory_cache_and_logout_invalidation(tmp_path, monkeypatch):
-    import json
-
-    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
-    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
-    agy_usage.clear_token_cache()
-
-    prof = agy_profile.add("ACP Cached")
-    tok_path = agy_profile.profile_app_data_dir(prof.id) / "acp_token.json"
-    tok_path.parent.mkdir(parents=True, exist_ok=True)
-    tok_path.write_text(
-        json.dumps({
-            "client_id": "cid",
-            "client_secret": "csec",
-            "refresh_token": "rtok",
-            "project_id": "proj-1",
-        }),
-        encoding="utf-8",
+    # Missing refresh token on nonzero exit classifies as login_required
+    tok_path.write_text(json.dumps({"token": {"access_token": "expired-only"}}), encoding="utf-8")
+    monkeypatch.setattr(
+        agy_usage.child_job,
+        "spawn",
+        lambda cmd, **kw: SimpleNamespace(pid=7733, returncode=1, wait=lambda timeout=None: 1),
     )
-
-    oauth_calls = 0
-
-    class CachingSession:
-        def post(self, url, data=None, headers=None, json=None, timeout=None, allow_redirects=True):
-            nonlocal oauth_calls
-            if url == "https://oauth2.googleapis.com/token":
-                oauth_calls += 1
-                return SimpleNamespace(
-                    status_code=200,
-                    json=lambda: {"access_token": f"acp-tok-{oauth_calls}", "expires_in": 3600},
-                )
-            if url.endswith(":retrieveUserQuotaSummary"):
-                return SimpleNamespace(
-                    status_code=200,
-                    json=lambda: {
-                        "buckets": [{
-                            "bucketId": "gemini-5h",
-                            "window": "5h",
-                            "remainingFraction": 0.9,
-                            "resetTime": "2026-11-26T00:00:00Z",
-                        }]
-                    },
-                )
-            return SimpleNamespace(status_code=404, json=lambda: {})
-
-    monkeypatch.setattr(agy_usage, "_make_http_session", lambda: CachingSession())
-    first = agy_usage.probe_account_usage(prof.id)
-    second = agy_usage.probe_account_usage(prof.id)
-    assert first["state"] == "authenticated" and second["state"] == "authenticated"
-    assert oauth_calls == 1
-
-    agy_usage.clear_token_cache(prof.id)
-    third = agy_usage.probe_account_usage(prof.id)
-    assert third["state"] == "authenticated"
-    assert oauth_calls == 2
+    assert agy_usage.refresh_profile_token(prof.id) == "login_required"
 
 
 def test_ledger_exclusive_and_legacy_rows_keep_cache_ratio_bounded(tmp_path, monkeypatch):
@@ -3141,161 +3056,101 @@ def test_worker_run_turn_prefers_db_generation_ms_over_partial_stream(tmp_path, 
     assert res_untimed_single["usage"]["generation_ms"] == 800
 
 
-def test_hourly_quota_scheduler_helpers_and_refresh_all_route(tmp_path, monkeypatch):
-    from datetime import datetime, timedelta, timezone
-
+def test_refresh_all_usage_endpoint_and_hourly_quota_sync_removed(tmp_path, monkeypatch):
     monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
-    agy_profile.ensure_workspace_ready()
-    work = agy_profile.add("工作账号")
-    no_cred = agy_profile.add("未登录账号")
-
-    # Seed local credentials on default and work, leaving no_cred without creds.
-    for pid in (agy_profile.DEFAULT, work.id):
-        gemini_dir = agy_profile.profile_vault_gemini_dir(pid) / "antigravity-cli"
-        gemini_dir.mkdir(parents=True, exist_ok=True)
-        (gemini_dir / "antigravity-oauth-token").write_text(
-            '{"token":{"access_token":"tok","refresh_token":"rtok"}}',
-            encoding="utf-8",
-        )
-
-    now = datetime(2026, 11, 26, 10, 15, 0).astimezone()
-    assert agy_runtime.latest_hourly_quota_slot(now) == datetime(2026, 11, 26, 10, 0, 0).astimezone()
-    assert agy_runtime.next_hourly_quota_slot(now) == datetime(2026, 11, 26, 11, 0, 0).astimezone()
-
-    fresh_ts = datetime(2026, 11, 26, 10, 5, 0).astimezone().astimezone(timezone.utc).isoformat()
-    stale_ts = (datetime(2026, 11, 26, 9, 55, 0).astimezone()).astimezone(timezone.utc).isoformat()
-    assert agy_runtime.is_profile_usage_stale_for_hour({"checked_at": fresh_ts}, now=now) is False
-    assert agy_runtime.is_profile_usage_stale_for_hour({"checked_at": stale_ts}, now=now) is True
-    assert agy_runtime.is_profile_usage_stale_for_hour(None, now=now) is True
-
-    # Seed pre-existing cached usage on default and override checked_at to previous hour.
-    cached_default_rows = [
-        {"model": "Gemini", "limit": "Five Hour Limit Remaining", "remaining_pct": 88.0, "resets_at": None},
-        {"model": "Gemini", "limit": "Weekly Limit Remaining", "remaining_pct": 66.0, "resets_at": None},
-    ]
-    agy_profile.record_usage(agy_profile.DEFAULT, "authenticated", cached_default_rows)
-
-    fresh_work_rows = [
-        {"model": "Gemini", "limit": "Five Hour Limit Remaining", "remaining_pct": 72.0, "resets_at": "2026-11-26T15:00:00Z"},
-        {"model": "Gemini", "limit": "Weekly Limit Remaining", "remaining_pct": 54.0, "resets_at": "2026-12-01T00:00:00Z"},
-    ]
-    agy_profile.record_usage(work.id, "authenticated", fresh_work_rows)
-
-    # Make default stale (checked last hour) while keeping work fresh in current hour.
-    import json as _json
-    meta_file = tmp_path / "agy-profiles" / "profiles.json"
-    raw_doc = _json.loads(meta_file.read_text(encoding="utf-8"))
-    raw_doc["meta"][agy_profile.DEFAULT]["usage"]["checked_at"] = stale_ts
-    raw_doc["meta"][work.id]["usage"]["checked_at"] = fresh_ts
-    meta_file.write_text(_json.dumps(raw_doc), encoding="utf-8")
-
     runtime = agy_runtime.AgyRuntimeManager(idle_ttl=0)
-    monkeypatch.setattr(anti, "daemon", runtime)
-    app = FastAPI()
-    app.include_router(anti.router)
-    client = TestClient(app)
-
-    probed: list[str] = []
-
-    def fake_probe(pid: str):
-        probed.append(pid)
-        if pid == agy_profile.DEFAULT:
-            return {
-                "state": "authenticated",
-                "rows": [
-                    {"model": "Gemini", "limit": "Five Hour Limit Remaining", "remaining_pct": 91.0, "resets_at": None},
-                    {"model": "Gemini", "limit": "Weekly Limit Remaining", "remaining_pct": 65.0, "resets_at": None},
-                ],
-            }
-        # Simulate transient failure on work when forced full refresh runs later.
-        return {"state": "unverified", "rows": [], "detail": "network timeout"}
-
-    monkeypatch.setattr(agy_usage, "probe_account_usage", fake_probe)
-
-    # Action header required
-    assert client.post("/api/anti/account-usage/refresh-all").status_code == 403
-
-    # Hourly stale catch-up: only default is stale; work (fresh) and no_cred (no creds) are skipped.
-    summary_stale = runtime.refresh_all_profiles_usage(only_stale=True, now=now)
-    assert summary_stale == {"refreshed": 1, "skipped": 2, "failed": 0}
-    assert probed == [agy_profile.DEFAULT]
-
-    # Full manual refresh via HTTP route: probes both default and work; transient failure on work preserves cached rows.
-    probed.clear()
-    resp = client.post("/api/anti/account-usage/refresh-all", headers={"X-GA-Hub-Action": "check-anti-usage"})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["refreshed"] == 1
-    assert body["skipped"] == 1  # no_cred
-    assert body["failed"] == 1   # work transient unverified
-    by_id = {p["id"]: p for p in body["profiles"]}
-    assert by_id[agy_profile.DEFAULT]["usage"]["rows"][0]["remaining_pct"] == 91.0
-    assert by_id[work.id]["usage"]["rows"] == fresh_work_rows
-    assert "usage" not in by_id[no_cred.id]
+    try:
+        assert not hasattr(runtime, "refresh_all_profiles_usage")
+        assert not hasattr(runtime, "_quota_sync_thread")
+        assert not hasattr(agy_runtime, "next_hourly_quota_slot")
+        monkeypatch.setattr(anti, "daemon", runtime)
+        app = FastAPI()
+        app.include_router(anti.router)
+        client = TestClient(app)
+        resp = client.post(
+            "/api/anti/account-usage/refresh-all",
+            headers={"X-GA-Hub-Action": "check-anti-usage"},
+        )
+        assert resp.status_code == 404
+    finally:
+        runtime.shutdown()
 
 
 def test_usage_probe_stable_order_dedup_and_preserves_cache_on_empty(tmp_path, monkeypatch):
+    import io
     import json
     from datetime import datetime, timedelta, timezone
 
     monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
     monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
-    agy_usage.clear_token_cache()
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
 
     prof = agy_profile.add("Stable Quota")
     app_dir = agy_profile.profile_app_data_dir(prof.id)
     app_dir.mkdir(parents=True, exist_ok=True)
     (app_dir / "antigravity-oauth-token").write_text(
-        json.dumps({
-            "token": {
-                "access_token": "valid-token",
-                "expiry": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
-            }
-        }),
+        json.dumps({"token": {"access_token": "valid-token", "refresh_token": "rtok"}}),
         encoding="utf-8",
     )
 
     now = datetime.now(timezone.utc)
     # Reversed buckets + two Gemini 5h buckets that collapse to same display label + 180s skewed 100% resetTime
     payload = {
-        "buckets": [
-            {
-                "bucketId": "3p-weekly",
-                "window": "weekly",
-                "remainingFraction": 0.65,
-                "resetTime": "2026-12-01T00:00:00Z",
+        "status": "SUCCESS",
+        "command": {
+            "name": "usage",
+            "data": {
+                "buckets": [
+                    {
+                        "id": "3p-weekly",
+                        "window": "weekly",
+                        "remaining_fraction": 0.65,
+                        "reset_time": "2026-12-01T00:00:00Z",
+                    },
+                    {
+                        "id": "gemini-argon-weekly",
+                        "window": "weekly",
+                        "remaining_fraction": 1.0,
+                        "reset_time": (now + timedelta(days=7, seconds=180)).isoformat().replace("+00:00", "Z"),
+                    },
+                    {
+                        "id": "gemini-5h-a",
+                        "window": "5h",
+                        "remaining_fraction": 0.8,
+                        "reset_time": "2026-11-26T15:00:00Z",
+                    },
+                    {
+                        "id": "gemini-5h-b",
+                        "window": "5h",
+                        "remaining_fraction": 0.4,
+                        "reset_time": "2026-11-26T14:00:00Z",
+                    },
+                ],
             },
-            {
-                "bucketId": "gemini-argon-weekly",
-                "window": "weekly",
-                "remainingFraction": 1.0,
-                "resetTime": (now + timedelta(days=7, seconds=180)).isoformat().replace("+00:00", "Z"),
-            },
-            {
-                "bucketId": "gemini-5h-a",
-                "window": "5h",
-                "remainingFraction": 0.8,
-                "resetTime": "2026-11-26T15:00:00Z",
-            },
-            {
-                "bucketId": "gemini-5h-b",
-                "window": "5h",
-                "remainingFraction": 0.4,
-                "resetTime": "2026-11-26T14:00:00Z",
-            },
-        ]
+        },
     }
     return_empty = {"flag": False}
 
-    class FakeSession:
-        def post(self, url, headers=None, json=None, timeout=None, allow_redirects=True):
-            if return_empty["flag"]:
-                return SimpleNamespace(status_code=503, json=lambda: {})
-            if url.endswith(":retrieveUserQuotaSummary"):
-                return SimpleNamespace(status_code=200, json=lambda: payload)
-            return SimpleNamespace(status_code=404, json=lambda: {})
+    class FakeGroup:
+        def terminate(self, pid):
+            return True
 
-    monkeypatch.setattr(agy_usage, "_make_http_session", lambda: FakeSession())
+        def close(self):
+            pass
+
+    def fake_spawn(cmd, **kwargs):
+        out = json.dumps({"status": "SUCCESS", "command": {"name": "usage", "data": {"groups": []}}}) if return_empty["flag"] else json.dumps(payload)
+        return SimpleNamespace(
+            pid=8833,
+            returncode=0,
+            stdout=io.StringIO(out),
+            stderr=io.StringIO(""),
+            wait=lambda timeout=None: 0,
+        )
+
+    monkeypatch.setattr(agy_usage.child_job, "spawn", fake_spawn)
+    monkeypatch.setattr(agy_usage.child_job, "create_process_group", lambda proc: FakeGroup())
+    monkeypatch.setattr(agy_usage.child_job, "forget", lambda pid: None)
     client = make_client(monkeypatch)
 
     resp = client.post(

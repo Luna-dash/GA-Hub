@@ -377,7 +377,6 @@ export default function AntiChat() {
         key={profiles.data?.active ?? 'default'}
         running={daemon.running}
         profileName={selectedProfile?.name}
-        autoRefreshKey={profiles.data?.active ?? 'default'}
         cachedUsage={cachedUsage}
         onChecked={() => {
           daemon.refresh()

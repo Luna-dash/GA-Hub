@@ -2562,23 +2562,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/anti/account-usage/refresh-all": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Refresh All Account Usage */
-        post: operations["refresh_all_account_usage_api_anti_account_usage_refresh_all_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/anti/quota": {
         parameters: {
             query?: never;
@@ -3344,30 +3327,6 @@ export interface components {
         };
         /** AgyProfiles */
         AgyProfiles: {
-            /** Active */
-            active: string;
-            /** Profiles */
-            profiles: components["schemas"]["AgyProfile"][];
-            /** Login Profile */
-            login_profile?: string | null;
-        };
-        /** AgyUsageRefreshAllResult */
-        AgyUsageRefreshAllResult: {
-            /**
-             * Refreshed
-             * @default 0
-             */
-            refreshed: number;
-            /**
-             * Skipped
-             * @default 0
-             */
-            skipped: number;
-            /**
-             * Failed
-             * @default 0
-             */
-            failed: number;
             /** Active */
             active: string;
             /** Profiles */
@@ -11630,37 +11589,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AntiAccountUsage"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    refresh_all_account_usage_api_anti_account_usage_refresh_all_post: {
-        parameters: {
-            query?: {
-                only_stale?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgyUsageRefreshAllResult"];
                 };
             };
             /** @description Validation Error */

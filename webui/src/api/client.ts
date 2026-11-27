@@ -665,7 +665,6 @@ export type AntiWorkerList = ApiComponents['schemas']['AntiWorkerList']
 export type AgyProfile = ApiComponents['schemas']['AgyProfile']
 export type AgyProfileUsageSnapshot = ApiComponents['schemas']['AgyProfileUsageSnapshot']
 export type AgyProfiles = ApiComponents['schemas']['AgyProfiles']
-export type AgyUsageRefreshAllResult = ApiComponents['schemas']['AgyUsageRefreshAllResult']
 export type AgyOrchestratorSettings = ApiComponents['schemas']['AgyOrchestratorSettings']
 export type AntiOrchestratorPreset = ApiComponents['schemas']['AntiOrchestratorPreset']
 export type AgyCodeLoginState = ApiComponents['schemas']['AgyCodeLoginState']
@@ -756,16 +755,6 @@ export const antiApi = {
       {
         headers: { 'X-GA-Hub-Action': 'check-anti-usage' },
         timeoutMs: 25_000,
-      },
-    ),
-  refreshAllAccountUsage: (onlyStale = false) =>
-    antiHttp<AgyUsageRefreshAllResult>(
-      'POST',
-      onlyStale ? '/api/anti/account-usage/refresh-all?only_stale=true' : '/api/anti/account-usage/refresh-all',
-      undefined,
-      {
-        headers: { 'X-GA-Hub-Action': 'check-anti-usage' },
-        timeoutMs: 60_000,
       },
     ),
   quota: (signal?: AbortSignal, profileId?: string) =>

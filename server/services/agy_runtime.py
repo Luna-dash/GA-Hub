@@ -1801,30 +1801,6 @@ class AgySessionWorker:
         }
 
 
-def latest_hourly_quota_slot(now: datetime | None = None) -> datetime:
-    """Return the local top-of-hour boundary (`HH:00:00`) at or before `now`."""
-    return agy_models._local_now(now).replace(minute=0, second=0, microsecond=0)
-
-
-def next_hourly_quota_slot(now: datetime | None = None) -> datetime:
-    """Return the next local top-of-hour boundary strictly after `now`."""
-    return latest_hourly_quota_slot(now) + timedelta(hours=1)
-
-
-def is_profile_usage_stale_for_hour(
-    usage: dict[str, Any] | None,
-    *,
-    now: datetime | None = None,
-) -> bool:
-    """Return True if cached usage is missing or predates the current local hour slot."""
-    if not isinstance(usage, dict):
-        return True
-    checked_at = agy_models._parse_iso(usage.get("checked_at"))
-    if checked_at is None:
-        return True
-    return checked_at < latest_hourly_quota_slot(now)
-
-
 class AgyRuntimeManager:
     """Process-wide manager for standalone Agy ACP workers, models, and logins."""
 
@@ -1862,8 +1838,6 @@ class AgyRuntimeManager:
         self._shutdown_event = threading.Event()
         self._reaper_thread: threading.Thread | None = None
         self._model_sync_thread: threading.Thread | None = None
-        self._quota_sync_thread: threading.Thread | None = None
-        self._quota_refresh_lock = threading.Lock()
 
     def _probe_version_once(self, executable: str) -> str | None:
         with self._lock:
@@ -2141,48 +2115,9 @@ class AgyRuntimeManager:
                 return
             self._sync_models_if_due()
 
-    def _sync_quota_if_due(self) -> None:
-        with self._lock:
-            if self._stopped_manually:
-                return
-        if agy_profile.agy_executable_or_none() is None:
-            return
-        try:
-            self.refresh_all_profiles_usage(only_stale=True)
-        except Exception:
-            log.debug("Scheduled Agy hourly quota refresh failed", exc_info=True)
-
-    def _quota_sync_loop(self) -> None:
-        while not self._shutdown_event.is_set():
-            now = agy_models._local_now()
-            target = next_hourly_quota_slot(now)
-            wait_sec = max(1.0, (target - now).total_seconds())
-            while wait_sec > 0 and not self._shutdown_event.is_set():
-                step = min(60.0, wait_sec)
-                if self._shutdown_event.wait(step):
-                    return
-                now = agy_models._local_now()
-                wait_sec = (target - now).total_seconds()
-            if self._shutdown_event.is_set():
-                return
-            self._sync_quota_if_due()
-
-    def _ensure_quota_sync_locked(self) -> None:
-        if self._idle_ttl <= 0 or self._shutdown_event.is_set():
-            return
-        if self._quota_sync_thread is not None and self._quota_sync_thread.is_alive():
-            return
-        self._quota_sync_thread = threading.Thread(
-            target=self._quota_sync_loop,
-            name="agy-quota-sync",
-            daemon=True,
-        )
-        self._quota_sync_thread.start()
-
     def _ensure_model_sync_locked(self) -> None:
         if self._idle_ttl <= 0 or self._shutdown_event.is_set():
             return
-        self._ensure_quota_sync_locked()
         if self._model_sync_thread is not None and self._model_sync_thread.is_alive():
             return
         self._model_sync_thread = threading.Thread(
@@ -2191,51 +2126,6 @@ class AgyRuntimeManager:
             daemon=True,
         )
         self._model_sync_thread.start()
-
-    def refresh_all_profiles_usage(
-        self,
-        *,
-        only_stale: bool = False,
-        now: datetime | None = None,
-    ) -> dict[str, int]:
-        """Probe quota usage across credentialed profiles, optionally skipping those fresh for this hour."""
-        with self._quota_refresh_lock:
-            with self._lock:
-                stopped = self._stopped_manually
-                login_pid = self._login_profile
-                switching = self._switching_profile
-            if switching or (only_stale and stopped):
-                return {"refreshed": 0, "skipped": 0, "failed": 0}
-            _, profiles = agy_profile.snapshot_details()
-            refreshed = 0
-            skipped = 0
-            failed = 0
-            for item in profiles:
-                pid = str(item.get("id") or "")
-                if not pid or not item.get("has_credentials") or pid == login_pid:
-                    skipped += 1
-                    continue
-                if only_stale and not is_profile_usage_stale_for_hour(item.get("usage"), now=now):
-                    skipped += 1
-                    continue
-                try:
-                    report = agy_usage.probe_account_usage(pid)
-                except Exception:
-                    log.debug("Quota probe failed for profile %s", pid, exc_info=True)
-                    failed += 1
-                    continue
-                state = str(report.get("state") or "unverified") if isinstance(report, dict) else "unverified"
-                rows = report.get("rows") if isinstance(report, dict) and isinstance(report.get("rows"), list) else []
-                tier = report.get("account_tier") if isinstance(report, dict) and isinstance(report.get("account_tier"), str) else None
-                tier_name = report.get("account_tier_name") if isinstance(report, dict) and isinstance(report.get("account_tier_name"), str) else None
-                if rows:
-                    agy_profile.record_usage(pid, state, rows, account_tier=tier, account_tier_name=tier_name)
-                    refreshed += 1
-                else:
-                    if state == "login_required":
-                        agy_profile.record_auth_state(pid, "login_required")
-                    failed += 1
-            return {"refreshed": refreshed, "skipped": skipped, "failed": failed}
 
     def shutdown(self) -> None:
         with self._lifecycle_lock:
@@ -2254,8 +2144,6 @@ class AgyRuntimeManager:
             self._reaper_thread = None
             sync_thread = self._model_sync_thread
             self._model_sync_thread = None
-            quota_thread = self._quota_sync_thread
-            self._quota_sync_thread = None
         try:
             try:
                 self._close_detached(workers)
@@ -2273,8 +2161,6 @@ class AgyRuntimeManager:
                     reaper.join(timeout=1.0)
                 if sync_thread is not None and sync_thread.is_alive() and threading.current_thread() is not sync_thread:
                     sync_thread.join(timeout=1.0)
-                if quota_thread is not None and quota_thread.is_alive() and threading.current_thread() is not quota_thread:
-                    quota_thread.join(timeout=1.0)
         finally:
             with self._lock:
                 self._stopped_manually = True
@@ -2689,7 +2575,6 @@ class AgyRuntimeManager:
         profile_id: str | None = None,
         *,
         force_refresh: bool = False,
-        include_cloudcode: bool = False,
     ) -> list[dict[str, Any]]:
         pid = profile_id or agy_profile.snapshot()[0]
         with self._lock:
@@ -2712,20 +2597,10 @@ class AgyRuntimeManager:
         except AgyProfileError as exc:
             cli_error = exc
 
-        cloud_items: list[dict[str, Any]] = []
-        if include_cloudcode or cli_error is not None:
-            try:
-                cloud_res = agy_usage.probe_available_models(pid)
-                if isinstance(cloud_res, dict) and isinstance(cloud_res.get("items"), list):
-                    cloud_items = [dict(i) for i in cloud_res["items"] if isinstance(i, dict)]
-            except Exception:
-                log.debug("CloudCode model probe failed for %s", pid, exc_info=True)
-
-        merged = agy_models.merge_catalog_items(cli_items, cloud_items) if (cli_items or cloud_items) else []
+        merged = agy_models.merge_catalog_items(cli_items, []) if cli_items else []
         if merged:
-            src = "cli+cloudcode" if cli_items and cloud_items else ("cloudcode" if cloud_items else "cli")
             try:
-                saved = agy_models.save_profile_catalog(pid, merged, source=src, merge_existing=True)
+                saved = agy_models.save_profile_catalog(pid, merged, source="cli", merge_existing=True)
             except OSError:
                 saved = merged
             with self._lock:
@@ -2749,10 +2624,9 @@ class AgyRuntimeManager:
         profile_id: str | None = None,
         *,
         force_refresh: bool = False,
-        include_cloudcode: bool = False,
     ) -> dict[str, Any]:
         pid = profile_id or agy_profile.snapshot()[0]
-        items = self.models(pid, force_refresh=force_refresh, include_cloudcode=include_cloudcode)
+        items = self.models(pid, force_refresh=force_refresh)
         _, meta = agy_models.profile_catalog(pid)
         return {
             "items": items,
@@ -2765,7 +2639,7 @@ class AgyRuntimeManager:
 
     def sync_models(self, profile_id: str | None = None) -> dict[str, Any]:
         pid = profile_id or agy_profile.snapshot()[0]
-        return self.models_catalog_info(pid, force_refresh=True, include_cloudcode=True)
+        return self.models_catalog_info(pid, force_refresh=True)
 
     # ── Profile management operations ──
 

@@ -9,12 +9,9 @@ import { antiApi, type AgyCodeLoginState } from '@/api/client'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import {
-  currentHourStartMs,
   fiveHourRemainingPct,
   formatQuotaPct,
   geminiQuotaSummary,
-  isUsageStaleForHour,
-  nextTopOfHourMs,
   quotaWindowShortLabel,
   resolveAccountTier,
   sortQuotaRows,
@@ -38,17 +35,10 @@ type Action =
   | { kind: 'check-usage'; profileId?: string; profileName?: string }
 
 const key = ['agy-profiles'] as const
-const HOURLY_TICK_CAP_MS = 60_000
 
 const resetTimeFormat = new Intl.DateTimeFormat('zh-CN', {
   month: 'numeric',
   day: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-})
-
-const hourClockFormat = new Intl.DateTimeFormat('zh-CN', {
   hour: '2-digit',
   minute: '2-digit',
   hourCycle: 'h23',
@@ -262,7 +252,6 @@ export function AntiAgyProfiles({
   const [codeLogin, setCodeLogin] = useState<AgyCodeLoginState | null>(null)
   const [authCode, setAuthCode] = useState('')
   const prevLoginProfile = useRef<string | null | undefined>(undefined)
-  const lastAutoHourSlotRef = useRef<number>(0)
 
   const accountViewId = view.kind === 'account' ? view.profileId : null
   const viewedProfile = useMemo(
@@ -322,109 +311,6 @@ export function AntiAgyProfiles({
       setResettingSid(null)
     },
   })
-
-  const refreshAll = useMutation({
-    mutationFn: (onlyStale: boolean) => antiApi.refreshAllAccountUsage(onlyStale),
-    onMutate: onlyStale => {
-      if (!onlyStale) setMessage('')
-    },
-    onSuccess: (res, onlyStale) => {
-      if (res && Array.isArray(res.profiles) && typeof res.active === 'string') {
-        cache.setQueryData<Profiles>(key, {
-          active: res.active,
-          profiles: res.profiles,
-          login_profile: res.login_profile ?? null,
-        })
-      } else {
-        void cache.invalidateQueries({ queryKey: key, exact: true })
-      }
-      if (!onlyStale) {
-        const refreshedCount = typeof res?.refreshed === 'number' ? res.refreshed : 0
-        const failedCount = typeof res?.failed === 'number' ? res.failed : 0
-        setMessage(
-          failedCount > 0
-            ? `已刷新 ${refreshedCount} 个账号额度（${failedCount} 个未完成，请检查登录或网络）。`
-            : `已刷新全部账号额度（${refreshedCount} 个）。`,
-        )
-      }
-      refresh()
-    },
-    onError: (_, onlyStale) => {
-      if (onlyStale) return
-    },
-  })
-  const refreshAllMutateRef = useRef(refreshAll.mutate)
-  refreshAllMutateRef.current = refreshAll.mutate
-  const refreshAllPendingRef = useRef(refreshAll.isPending)
-  refreshAllPendingRef.current = refreshAll.isPending
-
-  const profileItemsRef = useRef<Profile[]>([])
-  profileItemsRef.current = profiles.data?.profiles ?? []
-
-  // Top-of-hour quota refresh: catch up once per hour when opened + run on every local XX:00 while mounted.
-  useEffect(() => {
-    if (!open || !daemon?.running || daemon.busy || !profiles.data?.profiles?.length) return
-    if (profiles.data.login_profile || refreshAllPendingRef.current) return
-    const slot = currentHourStartMs()
-    if (lastAutoHourSlotRef.current === slot) return
-    const hasStale = profiles.data.profiles.some(
-      p => p.has_credentials && isUsageStaleForHour(p.usage?.checked_at),
-    )
-    if (!hasStale) return
-    lastAutoHourSlotRef.current = slot
-    refreshAllMutateRef.current(true)
-  }, [open, daemon?.running, daemon?.busy, profiles.data?.profiles, profiles.data?.login_profile])
-
-  useEffect(() => {
-    if (!daemon?.running || typeof document === 'undefined') return
-    let targetMs = nextTopOfHourMs()
-    let timer: number | undefined
-
-    const maybeTrigger = () => {
-      if (document.visibilityState !== 'visible') return
-      const now = Date.now()
-      if (now < targetMs) return
-      const slot = currentHourStartMs(now)
-      targetMs = nextTopOfHourMs(now)
-      if (lastAutoHourSlotRef.current === slot || refreshAllPendingRef.current) return
-      const hasCredentialed = profileItemsRef.current.some(p => p.has_credentials)
-      if (!hasCredentialed) return
-      lastAutoHourSlotRef.current = slot
-      refreshAllMutateRef.current(true)
-    }
-
-    const schedule = () => {
-      if (timer !== undefined) {
-        window.clearTimeout(timer)
-        timer = undefined
-      }
-      if (document.visibilityState !== 'visible') return
-      const waitMs = Math.max(1_000, Math.min(HOURLY_TICK_CAP_MS, targetMs - Date.now()))
-      timer = window.setTimeout(() => {
-        maybeTrigger()
-        schedule()
-      }, waitMs)
-    }
-
-    const onVisibility = () => {
-      if (document.visibilityState === 'hidden') {
-        if (timer !== undefined) {
-          window.clearTimeout(timer)
-          timer = undefined
-        }
-      } else {
-        maybeTrigger()
-        schedule()
-      }
-    }
-
-    schedule()
-    document.addEventListener('visibilitychange', onVisibility)
-    return () => {
-      if (timer !== undefined) window.clearTimeout(timer)
-      document.removeEventListener('visibilitychange', onVisibility)
-    }
-  }, [daemon?.running])
 
   const action = useMutation({
     mutationFn: async (args: Action) => {
@@ -591,7 +477,6 @@ export function AntiAgyProfiles({
     setAuthCode('')
     setMessage('')
     action.reset()
-    refreshAll.reset()
     resetWorker.reset()
     codeLoginStart.reset()
     codeLoginSubmit.reset()
@@ -743,7 +628,7 @@ export function AntiAgyProfiles({
               </>
             ) : (
               <p className="text-[11px] text-ink-muted">
-                暂无额度数据，请确认账号已登录后点击「刷新全部额度」。
+                暂无额度数据，请点击右侧设置图标进入账号详情后手动刷新额度。
               </p>
             )}
           </div>
@@ -1014,7 +899,6 @@ export function AntiAgyProfiles({
   }
 
   const renderSharedSettings = () => {
-    const nextHourLabel = hourClockFormat.format(nextTopOfHourMs())
     return (
       <div data-account-management-settings className="space-y-3">
         <form onSubmit={add} className="rounded-xl border border-line/70 bg-bg-card p-3">
@@ -1056,24 +940,11 @@ export function AntiAgyProfiles({
           </div>
         </form>
 
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-line/70 bg-bg-card p-3 text-xs">
-          <div className="min-w-0">
-            <div className="font-semibold text-ink">整点额度刷新</div>
-            <p className="mt-0.5 text-[11px] text-ink-muted">
-              每整点自动同步各账号 5h 与周 Gemini 额度（下次 {nextHourLabel}）
-            </p>
-          </div>
-          {daemon?.running && (
-            <button
-              type="button"
-              className={compactBtn}
-              disabled={disabled || refreshAll.isPending}
-              onClick={() => refreshAll.mutate(false)}
-            >
-              <RefreshCw className={clsx('h-3 w-3', refreshAll.isPending && 'animate-spin motion-reduce:animate-none')} aria-hidden="true" />
-              <span>{refreshAll.isPending ? '刷新中…' : '立即刷新全部'}</span>
-            </button>
-          )}
+        <div className="rounded-xl border border-line/70 bg-bg-card p-3 text-xs">
+          <div className="font-semibold text-ink">额度查询方式</div>
+          <p className="mt-0.5 text-[11px] text-ink-muted">
+            为避免后台高频探测触发账号风控，已关闭整点自动与批量刷新；可在顶部额度按钮或单个账号详情页手动按需查询。
+          </p>
         </div>
 
         {daemon && (
@@ -1272,13 +1143,7 @@ export function AntiAgyProfiles({
       ? '账号管理设置'
       : (viewedProfile?.name ?? '账号设置')
   const activeError = action.error ?? daemonError ?? codeLoginStart.error ?? codeLoginSubmit.error ?? resetWorker.error
-    ?? (!refreshAll.variables ? refreshAll.error : null)
-  const manualRefreshingAll = refreshAll.isPending && refreshAll.variables === false
-  const statusText = action.isPending
-    ? pendingLabel
-    : manualRefreshingAll
-      ? '正在刷新全部账号额度…'
-      : message
+  const statusText = action.isPending ? pendingLabel : message
 
   return <>
     <button
@@ -1352,33 +1217,16 @@ export function AntiAgyProfiles({
 
             <div className="flex shrink-0 items-center gap-1.5">
               {view.kind === 'list' && (
-                <>
-                  {daemon?.running && (
-                    <button
-                      type="button"
-                      className={compactBtn}
-                      disabled={disabled || refreshAll.isPending}
-                      aria-label="刷新全部额度"
-                      onClick={() => refreshAll.mutate(false)}
-                    >
-                      <RefreshCw
-                        className={clsx('h-3 w-3', manualRefreshingAll && 'animate-spin motion-reduce:animate-none')}
-                        aria-hidden="true"
-                      />
-                      <span>{manualRefreshingAll ? '刷新中…' : '刷新全部额度'}</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className={compactBtn}
-                    aria-label="账号管理设置"
-                    title="账号管理设置"
-                    onClick={() => navigateTo({ kind: 'settings' })}
-                  >
-                    <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>设置</span>
-                  </button>
-                </>
+                <button
+                  type="button"
+                  className={compactBtn}
+                  aria-label="账号管理设置"
+                  title="账号管理设置"
+                  onClick={() => navigateTo({ kind: 'settings' })}
+                >
+                  <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>设置</span>
+                </button>
               )}
               <button type="button" className={compactBtn} onClick={close} disabled={action.isPending}>
                 <X className="h-3.5 w-3.5" aria-hidden="true" />
