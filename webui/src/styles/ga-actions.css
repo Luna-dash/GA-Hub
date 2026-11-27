@@ -16,9 +16,9 @@
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 1px 2px rgba(28, 25, 23, 0.14);
   }
 
-  /* 纸质次级按钮：卡片底 + 细边框 + 顶部微高光 */
+  /* 纸质次级按钮：卡片底 + 细边框 + 顶部微高光（三档高度：md 34px / sm 28px / xs 24px） */
   .ga-btn {
-    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-line/85 bg-bg-card/90 text-sm leading-5 text-ink transition-all active:scale-[0.98];
+    @apply inline-flex h-[34px] items-center justify-center gap-1.5 px-3 rounded-lg border border-line/85 bg-bg-card/90 text-sm leading-5 text-ink transition-all active:scale-[0.98];
     @apply hover:bg-bg-soft/90 hover:border-accent/65 hover:text-ink;
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-1 focus-visible:ring-offset-bg;
     @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:shadow-none disabled:active:scale-100 disabled:opacity-100 disabled:cursor-not-allowed;
@@ -26,89 +26,140 @@
   }
 
   .ga-btn-sm {
-    @apply inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md border border-line/85 bg-bg-card/90 text-xs leading-4 text-ink transition-all active:scale-[0.98];
+    @apply inline-flex h-7 items-center justify-center gap-1.5 px-2.5 rounded-md border border-line/85 bg-bg-card/90 text-xs leading-4 text-ink transition-all active:scale-[0.98];
     @apply hover:bg-bg-soft/90 hover:border-accent/65 hover:text-ink;
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-1 focus-visible:ring-offset-bg;
     @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:shadow-none disabled:active:scale-100 disabled:opacity-100 disabled:cursor-not-allowed;
     box-shadow: inset 0 1px 0 var(--c-inset-highlight), 0 1px 2px rgba(28, 25, 23, 0.05);
   }
 
+  .ga-btn-xs {
+    @apply inline-flex h-6 items-center justify-center gap-1 px-2 rounded-md border border-line/85 bg-bg-card/90 text-[11px] leading-4 text-ink transition-all active:scale-[0.98];
+    @apply hover:bg-bg-soft/90 hover:border-accent/65 hover:text-ink;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-1 focus-visible:ring-offset-bg;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:shadow-none disabled:active:scale-100 disabled:opacity-100 disabled:cursor-not-allowed;
+    box-shadow: inset 0 1px 0 var(--c-inset-highlight), 0 1px 2px rgba(28, 25, 23, 0.04);
+  }
+
   .ga-btn-primary {
-    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-sm leading-5 ga-solid-primary;
+    @apply inline-flex h-[34px] items-center justify-center gap-1.5 px-3 rounded-lg text-sm leading-5 ga-solid-primary;
   }
 
   .ga-btn-sm-primary {
-    @apply inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md text-xs leading-4 ga-solid-primary;
+    @apply inline-flex h-7 items-center justify-center gap-1.5 px-2.5 rounded-md text-xs leading-4 ga-solid-primary;
+  }
+
+  .ga-btn-xs-primary {
+    @apply inline-flex h-6 items-center justify-center gap-1 px-2 rounded-md text-[11px] leading-4 ga-solid-primary;
   }
 
   .ga-btn-danger {
-    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-sm leading-5 ga-solid-danger;
+    @apply inline-flex h-[34px] items-center justify-center gap-1.5 px-3 rounded-lg text-sm leading-5 ga-solid-danger;
   }
 
-  .ga-btn-sm-danger {
-    @apply inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md border border-status-danger-line/85 bg-bg-card/90 text-xs leading-4 text-status-danger transition-all active:scale-[0.98];
+  .ga-btn-sm-solid-danger {
+    @apply inline-flex h-7 items-center justify-center gap-1.5 px-2.5 rounded-md text-xs leading-4 ga-solid-danger;
+  }
+
+  .ga-btn-xs-solid-danger {
+    @apply inline-flex h-6 items-center justify-center gap-1 px-2 rounded-md text-[11px] leading-4 ga-solid-danger;
+  }
+
+  .ga-btn-danger-outline {
+    @apply inline-flex h-[34px] items-center justify-center gap-1.5 px-3 rounded-lg border border-status-danger-line/85 bg-bg-card/90 text-sm leading-5 text-status-danger transition-all active:scale-[0.98];
     @apply hover:bg-status-danger-soft hover:border-status-danger/60;
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/40;
-    @apply disabled:opacity-45 disabled:shadow-none disabled:active:scale-100 disabled:cursor-not-allowed;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 disabled:cursor-not-allowed;
     box-shadow: inset 0 1px 0 var(--c-inset-highlight), 0 1px 2px rgba(28, 25, 23, 0.05);
   }
 
+  .ga-btn-sm-danger {
+    @apply inline-flex h-7 items-center justify-center gap-1.5 px-2.5 rounded-md border border-status-danger-line/85 bg-bg-card/90 text-xs leading-4 text-status-danger transition-all active:scale-[0.98];
+    @apply hover:bg-status-danger-soft hover:border-status-danger/60;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/40;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 disabled:cursor-not-allowed;
+    box-shadow: inset 0 1px 0 var(--c-inset-highlight), 0 1px 2px rgba(28, 25, 23, 0.05);
+  }
+
+  .ga-btn-xs-danger {
+    @apply inline-flex h-6 items-center justify-center gap-1 px-2 rounded-md border border-status-danger-line/85 bg-bg-card/90 text-[11px] leading-4 text-status-danger transition-all active:scale-[0.98];
+    @apply hover:bg-status-danger-soft hover:border-status-danger/60;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/40;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 disabled:cursor-not-allowed;
+    box-shadow: inset 0 1px 0 var(--c-inset-highlight), 0 1px 2px rgba(28, 25, 23, 0.04);
+  }
+
   .ga-btn-warning-sm {
-    @apply inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md border border-status-warning-line bg-bg-card text-xs leading-4 text-status-warning transition-all active:scale-[0.98];
+    @apply inline-flex h-7 items-center justify-center gap-1.5 px-2.5 rounded-md border border-status-warning-line bg-bg-card text-xs leading-4 text-status-warning transition-all active:scale-[0.98];
     @apply hover:bg-status-warning-soft hover:border-status-warning/60;
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-warning/40;
-    @apply disabled:opacity-45 disabled:shadow-none disabled:cursor-not-allowed;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 disabled:cursor-not-allowed;
     box-shadow: inset 0 1px 0 var(--c-inset-highlight), 0 1px 2px rgba(28, 25, 23, 0.05);
   }
 
   .ga-btn-ghost {
-    @apply inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md text-xs leading-4 text-ink-muted transition-colors active:scale-[0.98];
+    @apply inline-flex h-7 items-center justify-center gap-1.5 px-2.5 rounded-md text-xs leading-4 text-ink-muted transition-colors active:scale-[0.98];
     @apply hover:bg-bg-soft hover:text-ink;
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
-    @apply disabled:opacity-35 disabled:active:scale-100 disabled:cursor-not-allowed;
+    @apply disabled:text-[var(--c-disabled-text)] disabled:hover:bg-transparent disabled:active:scale-100 disabled:cursor-not-allowed;
   }
 
   .ga-btn-link {
     @apply inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-accent transition-colors;
     @apply hover:bg-accent/10 hover:text-[var(--c-accent-hover)];
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
-    @apply disabled:opacity-45 disabled:cursor-not-allowed;
+    @apply disabled:text-[var(--c-disabled-text)] disabled:hover:bg-transparent disabled:active:scale-100 disabled:cursor-not-allowed;
   }
 
-  /* 统一图标按钮体系：方圆框 / 轻幽灵 / 紧凑小号 / 角标移除 / 气泡动作标签 */
+  .ga-btn-link-muted {
+    @apply inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-ink-muted transition-colors;
+    @apply hover:bg-bg-soft hover:text-ink;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
+    @apply disabled:text-[var(--c-disabled-text)] disabled:hover:bg-transparent disabled:active:scale-100 disabled:cursor-not-allowed;
+  }
+
+  /* 统一图标按钮体系：方圆框 / 轻幽灵 / 紧凑小号 / 危险图标 / 角标移除 / 气泡动作标签 */
   .ga-btn-icon {
     @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line/80 bg-bg-card text-ink-muted shadow-sm transition-colors;
     @apply hover:border-accent/60 hover:bg-bg-soft hover:text-ink active:scale-[0.97];
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
-    @apply disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 disabled:cursor-not-allowed;
   }
 
   .ga-btn-icon-ghost {
     @apply inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors;
     @apply hover:bg-bg-soft hover:text-ink active:scale-[0.96];
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
-    @apply disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply disabled:text-[var(--c-disabled-text)] disabled:hover:bg-transparent disabled:active:scale-100 disabled:cursor-not-allowed;
   }
 
   .ga-btn-icon-sm {
     @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line/70 bg-bg-card text-ink-muted transition-colors;
-    @apply hover:border-accent/60 hover:bg-bg-soft hover:text-ink;
+    @apply hover:border-accent/60 hover:bg-bg-soft hover:text-ink active:scale-[0.96];
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
-    @apply disabled:opacity-35 disabled:cursor-not-allowed;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 disabled:cursor-not-allowed;
+  }
+
+  .ga-btn-icon-danger {
+    @apply inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-status-danger/35 bg-status-danger-soft text-status-danger transition-all;
+    @apply hover:border-[var(--c-solid-danger-bg)] hover:bg-[var(--c-solid-danger-bg)] hover:text-[var(--c-solid-danger-fg)] active:scale-[0.96];
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/45;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 disabled:cursor-not-allowed;
+    box-shadow: inset 0 1px 0 var(--c-inset-highlight), 0 1px 2px rgba(158, 51, 40, 0.08);
   }
 
   .ga-btn-icon-badge {
     @apply inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line/80 bg-bg/95 text-ink-muted transition-colors;
     @apply hover:border-status-danger-line hover:bg-status-danger-soft hover:text-status-danger;
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45;
-    @apply disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply disabled:opacity-45 disabled:active:scale-100 disabled:cursor-not-allowed;
   }
 
   .ga-btn-chip {
     @apply inline-flex items-center gap-1 rounded-md border border-line/85 bg-bg-soft/90 px-2.5 py-1 text-[11px] leading-none text-ink-muted transition-all active:scale-[0.98];
     @apply hover:border-accent/55 hover:bg-bg-card hover:text-ink;
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45;
-    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 disabled:cursor-not-allowed;
     box-shadow: inset 0 1px 0 var(--c-inset-highlight);
   }
 
@@ -122,7 +173,7 @@
     @apply inline-flex items-center justify-center gap-1.5 rounded-[9px] px-3 py-1 text-xs font-medium leading-5 text-ink-muted transition-all;
     @apply hover:bg-bg-card/55 hover:text-ink;
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
-    @apply disabled:opacity-45 disabled:cursor-not-allowed;
+    @apply disabled:text-[var(--c-disabled-text)] disabled:hover:bg-transparent disabled:active:scale-100 disabled:cursor-not-allowed;
   }
 
   .ga-segmented-btn-active {
@@ -140,14 +191,14 @@
     @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm leading-5 text-ink transition-colors;
     @apply hover:bg-bg-soft/90 hover:text-ink active:bg-bg-soft;
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40;
-    @apply disabled:opacity-45 disabled:cursor-not-allowed;
+    @apply disabled:text-[var(--c-disabled-text)] disabled:hover:bg-transparent disabled:active:scale-100 disabled:cursor-not-allowed;
   }
 
   .ga-btn-group-item-danger {
     @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm leading-5 text-status-danger transition-colors;
     @apply hover:bg-status-danger-soft active:bg-status-danger-soft;
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-status-danger/40;
-    @apply disabled:opacity-45 disabled:cursor-not-allowed;
+    @apply disabled:text-[var(--c-disabled-text)] disabled:hover:bg-transparent disabled:active:scale-100 disabled:cursor-not-allowed;
   }
 
   .ga-badge {

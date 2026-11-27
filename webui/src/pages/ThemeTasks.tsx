@@ -102,7 +102,7 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
       {llms.isError && <p role="alert" className="mt-4 rounded-xl bg-status-danger/10 p-3 text-sm text-status-danger">模型列表加载失败，请稍后重试。</p>}
       {error && <p role="alert" className="mt-4 rounded-xl bg-status-danger/10 p-3 text-sm text-status-danger">{error}</p>}
     </div>
-    <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line bg-bg-soft/50 px-5 py-3"><button type="button" className={`${button} px-4 py-2`} disabled={saving} onClick={onClose}>取消</button><button type="button" className={`${button} border-transparent ga-solid-primary px-5 py-2`} disabled={saving || !instruction.trim() || !title.trim() || !llms.data?.llms.some(m => m.key === key)} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></footer>
+    <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line bg-bg-soft/50 px-5 py-3"><button type="button" className="ga-btn px-4" disabled={saving} onClick={onClose}>取消</button><button type="button" className="ga-btn-primary px-5" disabled={saving || !instruction.trim() || !title.trim() || !llms.data?.llms.some(m => m.key === key)} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></footer>
   </ModalOverlay>
 }
 
