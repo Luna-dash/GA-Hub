@@ -35,6 +35,25 @@ def test_application_logging_is_bounded_and_idempotent() -> None:
             handler.close()
 
 
+def test_application_logging_quiets_apscheduler_executor_info_chatter() -> None:
+    exec_logger = logging.getLogger("apscheduler.executors")
+    prev_level = exec_logger.level
+    root_logger = logging.getLogger()
+    prev_handlers = list(root_logger.handlers)
+    prev_root_level = root_logger.level
+    try:
+        with TemporaryDirectory() as tmp:
+            logging_config.configure_application_logging(Path(tmp), stream=io.StringIO())
+            assert exec_logger.level == logging.WARNING
+            for handler in list(root_logger.handlers):
+                root_logger.removeHandler(handler)
+                handler.close()
+    finally:
+        exec_logger.setLevel(prev_level)
+        root_logger.handlers[:] = prev_handlers
+        root_logger.setLevel(prev_root_level)
+
+
 def test_backend_log_redaction_and_tail_limit() -> None:
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "backend.log"

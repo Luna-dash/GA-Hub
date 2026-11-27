@@ -559,6 +559,30 @@ class MainFlowTests(unittest.TestCase):
         self.assertLess(titles.index("前端生产构建"), titles.index("后端测试"))
 
 
+class SidecarSyncTests(unittest.TestCase):
+    def test_sync_sidecar_dir_removes_legacy_onefile_binary(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            src_dir = root / "src"
+            src_dir.mkdir()
+            src_exe = src_dir / "ga-hub-sidecar.exe"
+            src_exe.write_bytes(b"new-onedir")
+            (src_dir / "_internal").mkdir()
+            (src_dir / "_internal" / "dep.dll").write_bytes(b"dll")
+
+            release = root / "release"
+            release.mkdir()
+            legacy = release / "ga-hub-sidecar.exe"
+            legacy.write_bytes(b"old-onefile")
+            dst_exe = release / "sidecar" / "ga-hub-sidecar.exe"
+
+            build_all.sync_sidecar_dir(src_exe, dst_exe)
+
+            self.assertEqual(dst_exe.read_bytes(), b"new-onedir")
+            self.assertTrue((release / "sidecar" / "_internal" / "dep.dll").is_file())
+            self.assertFalse(legacy.exists())
+
+
 class SourceHygieneTests(unittest.TestCase):
     def test_module_import_pins_utf8(self):
         """import 时即固定 UTF-8：--help 与把模块当库调用都发生在 main() 之前。"""

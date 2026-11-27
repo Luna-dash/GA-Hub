@@ -51,4 +51,8 @@ def configure_application_logging(
     target.addHandler(console)
     target.addHandler(rotating)
     target.setLevel(logging.INFO)
+    if logger is None:
+        # Silence periodic APScheduler INFO chatter (e.g. 1-minute MykeyAutoSync
+        # ticks) while preserving job errors and startup summaries.
+        logging.getLogger("apscheduler.executors").setLevel(logging.WARNING)
     return log_path

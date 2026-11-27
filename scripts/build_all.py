@@ -351,6 +351,13 @@ def sync_sidecar_dir(src_exe: Path, dst_exe: Path) -> None:
             dst_dir.replace(backup)
         staged.replace(dst_dir)
         shutil.rmtree(backup, ignore_errors=True)
+        # Clean up any legacy pre-onedir sidecar binary in the release root so
+        # only the paired sidecar/ directory remains as the deliverable.
+        legacy_onefile = dst_dir.parent / dst_exe.name
+        try:
+            legacy_onefile.unlink(missing_ok=True)
+        except OSError:
+            pass
     except BaseException:
         if not dst_dir.exists() and backup.exists():
             backup.replace(dst_dir)
