@@ -206,6 +206,52 @@ def test_api(tmp_path, monkeypatch):
     assert client.post("/api/updates/prepare", json={**body, "sha256": "bad"}).status_code == 422
 
 
+def test_status_hides_stale_old_epoch_or_superseded_succeeded_plan(tmp_path, monkeypatch):
+    from server.routes import updates
+    from server.services import update_release
+
+    monkeypatch.setattr(updates._paths, "ADMIN_DATA", tmp_path / "admin")
+    monkeypatch.setattr(update_release, "installed_version", lambda: "1.3.0")
+    app = FastAPI()
+    app.include_router(updates.router)
+    client = TestClient(app)
+
+    state_file = tmp_path / "admin" / "updates" / "state.json"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # 1. Legacy data_epoch=1 succeeded record (e.g. 1.1.6) must report idle
+    state_file.write_text(json.dumps({
+        "id": "a" * 32, "state": "succeeded", "version": "1.1.6", "data_epoch": 1,
+    }), encoding="utf-8")
+    plan_v1 = client.get("/api/updates").json()["plan"]
+    assert plan_v1["state"] == "idle"
+    assert plan_v1["version"] is None
+
+    # 2. Same epoch but superseded version (1.2.0 < 1.3.0) must report idle
+    state_file.write_text(json.dumps({
+        "id": "b" * 32, "state": "succeeded", "version": "1.2.0", "data_epoch": DATA_EPOCH,
+    }), encoding="utf-8")
+    plan_old = client.get("/api/updates").json()["plan"]
+    assert plan_old["state"] == "idle"
+    assert plan_old["version"] is None
+
+    # 3. Current installed version succeeded record (1.3.0 == 1.3.0) stays visible
+    state_file.write_text(json.dumps({
+        "id": "c" * 32, "state": "succeeded", "version": "1.3.0", "data_epoch": DATA_EPOCH,
+    }), encoding="utf-8")
+    plan_cur = client.get("/api/updates").json()["plan"]
+    assert plan_cur["state"] == "succeeded"
+    assert plan_cur["version"] == "1.3.0"
+
+    # 4. Active/unresolved failure is never hidden
+    state_file.write_text(json.dumps({
+        "id": "d" * 32, "state": "failed", "version": "1.3.1", "data_epoch": DATA_EPOCH, "switch_started": False,
+    }), encoding="utf-8")
+    plan_fail = client.get("/api/updates").json()["plan"]
+    assert plan_fail["state"] == "failed"
+    assert plan_fail["switch_started"] is False
+
+
 @pytest.mark.parametrize("checksum", [None, ""])
 def test_api_optional_checksum(tmp_path, monkeypatch, checksum):
     from server.routes import updates

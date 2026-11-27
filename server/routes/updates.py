@@ -85,11 +85,27 @@ def store() -> UpdateStore:
     return UpdateStore(_paths.ADMIN_DATA / "updates")
 
 
+def _visible_plan(plan: dict) -> dict:
+    """Suppress stale historical terminal records from older epochs or superseded versions."""
+    state = plan.get("state")
+    if state in {"succeeded", "cancelled", "rolled_back"} and plan.get("data_epoch") != DATA_EPOCH:
+        return {"state": "idle"}
+    if state == "succeeded":
+        plan_ver = plan.get("version")
+        if isinstance(plan_ver, str) and plan_ver:
+            try:
+                if update_release.version_tuple(plan_ver) < update_release.version_tuple(update_release.installed_version()):
+                    return {"state": "idle"}
+            except Exception:
+                pass
+    return plan
+
+
 @router.get("", response_model=UpdateStatusResp)
 def update_status() -> dict:
     updates = store()
     return {
-        "plan": updates.read(),
+        "plan": _visible_plan(updates.read()),
         "supported": sys.platform == "win32",
         "sources": ["github_release", "trusted_local_archive"],
         "data_epoch": DATA_EPOCH,
