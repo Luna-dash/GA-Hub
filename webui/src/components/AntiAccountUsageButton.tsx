@@ -5,6 +5,8 @@ import { ChevronDown, ChevronUp, Gauge, LoaderCircle, RefreshCw } from 'lucide-r
 import clsx from 'clsx'
 import { Z_LAYERS } from '@/config/zLayers'
 import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
+import { toast } from '@/stores/toastStore'
+import { extractErrorMessage } from '@/utils/errors'
 import { hasHigherLayerOverlay } from '@/utils/overlayStack'
 import {
   antiApi,
@@ -37,8 +39,7 @@ async function checkUsage(profileId?: string): Promise<AntiAccountUsage> {
       if (error.status === 403) {
         throw new Error('当前页面无权发起额度检测，请从 Gyra 页面重试。')
       }
-      const detail = typeof error.body?.detail === 'string' ? error.body.detail : error.message
-      throw new Error(detail || '检测失败，请重试。')
+      throw new Error(extractErrorMessage(error, '检测失败，请重试。'))
     }
     throw error
   }
@@ -63,6 +64,7 @@ export function AntiAccountUsageButton({
     checkedAt: string
     checkedAtMs: number
   } | null>(null)
+  const openRef = useRef(false)
   const usage = useMutation({
     mutationFn: () => checkUsage(profileId),
     onSuccess: data => {
@@ -93,6 +95,11 @@ export function AntiAccountUsageButton({
         }
       })
     },
+    onError: error => {
+      if (!openRef.current) {
+        toast.error(extractErrorMessage(error, '检测失败，请重试。'))
+      }
+    },
     onSettled: onChecked,
   })
   const usageMutateRef = useRef(usage.mutate)
@@ -106,6 +113,7 @@ export function AntiAccountUsageButton({
   const [hovered, setHovered] = useState(false)
   const [showBreakdown, setShowBreakdown] = useState(false)
   const open = pinned || hovered
+  openRef.current = open
   const hoverCloseTimerRef = useRef<number | null>(null)
   const cancelHoverClose = useCallback(() => {
     if (hoverCloseTimerRef.current !== null) {
@@ -222,9 +230,10 @@ export function AntiAccountUsageButton({
   const coolingPools = (pools.data ?? []).filter(
     p => p.status === 'cooling_down' || (p.cooldown_remaining_seconds ?? 0) > 0,
   )
+  const usageErrorText = usage.isError ? extractErrorMessage(usage.error, '检测失败，请重试。') : ''
   const message = !running ? '请先启用 Agy 运行时。'
     : usage.isPending ? '正在检测额度…'
-      : usage.isError ? usage.error.message
+      : usage.isError ? usageErrorText
         : usage.data?.detail ? usage.data.detail
           : usage.data?.state === 'login_required' ? '请先登录 agy 后再检测。'
             : usage.data ? '未能读取剩余额度，请重试。'
@@ -308,13 +317,28 @@ export function AntiAccountUsageButton({
               />
             ) : <p className="mt-2 text-ink-muted">{message}</p>}
             {running && usage.isError && rows && rows.length > 0 && (
-              <p className="mt-1.5 text-[11px] text-status-danger">{usage.error.message}</p>
+              <p role="alert" className="mt-1.5 text-[11px] text-status-danger">{usageErrorText}</p>
             )}
             {running && !usage.isError && usage.data && !usage.data.rows.length && usage.data.detail && rows && rows.length > 0 && (
               <p className="mt-1.5 text-[11px] text-status-danger">{usage.data.detail}</p>
             )}
-            {running && (coolingPools.length > 0 || resetBreaker.isError || stats.data) && (
+            {running && (coolingPools.length > 0 || pools.isError || resetBreaker.isError || stats.data || stats.isError) && (
               <div className="mt-2.5 space-y-1.5 border-t border-line/65 pt-2">
+                {pools.isError && (
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-status-danger">
+                    <span role="alert" className="min-w-0 truncate">
+                      配额冷却状态读取失败：{extractErrorMessage(pools.error, '请重试')}
+                    </span>
+                    <button
+                      type="button"
+                      className="ga-btn-link shrink-0 px-1 py-0 text-[11px]"
+                      disabled={pools.isFetching}
+                      onClick={() => { void pools.refetch() }}
+                    >
+                      {pools.isFetching ? '重试中…' : '重试'}
+                    </button>
+                  </div>
+                )}
                 {coolingPools.length > 0 && (
                   <div
                     data-anti-cooldown-alert
@@ -334,7 +358,26 @@ export function AntiAccountUsageButton({
                     </button>
                   </div>
                 )}
-                {resetBreaker.isError && <p className="text-[11px] text-status-danger">{resetBreaker.error.message}</p>}
+                {resetBreaker.isError && (
+                  <p role="alert" className="text-[11px] text-status-danger">
+                    {extractErrorMessage(resetBreaker.error, '解锁失败，请重试')}
+                  </p>
+                )}
+                {stats.isError && (
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-status-danger">
+                    <span role="alert" className="min-w-0 truncate">
+                      今日用量读取失败：{extractErrorMessage(stats.error, '请重试')}
+                    </span>
+                    <button
+                      type="button"
+                      className="ga-btn-link shrink-0 px-1 py-0 text-[11px]"
+                      disabled={stats.isFetching}
+                      onClick={() => { void stats.refetch() }}
+                    >
+                      {stats.isFetching ? '重试中…' : '重试'}
+                    </button>
+                  </div>
+                )}
                 {stats.data && (
                   <div className="space-y-1 text-[11px] tabular-nums text-ink-muted">
                     <div className="flex items-center justify-between gap-2">

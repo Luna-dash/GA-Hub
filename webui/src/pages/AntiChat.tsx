@@ -51,6 +51,7 @@ import { getFirstVisibleDomItemIndex, scrollDomItemIntoView } from '@/utils/tran
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
 import { formatRunUsage } from '@/utils/antiUsage'
+import { extractErrorMessage } from '@/utils/errors'
 import { antiSessionToRuntime } from '@/utils/sessionUi'
 import { markSessionRead } from '@/stores/sessionUnreadStore'
 import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
@@ -224,7 +225,7 @@ function pickBestFallbackProfile(profilesData: AgyProfiles | undefined, currentP
 
 function Errors({ items }: { items: (Error | null)[] }) {
   return <>{items.filter(Boolean).map((error, index) =>
-    <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-sm text-status-danger [overflow-wrap:anywhere]" key={index}>{error?.message}</p>)}</>
+    <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-sm text-status-danger [overflow-wrap:anywhere]" key={index}>{extractErrorMessage(error, '请求失败')}</p>)}</>
 }
 
 function toUserAttachments(runId: string, list?: AntiAttachmentRef[]): PasteAttachment[] {
@@ -325,6 +326,10 @@ export default function AntiChat() {
     mutationFn: ({ id, title }: { id: string; title: string }) =>
       antiApi.renameSession(id, title),
     onSuccess: session => updateList(rows => rows.map(row => row.id === session.id ? { ...row, ...session } : row)),
+    onError: error => {
+      toast.error(extractErrorMessage(error, '重命名会话失败'))
+      rename.reset()
+    },
   })
   const remove = useMutation({
     mutationFn: (id: string) => antiApi.deleteSession(id),
@@ -333,6 +338,10 @@ export default function AntiChat() {
       await updateList(rows => rows.filter(row => row.id !== id))
       setSid(current => current === id ? '' : current)
       cache.removeQueries({ queryKey: ['anti-runs', id] })
+    },
+    onError: error => {
+      toast.error(extractErrorMessage(error, '删除会话失败'))
+      remove.reset()
     },
   })
   const selected = sessions.data?.find(row => row.id === sid) ?? sessions.data?.[0]
@@ -397,7 +406,7 @@ export default function AntiChat() {
         )}
         {daemon.state === 'unavailable' && !daemon.busy && (
           <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-status-danger-line bg-status-danger-soft px-4 py-2 text-xs text-status-danger">
-            <span>{daemon.status.data?.detail || daemon.status.error?.message || 'Agy ACP 运行时当前不可用，请检查官方 agy CLI 安装。'}</span>
+            <span>{daemon.status.data?.detail || (daemon.status.error ? extractErrorMessage(daemon.status.error, '') : '') || 'Agy ACP 运行时当前不可用，请检查官方 agy CLI 安装。'}</span>
             <div className="flex shrink-0 items-center gap-1.5">
               {daemon.managed && (
                 <button type="button" className="ga-btn shrink-0" onClick={() => daemon.restart.mutate(false)}>
@@ -426,7 +435,7 @@ export default function AntiChat() {
             </button>
           </div>
         )}
-        <Errors items={[sessions.error, rename.error, remove.error]} />
+        <Errors items={[sessions.error]} />
         {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions}
           profileId={profiles.data?.active}
           profilesData={profiles.data}
@@ -617,7 +626,9 @@ function Conversation({ session, headerActions, profileId, profilesData, support
         executor: nextFamily.preset.executor ?? null,
       }).then(updated => {
         cache.setQueryData(['anti-orchestrator', effectiveProfileId], updated)
-      }).catch(() => undefined)
+      }).catch(err => {
+        toast.error(extractErrorMessage(err, '保存预设配置失败'))
+      })
     }
   }, [cache, effectiveProfileId, families, setFamilyKey])
   const key = ['anti-runs', sid]
@@ -698,7 +709,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       if (error instanceof HttpError && (error.status === 422 || error.status === 429 || error.status === 409 || error.status === 503)) {
         setPending(undefined)
         if (error.status !== 429) {
-          toast.error(error.message || '发送失败，请稍后重试')
+          toast.error(extractErrorMessage(error, '发送失败，请稍后重试'))
           send.reset()
         }
       }
@@ -755,7 +766,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
         setForceStopEligible(true)
         setRecoveryDismissed(false)
       }
-      toast.error(error.message || (vars.force ? '强制终止失败，请稍后重试' : '停止任务失败，可直接尝试强制终止'))
+      toast.error(extractErrorMessage(error, vars.force ? '强制终止失败，请稍后重试' : '停止任务失败，可直接尝试强制终止'))
       cancel.reset()
     },
   })
@@ -768,7 +779,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] })
     },
     onError: error => {
-      toast.error(error.message || '审批提交失败，请重试')
+      toast.error(extractErrorMessage(error, '审批提交失败，请重试'))
       approve.reset()
     },
   })
@@ -783,7 +794,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
     },
     onError: error => {
-      toast.error(error.message || '重连 ACP 失败，请稍后重试')
+      toast.error(extractErrorMessage(error, '重连 ACP 失败，请稍后重试'))
       resetAcp.reset()
     },
   })
@@ -978,7 +989,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       toast.success(`已切换至「${targetName}」并沿用当前上下文重试`)
     },
     onError: error => {
-      toast.error(error.message || '切换账号重试失败，请稍后重试')
+      toast.error(extractErrorMessage(error, '切换账号重试失败，请稍后重试'))
       switchAndRetry.reset()
     },
   })
@@ -990,7 +1001,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       toast.success(kind ? `已收回本会话「${grantLabels[kind] ?? kind}」授权` : '已收回本会话全部常驻授权')
     },
     onError: error => {
-      toast.error(error.message || '收回授权失败')
+      toast.error(extractErrorMessage(error, '收回授权失败'))
       clearGrants.reset()
     },
   })
@@ -1037,7 +1048,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       }
     },
     onError: error => {
-      toast.error(error.message || '加入待发队列失败')
+      toast.error(extractErrorMessage(error, '加入待发队列失败'))
       enqueue.reset()
     },
   })
@@ -1049,7 +1060,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     },
     onError: error => {
       if (!(error instanceof HttpError && error.status === 404)) {
-        toast.error(error.message || '移除排队消息失败')
+        toast.error(extractErrorMessage(error, '移除排队消息失败'))
       }
       removeQueued.reset()
     },
@@ -1062,7 +1073,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
     },
     onError: error => {
-      toast.error(error.message || '清空队列失败')
+      toast.error(extractErrorMessage(error, '清空队列失败'))
       clearQueue.reset()
     },
   })
@@ -1088,7 +1099,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       cache.setQueryData<AntiQueueState>(queueKey, updated)
     },
     onError: error => {
-      toast.error(error.message || '调整队列顺序失败')
+      toast.error(extractErrorMessage(error, '调整队列顺序失败'))
       moveQueued.reset()
     },
   })
@@ -1105,7 +1116,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       toast.success('已将该排队消息作为插话发出')
     },
     onError: error => {
-      toast.error(error.message || '排队消息插话失败')
+      toast.error(extractErrorMessage(error, '排队消息插话失败'))
       steerQueued.reset()
     },
   })
@@ -1121,7 +1132,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
     },
     onError: error => {
-      toast.error(error.message || '立即发送排队消息失败')
+      toast.error(extractErrorMessage(error, '立即发送排队消息失败'))
       dispatchQueued.reset()
     },
   })
@@ -1159,7 +1170,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
           toast.info('当前任务暂无法实时插话，已加入待发队列')
         }
       } else {
-        toast.error(error.message || '插话纠偏失败')
+        toast.error(extractErrorMessage(error, '插话纠偏失败'))
       }
       steer.reset()
     },
@@ -1227,7 +1238,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
     void cache.invalidateQueries({ queryKey: queueKey })
   }, [activeRunId, cache, sid])
   const queryError = history.error ?? live.error ?? null
-  const queryErrorMessage = queryError?.message || null
+  const queryErrorMessage = queryError ? extractErrorMessage(queryError, '状态同步失败') : null
   const showUncertainSendNotice = Boolean(pending && send.isError && !current)
   const showRecoveryNotice = !showUncertainSendNotice && Boolean(showRecoveryBar && current && !recoveryDismissed)
   const showRateLimitNotice = !showUncertainSendNotice && !showRecoveryNotice && Boolean(isRateLimited && !rateLimitDismissed)

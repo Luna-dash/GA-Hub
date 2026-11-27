@@ -25,6 +25,8 @@ import { usePageState } from '@/utils/pageState'
 import { RAIL_TITLE_SCALE_EVENT, railTitlePercent, getRailTitleScale } from '@/utils/railAppearance'
 import { hasActiveOverlay } from '@/utils/overlayStack'
 import { storageKeys } from '@/config/storageKeys'
+import { toast } from '@/stores/toastStore'
+import { extractErrorMessage } from '@/utils/errors'
 import {
   ChevronDown,
   CollapseChevronsIcon,
@@ -472,7 +474,11 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                           autoFocus
                           value={titleDraft}
                           onChange={(event) => setTitleDraft(event.target.value)}
-                          onBlur={() => { void finishRename(session).catch(() => {}) }}
+                          onBlur={() => {
+                            void finishRename(session).catch((err) => {
+                              toast.error(extractErrorMessage(err, '重命名会话失败'))
+                            })
+                          }}
                           onKeyDown={(event) => {
                             if (event.nativeEvent.isComposing || event.keyCode === 229) return
                             if (event.key === 'Enter') event.currentTarget.blur()
@@ -536,7 +542,11 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                           // Failure is reported by the page (pushSystem); without
                           // this catch the rejection would surface as an
                           // unhandled promise rejection in the renderer.
-                          onClick={() => { void removeSession(session).catch(() => {}) }}
+                          onClick={() => {
+                            void removeSession(session).catch((err) => {
+                              toast.error(extractErrorMessage(err, '删除会话失败'))
+                            })
+                          }}
                           // leading-none: at 200px rail width the inherited
                           // 1.5 line-height made this button 24.5px tall and
                           // the strip 38.5px — compact it to ~33px.

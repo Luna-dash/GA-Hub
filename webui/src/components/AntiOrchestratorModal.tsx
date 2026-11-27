@@ -21,6 +21,7 @@ import {
 } from '@/components/AntiModelSelector'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { useDirtyClose } from '@/hooks/useDirtyClose'
+import { extractErrorMessage } from '@/utils/errors'
 import { readPageState } from '@/utils/pageState'
 
 const syncTimeFormat = new Intl.DateTimeFormat('zh-CN', {
@@ -259,7 +260,7 @@ export function AntiOrchestratorModal({
 
   if (!open) return null
 
-  const formDisabled = modelsConfigQuery.isPending || saveConfig.isPending
+  const formDisabled = modelsConfigQuery.isPending || modelsConfigQuery.isError || !modelsConfigQuery.data || saveConfig.isPending
 
   const updatePreset = (index: 0 | 1, patch: Partial<AntiOrchestratorPreset>) => {
     setPresetDrafts(prev => {
@@ -327,10 +328,41 @@ export function AntiOrchestratorModal({
               <span>{syncModels.isPending ? '同步中…' : '同步上游模型'}</span>
             </button>
           </div>
+          {modelsQuery.isError && (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-[11px] text-status-danger">
+              <span role="alert" className="min-w-0">
+                上游模型目录加载失败：{extractErrorMessage(modelsQuery.error, '请重试')}
+              </span>
+              <button
+                type="button"
+                className="ga-btn-xs shrink-0"
+                disabled={modelsQuery.isFetching}
+                onClick={() => { void modelsQuery.refetch() }}
+              >
+                {modelsQuery.isFetching ? '重试中…' : '重试'}
+              </button>
+            </div>
+          )}
           {syncModels.error && (
-            <p className="text-[11px] text-status-danger">
-              {syncModels.error instanceof Error ? syncModels.error.message : '同步上游模型失败'}
+            <p role="alert" className="text-[11px] text-status-danger">
+              {extractErrorMessage(syncModels.error, '同步上游模型失败')}
             </p>
+          )}
+
+          {modelsConfigQuery.isError && (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-[11px] text-status-danger">
+              <span role="alert" className="min-w-0">
+                模型配置加载失败（已禁用保存以防覆盖）：{extractErrorMessage(modelsConfigQuery.error, '请重试')}
+              </span>
+              <button
+                type="button"
+                className="ga-btn-xs shrink-0"
+                disabled={modelsConfigQuery.isFetching}
+                onClick={() => { void modelsConfigQuery.refetch() }}
+              >
+                {modelsConfigQuery.isFetching ? '重试中…' : '重试'}
+              </button>
+            </div>
           )}
 
           <div data-anti-orchestrator-section className="space-y-2.5 border-t border-line/60 pt-2.5">
@@ -443,8 +475,8 @@ export function AntiOrchestratorModal({
           </div>
 
           {saveConfig.error && (
-            <p className="text-[11px] text-status-danger">
-              {saveConfig.error instanceof Error ? saveConfig.error.message : '保存设置失败'}
+            <p role="alert" className="text-[11px] text-status-danger">
+              {extractErrorMessage(saveConfig.error, '保存设置失败')}
             </p>
           )}
           <div className="flex items-center justify-end gap-1.5 border-t border-line/50 pt-2.5">

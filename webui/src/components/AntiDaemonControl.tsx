@@ -8,7 +8,7 @@ import { Z_LAYERS } from '@/config/zLayers'
 import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
 import { toast } from '@/stores/toastStore'
 import { hasHigherLayerOverlay } from '@/utils/overlayStack'
-import { errorMessageFromError } from '@/utils/sessionUi'
+import { extractErrorMessage } from '@/utils/errors'
 import { RefreshIcon, StatusIconGlyph, statusBadgeToneClass, X, type StatusBadgeKind } from './ActionIcons'
 
 const key = ['anti-daemon-status'] as const
@@ -41,7 +41,7 @@ export function useAntiDaemonStatus() {
       setForceConflict(null)
       cache.setQueryData(key, data)
     },
-    onError: error => { toast.error(errorMessageFromError(error, '启动 Anti 网关失败')) },
+    onError: error => { toast.error(extractErrorMessage(error, '启动 Anti 网关失败')) },
   })
   const stop = useMutation({
     mutationFn: (force?: boolean | void) => antiApi.daemonStop(Boolean(force)),
@@ -57,7 +57,7 @@ export function useAntiDaemonStatus() {
       if (!force && error instanceof HttpError && error.status === 409) {
         setForceConflict('stop')
       }
-      toast.error(errorMessageFromError(error, '停止 Anti 网关失败'))
+      toast.error(extractErrorMessage(error, '停止 Anti 网关失败'))
     },
   })
   const restart = useMutation({
@@ -74,7 +74,7 @@ export function useAntiDaemonStatus() {
       if (!force && error instanceof HttpError && error.status === 409) {
         setForceConflict('restart')
       }
-      toast.error(errorMessageFromError(error, '重启 Anti 网关失败'))
+      toast.error(extractErrorMessage(error, '重启 Anti 网关失败'))
     },
   })
   const state = status.isError ? 'unavailable' : status.data?.state
@@ -141,11 +141,13 @@ export function AntiDaemonControl({
   const auth = running && status.data?.agy_available ? status.data.auth_state ?? 'unverified' : null
   const authLabel = auth === 'authenticated' ? 'agy 已验证登录' : auth === 'login_required' ? 'agy 需要登录'
     : auth === 'checking' ? '正在验证 agy 登录' : auth === 'unverified' ? '无法验证 agy 登录' : 'agy 登录状态未知'
-  const detail = (canStart ? start.error?.message : undefined)
-    ?? stop.error?.message
-    ?? restart.error?.message
-    ?? status.error?.message
-    ?? status.data?.detail
+  const detailError = (canStart ? start.error : undefined)
+    ?? stop.error
+    ?? restart.error
+    ?? status.error
+  const detail = detailError
+    ? extractErrorMessage(detailError, '')
+    : status.data?.detail
   const runtimeMeta = running
     ? [
         status.data?.version ? `v${status.data.version}` : undefined,
@@ -406,7 +408,7 @@ export function AntiDaemonControl({
               )}
               {diagError && (
                 <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-[11px] text-status-danger">
-                  {diagError.message}
+                  {extractErrorMessage(diagError, '操作失败')}
                 </p>
               )}
               {state === 'unavailable' && status.data?.detail && (
@@ -479,7 +481,7 @@ export function AntiDaemonControl({
                     </button>
                   </div>
                   {workers.error ? (
-                    <p className="text-[11px] text-status-danger">{workers.error.message}</p>
+                    <p role="alert" className="text-[11px] text-status-danger">{extractErrorMessage(workers.error, '读取活跃进程失败')}</p>
                   ) : workerItems.length > 0 ? (
                     <ul className="space-y-1">
                       {workerItems.map(worker => {
@@ -537,7 +539,7 @@ export function AntiDaemonControl({
                     </button>
                   </div>
                   {logs.error ? (
-                    <p className="text-[11px] text-status-danger">{logs.error.message}</p>
+                    <p role="alert" className="text-[11px] text-status-danger">{extractErrorMessage(logs.error, '读取运行日志失败')}</p>
                   ) : logs.data?.lines?.length ? (
                     <pre className="max-h-36 overflow-auto rounded bg-bg-soft p-2 font-mono text-[11px] leading-4 text-ink whitespace-pre-wrap break-all">
                       {logs.data.lines.join('\n')}

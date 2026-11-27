@@ -3962,3 +3962,94 @@ it('confirms via dialog.confirm before clearing AntiQueuedDock items', async () 
     vi.unstubAllGlobals()
   }
 })
+
+it('routes session rename failures to toast without sticky alert and surfaces orchestrator preset persistence errors', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  for (const item of useToastStore.getState().items) {
+    useToastStore.getState().dismiss(item.id)
+  }
+  const reply = (data: unknown, status = 200) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers({ 'content-type': 'application/json' }),
+    text: async () => JSON.stringify(data),
+    json: async () => JSON.parse(JSON.stringify(data)),
+  })
+  const session = { id: 's-toast-1', title: '初始标题', project: 'demo', workspace: 'D:/demo', has_conversation: false }
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    const path = new URL(url, 'http://localhost').pathname
+    const method = init?.method ?? 'GET'
+    if (path === '/api/anti/status') return Promise.resolve(reply({ state: 'ready', managed: true, agy_available: true, auth_state: 'authenticated' }))
+    if (path === '/api/anti/profiles') return Promise.resolve(reply({ active: 'p-1', profiles: [{ id: 'p-1', name: '主力', has_credentials: true, auth_state: 'authenticated' }] }))
+    if (path === '/api/anti/sessions') return Promise.resolve(reply([session]))
+    if (path === `/api/anti/sessions/${session.id}` && method === 'PATCH') {
+      return Promise.resolve(reply({ detail: { message: '会话标题包含非法字符' } }, 400))
+    }
+    if (path === `/api/anti/sessions/${session.id}/runs`) return Promise.resolve(reply([]))
+    if (path === `/api/anti/sessions/${session.id}/queue`) return Promise.resolve(reply({ items: [], pause_reason: null }))
+    if (path === '/api/anti/models') return Promise.resolve(reply({
+      items: [
+        { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', family: 'claude' },
+        { id: 'claude-orchestrator', name: 'Claude Orchestrator', is_orchestrator: true },
+      ],
+    }))
+    if (path === '/api/anti/models/config') return Promise.resolve(reply({ orchestrator_presets: [], hidden_models: [] }))
+    if (path === '/api/anti/profiles/p-1/orchestrator' && method === 'PATCH') {
+      return Promise.resolve(reply({ detail: '预设同步失败' }, 500))
+    }
+    if (path.startsWith('/api/file-transfer')) return Promise.resolve(reply([]))
+    return Promise.resolve(reply({}))
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 15)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await vi.waitFor(async () => {
+      await flush()
+      expect(host.querySelector('aside')?.textContent).toContain('初始标题')
+    })
+
+    const rowBtn = Array.from(host.querySelectorAll('aside button')).find(b => b.textContent?.includes('初始标题')) as HTMLButtonElement
+    await act(async () => { rowBtn.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="重命名 初始标题"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '新标题')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.blur()
+    })
+
+    await vi.waitFor(async () => {
+      await flush()
+      expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message.includes('会话标题包含非法字符'))).toBe(true)
+    })
+    expect(host.querySelector('p[role="alert"]')).toBeNull()
+
+    // Select an orchestrator preset whose persistence fails -> toast.error fires
+    const modelBtn = host.querySelector<HTMLButtonElement>('button[aria-label="模型"]')!
+    await act(async () => { modelBtn.click() })
+    await vi.waitFor(() => {
+      const candidate = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(el => el.textContent?.includes('Orch'))
+      expect(candidate).toBeDefined()
+    })
+    const orchOption = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(el => el.textContent?.includes('Orch'))!
+    await act(async () => { orchOption.click() })
+
+    await vi.waitFor(async () => {
+      await flush()
+      expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message.includes('预设同步失败'))).toBe(true)
+    })
+  } finally {
+    await act(async () => root.unmount())
+    for (const item of useToastStore.getState().items) {
+      useToastStore.getState().dismiss(item.id)
+    }
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})

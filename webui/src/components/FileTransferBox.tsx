@@ -9,8 +9,8 @@ import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import { toast } from '@/stores/toastStore'
 import { canReferenceLocalFiles, selectAttachmentPaths } from '@/utils/desktop'
+import { extractErrorMessage } from '@/utils/errors'
 import { hasHigherLayerOverlay } from '@/utils/overlayStack'
-import { errorMessageFromError } from '@/utils/sessionUi'
 
 export interface TransferredFile {
   id: number
@@ -209,16 +209,23 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
 
   const clearList = useMutation({
     mutationFn: () => request('DELETE'),
+    onMutate: () => {
+      clearDocs.reset()
+    },
     onSuccess: async () => {
       await cache.cancelQueries({ queryKey })
       cache.setQueryData(queryKey, [])
       setConfirmAction(null)
       await cache.invalidateQueries({ queryKey })
+      toast.success('已清空列表')
     },
   })
 
   const clearDocs = useMutation({
     mutationFn: () => clearTransferDocuments(),
+    onMutate: () => {
+      clearList.reset()
+    },
     onSuccess: async ({ deleted }) => {
       setConfirmAction(null)
       await cache.invalidateQueries({ queryKey })
@@ -226,10 +233,17 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
     },
   })
 
+  const clearListResetRef = useRef(clearList.reset)
+  clearListResetRef.current = clearList.reset
+  const clearDocsResetRef = useRef(clearDocs.reset)
+  clearDocsResetRef.current = clearDocs.reset
+
   const busy = clearList.isPending || clearDocs.isPending || adding
   const dismiss = useCallback(() => {
     setOpen(false)
     setConfirmAction(null)
+    clearListResetRef.current()
+    clearDocsResetRef.current()
   }, [])
   const close = useCallback(() => {
     dismiss()
@@ -281,7 +295,7 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
       await cache.invalidateQueries({ queryKey })
       toast.success(paths.length > 1 ? `已添加 ${paths.length} 个文件到中转箱` : '已放入中转箱')
     } catch (error) {
-      toast.error(errorMessageFromError(error, '放入中转箱失败'))
+      toast.error(extractErrorMessage(error, '放入中转箱失败'))
     } finally {
       setAdding(false)
     }
@@ -304,7 +318,7 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
       await cache.invalidateQueries({ queryKey })
       toast.success(list.length > 1 ? `已添加 ${list.length} 个文件到中转箱` : '已放入中转箱')
     } catch (error) {
-      toast.error(errorMessageFromError(error, '放入中转箱失败'))
+      toast.error(extractErrorMessage(error, '放入中转箱失败'))
     } finally {
       setAdding(false)
     }
@@ -317,7 +331,7 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
         const paths = await selectAttachmentPaths()
         if (paths.length > 0) await registerPaths(paths)
       } catch (error) {
-        toast.error(errorMessageFromError(error, '选择文件失败'))
+        toast.error(extractErrorMessage(error, '选择文件失败'))
       }
       return
     }
@@ -463,7 +477,9 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
             </div>
           )}
           {(clearList.isError || clearDocs.isError) && (
-            <p role="alert" className="mb-2 text-xs text-status-danger">操作失败，请重试</p>
+            <p role="alert" className="mb-2 text-xs text-status-danger">
+              {extractErrorMessage(clearList.error ?? clearDocs.error, '操作失败，请重试')}
+            </p>
           )}
           {files.isPending ? (
             <p className="py-2 text-center text-xs text-ink-muted">加载中…</p>

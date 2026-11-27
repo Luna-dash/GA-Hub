@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { expect, it, vi } from 'vitest'
 import { Z_LAYERS } from '@/config/zLayers'
+import { useToastStore } from '@/stores/toastStore'
 import { registerOverlay } from '@/utils/overlayStack'
 import { FileTransferBox, fileTransferQueryKey, guessTransferMime, type TransferredFile } from './FileTransferBox'
 
@@ -199,4 +200,61 @@ it('resolves MIME types across images, PDFs, audio, video, and binary artifacts'
   expect(guessTransferMime('clip.mp4')).toBe('video/mp4')
   expect(guessTransferMime('voice.mp3')).toBe('audio/mpeg')
   expect(guessTransferMime('bundle.zip')).toBe('application/octet-stream')
+})
+
+it('toasts on clearList success and surfaces specific clear error details', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  for (const item of useToastStore.getState().items) {
+    useToastStore.getState().dismiss(item.id)
+  }
+  const file: TransferredFile = { id: 1, path: 'D:/project/final.md', name: 'final.md', size: 1, engine: 'chat', project: 'Alpha', available: true }
+  let failDelete = false
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/file-transfer' && init?.method === 'DELETE') {
+      if (failDelete) return { ok: false, status: 500, json: async () => ({}) }
+      return { ok: true, json: async () => [] }
+    }
+    return { ok: true, json: async () => [file] }
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const settle = (assertion: () => void) => vi.waitFor(async () => {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    assertion()
+  })
+  try {
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <FileTransferBox canInsert onInsert={vi.fn()} source={{ engine: 'chat', sessionId: 's1', project: 'Alpha' }} />
+        </QueryClientProvider>,
+      )
+    })
+    await settle(() => expect(host.querySelector('[aria-label="中转箱"]')?.textContent).toBe('1'))
+    await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="中转箱"]')!.click() })
+    await settle(() => expect(host.querySelector('[aria-label="清空列表"]')).not.toBeNull())
+
+    // Clear list success triggers toast
+    await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="清空列表"]')!.click() })
+    await act(async () => { [...host.querySelectorAll('button')].find(b => b.textContent === '确认')!.click() })
+    await settle(() => expect(useToastStore.getState().items.some(t => t.kind === 'success' && t.message === '已清空列表')).toBe(true))
+
+    // Failed clear surfaces actual error detail instead of generic hardcoded message
+    failDelete = true
+    client.setQueryData(fileTransferQueryKey, [file])
+    await settle(() => expect(host.querySelector<HTMLButtonElement>('[aria-label="清空列表"]')?.disabled).toBe(false))
+    await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="清空列表"]')!.click() })
+    await act(async () => { [...host.querySelectorAll('button')].find(b => b.textContent === '确认')!.click() })
+    await settle(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('中转箱请求失败（500）'))
+  } finally {
+    await act(async () => root.unmount())
+    for (const item of useToastStore.getState().items) {
+      useToastStore.getState().dismiss(item.id)
+    }
+    client.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
 })

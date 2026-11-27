@@ -10,6 +10,7 @@ import { Z_LAYERS } from '@/config/zLayers'
 import { useDirtyClose } from '@/hooks/useDirtyClose'
 import { useOverlayRegistration } from '@/hooks/useOverlayRegistration'
 import { dialog } from '@/stores/dialogStore'
+import { extractErrorMessage } from '@/utils/errors'
 import { hasHigherLayerOverlay } from '@/utils/overlayStack'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import {
@@ -50,8 +51,8 @@ const key = ['agy-profiles'] as const
 async function request<T>(suffix = '', init?: RequestInit): Promise<T> {
   const response = await fetch(resolveApiUrl(`/api/anti/profiles${suffix}`), init)
   if (!response.ok) {
-    const error = await response.json().catch(() => null)
-    throw new Error(typeof error?.detail === 'string' ? error.detail : '无法访问 Agy 账号设置')
+    const body = await response.json().catch(() => null)
+    throw new Error(extractErrorMessage({ body }, '无法访问 Agy 账号设置'))
   }
   return response.status === 204 ? undefined as T : response.json()
 }
@@ -135,6 +136,7 @@ export function AntiAgyProfiles({
   const [codeLogin, setCodeLogin] = useState<AgyCodeLoginState | null>(null)
   const [authCode, setAuthCode] = useState('')
   const [refreshingCodeLogin, setRefreshingCodeLogin] = useState(false)
+  const [codeLoginRefreshError, setCodeLoginRefreshError] = useState('')
   const refreshCodeLoginBusyRef = useRef(false)
   const codeLoginEpochRef = useRef(0)
   const mountedRef = useRef(true)
@@ -173,6 +175,8 @@ export function AntiAgyProfiles({
     }
     prevLoginProfile.current = current
   }, [profiles.data?.login_profile, refresh])
+
+  const clearErrorsRef = useRef<() => void>(() => {})
 
   const action = useMutation({
     mutationFn: async (args: Action) => {
@@ -261,6 +265,7 @@ export function AntiAgyProfiles({
     },
     onMutate: async args => {
       setMessage('')
+      clearErrorsRef.current()
       if (args.kind !== 'login' && args.kind !== 'check-usage') {
         await cache.cancelQueries({ queryKey: key, exact: true })
       }
@@ -273,6 +278,11 @@ export function AntiAgyProfiles({
 
   const codeLoginStart = useMutation({
     mutationFn: ({ profileId }: { profileId: string; epoch: number }) => antiApi.startCodeLogin(profileId),
+    onMutate: () => {
+      action.reset()
+      codeLoginSubmit.reset()
+      setCodeLoginRefreshError('')
+    },
     onSuccess: (state, vars) => {
       if (!mountedRef.current || vars.epoch !== codeLoginEpochRef.current) return
       setCodeLogin(state)
@@ -285,6 +295,11 @@ export function AntiAgyProfiles({
   })
   const codeLoginSubmit = useMutation({
     mutationFn: ({ flowId, code }: { flowId: string; code: string; epoch: number }) => antiApi.submitCodeLogin(flowId, code),
+    onMutate: () => {
+      action.reset()
+      codeLoginStart.reset()
+      setCodeLoginRefreshError('')
+    },
     onSuccess: (state, vars) => {
       if (!mountedRef.current || vars.epoch !== codeLoginEpochRef.current) return
       setCodeLogin(state)
@@ -346,6 +361,11 @@ export function AntiAgyProfiles({
       void cache.invalidateQueries({ queryKey: key, exact: true })
     })
   }, [cache])
+  clearErrorsRef.current = () => {
+    codeLoginStart.reset()
+    codeLoginSubmit.reset()
+    setCodeLoginRefreshError('')
+  }
   const hasActiveCodeLogin = Boolean(codeLogin && (codeLogin.phase === 'starting' || codeLogin.phase === 'waiting_code'))
   const addDirty = view.kind === 'add' && name.trim().length > 0
   const accountDirty = view.kind === 'account' && Boolean(
@@ -361,6 +381,7 @@ export function AntiAgyProfiles({
     cancelActiveCodeLogin(codeLogin)
     setCodeLogin(null)
     setAuthCode('')
+    setCodeLoginRefreshError('')
     setName('')
     if (viewedProfile) setRenameDraft(viewedProfile.name)
     setMessage('')
@@ -394,6 +415,7 @@ export function AntiAgyProfiles({
     setName('')
     setCodeLogin(null)
     setAuthCode('')
+    setCodeLoginRefreshError('')
     setMessage('')
     action.reset()
     codeLoginStart.reset()
@@ -814,6 +836,10 @@ export function AntiAgyProfiles({
                       onClick={() => {
                         if (refreshCodeLoginBusyRef.current) return
                         refreshCodeLoginBusyRef.current = true
+                        action.reset()
+                        codeLoginStart.reset()
+                        codeLoginSubmit.reset()
+                        setCodeLoginRefreshError('')
                         setRefreshingCodeLogin(true)
                         const epoch = codeLoginEpochRef.current
                         void antiApi.codeLoginStatus(codeLogin.flow_id).then(next => {
@@ -826,7 +852,10 @@ export function AntiAgyProfiles({
                             void cache.invalidateQueries({ queryKey: key, exact: true })
                             refresh()
                           }
-                        }).catch(() => undefined).finally(() => {
+                        }).catch(err => {
+                          if (!mountedRef.current || epoch !== codeLoginEpochRef.current) return
+                          setCodeLoginRefreshError(extractErrorMessage(err, '刷新授权状态失败'))
+                        }).finally(() => {
                           refreshCodeLoginBusyRef.current = false
                           if (mountedRef.current) setRefreshingCodeLogin(false)
                         })
@@ -976,6 +1005,9 @@ export function AntiAgyProfiles({
       ? '添加账号'
       : (viewedProfile?.name ?? '账号设置')
   const activeError = action.error ?? codeLoginStart.error ?? codeLoginSubmit.error
+  const activeErrorMessage = activeError
+    ? extractErrorMessage(activeError, '操作失败')
+    : codeLoginRefreshError
   const statusText = action.isPending ? pendingLabel : message
 
   return <>
@@ -1096,21 +1128,27 @@ export function AntiAgyProfiles({
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3">
-            <div role="status" className="rounded-md bg-bg-card/80 px-2.5 py-1.5 text-xs text-ink-muted empty:hidden">
-              {statusText}
+          {(statusText || activeErrorMessage) && (
+            <div data-anti-profiles-pinned-feedback className="shrink-0 space-y-1.5 border-b border-line/50 bg-bg-soft/35 px-3 py-2">
+              {statusText && (
+                <div role="status" className="rounded-md bg-bg-card/80 px-2.5 py-1.5 text-xs text-ink-muted">
+                  {statusText}
+                </div>
+              )}
+              {activeErrorMessage && (
+                <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-xs text-status-danger">
+                  {activeErrorMessage}
+                </p>
+              )}
             </div>
-            {activeError && (
-              <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-xs text-status-danger">
-                {activeError.message}
-              </p>
-            )}
+          )}
 
+          <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3">
             {view.kind === 'list' ? (
               <div className="space-y-2">
                 {profiles.isError && (
                   <div className="flex items-center justify-between gap-2 rounded-lg border border-line bg-bg-card px-3 py-2 text-xs">
-                    <p role="alert" className="text-status-danger">{profiles.error.message}</p>
+                    <p role="alert" className="text-status-danger">{extractErrorMessage(profiles.error, '读取账号列表失败')}</p>
                     <button type="button" className="ga-btn-sm shrink-0 px-2 text-[11px]" onClick={() => void profiles.refetch()} disabled={profiles.isFetching}>
                       重试
                     </button>
