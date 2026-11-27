@@ -120,12 +120,14 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
     if (!menu) return
     const panel = menuRef.current
     if (!panel) return
+    const active = document.activeElement
+    const activeDisabled = active instanceof HTMLButtonElement && active.disabled
     const firstEnabled = panel.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')
     if (firstEnabled) {
-      if (!panel.contains(document.activeElement) || document.activeElement === panel) {
+      if (!panel.contains(active) || active === panel || activeDisabled) {
         firstEnabled.focus()
       }
-    } else if (!panel.contains(document.activeElement)) {
+    } else if (!panel.contains(active) || activeDisabled) {
       panel.focus()
     }
   }, [menu, info, resolved, busy])
@@ -175,6 +177,7 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
     finally { setMenu(null) }
   }
   const openMenuAt = (x: number, y: number) => {
+    setInfo(null)
     setMenu({ x, y })
     void resolve().catch(error => toast.error(errorMessageFromError(error, '解析失败')))
   }

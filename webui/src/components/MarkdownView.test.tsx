@@ -572,4 +572,81 @@ describe('MarkdownView responsive wrapping', () => {
     })
     expect(document.body.querySelector('[role="menu"]')).not.toBeNull()
   })
+
+  it('clears stale PathLink menu info on reopen and avoids trapping focus on disabled menuitems', async () => {
+    mocks.resolveFile.mockResolvedValueOnce({
+      raw: 'c1.md',
+      resolved: 'D:/repo/c1.md',
+      exists: true,
+      is_dir: false,
+      ambiguous: false,
+      scope: 'repo',
+    })
+
+    act(() => root.render(
+      <FileLinkContext.Provider value={{ sessionId: 's1', projectPath: 'D:/repo', engine: 'chat' }}>
+        <PathLink path="c1.md" display="c1.md" />
+      </FileLinkContext.Provider>,
+    ))
+
+    const trigger = host.querySelector('button.path-link') as HTMLButtonElement
+    trigger.focus()
+
+    // First open: resolved -> focuses enabled '定位文件'
+    await act(async () => {
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+    })
+    const firstMenu = document.body.querySelector('[role="menu"]') as HTMLDivElement
+    const firstLocateBtn = Array.from(firstMenu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((b) => b.textContent === '定位文件')!
+    expect(firstLocateBtn.disabled).toBe(false)
+    expect(document.activeElement).toBe(firstLocateBtn)
+
+    // Close via Escape -> restores focus to trigger
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(document.body.querySelector('[role="menu"]')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+
+    // Second open: file becomes ambiguous -> defer resolve to inspect frame 1 stale-info clearing
+    let resolveSecond!: (val: unknown) => void
+    mocks.resolveFile.mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve }))
+
+    act(() => {
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+    })
+    const secondMenu = document.body.querySelector('[role="menu"]') as HTMLDivElement
+    const pendingLocateBtn = Array.from(secondMenu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((b) => b.textContent === '定位文件')!
+    expect(pendingLocateBtn.disabled).toBe(true)
+    expect(document.activeElement).toBe(secondMenu)
+
+    await act(async () => {
+      resolveSecond({
+        raw: 'c1.md',
+        resolved: null,
+        exists: false,
+        is_dir: false,
+        ambiguous: true,
+        candidates: ['D:/repo/c1.md'],
+        scope: 'repo',
+      })
+    })
+    const candidateBtn = Array.from(secondMenu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((b) => b.textContent === 'D:/repo/c1.md')!
+    expect(pendingLocateBtn.disabled).toBe(true)
+    expect(candidateBtn.disabled).toBe(false)
+    expect(document.activeElement).toBe(candidateBtn)
+    expect((document.activeElement as HTMLButtonElement).disabled).toBe(false)
+
+    // Tab closes the menu cleanly without trapping focus
+    let tabEvent!: KeyboardEvent
+    act(() => {
+      tabEvent = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+      secondMenu.dispatchEvent(tabEvent)
+    })
+    expect(tabEvent.defaultPrevented).toBe(false)
+    expect(document.body.querySelector('[role="menu"]')).toBeNull()
+  })
 })
