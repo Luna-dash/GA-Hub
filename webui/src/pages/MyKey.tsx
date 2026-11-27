@@ -780,18 +780,11 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
                 const nextType = e.target.value || undefined
                 if (nextType === 'enabled') {
                   const trimmed = budgetDraft.trim()
-                  const seededBudget = s.fields.thinking_budget_tokens ?? (/^\d+$/.test(trimmed) ? Number(trimmed) : 32768)
                   if (!trimmed) {
+                    const seededBudget = s.fields.thinking_budget_tokens ?? 32768
                     setBudgetDraft(String(seededBudget))
                   }
-                  setS(prev => ({
-                    ...prev,
-                    fields: {
-                      ...prev.fields,
-                      thinking_type: nextType,
-                      thinking_budget_tokens: prev.fields.thinking_budget_tokens ?? seededBudget,
-                    },
-                  }))
+                  setField('thinking_type', nextType)
                 } else {
                   setField('thinking_type', nextType)
                   if (budgetError) {

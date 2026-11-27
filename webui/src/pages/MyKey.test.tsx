@@ -623,6 +623,37 @@ describe('MyKey upload button visibility', () => {
     }))
   })
 
+  it('does not leave thinking_budget_tokens dirty when switching adaptive -> enabled -> adaptive without editing budget', async () => {
+    const data = fixture()
+    data.structured.sessions = [
+      { var: 'native_claude_a', type: 'native_claude', lineno: 2, fields: { name: 'Claude', thinking_type: 'adaptive' } },
+    ]
+    await mountFixture(data)
+    act(() => host.querySelector<HTMLButtonElement>('.mykey-card__toggle')!.click())
+    click('编辑')
+
+    const dlg = host.querySelector('[role="dialog"]')!
+    const thinkingSelect = dlg.querySelector<HTMLSelectElement>('select')!
+    act(() => {
+      thinkingSelect.value = 'enabled'
+      thinkingSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    act(() => {
+      thinkingSelect.value = 'adaptive'
+      thinkingSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValue(false)
+    try {
+      // Closing now should not trigger a dirty-confirm dialog because nothing was changed.
+      click('取消')
+      expect(confirmSpy).not.toHaveBeenCalled()
+      expect(host.querySelector('[role="dialog"]')).toBeNull()
+    } finally {
+      confirmSpy.mockRestore()
+    }
+  })
+
   it('supports arrow-key and roving tabIndex navigation on edit mode tablist and keeps focus on dirty cancel', async () => {
     const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
     await mountFixture()

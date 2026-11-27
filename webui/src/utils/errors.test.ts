@@ -46,6 +46,13 @@ describe('extractErrorMessage', () => {
     expect(extractErrorMessage(new HttpError(500, {}), '服务失败')).toBe('服务失败')
     expect(extractErrorMessage(new HttpError(500, []), '服务失败')).toBe('服务失败')
     expect(extractErrorMessage(new HttpError(500, 'null'), '服务失败')).toBe('服务失败')
+    expect(extractErrorMessage(new HttpError(500, { detail: {} }), '服务失败')).toBe('服务失败')
+    expect(extractErrorMessage(new HttpError(500, { error: {} }), '服务失败')).toBe('服务失败')
+    expect(extractErrorMessage(new HttpError(500, { detail: [] }), '服务失败')).toBe('服务失败')
+    expect(extractErrorMessage(new HttpError(500, { detail: null }), '服务失败')).toBe('服务失败')
+    expect(extractErrorMessage(new HttpError(500, { message: 'null' }), '服务失败')).toBe('服务失败')
+    expect(extractErrorMessage(new HttpError(500, { detail: { path: 'D:/repo' } }), '服务失败')).toBe('{"path":"D:/repo"}')
+    expect(extractErrorMessage('{"detail":{}}', '服务失败')).toBe('服务失败')
     expect(extractErrorMessage({ body: { detail: {} }, message: 'transport down' })).toBe('transport down')
   })
 
