@@ -1856,6 +1856,7 @@ class AgyRuntimeManager:
         self._shutdown_event = threading.Event()
         self._reaper_thread: threading.Thread | None = None
         self._model_sync_thread: threading.Thread | None = None
+        self._storage_gc_thread: threading.Thread | None = None
 
     def _probe_version_once(self, executable: str) -> str | None:
         with self._lock:
@@ -2161,9 +2162,58 @@ class AgyRuntimeManager:
                 return
             self._sync_models_if_due()
 
+    def _storage_gc_loop(self) -> None:
+        # Delay initial check so app startup is never slowed down.
+        if self._shutdown_event.wait(60.0):
+            return
+        from . import agy_storage_gc
+
+        while not self._shutdown_event.is_set():
+            wait_sec = 1800.0
+            try:
+                if agy_storage_gc.is_scheduled_gc_due():
+                    with self._lock:
+                        busy = (
+                            self._active_turn_count() > 0
+                            or self._switching_profile
+                            or self._draining_workers
+                        )
+                    if busy:
+                        wait_sec = 900.0
+                    else:
+                        res = agy_storage_gc.run_scheduled_gc(runtime=self)
+                        if isinstance(res, dict) and res.get("reclaimed_bytes", 0) > 0:
+                            mb = res["reclaimed_bytes"] / (1024 * 1024)
+                            _append_log(
+                                f"Scheduled Agy storage GC reclaimed {mb:.1f} MB "
+                                f"({res.get('removed_entries', 0)} entries)"
+                            )
+            except Exception:
+                log.debug("Scheduled Agy storage GC iteration failed", exc_info=True)
+            if self._shutdown_event.wait(wait_sec):
+                return
+
+    def _ensure_storage_gc_locked(self) -> None:
+        if self._idle_ttl <= 0 or self._shutdown_event.is_set():
+            return
+        if self._storage_gc_thread is not None and self._storage_gc_thread.is_alive():
+            return
+        self._storage_gc_thread = threading.Thread(
+            target=self._storage_gc_loop,
+            name="agy-storage-gc",
+            daemon=True,
+        )
+        self._storage_gc_thread.start()
+
+    def start_background_maintenance(self) -> None:
+        """Start lightweight background storage GC loop on app startup."""
+        with self._lock:
+            self._ensure_storage_gc_locked()
+
     def _ensure_model_sync_locked(self) -> None:
         if self._idle_ttl <= 0 or self._shutdown_event.is_set():
             return
+        self._ensure_storage_gc_locked()
         if self._model_sync_thread is not None and self._model_sync_thread.is_alive():
             return
         self._model_sync_thread = threading.Thread(
@@ -2190,6 +2240,8 @@ class AgyRuntimeManager:
             self._reaper_thread = None
             sync_thread = self._model_sync_thread
             self._model_sync_thread = None
+            gc_thread = self._storage_gc_thread
+            self._storage_gc_thread = None
         try:
             try:
                 self._close_detached(workers)
@@ -2207,6 +2259,8 @@ class AgyRuntimeManager:
                     reaper.join(timeout=1.0)
                 if sync_thread is not None and sync_thread.is_alive() and threading.current_thread() is not sync_thread:
                     sync_thread.join(timeout=1.0)
+                if gc_thread is not None and gc_thread.is_alive() and threading.current_thread() is not gc_thread:
+                    gc_thread.join(timeout=1.0)
         finally:
             with self._lock:
                 self._stopped_manually = True

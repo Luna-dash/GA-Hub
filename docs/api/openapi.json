@@ -796,6 +796,66 @@
         }
       }
     },
+    "/api/storage/agy-gc-policy": {
+      "get": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Get Agy Gc Policy",
+        "operationId": "get_agy_gc_policy_api_storage_agy_gc_policy_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyGcPolicyStatusResp"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Update Agy Gc Policy",
+        "operationId": "update_agy_gc_policy_api_storage_agy_gc_policy_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgyGcPolicyPatchReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyGcPolicyStatusResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/agent/status": {
       "get": {
         "summary": "Status",
@@ -7738,6 +7798,363 @@
           "code"
         ],
         "title": "AgyCodeLoginSubmit"
+      },
+      "AgyGcPolicyModel": {
+        "properties": {
+          "auto_enabled": {
+            "type": "boolean",
+            "title": "Auto Enabled",
+            "default": true
+          },
+          "interval_hours": {
+            "type": "integer",
+            "maximum": 168.0,
+            "minimum": 1.0,
+            "title": "Interval Hours",
+            "default": 24
+          },
+          "l0_orphans_enabled": {
+            "type": "boolean",
+            "title": "L0 Orphans Enabled",
+            "default": true
+          },
+          "l0_log_retention_days": {
+            "type": "integer",
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "L0 Log Retention Days",
+            "default": 7
+          },
+          "l1_redundant_enabled": {
+            "type": "boolean",
+            "title": "L1 Redundant Enabled",
+            "default": true
+          },
+          "l1_grace_hours": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 0.0,
+            "title": "L1 Grace Hours",
+            "default": 6
+          },
+          "l1_steps_retention_days": {
+            "type": "integer",
+            "maximum": 365.0,
+            "minimum": 0.0,
+            "title": "L1 Steps Retention Days",
+            "default": 3
+          },
+          "l1_steps_max_file_mb": {
+            "type": "integer",
+            "maximum": 1024.0,
+            "minimum": 1.0,
+            "title": "L1 Steps Max File Mb",
+            "default": 5
+          },
+          "l1_scratch_retention_days": {
+            "type": "integer",
+            "maximum": 365.0,
+            "minimum": 0.0,
+            "title": "L1 Scratch Retention Days",
+            "default": 7
+          },
+          "l2_subagents_enabled": {
+            "type": "boolean",
+            "title": "L2 Subagents Enabled",
+            "default": true
+          },
+          "l2_killed_grace_hours": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 0.0,
+            "title": "L2 Killed Grace Hours",
+            "default": 24
+          },
+          "l2_idle_retention_days": {
+            "type": "integer",
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "L2 Idle Retention Days",
+            "default": 7
+          },
+          "l2_keep_artifacts": {
+            "type": "boolean",
+            "title": "L2 Keep Artifacts",
+            "default": true
+          },
+          "l3_cold_roots_enabled": {
+            "type": "boolean",
+            "title": "L3 Cold Roots Enabled",
+            "default": false
+          },
+          "l3_cold_root_days": {
+            "type": "integer",
+            "maximum": 3650.0,
+            "minimum": 7.0,
+            "title": "L3 Cold Root Days",
+            "default": 30
+          },
+          "l3_run_events_retention_days": {
+            "type": "integer",
+            "maximum": 3650.0,
+            "minimum": 7.0,
+            "title": "L3 Run Events Retention Days",
+            "default": 30
+          }
+        },
+        "type": "object",
+        "title": "AgyGcPolicyModel"
+      },
+      "AgyGcPolicyPatchReq": {
+        "properties": {
+          "auto_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Enabled"
+          },
+          "interval_hours": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 168.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval Hours"
+          },
+          "l0_orphans_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L0 Orphans Enabled"
+          },
+          "l0_log_retention_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 365.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L0 Log Retention Days"
+          },
+          "l1_redundant_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L1 Redundant Enabled"
+          },
+          "l1_grace_hours": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 720.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L1 Grace Hours"
+          },
+          "l1_steps_retention_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 365.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L1 Steps Retention Days"
+          },
+          "l1_steps_max_file_mb": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1024.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L1 Steps Max File Mb"
+          },
+          "l1_scratch_retention_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 365.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L1 Scratch Retention Days"
+          },
+          "l2_subagents_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L2 Subagents Enabled"
+          },
+          "l2_killed_grace_hours": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 720.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L2 Killed Grace Hours"
+          },
+          "l2_idle_retention_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 365.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L2 Idle Retention Days"
+          },
+          "l2_keep_artifacts": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L2 Keep Artifacts"
+          },
+          "l3_cold_roots_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L3 Cold Roots Enabled"
+          },
+          "l3_cold_root_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 3650.0,
+                "minimum": 7.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L3 Cold Root Days"
+          },
+          "l3_run_events_retention_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 3650.0,
+                "minimum": 7.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L3 Run Events Retention Days"
+          }
+        },
+        "type": "object",
+        "title": "AgyGcPolicyPatchReq"
+      },
+      "AgyGcPolicyStatusResp": {
+        "properties": {
+          "policy": {
+            "$ref": "#/components/schemas/AgyGcPolicyModel"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run At"
+          },
+          "last_reclaimed_bytes": {
+            "type": "integer",
+            "title": "Last Reclaimed Bytes",
+            "default": 0
+          },
+          "last_removed_entries": {
+            "type": "integer",
+            "title": "Last Removed Entries",
+            "default": 0
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "pending_delete_count": {
+            "type": "integer",
+            "title": "Pending Delete Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "policy"
+        ],
+        "title": "AgyGcPolicyStatusResp"
       },
       "AgyOrchestratorSettings": {
         "properties": {

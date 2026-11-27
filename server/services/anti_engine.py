@@ -391,12 +391,20 @@ class AntiSessions:
             return self._enrich_session(self._public_sessions(db, sid)[0])
 
     def delete(self, sid: str) -> None:
+        conv_ids: set[str] = set()
         with self.connect() as db, db:
             db.execute("BEGIN IMMEDIATE")
             if any(row[0] in ACTIVE for row in db.execute("SELECT status FROM runs WHERE session_id=?", (sid,))):
                 raise AntiError(409, "请先结束这条 Anti 会话中尚未完成的运行，再删除会话。")
-            if not db.execute("DELETE FROM sessions WHERE id=?", (sid,)).rowcount:
+            sess_row = db.execute("SELECT conversation FROM sessions WHERE id=?", (sid,)).fetchone()
+            if sess_row is None:
                 raise AntiError(404, "Anti session not found")
+            if sess_row[0]:
+                conv_ids.add(str(sess_row[0]).strip())
+            for row in db.execute("SELECT conversation FROM profile_conversations WHERE session_id=?", (sid,)):
+                if row[0]:
+                    conv_ids.add(str(row[0]).strip())
+            db.execute("DELETE FROM sessions WHERE id=?", (sid,))
             db.execute("DELETE FROM run_events WHERE run_id IN (SELECT id FROM runs WHERE session_id=?)", (sid,))
             db.execute("DELETE FROM profile_conversations WHERE session_id=?", (sid,))
             db.execute("DELETE FROM queued_prompts WHERE session_id=?", (sid,))
@@ -407,6 +415,17 @@ class AntiSessions:
         if callable(forget_fn):
             forget_fn(str(self._db_key), sid)
         self.runtime.close_session(str(self._db_key), sid)
+        if conv_ids and self._db_key.parent == _paths.ADMIN_DATA.resolve():
+            try:
+                from . import agy_storage_gc
+
+                agy_storage_gc.cleanup_deleted_conversations(
+                    conv_ids,
+                    db_path=self.db,
+                    runtime=self.runtime,
+                )
+            except Exception:
+                log.debug("Deferred Agy native archive cleanup for deleted session %s", sid, exc_info=True)
 
     def _close_session_runtime(self, sid: str, *, force: bool = False) -> None:
         if force:

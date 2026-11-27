@@ -425,6 +425,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/storage/agy-gc-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agy Gc Policy */
+        get: operations["get_agy_gc_policy_api_storage_agy_gc_policy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Agy Gc Policy */
+        patch: operations["update_agy_gc_policy_api_storage_agy_gc_policy_patch"];
+        trace?: never;
+    };
     "/api/agent/status": {
         parameters: {
             query?: never;
@@ -3177,6 +3195,147 @@ export interface components {
         AgyCodeLoginSubmit: {
             /** Code */
             code: string;
+        };
+        /** AgyGcPolicyModel */
+        AgyGcPolicyModel: {
+            /**
+             * Auto Enabled
+             * @default true
+             */
+            auto_enabled: boolean;
+            /**
+             * Interval Hours
+             * @default 24
+             */
+            interval_hours: number;
+            /**
+             * L0 Orphans Enabled
+             * @default true
+             */
+            l0_orphans_enabled: boolean;
+            /**
+             * L0 Log Retention Days
+             * @default 7
+             */
+            l0_log_retention_days: number;
+            /**
+             * L1 Redundant Enabled
+             * @default true
+             */
+            l1_redundant_enabled: boolean;
+            /**
+             * L1 Grace Hours
+             * @default 6
+             */
+            l1_grace_hours: number;
+            /**
+             * L1 Steps Retention Days
+             * @default 3
+             */
+            l1_steps_retention_days: number;
+            /**
+             * L1 Steps Max File Mb
+             * @default 5
+             */
+            l1_steps_max_file_mb: number;
+            /**
+             * L1 Scratch Retention Days
+             * @default 7
+             */
+            l1_scratch_retention_days: number;
+            /**
+             * L2 Subagents Enabled
+             * @default true
+             */
+            l2_subagents_enabled: boolean;
+            /**
+             * L2 Killed Grace Hours
+             * @default 24
+             */
+            l2_killed_grace_hours: number;
+            /**
+             * L2 Idle Retention Days
+             * @default 7
+             */
+            l2_idle_retention_days: number;
+            /**
+             * L2 Keep Artifacts
+             * @default true
+             */
+            l2_keep_artifacts: boolean;
+            /**
+             * L3 Cold Roots Enabled
+             * @default false
+             */
+            l3_cold_roots_enabled: boolean;
+            /**
+             * L3 Cold Root Days
+             * @default 30
+             */
+            l3_cold_root_days: number;
+            /**
+             * L3 Run Events Retention Days
+             * @default 30
+             */
+            l3_run_events_retention_days: number;
+        };
+        /** AgyGcPolicyPatchReq */
+        AgyGcPolicyPatchReq: {
+            /** Auto Enabled */
+            auto_enabled?: boolean | null;
+            /** Interval Hours */
+            interval_hours?: number | null;
+            /** L0 Orphans Enabled */
+            l0_orphans_enabled?: boolean | null;
+            /** L0 Log Retention Days */
+            l0_log_retention_days?: number | null;
+            /** L1 Redundant Enabled */
+            l1_redundant_enabled?: boolean | null;
+            /** L1 Grace Hours */
+            l1_grace_hours?: number | null;
+            /** L1 Steps Retention Days */
+            l1_steps_retention_days?: number | null;
+            /** L1 Steps Max File Mb */
+            l1_steps_max_file_mb?: number | null;
+            /** L1 Scratch Retention Days */
+            l1_scratch_retention_days?: number | null;
+            /** L2 Subagents Enabled */
+            l2_subagents_enabled?: boolean | null;
+            /** L2 Killed Grace Hours */
+            l2_killed_grace_hours?: number | null;
+            /** L2 Idle Retention Days */
+            l2_idle_retention_days?: number | null;
+            /** L2 Keep Artifacts */
+            l2_keep_artifacts?: boolean | null;
+            /** L3 Cold Roots Enabled */
+            l3_cold_roots_enabled?: boolean | null;
+            /** L3 Cold Root Days */
+            l3_cold_root_days?: number | null;
+            /** L3 Run Events Retention Days */
+            l3_run_events_retention_days?: number | null;
+        };
+        /** AgyGcPolicyStatusResp */
+        AgyGcPolicyStatusResp: {
+            policy: components["schemas"]["AgyGcPolicyModel"];
+            /** Last Run At */
+            last_run_at?: string | null;
+            /**
+             * Last Reclaimed Bytes
+             * @default 0
+             */
+            last_reclaimed_bytes: number;
+            /**
+             * Last Removed Entries
+             * @default 0
+             */
+            last_removed_entries: number;
+            /** Last Error */
+            last_error?: string | null;
+            /**
+             * Pending Delete Count
+             * @default 0
+             */
+            pending_delete_count: number;
         };
         /** AgyOrchestratorSettings */
         AgyOrchestratorSettings: {
@@ -7366,6 +7525,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StorageCleanupResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agy_gc_policy_api_storage_agy_gc_policy_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyGcPolicyStatusResp"];
+                };
+            };
+        };
+    };
+    update_agy_gc_policy_api_storage_agy_gc_policy_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgyGcPolicyPatchReq"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyGcPolicyStatusResp"];
                 };
             };
             /** @description Validation Error */

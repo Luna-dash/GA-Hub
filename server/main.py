@@ -455,6 +455,7 @@ def create_app() -> FastAPI:
         try:
             from .services.agy_runtime import runtime as agy_runtime_instance
             services.agy_runtime = agy_runtime_instance
+            agy_runtime_instance.start_background_maintenance()
         except Exception:
             log.debug("agy runtime unavailable during startup", exc_info=True)
 

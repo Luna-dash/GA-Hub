@@ -934,9 +934,41 @@ export interface StorageCleanupResult {
   summary: StorageSummary
 }
 
+export interface AgyGcPolicy {
+  auto_enabled: boolean
+  interval_hours: number
+  l0_orphans_enabled: boolean
+  l0_log_retention_days: number
+  l1_redundant_enabled: boolean
+  l1_grace_hours: number
+  l1_steps_retention_days: number
+  l1_steps_max_file_mb: number
+  l1_scratch_retention_days: number
+  l2_subagents_enabled: boolean
+  l2_killed_grace_hours: number
+  l2_idle_retention_days: number
+  l2_keep_artifacts: boolean
+  l3_cold_roots_enabled: boolean
+  l3_cold_root_days: number
+  l3_run_events_retention_days: number
+}
+
+export interface AgyGcPolicyStatus {
+  policy: AgyGcPolicy
+  last_run_at: string | null
+  last_reclaimed_bytes: number
+  last_removed_entries: number
+  last_error: string | null
+  pending_delete_count: number
+}
+
 export const storageApi = {
   summary: (signal?: AbortSignal) =>
     http<StorageSummary>('GET', '/api/storage/summary', undefined, { signal }),
   cleanup: (categories: string[]) =>
     http<StorageCleanupResult>('POST', '/api/storage/cleanup', { categories }),
+  agyGcPolicy: (signal?: AbortSignal) =>
+    http<AgyGcPolicyStatus>('GET', '/api/storage/agy-gc-policy', undefined, { signal }),
+  updateAgyGcPolicy: (patch: Partial<AgyGcPolicy>) =>
+    http<AgyGcPolicyStatus>('PATCH', '/api/storage/agy-gc-policy', patch),
 }
