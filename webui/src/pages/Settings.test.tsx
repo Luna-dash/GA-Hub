@@ -4,8 +4,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Settings from './Settings'
-import { api, fontApi, novaApi, updateApi } from '@/api/client'
+import { api, fontApi, novaApi, storageApi, updateApi } from '@/api/client'
 import { dialog } from '@/stores/dialogStore'
+import { useToastStore } from '@/stores/toastStore'
 
 vi.mock('@/api/client', () => ({
   api: { setupStatus: vi.fn(), setupValidate: vi.fn(), setupSave: vi.fn(), chatRetryConfig: vi.fn(), saveChatRetryConfig: vi.fn() },
@@ -19,6 +20,7 @@ vi.mock('@/api/client', () => ({
     importFile: vi.fn(),
   },
   novaApi: { status: vi.fn(), action: vi.fn() },
+  storageApi: { summary: vi.fn(), agyGcPolicy: vi.fn(), updateAgyGcPolicy: vi.fn(), cleanup: vi.fn() },
   updateApi: { status: vi.fn(), release: vi.fn(), download: vi.fn(), prepare: vi.fn(), apply: vi.fn(), cancel: vi.fn() },
 }))
 vi.mock('@/utils/notify', () => {
@@ -45,10 +47,15 @@ async function mount(initialMode: 'settings' | 'setup' = 'settings') {
 beforeEach(() => {
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   vi.resetAllMocks()
+  for (const item of useToastStore.getState().items) {
+    useToastStore.getState().dismiss(item.id)
+  }
   localStorage.clear()
   vi.mocked(api.setupStatus).mockResolvedValue({ configured: true, ga_root: 'D:/GA', admin_data: 'D:/data' } as any)
   vi.mocked(api.chatRetryConfig).mockResolvedValue({ enabled: true, max_attempts: 2 } as any)
   vi.mocked(updateApi.status).mockResolvedValue({ plan: { state: 'idle' }, supported: true, sources: ['github_release', 'trusted_local_archive'], data_epoch: 2 })
+  vi.mocked(storageApi.summary).mockResolvedValue({ total_bytes: 0, categories: [] } as never)
+  vi.mocked(storageApi.agyGcPolicy).mockRejectedValue(new Error('policy unavailable'))
   vi.mocked(novaApi.status).mockResolvedValue({ device: 'device-test', paired: false, running: false, connected: false, paused: false })
   vi.mocked(fontApi.settings).mockResolvedValue({
     active_pack: 'system',
@@ -251,5 +258,22 @@ describe('Settings functional tabs', () => {
     } finally {
       confirmSpy.mockRestore()
     }
+  })
+
+  it('renders QueryLoadState with retry when ChatRetryPanel fails to load and toasts on save', async () => {
+    vi.mocked(api.chatRetryConfig).mockRejectedValueOnce({ body: { detail: '重试配置不可读' } })
+    await mount()
+    await click('chat')
+    expect(panel().querySelector('[role="alert"]')?.textContent).toContain('重试配置加载失败：重试配置不可读')
+
+    vi.mocked(api.chatRetryConfig).mockResolvedValueOnce({ enabled: true, max_attempts: 2 } as any)
+    vi.mocked(api.saveChatRetryConfig).mockResolvedValueOnce({ enabled: true, max_attempts: 2 } as any)
+    const retryBtn = Array.from(panel().querySelectorAll('button')).find(b => b.textContent === '重试')!
+    await act(async () => { retryBtn.click(); await new Promise(r => setTimeout(r, 20)) })
+    expect(panel().textContent).toContain('实时会话')
+
+    const saveBtn = Array.from(panel().querySelectorAll('button')).find(b => b.textContent === '保存')!
+    await act(async () => { saveBtn.click(); await Promise.resolve() })
+    expect(useToastStore.getState().items.some(t => t.kind === 'success' && t.message === '已保存重试配置')).toBe(true)
   })
 })

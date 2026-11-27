@@ -6,7 +6,7 @@ import type { TaskRun, TaskSchedule, TaskScheduleType } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { formatRelativeTime } from '@/utils/timeFormat'
-import { errorMessageFromError } from '@/utils/sessionUi'
+import { extractErrorMessage } from '@/utils/errors'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { useHubEvent } from '@/hooks/useHubEvent'
@@ -69,7 +69,7 @@ export default function Tasks() {
       toast.success('已触发定时任务')
       void qc.invalidateQueries({ queryKey: queryKeys.tasks.runs })
     } catch (e: unknown) {
-      await dialog.alert('触发失败', errorMessageFromError(e))
+      toast.error(extractErrorMessage(e, '触发失败'))
     }
   }
 
@@ -239,9 +239,10 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
     setBusyAction('toggle')
     try {
       await api.upsertTaskSchedule({ ...s, type: s.type as TaskScheduleType, enabled: !s.enabled })
+      toast.success(s.enabled ? '已禁用定时任务' : '已启用定时任务')
       void qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
     } catch (e: unknown) {
-      await dialog.alert('切换失败', errorMessageFromError(e))
+      toast.error(extractErrorMessage(e, '切换失败'))
     } finally {
       busyRef.current = false
       setBusyAction(null)
@@ -261,7 +262,7 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
       toast.success('已删除定时任务')
       void qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
     } catch (e: unknown) {
-      await dialog.alert('删除失败', errorMessageFromError(e))
+      toast.error(extractErrorMessage(e, '删除失败'))
     } finally {
       busyRef.current = false
       setBusyAction(null)
@@ -416,10 +417,11 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
         ...s, type,
         interval_minutes: Number.isNaN(s.interval_minutes) ? undefined : s.interval_minutes,
       })
+      toast.success(initial.id ? '已更新定时任务' : '已创建定时任务')
       qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
       onClose()
     } catch (e: any) {
-      await dialog.alert('保存失败', errorMessageFromError(e))
+      toast.error(extractErrorMessage(e, '保存失败'))
     } finally {
       setSaving(false)
     }

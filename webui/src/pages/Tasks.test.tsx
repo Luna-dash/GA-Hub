@@ -7,6 +7,7 @@ import { api } from '@/api/client'
 import type { TaskRun, TaskSchedule } from '@/api/types'
 import { queryKeys } from '@/queries/queryKeys'
 import { dialog } from '@/stores/dialogStore'
+import { useToastStore } from '@/stores/toastStore'
 import Tasks from './Tasks'
 
 vi.mock('@/hooks/useHubEvent', () => ({ useHubEvent: vi.fn() }))
@@ -28,6 +29,9 @@ let root: Root
 let client: QueryClient
 
 beforeEach(() => {
+  for (const item of useToastStore.getState().items) {
+    useToastStore.getState().dismiss(item.id)
+  }
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
@@ -134,20 +138,17 @@ it('renders Chinese status labels and surfaces errors when schedule actions fail
   expect(disabledPill.className).not.toContain('bg-slate-700')
   expect(disabledPill.className).toContain('text-ink-muted')
 
-  const alertSpy = vi.spyOn(dialog, 'alert').mockResolvedValue(undefined)
   vi.spyOn(dialog, 'confirm').mockResolvedValue(true)
   vi.mocked(api.upsertTaskSchedule).mockRejectedValueOnce(new Error('save denied'))
 
   const enableBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === '启用')!
   await act(async () => { enableBtn.click(); await Promise.resolve() })
-  expect(alertSpy).toHaveBeenCalledWith('切换失败', 'save denied')
+  expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message.includes('save denied'))).toBe(true)
 
   vi.mocked(api.triggerTaskSchedule).mockRejectedValueOnce(new Error('trigger denied'))
   const fireBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === '立即触发')!
   await act(async () => { fireBtn.click(); await new Promise((r) => setTimeout(r, 10)) })
-  expect(alertSpy).toHaveBeenCalledWith('触发失败', 'trigger denied')
-
-  alertSpy.mockRestore()
+  expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message.includes('trigger denied'))).toBe(true)
 })
 
 it('hides legacy progress and loads the full conclusion only on demand', async () => {
@@ -199,7 +200,6 @@ it('locks TaskCard buttons against same-tick double-clicks, shows loading labels
   act(() => root.render(<QueryClientProvider client={client}><Tasks /></QueryClientProvider>))
 
   const btn = (text: string) => Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === text)!
-  const alertSpy = vi.spyOn(dialog, 'alert').mockResolvedValue(undefined)
   const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValue(true)
 
   // 1. Toggle same-tick double-click + rejection recovery
@@ -217,7 +217,7 @@ it('locks TaskCard buttons against same-tick double-clicks, shows loading labels
   expect(host.querySelector<HTMLButtonElement>('button[aria-label="删除任务"]')!.disabled).toBe(true)
   await act(async () => { rejectToggle(new Error('toggle failed')); await Promise.resolve() })
   await act(async () => { await Promise.resolve() })
-  expect(alertSpy).toHaveBeenCalledWith('切换失败', 'toggle failed')
+  expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message.includes('toggle failed'))).toBe(true)
   expect(btn('启用').disabled).toBe(false)
 
   // Subsequent toggle succeeds and transitions to enabled=true, then 禁用 -> 禁用中…
@@ -228,6 +228,7 @@ it('locks TaskCard buttons against same-tick double-clicks, shows loading labels
   currentSchedule = { ...currentSchedule, enabled: true }
   await act(async () => { resolveToggle(currentSchedule); await Promise.resolve() })
   await act(async () => { await new Promise((r) => setTimeout(r, 15)) })
+  expect(useToastStore.getState().items.some(t => t.kind === 'success' && t.message === '已启用定时任务')).toBe(true)
 
   let resolveDisable!: (v: TaskSchedule) => void
   vi.mocked(api.upsertTaskSchedule).mockImplementationOnce(() => new Promise<TaskSchedule>((resolve) => { resolveDisable = resolve }))
@@ -263,7 +264,7 @@ it('locks TaskCard buttons against same-tick double-clicks, shows loading labels
   expect(api.triggerTaskSchedule).toHaveBeenCalledTimes(1)
   await act(async () => { rejectFire(new Error('fire failed')); await Promise.resolve() })
   await act(async () => { await Promise.resolve() })
-  expect(alertSpy).toHaveBeenCalledWith('触发失败', 'fire failed')
+  expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message.includes('fire failed'))).toBe(true)
   expect(btn('立即触发').disabled).toBe(false)
 
   // 3. Delete same-tick double-click (before dialog.confirm) + rejection recovery + 删除中…
@@ -286,11 +287,10 @@ it('locks TaskCard buttons against same-tick double-clicks, shows loading labels
   expect(api.deleteTaskSchedule).toHaveBeenCalledTimes(1)
   await act(async () => { rejectDelete(new Error('delete failed')); await Promise.resolve() })
   await act(async () => { await Promise.resolve() })
-  expect(alertSpy).toHaveBeenCalledWith('删除失败', 'delete failed')
+  expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message.includes('delete failed'))).toBe(true)
   expect(delBtn.disabled).toBe(false)
 
   confirmSpy.mockRestore()
-  alertSpy.mockRestore()
 })
 
 it('ignores backdrop clicks in TaskDialog and prompts only when dirty on close', async () => {

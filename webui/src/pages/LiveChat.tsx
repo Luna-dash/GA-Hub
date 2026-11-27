@@ -37,9 +37,11 @@ import {
 import { guessTransferMime, type TransferredFile } from '@/components/FileTransferBox'
 import { PageShell } from '@/components/PageShell'
 import { dialog } from '@/stores/dialogStore'
+import { toast } from '@/stores/toastStore'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
 import { formatDateTime } from '@/utils/formatTime'
 import { useDraftStore } from '@/stores/draftStore'
+import { extractErrorMessage, markErrorHandled } from '@/utils/errors'
 import { capacityConflictFromError, errorMessageFromError, openSessionChat, sessionChatHref, startAbortedFromError } from '@/utils/sessionUi'
 import { markSessionRead } from '@/stores/sessionUnreadStore'
 import { buildSessionPromptText } from '@/utils/sessionPrompt'
@@ -218,9 +220,9 @@ export default function LiveChat() {
 
   useEffect(() => {
     if (llmsQuery.isError && llmsQuery.error) {
-      pushSystem(`_加载模型列表失败:${errorMessageFromError(llmsQuery.error)}_`)
+      toast.error(`加载模型列表失败：${extractErrorMessage(llmsQuery.error)}`)
     }
-  }, [llmsQuery.isError, llmsQuery.error, pushSystem])
+  }, [llmsQuery.isError, llmsQuery.error])
 
   const runtime = session ? runtimes[session.id] : undefined
   const refreshRuntime = useCallback(async (sessionId?: string) => {
@@ -319,10 +321,10 @@ export default function LiveChat() {
       const updated = await api.updateSessionModel(sid, value)
       if (sessionIdRef.current !== sid || llmChangeSeqRef.current !== changeSeq) return
       queryClient.setQueryData<SessionListData>(queryKeys.sessions, (cached) => upsertSessionInList(cached, updated))
-      pushSystem(`_已切换模型:${llms.find((item) => item.key === updated.llm_key)?.name || updated.llm_key}_`, noticeKeys.llmSwitch)
+      toast.success(`已切换模型：${llms.find((item) => item.key === updated.llm_key)?.name || updated.llm_key}`)
     } catch (e: any) {
       if (sessionIdRef.current === sid && llmChangeSeqRef.current === changeSeq) {
-        pushSystem(`_切换模型失败:${errorMessageFromError(e)}_`, noticeKeys.llmSwitchFail)
+        toast.error(`切换模型失败：${extractErrorMessage(e)}`)
       }
     } finally {
       if (llmChangeSeqRef.current === changeSeq) setLlmSaving(false)
@@ -550,8 +552,9 @@ export default function LiveChat() {
     try {
       await api.cancelScheduledChat(session.id, task.id)
       await queryClient.invalidateQueries({ queryKey: queryKeys.scheduledChats(session.id) })
+      toast.success('已取消定时发送')
     } catch (e: any) {
-      pushSystem(`_取消定时消息失败：${errorMessageFromError(e)}。_`)
+      toast.error(`取消定时消息失败：${extractErrorMessage(e)}`)
     }
   }
 
@@ -590,19 +593,20 @@ export default function LiveChat() {
     try {
       await newConv()
     } catch (error: any) {
-      pushSystem(`_新建会话失败：${errorMessageFromError(error)}_`)
+      toast.error(`新建会话失败：${extractErrorMessage(error)}`)
     }
-  }, [newConv, pushSystem])
+  }, [newConv])
 
   const renameSession = useCallback(async (id: string, title: string) => {
     try {
       const updated = await api.updateSession(id, { title })
       queryClient.setQueryData<SessionListData>(queryKeys.sessions, (cached) => upsertSessionInList(cached, updated))
     } catch (error: any) {
-      pushSystem(`_重命名失败：${errorMessageFromError(error)}_`)
+      toast.error(`重命名失败：${extractErrorMessage(error)}`)
+      markErrorHandled(error)
       throw error
     }
-  }, [pushSystem, queryClient])
+  }, [queryClient])
 
   const changeProject = useCallback(async (value: string) => {
     const sid = sessionIdRef.current
@@ -653,11 +657,11 @@ export default function LiveChat() {
       }
       queryClient.setQueryData<SessionListData>(queryKeys.sessions, (cached) => upsertSessionInList(cached, updated))
     } catch (error: unknown) {
-      pushSystem(`_切换项目失败：${errorMessageFromError(error)}_`, noticeKeys.projectSwitchFail)
+      toast.error(`切换项目失败：${extractErrorMessage(error)}`)
     } finally {
       if (projectChangeSeqRef.current === changeSeq) setProjectSaving(false)
     }
-  }, [projectSaving, projects, pushSystem, queryClient])
+  }, [projectSaving, projects, queryClient])
 
   const deleteCurrentProject = useCallback(async () => {
     const sid = sessionIdRef.current
@@ -679,12 +683,13 @@ export default function LiveChat() {
 
       await api.deleteProject(selected.name)
       await queryClient.invalidateQueries({ queryKey: queryKeys.projects })
+      toast.success('已移除项目映射')
     } catch (error: unknown) {
-      pushSystem(`_移除项目映射失败：${errorMessageFromError(error)}_`)
+      toast.error(`移除项目映射失败：${extractErrorMessage(error)}`)
     } finally {
       if (projectChangeSeqRef.current === changeSeq) setProjectSaving(false)
     }
-  }, [projectSaving, projects, pushSystem, queryClient, session?.project_path])
+  }, [projectSaving, projects, queryClient, session?.project_path])
 
   const deleteSession = useCallback(async (id: string) => {
     try {
@@ -717,11 +722,12 @@ export default function LiveChat() {
     } catch (error: any) {
       const detail = error?.status === 409
         ? '会话仍在运行，请先停止任务。'
-        : errorMessageFromError(error)
-      pushSystem(`_移除会话失败：${detail}_`)
+        : extractErrorMessage(error)
+      toast.error(`移除会话失败：${detail}`)
+      markErrorHandled(error)
       throw error
     }
-  }, [clearLocal, dropSessionView, nav, pushSystem, queryClient, sessions, teardownChat])
+  }, [clearLocal, dropSessionView, nav, queryClient, sessions, teardownChat])
 
   // Keep the callback stable while streaming chunks update `msgs`; otherwise
   // every completed assistant bubble receives a new prop and rebuilds Markdown.
@@ -920,7 +926,7 @@ export default function LiveChat() {
                     return refreshRuntime(sid).catch(() => undefined)
                   })
                   .catch((e: unknown) => {
-                    pushSystem(`_停止任务失败：${errorMessageFromError(e)}_`)
+                    toast.error(`停止任务失败：${extractErrorMessage(e)}`)
                   })
                   .finally(() => {
                     setAbortPendingSid((currentSid) => (currentSid === sid ? null : currentSid))

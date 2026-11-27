@@ -1,5 +1,3 @@
-import { HttpTimeoutError } from '@/api/client'
-
 function extractFromObject(payload: Record<string, unknown>, serializeFallback: boolean): string | null {
   for (const key of ['message', 'detail', 'error', 'code']) {
     const candidate = payload[key]
@@ -33,6 +31,18 @@ function tryExtractJsonString(raw: string): string | null {
   return null
 }
 
+const handledErrors = new WeakSet<object>()
+
+export function markErrorHandled(error: unknown): void {
+  if (error && typeof error === 'object') {
+    handledErrors.add(error)
+  }
+}
+
+export function isErrorHandled(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && handledErrors.has(error))
+}
+
 export function extractErrorMessage(error: unknown, fallback = '请求失败'): string {
   if (typeof error === 'string') {
     if (!error.trim()) return fallback
@@ -47,7 +57,7 @@ export function extractErrorMessage(error: unknown, fallback = '请求失败'): 
     message?: unknown
   }
 
-  if (error instanceof HttpTimeoutError || value.name === 'HttpTimeoutError' || value.code === 'timeout') {
+  if (value.name === 'HttpTimeoutError' || value.code === 'timeout') {
     return '请求超时，请检查网络或稍后重试'
   }
   if (value.name === 'NetworkError' || value.code === 'network_error') {

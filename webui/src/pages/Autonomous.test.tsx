@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/queries/queryKeys'
 import { dialog } from '@/stores/dialogStore'
+import { useToastStore } from '@/stores/toastStore'
 import Autonomous from './Autonomous'
 
 const apiMock = vi.hoisted(() => ({
@@ -30,6 +31,9 @@ describe('Autonomous schedule dialog & report drawer', () => {
 
   beforeEach(() => {
     vi.resetAllMocks()
+    for (const item of useToastStore.getState().items) {
+      useToastStore.getState().dismiss(item.id)
+    }
     apiMock.schedules.mockResolvedValue({
       schedules: [{
         id: 'sch-1', name: '空闲反思', type: 'idle', idle_minutes: 30,
@@ -248,5 +252,31 @@ describe('Autonomous schedule dialog & report drawer', () => {
     expect(confirmSpy).toHaveBeenCalledTimes(2)
     expect(host.querySelector('[role="dialog"]')).toBeNull()
     confirmSpy.mockRestore()
+  })
+
+  it('routes schedule mutation successes and transient API errors to toast without blocking dialog alerts', async () => {
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValue(true)
+    const alertSpy = vi.spyOn(dialog, 'alert').mockResolvedValue(undefined)
+    apiMock.upsertSchedule.mockResolvedValueOnce({} as never).mockRejectedValueOnce(new Error('toggle oops'))
+    apiMock.triggerSchedule.mockResolvedValueOnce({} as never)
+    apiMock.deleteSchedule.mockResolvedValueOnce({} as never)
+
+    await renderPage()
+
+    await act(async () => { button('启用').click(); await Promise.resolve() })
+    expect(useToastStore.getState().items.some(t => t.kind === 'success' && t.message === '已启用计划')).toBe(true)
+
+    await act(async () => { button('启用').click(); await Promise.resolve() })
+    expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message === 'toggle oops')).toBe(true)
+
+    await act(async () => { button('立即触发').click(); await Promise.resolve() })
+    expect(useToastStore.getState().items.some(t => t.kind === 'success' && t.message === '已触发自主任务')).toBe(true)
+
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="删除计划"]')!.click(); await Promise.resolve() })
+    expect(useToastStore.getState().items.some(t => t.kind === 'success' && t.message === '已删除计划')).toBe(true)
+    expect(alertSpy).not.toHaveBeenCalled()
+
+    confirmSpy.mockRestore()
+    alertSpy.mockRestore()
   })
 })

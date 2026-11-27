@@ -51,7 +51,7 @@ import { getFirstVisibleDomItemIndex, scrollDomItemIntoView } from '@/utils/tran
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
 import { formatRunUsage } from '@/utils/antiUsage'
-import { extractErrorMessage } from '@/utils/errors'
+import { extractErrorMessage, markErrorHandled } from '@/utils/errors'
 import { antiSessionToRuntime } from '@/utils/sessionUi'
 import { markSessionRead } from '@/stores/sessionUnreadStore'
 import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
@@ -327,6 +327,7 @@ export default function AntiChat() {
       antiApi.renameSession(id, title),
     onSuccess: session => updateList(rows => rows.map(row => row.id === session.id ? { ...row, ...session } : row)),
     onError: error => {
+      markErrorHandled(error)
       toast.error(extractErrorMessage(error, '重命名会话失败'))
       rename.reset()
     },
@@ -340,6 +341,7 @@ export default function AntiChat() {
       cache.removeQueries({ queryKey: ['anti-runs', id] })
     },
     onError: error => {
+      markErrorHandled(error)
       toast.error(extractErrorMessage(error, '删除会话失败'))
       remove.reset()
     },

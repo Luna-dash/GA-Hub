@@ -11,7 +11,8 @@ import { PageShell } from '@/components/PageShell'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { formatRelativeTime } from '@/utils/timeFormat'
 import { dialog } from '@/stores/dialogStore'
-import { errorMessageFromError } from '@/utils/sessionUi'
+import { toast } from '@/stores/toastStore'
+import { extractErrorMessage } from '@/utils/errors'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { useDirtyClose } from '@/hooks/useDirtyClose'
 import { queryKeys } from '@/queries/queryKeys'
@@ -86,9 +87,10 @@ export default function Autonomous() {
     if (!ok) return
     try {
       await api.triggerSchedule(id)
+      toast.success('已触发自主任务')
       qc.invalidateQueries({ queryKey: queryKeys.autonomous.runs })
     } catch (e: any) {
-      await dialog.alert('触发失败', errorMessageFromError(e))
+      toast.error(extractErrorMessage(e, '触发失败'))
     }
   }
 
@@ -261,7 +263,7 @@ export default function Autonomous() {
           content={report?.content}
           isLoading={reportLoading}
           isError={reportError}
-          errorMessage={reportError ? errorMessageFromError(reportErr) : undefined}
+          errorMessage={reportError ? extractErrorMessage(reportErr) : undefined}
           onRetry={() => { void refetchReport() }}
           onClose={() => setActiveReport(null)}
         />
@@ -292,9 +294,10 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
     setBusyAction('toggle')
     try {
       await api.upsertSchedule({ ...s, type: s.type as ScheduleType, enabled: !s.enabled })
+      toast.success(s.enabled ? '已禁用计划' : '已启用计划')
       qc.invalidateQueries({ queryKey: queryKeys.schedules })
     } catch (e: any) {
-      await dialog.alert('切换失败', errorMessageFromError(e))
+      toast.error(extractErrorMessage(e, '切换失败'))
     } finally {
       busyRef.current = false
       setBusyAction(null)
@@ -311,9 +314,10 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
       })
       if (!ok) return
       await api.deleteSchedule(s.id)
+      toast.success('已删除计划')
       qc.invalidateQueries({ queryKey: queryKeys.schedules })
     } catch (e: any) {
-      await dialog.alert('删除失败', errorMessageFromError(e))
+      toast.error(extractErrorMessage(e, '删除失败'))
     } finally {
       busyRef.current = false
       setBusyAction(null)
@@ -475,10 +479,11 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
         interval_minutes: Number.isNaN(s.interval_minutes) ? undefined : s.interval_minutes,
         idle_minutes: Number.isNaN(s.idle_minutes) ? undefined : s.idle_minutes,
       })
+      toast.success(initial.id ? '已更新计划' : '已创建计划')
       void qc.invalidateQueries({ queryKey: queryKeys.schedules })
       onClose()
     } catch (e: any) {
-      await dialog.alert('保存失败', errorMessageFromError(e))
+      toast.error(extractErrorMessage(e, '保存失败'))
     } finally {
       setSaving(false)
     }

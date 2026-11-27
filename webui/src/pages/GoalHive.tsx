@@ -12,8 +12,10 @@ import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
 import { dialog } from '@/stores/dialogStore'
+import { toast } from '@/stores/toastStore'
 import { GoalHiveSocket } from '@/runtime/goalHiveSocket'
 import { queryKeys } from '@/queries/queryKeys'
+import { extractErrorMessage } from '@/utils/errors'
 import { usePageState } from '@/utils/pageState'
 import { CloseIconButton, Play, Settings2, Square, StatusIconBadge, Trash2 } from '@/components/ActionIcons'
 
@@ -73,7 +75,13 @@ export default function GoalHive() {
   const subagentSettingsDialogRef = useRef<HTMLDivElement | null>(null)
 
   // Conductor and Goal/Hive share durable key-based model preferences.
-  const { data: llmsData } = useQuery({
+  const {
+    data: llmsData,
+    isError: llmsFailed,
+    error: llmsError,
+    isFetching: llmsFetching,
+    refetch: refetchLlms,
+  } = useQuery({
     queryKey: queryKeys.llms,
     queryFn: api.llms,
   })
@@ -169,11 +177,12 @@ export default function GoalHive() {
       subagent_llm_index: effectiveSubagentLlmIndex,
     })
     if (sent) clearGoalDraft()
+    else toast.error('发送失败：实时通道未连接，请稍后重试')
   }
 
   const abort = () => {
-    if (wsRef.current) {
-      wsRef.current.send({ type: 'abort' })
+    if (wsRef.current && !wsRef.current.send({ type: 'abort' })) {
+      toast.error('停止请求未发出：实时通道未连接')
     }
   }
 
@@ -187,7 +196,9 @@ export default function GoalHive() {
       )
       if (!ok) return
     }
-    wsRef.current?.send({ type: 'reset' })
+    if (wsRef.current && !wsRef.current.send({ type: 'reset' })) {
+      toast.error('清空历史请求未发出：实时通道未连接')
+    }
   }
 
   return (
@@ -300,6 +311,21 @@ export default function GoalHive() {
                 <div className="text-[11px] font-medium text-ink-faint">指令预览</div>
                 <pre className="whitespace-pre-wrap break-words text-xs text-ink font-mono">{preview || `${config.command} ...`}</pre>
               </div>
+              {llmsFailed && (
+                <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-xs text-status-danger">
+                  <span className="min-w-0 flex-1">
+                    模型列表加载失败：{extractErrorMessage(llmsError, '暂无法启动任务')}
+                  </span>
+                  <button
+                    type="button"
+                    className="ga-btn-xs shrink-0"
+                    disabled={llmsFetching}
+                    onClick={() => { void refetchLlms() }}
+                  >
+                    {llmsFetching ? '重试中…' : '重试'}
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="shrink-0 bg-bg-soft/45 px-4 py-3 flex items-center justify-between gap-3 border-t border-line/40">

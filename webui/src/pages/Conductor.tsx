@@ -32,6 +32,7 @@ import { queryKeys } from '@/queries/queryKeys'
 import { StatusIconBadge } from '@/components/ActionIcons'
 import { usePageState } from '@/utils/pageState'
 import { toast } from '@/stores/toastStore'
+import { extractErrorMessage } from '@/utils/errors'
 import { errorMessageFromError, structuredErrorDetailFromError } from '@/utils/sessionUi'
 import { formatDurationSeconds } from '@/utils/timeFormat'
 
@@ -149,7 +150,13 @@ export default function Conductor() {
   })
 
   // Conductor and Goal/Hive share durable key-based model preferences.
-  const { data: llmsData, isError: llmsFailed } = useQuery({
+  const {
+    data: llmsData,
+    isError: llmsFailed,
+    error: llmsError,
+    isFetching: llmsFetching,
+    refetch: refetchLlms,
+  } = useQuery({
     queryKey: queryKeys.llms,
     queryFn: api.llms,
   })
@@ -331,7 +338,7 @@ export default function Conductor() {
       toast.success('Conductor 已停止')
     } catch (err) {
       console.error('stopConductor failed', err)
-      toast.error('停止 Conductor 失败，请稍后重试。')
+      toast.error(extractErrorMessage(err, '停止 Conductor 失败，请稍后重试。'))
     } finally {
       setIsStopping(false)
     }
@@ -746,6 +753,19 @@ export default function Conductor() {
             {engineStarting
               ? '正在启动调度引擎…'
               : status.recovery.error ? `调度暂不可用：${status.recovery.error}` : '正在同步任务状态'}
+          </div>
+        )}
+        {llmsFailed && (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-status-danger-line bg-status-danger-soft px-4 py-2 text-xs text-status-danger">
+            <span>模型列表加载失败：{extractErrorMessage(llmsError, '请检查服务状态后重试')}</span>
+            <button
+              type="button"
+              className="ga-btn-xs shrink-0"
+              disabled={llmsFetching}
+              onClick={() => { void refetchLlms() }}
+            >
+              {llmsFetching ? '重试中…' : '重试'}
+            </button>
           </div>
         )}
         <div className="conductor-mobile-tabs" role="tablist" aria-label="工作区视图">

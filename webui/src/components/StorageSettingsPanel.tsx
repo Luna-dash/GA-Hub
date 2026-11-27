@@ -10,7 +10,7 @@ import {
 import { RefreshIcon } from '@/components/ActionIcons'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
-import { errorMessageFromError } from '@/utils/sessionUi'
+import { extractErrorMessage } from '@/utils/errors'
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -38,21 +38,32 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
   const [savingPolicy, setSavingPolicy] = useState(false)
   const [cleaningId, setCleaningId] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [policyError, setPolicyError] = useState('')
   const [showPolicy, setShowPolicy] = useState(false)
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
     setError('')
+    setPolicyError('')
     try {
-      const [data, policyData] = await Promise.all([
+      const [summaryRes, policyRes] = await Promise.allSettled([
         storageApi.summary(signal),
-        storageApi.agyGcPolicy(signal).catch(() => null),
+        storageApi.agyGcPolicy(signal),
       ])
-      setSummary(data)
-      if (policyData) setGcStatus(policyData)
+      if (summaryRes.status === 'fulfilled') {
+        setSummary(summaryRes.value)
+      } else if ((summaryRes.reason as { name?: string })?.name !== 'AbortError') {
+        setError(extractErrorMessage(summaryRes.reason, '无法读取磁盘占用统计'))
+      }
+      if (policyRes.status === 'fulfilled') {
+        setGcStatus(policyRes.value)
+      } else if ((policyRes.reason as { name?: string })?.name !== 'AbortError') {
+        setPolicyError(extractErrorMessage(policyRes.reason, '无法读取自动清理策略'))
+      }
     } catch (e) {
-      if ((e as { name?: string })?.name === 'AbortError') return
-      setError(errorMessageFromError(e, '无法读取磁盘占用统计'))
+      if ((e as { name?: string })?.name !== 'AbortError') {
+        setError(extractErrorMessage(e, '无法读取磁盘占用统计'))
+      }
     } finally {
       setLoading(false)
     }
@@ -73,7 +84,7 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
       const nextSummary = await storageApi.summary()
       setSummary(nextSummary)
     } catch (e) {
-      toast.error(errorMessageFromError(e, '保存自动清理策略失败'))
+      toast.error(extractErrorMessage(e, '保存自动清理策略失败'))
     } finally {
       setSavingPolicy(false)
     }
@@ -100,7 +111,6 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
 
     const busyKey = cleanable.length === 1 ? cleanable[0].id : '__safe_all__'
     setCleaningId(busyKey)
-    setError('')
     try {
       const result = await storageApi.cleanup(cleanable.map(c => c.id))
       setSummary(result.summary)
@@ -110,9 +120,7 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
         toast.success(`已释放 ${formatBytes(result.reclaimed_bytes)}`)
       }
     } catch (e) {
-      const msg = errorMessageFromError(e, '清理失败')
-      setError(msg)
-      toast.error(msg)
+      toast.error(extractErrorMessage(e, '清理失败'))
     } finally {
       setCleaningId(null)
     }
@@ -180,6 +188,20 @@ export function StorageSettingsPanel({ active = true }: { active?: boolean } = {
           </button>
         </div>
       </div>
+
+      {policyError && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-status-warning-line bg-status-warning-soft px-4 py-2.5 text-xs text-status-warning">
+          <span>自动清理策略加载失败：{policyError}</span>
+          <button
+            type="button"
+            className="ga-btn-xs"
+            disabled={loading}
+            onClick={() => void refresh()}
+          >
+            {loading ? '重试中…' : '重试'}
+          </button>
+        </div>
+      )}
 
       {policy && showPolicy && (
         <div className="ga-paper-card p-4 space-y-3 text-xs">

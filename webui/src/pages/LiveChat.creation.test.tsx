@@ -12,6 +12,7 @@ import { useDraftStore } from '@/stores/draftStore'
 import { storageKeys } from '@/config/storageKeys'
 import { queryKeys } from '@/queries/queryKeys'
 import { dialog } from '@/stores/dialogStore'
+import { useToastStore } from '@/stores/toastStore'
 import { selectDirectory } from '@/utils/desktop'
 import type { SessionListData } from '@/queries/sessions'
 
@@ -31,7 +32,7 @@ vi.mock('@/utils/desktop', () => ({ isTauriDesktop: () => true, selectDirectory:
 vi.mock('@/components/SessionRail', () => ({ SessionRail: ({ onCreate, onDelete, onSelect }: { onCreate: () => void; onDelete?: (id: string) => void; onSelect?: (id: string) => void }) => <>
   <button data-create onClick={onCreate}>Create</button>
   {onSelect && <button data-select-second onClick={() => onSelect('second')}>Select second</button>}
-  {onDelete && <button data-delete-old onClick={() => void onDelete('old')}>Delete old</button>}
+  {onDelete && <button data-delete-old onClick={() => { void Promise.resolve(onDelete('old')).catch(() => {}) }}>Delete old</button>}
 </> }))
 vi.mock('@/components/ModelSelect', () => ({ MainModelSelect: () => null }))
 vi.mock('@/components/LiveChatTranscript', () => ({ LiveChatTranscript: forwardRef(() => null) }))
@@ -74,6 +75,9 @@ describe('LiveChat creation ownership', () => {
 
   beforeEach(() => {
     vi.resetAllMocks()
+    for (const item of useToastStore.getState().items) {
+      useToastStore.getState().dismiss(item.id)
+    }
     localStorage.clear()
     vi.spyOn(useChatStore.getState(), 'start').mockImplementation((id) => {
       useChatStore.setState({ sessionId: id })
@@ -423,5 +427,22 @@ describe('LiveChat creation ownership', () => {
     serverSessions = [repairedOld, healthySecond]
     await act(async () => finishRepair(repairedOld))
     expect(client.getQueryData<SessionListData>(queryKeys.sessions)?.items.find((s) => s.id === 'old')?.llm_key).toBe('model')
+  })
+
+  it('routes rail create/delete and llms query failures to toast instead of polluting chat transcript', async () => {
+    vi.mocked(api.llms).mockRejectedValueOnce({ body: { detail: '模型配置加载失败' } })
+    vi.mocked(api.createSession).mockRejectedValueOnce({ body: { detail: '新建会话配额不足' } })
+    vi.mocked(api.deleteSession).mockRejectedValueOnce({ status: 409, body: { detail: 'busy' } })
+
+    await mount()
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
+    expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message.includes('模型配置加载失败'))).toBe(true)
+
+    await click('[data-create]')
+    expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message.includes('新建会话配额不足'))).toBe(true)
+
+    await click('[data-delete-old]')
+    expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message.includes('会话仍在运行，请先停止任务'))).toBe(true)
+    expect(useChatStore.getState().msgs).toHaveLength(0)
   })
 })

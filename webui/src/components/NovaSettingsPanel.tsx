@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { novaApi, type NovaStatus } from '@/api/client'
+import { extractErrorMessage } from '@/utils/errors'
 import { RefreshIcon, ShieldCheck, Unlink, X } from './ActionIcons'
 
 export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) {
@@ -14,27 +15,39 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
   const [invite, setInvite] = useState('')
   const [name, setName] = useState('Gyra')
   const [confirmed, setConfirmed] = useState(false)
+  const aliveRef = useRef(true)
+
+  const refreshStatus = useCallback(async () => {
+    try {
+      const next = await novaApi.status()
+      if (!aliveRef.current) return
+      setStatus(next)
+      setError('')
+    } catch (e) {
+      if (!aliveRef.current) return
+      setError(extractErrorMessage(e, '无法读取 Nova 本机状态'))
+    }
+  }, [])
 
   useEffect(() => {
-    if (!active) return
-    let alive = true
-    const refresh = () => {
+    aliveRef.current = true
+    if (!active) return () => { aliveRef.current = false }
+    const poll = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-      void novaApi.status().then(s => { if (alive) setStatus(s) })
-        .catch(() => { if (alive) setError('无法读取 Nova 本机状态') })
+      void refreshStatus()
     }
-    refresh()
-    const timer = setInterval(refresh, 5000)
+    poll()
+    const timer = setInterval(poll, 5000)
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') refresh()
+      if (document.visibilityState === 'visible') poll()
     }
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
-      alive = false
+      aliveRef.current = false
       clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [active])
+  }, [active, refreshStatus])
 
   const act = async (action: 'associate' | 'revoke' | 'reconnect' | 'pause' | 'resume') => {
     setBusy(true); setError(''); setMessage('')
@@ -55,7 +68,7 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
         : action === 'resume' ? '已恢复远程连接。'
         : '已请求重连。')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Nova 操作失败')
+      setError(extractErrorMessage(e, 'Nova 操作失败'))
     } finally {
       setPassword(''); setInvite(''); setBusy(false)
     }
@@ -73,7 +86,18 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
       <h2 className="text-sm font-semibold text-ink">远程连接 <span className="ml-1 text-xs font-normal text-ink-faint">Nova</span></h2>
       <p className="mt-1 text-xs leading-relaxed text-ink-muted">关联账号后，即可通过 Nova 远程访问这台电脑。</p>
     </header>
-    {!status ? <p className="text-sm text-ink-muted" role="status">正在读取本机状态…</p> : <>
+    {!status ? (
+      error ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span role="alert" className="break-words text-status-danger">{error}</span>
+          <button type="button" className="ga-btn-sm" onClick={() => { void refreshStatus() }}>
+            重试
+          </button>
+        </div>
+      ) : (
+        <p className="text-sm text-ink-muted" role="status">正在读取本机状态…</p>
+      )
+    ) : <>
       <div className="ga-paper-subcard p-3 space-y-2.5">
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${status.paired ? 'bg-status-success-soft text-status-success' : 'bg-bg-card text-ink-muted ring-1 ring-line/45'}`}>{status.paired ? '已关联账号' : '未关联账号'}</span>
@@ -120,6 +144,8 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
           <p className="text-xs text-ink-faint">密码仅用于本次验证，不作保存。</p>
         </div>
       </form>}
+      {error && <p role="alert" className="break-words text-sm text-status-warning">{error}</p>}
+      {message && <p role="status" className="text-sm text-status-success">{message}</p>}
       <details className="border-t border-line/40 pt-3 text-xs text-ink-faint">
         <summary className="w-fit cursor-pointer text-ink-muted hover:text-ink">连接与安全说明</summary>
         <ul className="mt-2 list-disc space-y-1.5 pl-4 leading-relaxed">
@@ -148,7 +174,5 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
         </div>
       </details>}
     </>}
-    {error && <p role="alert" className="break-words text-sm text-status-warning">{error}</p>}
-    {message && <p role="status" className="text-sm text-status-success">{message}</p>}
   </section>
 }

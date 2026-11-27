@@ -1041,7 +1041,7 @@ describe('Conductor chat scroll restoration', () => {
 
     mocks.conductorStop.mockRejectedValueOnce(new Error('engine down'))
     act(() => stop.click())
-    await waitFor(() => expect(lastToast()?.message).toBe('停止 Conductor 失败，请稍后重试。'))
+    await waitFor(() => expect(lastToast()?.message).toBe('engine down'))
   })
 
   it('keeps the engine stop control out of the main page', async () => {
@@ -2049,5 +2049,19 @@ describe('Conductor chat scroll restoration', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     })
     expect(host.querySelector('#conductor-history-dropdown')).toBeNull()
+  })
+
+  it('shows retryable alert when llms query fails and formats stopConductor errors', async () => {
+    mocks.llms.mockRejectedValueOnce({ body: { detail: 'LLM 目录不可达' } })
+    renderPage()
+    await waitFor(() => {
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain('模型列表加载失败：LLM 目录不可达')
+    })
+
+    mocks.llms.mockResolvedValueOnce({ llms: [{ key: 'main', index: 0, name: 'Main', current: true }] })
+    act(() => { button('重试').click() })
+    await waitFor(() => {
+      expect(host.querySelector('[role="alert"]')).toBeNull()
+    })
   })
 })

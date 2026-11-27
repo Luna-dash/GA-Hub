@@ -12,6 +12,7 @@ import { NovaSettingsPanel } from '@/components/NovaSettingsPanel'
 import { StorageSettingsPanel } from '@/components/StorageSettingsPanel'
 import { UpdateSettingsPanel } from '@/components/UpdateSettingsPanel'
 import { FontAppearancePanel } from '@/components/FontAppearancePanel'
+import { QueryLoadState } from '@/components/QueryLoadState'
 import { ThemeAppearancePanel } from '@/components/ThemeAppearancePanel'
 import type { ChatRetryConfig } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
@@ -36,6 +37,7 @@ import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { isTauriDesktop, restartDesktopBackend, selectDirectory } from '@/utils/desktop'
 import { waitForDesktopRestart } from '@/utils/backendRestart'
 import { getMyKeyShowUpload, setMyKeyShowUpload } from '@/utils/mykeySyncUi'
+import { extractErrorMessage } from '@/utils/errors'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { queryKeys } from '@/queries/queryKeys'
 const SETTINGS_TABS = [
@@ -535,11 +537,11 @@ function ChatAppearancePanel() {
 
 function ChatRetryPanel() {
   const qc = useQueryClient()
-  const { data, isLoading } = useQuery({ queryKey: queryKeys.agent.chatRetryConfig, queryFn: api.chatRetryConfig })
+  const retryQuery = useQuery({ queryKey: queryKeys.agent.chatRetryConfig, queryFn: api.chatRetryConfig })
+  const { data, isLoading, isError } = retryQuery
   const [cfg, setCfg] = useState<ChatRetryConfig>({ enabled: true, max_attempts: 2, scheduled_max_attempts: 6, backoff_base_seconds: 2, backoff_factor: 2, backoff_max_seconds: 60, scheduled_backoff_base_seconds: 5, scheduled_backoff_max_seconds: 600 })
   const retryDirtyRef = useRef(false)
   const [saving, setSaving] = useState(false)
-  const [msg, setMsg] = useState('')
 
   useEffect(() => {
     if (data && !retryDirtyRef.current) setCfg(data)
@@ -553,9 +555,8 @@ function ChatRetryPanel() {
   const hasBlankNumber = Object.values(cfg).some(Number.isNaN)
 
   const save = async () => {
-    if (hasBlankNumber) return
+    if (hasBlankNumber || isLoading || isError) return
     setSaving(true)
-    setMsg('')
     try {
       const saved = await api.saveChatRetryConfig({
         enabled: !!cfg.enabled,
@@ -570,12 +571,11 @@ function ChatRetryPanel() {
       setCfg(saved)
       retryDirtyRef.current = false
       await qc.invalidateQueries({ queryKey: queryKeys.agent.chatRetryConfig })
-      setMsg('已保存')
+      toast.success('已保存重试配置')
     } catch (e: any) {
-      setMsg(`保存失败：${errorMessageFromError(e)}`)
+      toast.error(`保存失败：${extractErrorMessage(e)}`)
     } finally {
       setSaving(false)
-      window.setTimeout(() => setMsg(''), 3500)
     }
   }
 
@@ -589,17 +589,16 @@ function ChatRetryPanel() {
               type="checkbox"
               checked={!!cfg.enabled}
               onChange={(e) => updateCfg({ enabled: e.target.checked })}
-              disabled={isLoading || saving}
+              disabled={isLoading || isError || saving}
             />
             <span>{cfg.enabled ? '已开启' : '已关闭'}</span>
           </label>
         </div>
         <div className="flex items-center gap-2">
-          {msg && <span className={`text-xs ${msg.startsWith('保存失败') ? 'text-status-danger' : 'text-status-success'}`}>{msg}</span>}
           <button
             type="button"
             onClick={save}
-            disabled={saving || isLoading || hasBlankNumber}
+            disabled={saving || isLoading || isError || hasBlankNumber}
             className="ga-btn-primary"
           >
             <Save className="h-3.5 w-3.5" aria-hidden="true" />
@@ -608,63 +607,65 @@ function ChatRetryPanel() {
         </div>
       </div>
 
-      <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="ga-paper-subcard p-3.5 space-y-2.5">
-          <div className="text-xs font-semibold text-ink">实时会话</div>
-          <div className="grid grid-cols-2 gap-2.5">
-            <label className="block text-xs text-ink-faint" title="普通对话的最大自动重试次数">
-              <span>最大次数</span>
-              <input
-                type="number"
-                min={0}
-                max={5}
-                value={Number.isNaN(cfg.max_attempts) ? '' : (cfg.max_attempts)}
-                onChange={(e) => updateCfg({ max_attempts: e.currentTarget.valueAsNumber })}
-                disabled={isLoading || saving || !cfg.enabled}
-                className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
-              />
-            </label>
-            <label className="block text-xs text-ink-faint">
-              <span>基础间隔（秒）</span>
-              <input type="number" min={0} max={600} step="1" value={Number.isNaN(cfg.backoff_base_seconds) ? '' : (cfg.backoff_base_seconds ?? 2)} onChange={(e) => updateCfg({ backoff_base_seconds: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
-            </label>
-            <label className="block text-xs text-ink-faint">
-              <span>退避倍率</span>
-              <input type="number" min={1} max={10} step="0.5" value={Number.isNaN(cfg.backoff_factor) ? '' : (cfg.backoff_factor ?? 2)} onChange={(e) => updateCfg({ backoff_factor: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
-            </label>
-            <label className="block text-xs text-ink-faint">
-              <span>最长等待（秒）</span>
-              <input type="number" min={0} max={600} step="1" value={Number.isNaN(cfg.backoff_max_seconds) ? '' : (cfg.backoff_max_seconds ?? 60)} onChange={(e) => updateCfg({ backoff_max_seconds: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
-            </label>
+      <QueryLoadState query={retryQuery} label="重试配置" showDetail>
+        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="ga-paper-subcard p-3.5 space-y-2.5">
+            <div className="text-xs font-semibold text-ink">实时会话</div>
+            <div className="grid grid-cols-2 gap-2.5">
+              <label className="block text-xs text-ink-faint" title="普通对话的最大自动重试次数">
+                <span>最大次数</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={5}
+                  value={Number.isNaN(cfg.max_attempts) ? '' : (cfg.max_attempts)}
+                  onChange={(e) => updateCfg({ max_attempts: e.currentTarget.valueAsNumber })}
+                  disabled={isLoading || saving || !cfg.enabled}
+                  className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
+                />
+              </label>
+              <label className="block text-xs text-ink-faint">
+                <span>基础间隔（秒）</span>
+                <input type="number" min={0} max={600} step="1" value={Number.isNaN(cfg.backoff_base_seconds) ? '' : (cfg.backoff_base_seconds ?? 2)} onChange={(e) => updateCfg({ backoff_base_seconds: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+              </label>
+              <label className="block text-xs text-ink-faint">
+                <span>退避倍率</span>
+                <input type="number" min={1} max={10} step="0.5" value={Number.isNaN(cfg.backoff_factor) ? '' : (cfg.backoff_factor ?? 2)} onChange={(e) => updateCfg({ backoff_factor: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+              </label>
+              <label className="block text-xs text-ink-faint">
+                <span>最长等待（秒）</span>
+                <input type="number" min={0} max={600} step="1" value={Number.isNaN(cfg.backoff_max_seconds) ? '' : (cfg.backoff_max_seconds ?? 60)} onChange={(e) => updateCfg({ backoff_max_seconds: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+              </label>
+            </div>
           </div>
-        </div>
 
-        <div className="ga-paper-subcard p-3.5 space-y-2.5">
-          <div className="text-xs font-semibold text-ink">定时 / 无人值守任务</div>
-          <div className="grid grid-cols-2 gap-2.5">
-            <label className="block text-xs text-ink-faint" title="无人值守任务的最大自动重试次数">
-              <span>最大次数</span>
-              <input
-                type="number"
-                min={0}
-                max={10}
-                value={Number.isNaN(cfg.scheduled_max_attempts) ? '' : (cfg.scheduled_max_attempts ?? 6)}
-                onChange={(e) => updateCfg({ scheduled_max_attempts: e.currentTarget.valueAsNumber })}
-                disabled={isLoading || saving || !cfg.enabled}
-                className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
-              />
-            </label>
-            <label className="block text-xs text-ink-faint" title="无人值守任务的起始重试间隔">
-              <span>基础间隔（秒）</span>
-              <input type="number" min={0} max={600} step="1" value={Number.isNaN(cfg.scheduled_backoff_base_seconds) ? '' : (cfg.scheduled_backoff_base_seconds ?? 5)} onChange={(e) => updateCfg({ scheduled_backoff_base_seconds: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
-            </label>
-            <label className="block text-xs text-ink-faint col-span-2 sm:col-span-1" title="无人值守任务的单次最长等待，默认 10 分钟">
-              <span>最长等待（秒）</span>
-              <input type="number" min={0} max={600} step="1" value={Number.isNaN(cfg.scheduled_backoff_max_seconds) ? '' : (cfg.scheduled_backoff_max_seconds ?? 600)} onChange={(e) => updateCfg({ scheduled_backoff_max_seconds: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
-            </label>
+          <div className="ga-paper-subcard p-3.5 space-y-2.5">
+            <div className="text-xs font-semibold text-ink">定时 / 无人值守任务</div>
+            <div className="grid grid-cols-2 gap-2.5">
+              <label className="block text-xs text-ink-faint" title="无人值守任务的最大自动重试次数">
+                <span>最大次数</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={Number.isNaN(cfg.scheduled_max_attempts) ? '' : (cfg.scheduled_max_attempts ?? 6)}
+                  onChange={(e) => updateCfg({ scheduled_max_attempts: e.currentTarget.valueAsNumber })}
+                  disabled={isLoading || saving || !cfg.enabled}
+                  className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
+                />
+              </label>
+              <label className="block text-xs text-ink-faint" title="无人值守任务的起始重试间隔">
+                <span>基础间隔（秒）</span>
+                <input type="number" min={0} max={600} step="1" value={Number.isNaN(cfg.scheduled_backoff_base_seconds) ? '' : (cfg.scheduled_backoff_base_seconds ?? 5)} onChange={(e) => updateCfg({ scheduled_backoff_base_seconds: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+              </label>
+              <label className="block text-xs text-ink-faint col-span-2 sm:col-span-1" title="无人值守任务的单次最长等待，默认 10 分钟">
+                <span>最长等待（秒）</span>
+                <input type="number" min={0} max={600} step="1" value={Number.isNaN(cfg.scheduled_backoff_max_seconds) ? '' : (cfg.scheduled_backoff_max_seconds ?? 600)} onChange={(e) => updateCfg({ scheduled_backoff_max_seconds: e.currentTarget.valueAsNumber })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+              </label>
+            </div>
           </div>
         </div>
-      </div>
+      </QueryLoadState>
     </div>
   )
 }
@@ -675,24 +676,39 @@ function NotifyPanel() {
   const setOptIn = useNotifyStore((s) => s.setOptIn)
   const refresh = useNotifyStore((s) => s.refresh)
   const [testing, setTesting] = useState<null | string>(null)
+  const testingTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  useEffect(() => () => {
+    if (testingTimerRef.current !== null) {
+      window.clearTimeout(testingTimerRef.current)
+      testingTimerRef.current = null
+    }
+  }, [])
 
   const toggle = () => {
     setOptIn(!optedIn)
   }
 
   const test = async () => {
+    if (testingTimerRef.current !== null) {
+      window.clearTimeout(testingTimerRef.current)
+      testingTimerRef.current = null
+    }
     setTesting('发送中…')
     try {
       const shown = await notify('测试提醒', { body: '会话有新结果或需要互动时，将使用此消息窗提醒。', force: true })
       setTesting(shown ? '主题消息窗正常' : '提醒已关闭')
+      testingTimerRef.current = window.setTimeout(() => {
+        testingTimerRef.current = null
+        setTesting(null)
+      }, 3500)
     } catch (e) {
-      setTesting(`网络异常：${(e as Error).message}`)
-    } finally {
-      window.setTimeout(() => setTesting(null), 3500)
+      setTesting(null)
+      toast.error(`测试提醒失败：${extractErrorMessage(e)}`)
     }
   }
 

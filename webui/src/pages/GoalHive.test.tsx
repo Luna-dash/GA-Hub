@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
 import { dialog } from '@/stores/dialogStore'
+import { useToastStore } from '@/stores/toastStore'
 import GoalHive from './GoalHive'
 import { resetPageState } from '@/utils/pageState'
 
@@ -103,6 +104,9 @@ describe('Goal Hive compact subagent settings', () => {
   beforeEach(() => {
     resetPageState()
     vi.clearAllMocks()
+    for (const item of useToastStore.getState().items) {
+      useToastStore.getState().dismiss(item.id)
+    }
     mocks.llms.mockResolvedValue({ llms: [] })
     useDraftStore.setState({ texts: {}, attachments: {} })
     useGoalHiveStore.setState({ messages: [], conn: 'closed', mode: 'goal' })
@@ -284,5 +288,27 @@ describe('Goal Hive compact subagent settings', () => {
       useGoalHiveStore.getState().setMessages([{ id: 'm1', role: 'assistant', content: 'streaming chunk 2', ts: 1, streaming: true }])
     })
     expect(scrollToSpy).toHaveBeenCalled()
+  })
+
+  it('shows retryable alert on llms failure and toasts when ws send returns false', async () => {
+    mocks.llms.mockRejectedValueOnce({ body: { detail: '模型服务不可用' } })
+    renderPage()
+    await vi.waitFor(() => {
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain('模型列表加载失败：模型服务不可用')
+    })
+
+    mocks.llms.mockResolvedValueOnce({ llms: [{ key: 'main', index: 0, name: 'Main', current: true }] })
+    await act(async () => { button('重试').click(); await new Promise(r => setTimeout(r, 15)) })
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+
+    mocks.socketSend.mockReturnValue(false)
+    const textarea = host.querySelector('textarea')!
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '目标文本')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    act(() => { button('启动 Goal').click() })
+    expect(useToastStore.getState().items.some(t => t.kind === 'error' && t.message.includes('实时通道未连接'))).toBe(true)
+    expect(useDraftStore.getState().texts['goalHive:goal:target']).toBe('目标文本')
   })
 })

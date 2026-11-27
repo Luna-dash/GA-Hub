@@ -26,7 +26,7 @@ import { RAIL_TITLE_SCALE_EVENT, railTitlePercent, getRailTitleScale } from '@/u
 import { hasActiveOverlay } from '@/utils/overlayStack'
 import { storageKeys } from '@/config/storageKeys'
 import { toast } from '@/stores/toastStore'
-import { extractErrorMessage } from '@/utils/errors'
+import { extractErrorMessage, isErrorHandled } from '@/utils/errors'
 import {
   ChevronDown,
   CollapseChevronsIcon,
@@ -476,7 +476,9 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                           onChange={(event) => setTitleDraft(event.target.value)}
                           onBlur={() => {
                             void finishRename(session).catch((err) => {
-                              toast.error(extractErrorMessage(err, '重命名会话失败'))
+                              if (!isErrorHandled(err)) {
+                                toast.error(extractErrorMessage(err, '重命名会话失败'))
+                              }
                             })
                           }}
                           onKeyDown={(event) => {
@@ -544,7 +546,9 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                           // unhandled promise rejection in the renderer.
                           onClick={() => {
                             void removeSession(session).catch((err) => {
-                              toast.error(extractErrorMessage(err, '删除会话失败'))
+                              if (!isErrorHandled(err)) {
+                                toast.error(extractErrorMessage(err, '删除会话失败'))
+                              }
                             })
                           }}
                           // leading-none: at 200px rail width the inherited

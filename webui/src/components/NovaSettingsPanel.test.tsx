@@ -150,4 +150,15 @@ describe('Nova embedded settings', () => {
     expect(allDetails[1].textContent).toContain('resumable_upload')
     expect(allDetails[1].textContent).toContain('protocol=v2')
   })
+
+  it('shows retry when initial status load fails and clears stale error after poll recovery', async () => {
+    vi.mocked(novaApi.status).mockRejectedValueOnce({ body: { detail: 'Nova 守护进程未启动' } })
+    await act(async () => root.render(<NovaSettingsPanel />))
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Nova 守护进程未启动')
+
+    vi.mocked(novaApi.status).mockResolvedValueOnce(status)
+    await act(async () => button('重试').click())
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    expect(host.textContent).toContain(status.device)
+  })
 })
