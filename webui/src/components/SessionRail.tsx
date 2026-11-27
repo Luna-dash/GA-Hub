@@ -658,7 +658,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
         title={collapsed ? '展开会话管理' : '折叠会话管理'}
         className={clsx(
           // 外侧半椭圆：桌面竖向且薄，保留渐变浮雕；SVG 几何居中。
-          'absolute z-30 flex items-center justify-center border border-[#54432B]/70 bg-[#6B583D] bg-gradient-to-b from-bg-card/15 to-transparent text-[#FAF4E6] shadow-[inset_0_1px_0_rgb(255_255_255_/_0.25),0_2px_5px_rgb(0_0_0_/_0.18)] transition-[background-color,box-shadow] duration-300 hover:bg-[#5A4932] hover:shadow-[inset_0_1px_0_rgb(255_255_255_/_0.3),0_3px_7px_rgb(0_0_0_/_0.22)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+          'ga-floating-handle absolute z-30 flex items-center justify-center duration-300',
           'left-1/2 h-5 w-[60px] -translate-x-1/2 rounded-[0_0_50%_50%/0_0_100%_100%] border-t-0',
           'md:left-auto md:top-1/2 md:h-[60px] md:w-5 md:translate-x-0 md:-translate-y-1/2 md:rounded-[0_100%_100%_0/0_50%_50%_0] md:border-l-0 md:border-t',
           collapsed ? 'top-0 md:-right-5' : 'top-32 md:-right-5 md:top-1/2',

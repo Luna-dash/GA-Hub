@@ -239,7 +239,7 @@ export function AntiAccountUsageButton({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? popoverId : undefined}
-        className={clsx('ga-btn-icon',
+        className={clsx('ga-btn-icon h-[35px] w-[35px] rounded-[9px]',
           rows?.length ? 'text-ink' : 'text-ink-muted')}
         onMouseEnter={handlePointerEnter}
         onMouseLeave={handlePointerLeave}

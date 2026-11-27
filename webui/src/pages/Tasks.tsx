@@ -462,7 +462,7 @@ function TaskResultDialog({ run, onClose }: { run: TaskRun; onClose: () => void 
           <h2 id="task-result-title" className="text-base font-semibold text-ink">运行结论</h2>
           <p className="text-xs text-ink-muted">{run.task_name || run.task_id} · {formatRelativeTime(run.fired_at)}</p>
         </div>
-        <button type="button" className="shrink-0 rounded border border-line px-2 py-1 text-xs text-ink" onClick={onClose}>关闭</button>
+        <CloseIconButton label="关闭运行结论" title="关闭" variant="ghost" iconSize={15} onClick={onClose} />
       </div>
       <div className="min-h-0 min-w-0 overflow-auto text-sm text-ink">
         {result.isPending ? <p role="status">正在加载结论…</p> : result.isError ? (

@@ -3,7 +3,8 @@
 // values, saving hands the resolved triple to the page (which owns the
 // persistence calls) and closes. Focus returns to the trigger on close.
 import { useRef, useState } from 'react'
-import { Settings2, Square, X } from 'lucide-react'
+import { Settings2, Square } from 'lucide-react'
+import { CloseIconButton } from '@/components/ActionIcons'
 import clsx from 'clsx'
 import { SubagentModelSelect } from '@/components/ModelSelect'
 import { ModalOverlay } from '@/components/ModalOverlay'
@@ -73,15 +74,13 @@ export function SubagentSettingsModal({ llms, value, locked, autoAccept, engineS
         >
           <div className="flex items-center justify-between border-b border-line/70 px-5 py-4">
             <h2 id="subagent-settings-title" className="text-base font-semibold text-ink">子代理设置</h2>
-            <button
-              type="button"
-              onClick={closeDialog}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none text-ink-muted hover:bg-bg-soft hover:text-ink"
-              aria-label="关闭子代理设置"
+            <CloseIconButton
+              label="关闭子代理设置"
               title="关闭"
-            >
-              <X size={18} />
-            </button>
+              variant="ghost"
+              iconSize={16}
+              onClick={closeDialog}
+            />
           </div>
           <div className="space-y-5 px-5 py-5">
             <label className="block text-sm font-medium text-ink">

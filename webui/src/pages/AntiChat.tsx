@@ -6,7 +6,7 @@ import { guessTransferMime, type TransferredFile } from '@/components/FileTransf
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
 import { AlertCircle, AlertTriangle, Check, ChevronDown, ClipboardList, Pencil, RefreshCw, ShieldAlert, X } from 'lucide-react'
-import { RotateCw, Square } from '@/components/ActionIcons'
+import { CloseIconButton, RotateCw, Square } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, FinalConclusionDivider, TranscriptUtilityRail, chatTranscriptClass } from '@/components/ChatLayout'
 import { ConversationCollapseControl, ConversationCollapseProvider } from '@/components/ConversationCollapse'
 import { ConversationTurnMinimap } from '@/components/ConversationTurnMinimap'
@@ -1615,15 +1615,14 @@ function Conversation({ session, headerActions, profileId, profilesData, support
               >
                 {resetAcp.isPending ? '重连中…' : '强制重连 ACP'}
               </button>
-              <button
-                type="button"
-                aria-label="关闭提示"
+              <CloseIconButton
+                label="关闭提示"
                 title="暂时隐藏提示"
+                variant="compact"
+                iconSize={13}
+                className="rounded-md"
                 onClick={() => setRecoveryDismissed(true)}
-                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-bg-soft/80 hover:text-ink"
-              >
-                <X size={13} aria-hidden="true" />
-              </button>
+              />
             </div>
           </div>
         )}
@@ -1653,15 +1652,14 @@ function Conversation({ session, headerActions, profileId, profilesData, support
               <button type="button" className="ga-btn-warning-sm shrink-0" onClick={onOpenProfiles}>
                 切换可用账号
               </button>
-              <button
-                type="button"
-                aria-label="关闭提示"
+              <CloseIconButton
+                label="关闭提示"
                 title="关闭提示"
+                variant="compact"
+                iconSize={13}
+                className="rounded-md"
                 onClick={() => { setRateLimitDismissed(true); send.reset() }}
-                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-bg-soft/80 hover:text-ink"
-              >
-                <X size={13} aria-hidden="true" />
-              </button>
+              />
             </div>
           </div>
         )}
@@ -1686,15 +1684,14 @@ function Conversation({ session, headerActions, profileId, profilesData, support
               >
                 重试
               </button>
-              <button
-                type="button"
-                aria-label="关闭提示"
+              <CloseIconButton
+                label="关闭提示"
                 title="关闭提示"
+                variant="compact"
+                iconSize={13}
+                className="rounded-md"
                 onClick={() => setDismissedQueryError(queryErrorMessage)}
-                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-bg-soft/80 hover:text-ink"
-              >
-                <X size={13} aria-hidden="true" />
-              </button>
+              />
             </div>
           </div>
         )}
@@ -1713,7 +1710,7 @@ function Conversation({ session, headerActions, profileId, profilesData, support
                   aria-label={`收回 ${grantLabels[kind] ?? kind} 授权`}
                   title="收回此项授权"
                   onClick={() => clearGrants.mutate(kind)}
-                  className="text-ink-muted hover:text-status-danger"
+                  className="inline-flex h-4 w-4 items-center justify-center rounded text-ink-muted transition-colors hover:bg-status-danger-soft hover:text-status-danger disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <X size={10} aria-hidden="true" />
                 </button>

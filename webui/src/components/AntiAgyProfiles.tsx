@@ -73,13 +73,13 @@ function authBadge(profile?: Profile, loggingIn?: boolean) {
 function renderTierPillIcon(tier: AgyAccountTier | undefined, fallbackAccent: boolean) {
   switch (tier) {
     case 'ultra':
-      return <Crown className="h-3.5 w-3.5 shrink-0 text-[#9A6B16]" strokeWidth={2} aria-hidden="true" />
+      return <Crown className="ga-account-tier-icon--ultra h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
     case 'pro':
-      return <Gem className="h-3.5 w-3.5 shrink-0 text-[#8A5622]" strokeWidth={1.9} aria-hidden="true" />
+      return <Gem className="ga-account-tier-icon--pro h-3.5 w-3.5 shrink-0" strokeWidth={1.9} aria-hidden="true" />
     case 'plus':
-      return <Sparkles className="h-3.5 w-3.5 shrink-0 text-[#2E6B50]" strokeWidth={1.9} aria-hidden="true" />
+      return <Sparkles className="ga-account-tier-icon--plus h-3.5 w-3.5 shrink-0" strokeWidth={1.9} aria-hidden="true" />
     case 'enterprise':
-      return <Building2 className="h-3.5 w-3.5 shrink-0 text-[#335073]" strokeWidth={1.9} aria-hidden="true" />
+      return <Building2 className="ga-account-tier-icon--enterprise h-3.5 w-3.5 shrink-0" strokeWidth={1.9} aria-hidden="true" />
     default:
       return <UserRound className={clsx('h-3.5 w-3.5 shrink-0', fallbackAccent && 'text-accent')} strokeWidth={1.85} aria-hidden="true" />
   }

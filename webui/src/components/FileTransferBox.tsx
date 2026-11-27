@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { RefreshIcon } from '@/components/ActionIcons'
-import { File, FileArchive, FileCode2, FileText, Film, FolderOpen, Image, Music, Plus, Trash2, X } from 'lucide-react'
+import { CloseIconButton, RefreshIcon } from '@/components/ActionIcons'
+import { File, FileArchive, FileCode2, FileText, Film, FolderOpen, Image, Music, Plus, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
 import { api } from '@/api/client'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
@@ -389,15 +389,14 @@ export function FileTransferBox({ canInsert, onInsert, source }: FileTransferBox
                   <Plus size={13} aria-hidden="true" />
                 </button>
               )}
-              <button
-                type="button"
+              <CloseIconButton
+                label="关闭中转箱"
                 title="关闭"
-                aria-label="关闭中转箱"
-                className="ga-btn-icon-sm"
+                variant="compact"
+                iconSize={13}
+                className="rounded-md"
                 onClick={close}
-              >
-                <X size={13} aria-hidden="true" />
-              </button>
+              />
             </div>
           </header>
           <div className="mb-2 grid grid-cols-2 gap-1.5">
