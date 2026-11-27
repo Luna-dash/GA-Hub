@@ -119,4 +119,30 @@ describe('ModalOverlay behaviour contract', () => {
     expect(panel().getAttribute('aria-labelledby')).toBe('some-title')
     expect(panel().getAttribute('aria-modal')).toBe('true')
   })
+
+  it('does not steal focus back to opener on unmount if focus intentionally moved to another live control', () => {
+    const opener = document.createElement('button')
+    opener.textContent = 'opener'
+    const newTarget = document.createElement('button')
+    newTarget.textContent = 'new-target'
+    document.body.appendChild(opener)
+    document.body.appendChild(newTarget)
+    try {
+      opener.focus()
+      render(
+        <ModalOverlay onClose={vi.fn()}><button type="button">inner</button></ModalOverlay>,
+      )
+      expect(panel().contains(document.activeElement)).toBe(true)
+
+      newTarget.focus()
+      expect(document.activeElement).toBe(newTarget)
+
+      act(() => root!.unmount())
+      root = createRoot(host)
+      expect(document.activeElement).toBe(newTarget)
+    } finally {
+      opener.remove()
+      newTarget.remove()
+    }
+  })
 })

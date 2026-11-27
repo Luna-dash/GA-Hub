@@ -7,7 +7,7 @@
 import { useEffect, useRef, type CSSProperties, type ReactNode, type Ref } from 'react'
 import clsx from 'clsx'
 import { Z_LAYERS } from '@/config/zLayers'
-import { isTopOverlay, registerOverlay, restoreOverlayFocus } from '@/utils/overlayStack'
+import { hasActiveTrappedOverlay, isInsideTrappedOverlay, isTopOverlay, registerOverlay, restoreOverlayFocus } from '@/utils/overlayStack'
 
 interface ModalOverlayProps {
   onClose: () => void
@@ -63,6 +63,17 @@ export function ModalOverlay({
     return () => {
       reg.unregister()
       overlayIdRef.current = null
+      const active = document.activeElement
+      const focusMovedOutside =
+        active instanceof HTMLElement &&
+        active !== document.body &&
+        active !== document.documentElement &&
+        active.isConnected &&
+        !(active as HTMLButtonElement).disabled &&
+        !panel?.contains(active)
+      if (focusMovedOutside && (!hasActiveTrappedOverlay() || isInsideTrappedOverlay(active))) {
+        return
+      }
       restoreOverlayFocus(opener)
     }
   }, [zIndex])

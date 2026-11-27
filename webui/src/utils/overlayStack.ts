@@ -160,6 +160,11 @@ export function hasHigherLayerOverlay(zIndex: number): boolean {
   return stack.some((entry) => entry.zIndex > zIndex)
 }
 
+/** Whether any registered overlay currently traps focus. */
+export function hasActiveTrappedOverlay(): boolean {
+  return stack.some((entry) => entry.trapFocus)
+}
+
 /** Whether `node` resides inside any registered focus-trapping overlay panel. */
 export function isInsideTrappedOverlay(node: Node | null): boolean {
   if (!node) return false

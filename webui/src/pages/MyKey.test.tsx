@@ -5,9 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MyKey from './MyKey'
+import { DialogHost } from '@/components/DialogHost'
 import { resetPageState } from '@/utils/pageState'
 import { queryKeys } from '@/queries/queryKeys'
-import { dialog } from '@/stores/dialogStore'
+import { dialog, useDialogStore } from '@/stores/dialogStore'
 import type { MyKeyData } from '@/api/types'
 import { MYKEY_SHOW_UPLOAD_KEY, setMyKeyShowUpload } from '@/utils/mykeySyncUi'
 
@@ -66,6 +67,10 @@ describe('MyKey upload button visibility', () => {
     client.clear()
     host.remove()
     localStorage.removeItem(MYKEY_SHOW_UPLOAD_KEY)
+    useDialogStore.setState({
+      open: false, config: null, resolve: null, queue: [],
+      notificationConfig: null, notificationResolve: null, notificationQueue: [],
+    })
   })
 
   const render = () => {
@@ -687,5 +692,54 @@ describe('MyKey upload button visibility', () => {
     expect(confirmSpy).toHaveBeenCalledTimes(2)
     expect(structuredTab.getAttribute('aria-selected')).toBe('true')
     expect(document.activeElement).toBe(structuredTab)
+  })
+
+  it('keeps focus on old tab on Cancel and on new active tab on Confirm with real DialogHost', async () => {
+    apiMock.mykey.mockResolvedValue(fixture())
+    act(() => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <MyKey />
+          <DialogHost />
+        </QueryClientProvider>,
+      )
+    })
+    await settle()
+
+    const tabs = () => Array.from(host.querySelectorAll<HTMLButtonElement>('[role="tablist"][aria-label="编辑模式"] [role="tab"]'))
+    const [structuredTab, rawTab] = tabs()
+
+    // Dirty proxy in structured view
+    const proxyInput = host.querySelector<HTMLInputElement>('input[placeholder*="127.0.0.1"]')!
+    input(proxyInput, 'dirty-proxy')
+    structuredTab.focus()
+
+    // ArrowRight opens real DialogHost confirm -> Cancel keeps selection & restores focus to 结构化
+    await act(async () => {
+      structuredTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    })
+    const cancelBtn = host.querySelector<HTMLButtonElement>('[role="dialog"] [data-cancel]')!
+    expect(cancelBtn).not.toBeNull()
+    await act(async () => { cancelBtn.click() })
+    await settle()
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(structuredTab.getAttribute('aria-selected')).toBe('true')
+    expect(structuredTab.tabIndex).toBe(0)
+    expect(document.activeElement).toBe(structuredTab)
+
+    // ArrowRight -> Confirm ("放弃修改") switches to 原始 and keeps focus on 原始 (not stolen back to 结构化)
+    await act(async () => {
+      structuredTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    })
+    const confirmBtn = host.querySelector<HTMLButtonElement>('[role="dialog"] [data-confirm]')!
+    expect(confirmBtn).not.toBeNull()
+    await act(async () => { confirmBtn.click() })
+    await settle()
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(rawTab.getAttribute('aria-selected')).toBe('true')
+    expect(rawTab.tabIndex).toBe(0)
+    expect(structuredTab.getAttribute('aria-selected')).toBe('false')
+    expect(structuredTab.tabIndex).toBe(-1)
+    expect(document.activeElement).toBe(rawTab)
   })
 })

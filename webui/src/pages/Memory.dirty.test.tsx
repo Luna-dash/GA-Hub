@@ -6,9 +6,10 @@ import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-rou
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Memory from './Memory'
+import { DialogHost } from '@/components/DialogHost'
 import { GuardedLink } from '@/components/GuardedLink'
 import { api } from '@/api/client'
-import { dialog } from '@/stores/dialogStore'
+import { dialog, useDialogStore } from '@/stores/dialogStore'
 import { hasDirtyGuard, resetNavigationGuardsForTests } from '@/stores/navigationGuardStore'
 import { resetPageState } from '@/utils/pageState'
 
@@ -76,6 +77,10 @@ describe('Memory unsaved draft guard', () => {
     client.clear()
     resetPageState()
     resetNavigationGuardsForTests()
+    useDialogStore.setState({
+      open: false, config: null, resolve: null, queue: [],
+      notificationConfig: null, notificationResolve: null, notificationQueue: [],
+    })
     vi.restoreAllMocks()
   })
 
@@ -221,6 +226,52 @@ describe('Memory unsaved draft guard', () => {
     await settle()
     expect(confirmSpy).toHaveBeenCalledTimes(2)
     expect(l2Tab.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(l2Tab)
+  })
+
+  it('keeps focus on old tab on Cancel and on new active tab on Confirm with real DialogHost', async () => {
+    await act(async () => root.render(
+      <MemoryRouter initialEntries={['/memory?tab=insight']}>
+        <QueryClientProvider client={client}>
+          <Memory />
+          <DialogHost />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    ))
+    await vi.waitFor(() => expect(host.querySelector('textarea[aria-label="编辑器"]')).not.toBeNull())
+    setEditorText('unsaved insight')
+
+    const tabs = () => Array.from(host.querySelectorAll<HTMLButtonElement>('[role="tablist"][aria-label="记忆层级"] [role="tab"]'))
+    const l1Tab = tabs().find((b) => b.textContent === 'L1')!
+    const l2Tab = tabs().find((b) => b.textContent === 'L2')!
+    l1Tab.focus()
+
+    // ArrowRight opens real DialogHost confirm -> Cancel keeps selection & restores focus to L1
+    await act(async () => {
+      l1Tab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    })
+    const cancelBtn = host.querySelector<HTMLButtonElement>('[role="dialog"] [data-cancel]')!
+    expect(cancelBtn).not.toBeNull()
+    await act(async () => { cancelBtn.click() })
+    await settle()
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(l1Tab.getAttribute('aria-selected')).toBe('true')
+    expect(l1Tab.tabIndex).toBe(0)
+    expect(document.activeElement).toBe(l1Tab)
+
+    // ArrowRight -> Confirm ("放弃修改") switches to L2 and keeps focus on L2 (not stolen back to L1)
+    await act(async () => {
+      l1Tab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    })
+    const confirmBtn = host.querySelector<HTMLButtonElement>('[role="dialog"] [data-confirm]')!
+    expect(confirmBtn).not.toBeNull()
+    await act(async () => { confirmBtn.click() })
+    await settle()
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(l2Tab.getAttribute('aria-selected')).toBe('true')
+    expect(l2Tab.tabIndex).toBe(0)
+    expect(l1Tab.getAttribute('aria-selected')).toBe('false')
+    expect(l1Tab.tabIndex).toBe(-1)
     expect(document.activeElement).toBe(l2Tab)
   })
 })
