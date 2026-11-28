@@ -8,6 +8,7 @@ export interface FormattedRunUsage {
 const MODEL_ROLE_LABELS: Record<string, string> = {
   planner: '规划',
   executor: '执行',
+  subagent: '子代理',
   compaction: '压缩',
   model: '主模型',
 }

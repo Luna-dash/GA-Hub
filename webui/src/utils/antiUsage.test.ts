@@ -8,6 +8,7 @@ import {
   formatRunUsage,
   geminiQuotaSummary,
   isUsageStaleForHour,
+  modelRoleLabel,
   nextTopOfHourMs,
   quotaLimitDisplayLabel,
   resolveAccountTier,
@@ -224,5 +225,34 @@ describe('estimated USD formatting & per-model breakdown', () => {
     expect(res?.title).toContain('按官方公开 API 价估算 ~$0.0042')
     expect(res?.title).toContain('Gemini 4 Neon(规划) ×1 ~$0.003')
     expect(res?.title).toContain('Gemini 4 Hydrogen(执行) ×2 ~$0.0012')
+  })
+
+  it('formats subagent role breakdown with 子代理 label', () => {
+    expect(modelRoleLabel('subagent')).toBe('子代理')
+    const res = formatRunUsage({
+      input_tokens: 200_000,
+      output_tokens: 10_000,
+      cache_read_tokens: 100_000,
+      cache_write_tokens: 0,
+      thinking_tokens: 0,
+      model_calls: 6,
+      estimated_cost_usd: 0.015,
+      model_breakdown: [
+        {
+          model: 'gemini-3.8-flash',
+          display_name: 'Gemini 3.8 Flash',
+          role: 'subagent',
+          calls: 5,
+          input_tokens: 150_000,
+          output_tokens: 8_000,
+          cache_read_tokens: 100_000,
+          cache_write_tokens: 0,
+          thinking_tokens: 0,
+          estimated_cost_usd: 0.012,
+          pricing_source: 'catalog',
+        },
+      ],
+    })
+    expect(res?.title).toContain('Gemini 3.8 Flash(子代理) ×5 ~$0.01')
   })
 })

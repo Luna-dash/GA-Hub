@@ -87,6 +87,64 @@ def _merge_prompt_usage(acc: dict[str, int], payload: Any) -> None:
         acc[key] = acc.get(key, 0) + val
 
 
+def _merge_subagent_usage(
+    usage: dict[str, Any],
+    subagent_step_usages: list[dict[str, Any]],
+    *,
+    parent_step_usages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Fold subagent transcript step tokens/calls into `usage`, omitting parallel `generation_ms`."""
+    merged = dict(usage)
+    if not subagent_step_usages:
+        return merged
+
+    p_total_in, _, p_cr, p_cw = agy_pricing.split_inclusive_input(
+        max(0, int(merged.get("input_tokens") or 0)),
+        max(0, int(merged.get("cache_read_tokens") or 0)),
+        max(0, int(merged.get("cache_write_tokens") or 0)),
+    )
+    p_out = max(0, int(merged.get("output_tokens") or 0))
+    p_think = max(0, int(merged.get("thinking_tokens") or 0))
+    p_billable_out = max(p_out, p_think)
+
+    sub_uncached_in = 0
+    sub_cr = 0
+    sub_cw = 0
+    sub_out_total = 0
+    sub_think = 0
+    for step in subagent_step_usages:
+        if not isinstance(step, dict):
+            continue
+        s_in = max(0, int(step.get("input_tokens") or 0))
+        s_cr = max(0, int(step.get("cache_read_tokens") or 0))
+        s_cw = max(0, int(step.get("cache_write_tokens") or 0))
+        s_out = max(0, int(step.get("output_tokens") or 0))
+        s_th = max(0, int(step.get("thinking_tokens") or 0))
+        sub_uncached_in += s_in
+        sub_cr += s_cr
+        sub_cw += s_cw
+        sub_out_total += max(s_out, s_th)
+        sub_think += s_th
+
+    sub_total_in = sub_uncached_in + sub_cr + sub_cw
+    merged["input_tokens"] = p_total_in + sub_total_in
+    merged["cache_read_tokens"] = p_cr + sub_cr
+    merged["cache_write_tokens"] = p_cw + sub_cw
+    merged["output_tokens"] = p_billable_out + sub_out_total
+    merged["thinking_tokens"] = p_think + sub_think
+
+    parent_calls = max(0, int(merged.get("model_calls") or 0))
+    if parent_calls <= 0:
+        if parent_step_usages:
+            parent_calls = len(parent_step_usages)
+        elif p_total_in > 0 or p_billable_out > 0:
+            parent_calls = 1
+    merged["model_calls"] = parent_calls + len(subagent_step_usages)
+    # Parallel descendant turns share wall-clock generation time; keeping parent-only ms inflates tok/s.
+    merged.pop("generation_ms", None)
+    return merged
+
+
 @dataclass(frozen=True)
 class AntiDaemonStatus:
     state: AntiDaemonState
@@ -1506,6 +1564,14 @@ class AgySessionWorker:
                 self.loaded_orchestrator[1] if self.loaded_orchestrator else None
             )
             step_usages = outcome_watcher.turn_step_usages()
+            subagent_step_usages = outcome_watcher.turn_subagent_step_usages()
+            if subagent_step_usages:
+                usage = _merge_subagent_usage(
+                    usage,
+                    subagent_step_usages,
+                    parent_step_usages=step_usages,
+                )
+                step_usages = [*step_usages, *subagent_step_usages]
             cost_info = agy_pricing.calculate_run_cost(
                 model=effective_model,
                 usage=usage,

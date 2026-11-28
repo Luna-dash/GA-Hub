@@ -245,3 +245,87 @@ def test_external_user_pricing_json_and_config_overrides_hot_reload(tmp_path, mo
     )
     assert overridden["estimated_cost_usd"] == pytest.approx(2.4)
     assert overridden["model_breakdown"][0]["pricing_source"] == "override"
+
+
+def test_pricing_subagent_steps_preserve_parent_residual_and_breakdown(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_pricing._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_models._paths, "ADMIN_DATA", tmp_path)
+
+    # Parent ACP had 100k uncached + 100k cache_read + 50k un-flushed cache_write,
+    # while subagent added 200k uncached + 300k cache_read + 20k output on gemini-3.8-flash.
+    res = agy_pricing.calculate_run_cost(
+        model="claude-opus-5-5",
+        usage={
+            "input_tokens": 750_000,  # 250k parent (inc 50k cw) + 500k subagent
+            "cache_read_tokens": 400_000,
+            "cache_write_tokens": 50_000,
+            "output_tokens": 30_000,
+            "model_calls": 3,
+        },
+        step_usages=[
+            {
+                "kind": "PLANNER_RESPONSE",
+                "step_index": 1,
+                "model": "claude-opus-5-5",
+                "input_tokens": 100_000,
+                "cache_read_tokens": 100_000,
+                "output_tokens": 10_000,
+            },
+            {
+                "role": "subagent",
+                "kind": "PLANNER_RESPONSE",
+                "step_index": 1,
+                "model": "gemini-3.8-flash",
+                "input_tokens": 200_000,
+                "cache_read_tokens": 300_000,
+                "output_tokens": 20_000,
+            },
+        ],
+    )
+    by_key = {(item["model"], item["role"]): item for item in res["model_breakdown"]}
+    assert set(by_key) == {("claude-opus-5-5", "model"), ("gemini-3.8-flash", "subagent")}
+    parent_bucket = by_key[("claude-opus-5-5", "model")]
+    sub_bucket = by_key[("gemini-3.8-flash", "subagent")]
+    # Missing cache_write (50k) reconciles strictly into parent bucket, not subagent's model.
+    assert parent_bucket["calls"] == 1
+    assert parent_bucket["cache_write_tokens"] == 50_000
+    assert parent_bucket["input_tokens"] == 250_000
+    assert sub_bucket["calls"] == 1
+    assert sub_bucket["input_tokens"] == 500_000
+    assert sub_bucket["cache_read_tokens"] == 300_000
+    assert sub_bucket["output_tokens"] == 20_000
+    assert sum(item["input_tokens"] for item in res["model_breakdown"]) == 750_000
+
+    # When parent has ACP tokens/calls without parent transcript steps, residual preserves parent calls.
+    no_parent_steps = agy_pricing.calculate_run_cost(
+        model="gemini-4-neon",
+        usage={
+            "input_tokens": 300_000,
+            "cache_read_tokens": 100_000,
+            "output_tokens": 15_000,
+            "model_calls": 4,
+        },
+        step_usages=[
+            {
+                "role": "subagent",
+                "kind": "PLANNER_RESPONSE",
+                "step_index": 1,
+                "model": "gemini-3.8-flash",
+                "input_tokens": 100_000,
+                "cache_read_tokens": 50_000,
+                "output_tokens": 5_000,
+            },
+            {
+                "role": "subagent",
+                "kind": "PLANNER_RESPONSE",
+                "step_index": 2,
+                "model": "gemini-3.8-flash",
+                "input_tokens": 50_000,
+                "cache_read_tokens": 50_000,
+                "output_tokens": 5_000,
+            },
+        ],
+    )
+    by_key_2 = {(item["model"], item["role"]): item for item in no_parent_steps["model_breakdown"]}
+    assert by_key_2[("gemini-4-neon", "model")]["calls"] == 2
+    assert by_key_2[("gemini-3.8-flash", "subagent")]["calls"] == 2

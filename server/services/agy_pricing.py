@@ -537,7 +537,7 @@ def _step_cost(
     return usd
 
 
-def _split_inclusive_input(input_tokens: int, cache_read_tokens: int, cache_write_tokens: int) -> tuple[int, int, int, int]:
+def split_inclusive_input(input_tokens: int, cache_read_tokens: int, cache_write_tokens: int) -> tuple[int, int, int, int]:
     """Normalize inclusive vs exclusive ACP `input_tokens` into `(total_input, uncached_input, cache_read, cache_write)`."""
     raw_in = max(0, int(input_tokens))
     cr = max(0, int(cache_read_tokens))
@@ -546,6 +546,9 @@ def _split_inclusive_input(input_tokens: int, cache_read_tokens: int, cache_writ
     if cached > raw_in:
         return (raw_in + cached, raw_in, cr, cw)
     return (raw_in, raw_in - cached, cr, cw)
+
+
+_split_inclusive_input = split_inclusive_input
 
 
 def calculate_run_cost(
@@ -569,7 +572,7 @@ def calculate_run_cost(
     ov_map = _normalize_overrides(overrides)
     u = usage if isinstance(usage, dict) else {}
 
-    u_total_in, u_uncached_in, u_cr, u_cw = _split_inclusive_input(
+    u_total_in, u_uncached_in, u_cr, u_cw = split_inclusive_input(
         max(0, int(u.get("input_tokens") or 0)),
         max(0, int(u.get("cache_read_tokens") or 0)),
         max(0, int(u.get("cache_write_tokens") or 0)),
@@ -620,9 +623,11 @@ def calculate_run_cost(
         bucket["estimated_cost_usd"] += cost_usd
 
     if step_usages:
-        last_model: str | None = None
-        last_key: str | None = None
-        last_role: str | None = None
+        last_parent_model: str | None = None
+        last_parent_key: str | None = None
+        last_parent_role: str | None = None
+        parent_step_count = 0
+        subagent_step_count = 0
         sum_uncached_in = 0
         sum_cr = 0
         sum_cw = 0
@@ -631,21 +636,44 @@ def calculate_run_cost(
         for step in step_usages:
             if not isinstance(step, dict):
                 continue
+            step_role = str(step.get("role") or "").strip().lower()
             raw_step_model = str(step.get("model") or "").strip()
             kind = str(step.get("kind") or "PLANNER_RESPONSE").strip().upper()
-            canon_model, role, lookup_key = resolve_step_model_and_role(
-                raw_step_model,
-                run_model=model,
-                kind=kind,
-                planner_model=orchestrator_planner,
-                executor_model=orchestrator_executor,
-                last_model=last_model,
-                catalog=cat,
-            )
-            if raw_step_model:
-                last_model = canon_model
-                last_key = lookup_key
-                last_role = role
+            if step_role == "subagent":
+                subagent_step_count += 1
+                if raw_step_model:
+                    canon_model, _, lookup_key = resolve_step_model_and_role(
+                        raw_step_model,
+                        run_model=model,
+                        kind=kind,
+                        planner_model=orchestrator_planner,
+                        executor_model=orchestrator_executor,
+                        catalog=cat,
+                    )
+                else:
+                    fallback_sub_model = (
+                        (orchestrator_executor or orchestrator_planner or model)
+                        if _is_orchestrator_id(model, cat)
+                        else model
+                    )
+                    canon_model = canonicalize_model_id(fallback_sub_model, cat)
+                    lookup_key = str(fallback_sub_model or canon_model).strip().lower()
+                role = "subagent"
+            else:
+                parent_step_count += 1
+                canon_model, role, lookup_key = resolve_step_model_and_role(
+                    raw_step_model,
+                    run_model=model,
+                    kind=kind,
+                    planner_model=orchestrator_planner,
+                    executor_model=orchestrator_executor,
+                    last_model=last_parent_model,
+                    catalog=cat,
+                )
+                if raw_step_model:
+                    last_parent_model = canon_model
+                    last_parent_key = lookup_key
+                    last_parent_role = role
 
             # transcript.jsonl reports exclusive `input_tokens` (uncached fresh tokens) per request
             s_uncached_in = max(0, int(step.get("input_tokens") or 0))
@@ -696,10 +724,20 @@ def calculate_run_cost(
         if rem_uncached_in or rem_cr or rem_cw or rem_out_total:
             rem_out = rem_out_total if u_out >= u_think else 0
             rem_think = rem_out_total if u_think > u_out else 0
-            fallback_model = (orchestrator_executor or orchestrator_planner or model) if _is_orchestrator_id(model, cat) else model
-            res_model = last_model or canonicalize_model_id(fallback_model, cat)
-            res_key = last_key or res_model
-            res_role = last_role or "model"
+            if last_parent_model is not None:
+                res_model = last_parent_model
+                res_key = last_parent_key or last_parent_model
+                res_role = last_parent_role or "model"
+            else:
+                res_model, res_role, res_key = resolve_step_model_and_role(
+                    model,
+                    run_model=model,
+                    kind="PLANNER_RESPONSE",
+                    planner_model=orchestrator_planner,
+                    executor_model=orchestrator_executor,
+                    catalog=cat,
+                )
+            res_calls = 0 if parent_step_count > 0 else max(1, u_calls - subagent_step_count)
             rates = resolve_model_rates(res_key, run_date=run_date, catalog=cat, overrides=ov_map)
             rem_cost = _step_cost(
                 uncached_input_tokens=rem_uncached_in,
@@ -712,7 +750,7 @@ def calculate_run_cost(
             _add_to_bucket(
                 canon_model=res_model or rates.model,
                 role=res_role,
-                calls=0,
+                calls=res_calls,
                 inclusive_in_tok=rem_uncached_in + rem_cr + rem_cw,
                 out_tok=rem_out,
                 cr_tok=rem_cr,

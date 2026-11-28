@@ -3433,3 +3433,139 @@ def test_profile_manual_account_tier_patch_and_passive_protection(tmp_path, monk
     entry_passive = next(p for p in listed_again["profiles"] if p["id"] == prof.id)
     assert entry_passive["account_tier"] == "pro"
     assert entry_passive["account_tier_name"] == "Google AI Pro"
+
+
+def test_merge_subagent_usage_and_ledger_role_ordering(tmp_path, monkeypatch):
+    from server.services import agy_models, agy_pricing
+
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_pricing._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_models._paths, "ADMIN_DATA", tmp_path)
+
+    # Parent ACP reported exclusive input (500 uncached, 1000 cached_read); subagent includes pure thinking step.
+    merged = agy_runtime._merge_subagent_usage(
+        {
+            "input_tokens": 500,
+            "cache_read_tokens": 1000,
+            "cache_write_tokens": 0,
+            "output_tokens": 100,
+            "thinking_tokens": 20,
+            "model_calls": 1,
+            "generation_ms": 2500,
+        },
+        [
+            {
+                "role": "subagent",
+                "model": "gemini-3.8-flash",
+                "input_tokens": 2000,
+                "cache_read_tokens": 3000,
+                "cache_write_tokens": 100,
+                "output_tokens": 250,
+                "thinking_tokens": 50,
+            },
+            {
+                "role": "subagent",
+                "model": "gemini-3.8-flash",
+                "input_tokens": 400,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "output_tokens": 0,
+                "thinking_tokens": 300,
+            },
+        ],
+    )
+    # Parent normalized inclusive input = 1500; subagent total input = 5100 + 400 = 5500 -> 7000
+    assert merged["input_tokens"] == 7000
+    assert merged["cache_read_tokens"] == 4000
+    assert merged["cache_write_tokens"] == 100
+    assert merged["output_tokens"] == 650
+    assert merged["thinking_tokens"] == 370
+    assert merged["model_calls"] == 3
+    assert "generation_ms" not in merged
+
+    ledger = agy_usage.AgyLedger(tmp_path / "usage.sqlite3")
+    cost_info = agy_pricing.calculate_run_cost(
+        model="gemini-4-neon",
+        usage=merged,
+        step_usages=[
+            {
+                "kind": "PLANNER_RESPONSE",
+                "step_index": 1,
+                "model": "gemini-4-neon",
+                "input_tokens": 500,
+                "cache_read_tokens": 1000,
+                "output_tokens": 100,
+                "thinking_tokens": 20,
+            },
+            {
+                "role": "subagent",
+                "kind": "PLANNER_RESPONSE",
+                "step_index": 1,
+                "model": "gemini-3.8-flash",
+                "input_tokens": 2000,
+                "cache_read_tokens": 3000,
+                "cache_write_tokens": 100,
+                "output_tokens": 250,
+                "thinking_tokens": 50,
+            },
+            {
+                "role": "subagent",
+                "kind": "PLANNER_RESPONSE",
+                "step_index": 2,
+                "model": "gemini-3.8-flash",
+                "input_tokens": 400,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "output_tokens": 0,
+                "thinking_tokens": 300,
+            },
+        ],
+    )
+    ledger.record_run(
+        "run-subagent-1",
+        "gemini-4-neon",
+        "success",
+        profile_id="default",
+        input_tokens=merged["input_tokens"],
+        output_tokens=merged["output_tokens"],
+        cache_read_tokens=merged["cache_read_tokens"],
+        cache_write_tokens=merged["cache_write_tokens"],
+        thinking_tokens=merged["thinking_tokens"],
+        model_calls=merged["model_calls"],
+        generation_ms=merged.get("generation_ms", 0),
+        estimated_cost_usd=cost_info["estimated_cost_usd"],
+        model_breakdown=cost_info["model_breakdown"],
+    )
+    # Record a second same-model run where gemini-3.8-flash acts as compaction to verify role ordering.
+    ledger.record_run(
+        "run-subagent-2",
+        "gemini-3.8-flash",
+        "success",
+        profile_id="default",
+        input_tokens=1000,
+        output_tokens=50,
+        model_calls=1,
+        model_breakdown=[
+            {
+                "model": "gemini-3.8-flash",
+                "display_name": "Gemini 3.8 Flash",
+                "role": "compaction",
+                "calls": 1,
+                "input_tokens": 1000,
+                "output_tokens": 50,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "thinking_tokens": 0,
+                "estimated_cost_usd": 0.0001,
+                "pricing_source": "catalog",
+            }
+        ],
+    )
+    stats = ledger.stats(window_hours=24, profile_id="default")
+    assert stats["model_calls"] == 4
+    assert stats["tokens_per_sec"] == 0.0
+    by_model = {item["model"]: item for item in stats["by_model"]}
+    assert by_model["gemini-3.8-flash"]["roles"] == ["subagent", "compaction"]
+    assert by_model["gemini-3.8-flash"]["calls"] == 3
+    assert by_model["gemini-4-neon"]["calls"] == 1

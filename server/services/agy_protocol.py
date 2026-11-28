@@ -2026,6 +2026,8 @@ _PROTO_TS_MAX_SEC = 4_102_444_800
 _MAX_PLANNER_STEP_DURATION_SEC = 3600.0
 _MAX_MESSAGE_FILES = 500
 _MAX_DETACHED_CHILDREN = 256
+_MAX_DESCENDANT_CONVERSATIONS = 256
+_LAST_MODEL_TAIL_BYTES = 64 * 1024
 _HIGH_PRIORITY_MESSAGE = "MESSAGE_PRIORITY_HIGH"
 _LOW_PRIORITY_MESSAGE = "MESSAGE_PRIORITY_LOW"
 
@@ -2358,6 +2360,164 @@ def _nonneg_int(val: Any) -> int:
     return num if num > 0 else 0
 
 
+def _read_transcript_step_usages(path: Path, st: os.stat_result, start_offset: int) -> list[dict[str, Any]]:
+    clamped_start = start_offset if 0 <= start_offset <= st.st_size else 0
+    if clamped_start >= st.st_size:
+        return []
+    try:
+        with path.open("rb") as fh:
+            if clamped_start > 0:
+                fh.seek(clamped_start)
+            raw_bytes = fh.read()
+    except OSError:
+        return []
+
+    entries: dict[int, dict[str, Any]] = {}
+    anonymous: list[dict[str, Any]] = []
+    for raw_line in raw_bytes.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line.decode("utf-8", errors="replace"))
+        except ValueError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        kind = str(obj.get("type") or "").strip().upper()
+        if kind not in {"PLANNER_RESPONSE", "CHECKPOINT"}:
+            continue
+        in_tok = _nonneg_int(obj.get("input_tokens"))
+        cr_tok = _nonneg_int(obj.get("cache_read_tokens"))
+        cw_tok = _nonneg_int(obj.get("cache_write_tokens"))
+        out_tok = _nonneg_int(obj.get("output_tokens"))
+        think_tok = _nonneg_int(obj.get("thinking_tokens"))
+        if in_tok + cr_tok + cw_tok + out_tok + think_tok <= 0:
+            continue
+        step_idx = obj.get("step_index")
+        item = {
+            "kind": kind,
+            "step_index": step_idx if isinstance(step_idx, int) and not isinstance(step_idx, bool) else None,
+            "model": str(obj.get("model") or "").strip(),
+            "input_tokens": in_tok,
+            "cache_read_tokens": cr_tok,
+            "cache_write_tokens": cw_tok,
+            "output_tokens": out_tok,
+            "thinking_tokens": think_tok,
+        }
+        if item["step_index"] is not None:
+            entries[item["step_index"]] = item
+        else:
+            anonymous.append(item)
+
+    ordered = [entries[idx] for idx in sorted(entries)]
+    ordered.extend(anonymous)
+    return ordered
+
+
+def _read_transcript_last_model(path: Path, st: os.stat_result, end_offset: int) -> str:
+    clamped_end = min(max(0, int(end_offset)), st.st_size)
+    if clamped_end <= 0:
+        return ""
+    seek_pos = max(0, clamped_end - _LAST_MODEL_TAIL_BYTES)
+    try:
+        with path.open("rb") as fh:
+            if seek_pos > 0:
+                fh.seek(seek_pos)
+            raw_bytes = fh.read(clamped_end - seek_pos)
+    except OSError:
+        return ""
+
+    for raw_line in reversed(raw_bytes.splitlines()):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line.decode("utf-8", errors="replace"))
+        except ValueError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        model = str(obj.get("model") or "").strip()
+        if model:
+            return model
+    return ""
+
+
+def discover_descendant_conversations(
+    app_data_dir: Path,
+    root_session_id: str,
+    *,
+    max_descendants: int = _MAX_DESCENDANT_CONVERSATIONS,
+) -> list[str]:
+    """Discover descendant conversation IDs rooted at `root_session_id` via `conversation_summaries.db`."""
+    if max_descendants <= 0 or not _NATIVE_ID_RE.fullmatch(root_session_id):
+        return []
+    resolved = _resolve_managed_path(app_data_dir, ("conversation_summaries.db",), "file")
+    if resolved is None:
+        return []
+    db_path, _ = resolved
+    try:
+        uri = f"{db_path.resolve().as_uri()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=0.5)
+    except (OSError, sqlite3.Error):
+        return []
+
+    children_by_parent: dict[str, list[str]] = {}
+    try:
+        conn.execute("PRAGMA busy_timeout = 100")
+        has_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'conversation_summaries'"
+        ).fetchone()
+        if has_table is None:
+            return []
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(conversation_summaries)").fetchall()
+            if len(row) > 1
+        }
+        if "conversation_id" not in cols or "parent_conversation_id" not in cols:
+            return []
+        rows = conn.execute(
+            "SELECT conversation_id, parent_conversation_id FROM conversation_summaries"
+        ).fetchall()
+        for row in rows:
+            if len(row) < 2:
+                continue
+            cid = str(row[0] or "").strip()
+            pid = str(row[1] or "").strip()
+            if (
+                not cid
+                or not pid
+                or cid == pid
+                or not _NATIVE_ID_RE.fullmatch(cid)
+                or not _NATIVE_ID_RE.fullmatch(pid)
+            ):
+                continue
+            children_by_parent.setdefault(pid, []).append(cid)
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+    descendants: list[str] = []
+    seen: set[str] = {root_session_id}
+    queue: list[str] = [root_session_id]
+    q_idx = 0
+    while q_idx < len(queue) and len(descendants) < max_descendants:
+        cur = queue[q_idx]
+        q_idx += 1
+        for child_id in sorted(children_by_parent.get(cur, ())):
+            if child_id in seen:
+                continue
+            seen.add(child_id)
+            descendants.append(child_id)
+            queue.append(child_id)
+            if len(descendants) >= max_descendants:
+                break
+    return descendants
+
+
 class PromptOutcomeWatcher:
     """Ports T3 Code's `watchAntigravityPromptOutcome` against `<app_data_dir>/conversations/<sid>.db`."""
 
@@ -2369,6 +2529,7 @@ class PromptOutcomeWatcher:
         self._start_index: int = -1
         self._turn_start_index: int = -1
         self._turn_transcript_offset: int = 0
+        self._turn_descendant_offsets: dict[str, int] = {}
 
     def prepare(self, *, reset_turn: bool = True) -> None:
         self._untrusted = False
@@ -2377,6 +2538,7 @@ class PromptOutcomeWatcher:
         if reset_turn:
             self._turn_start_index = -1
             self._turn_transcript_offset = 0
+            self._turn_descendant_offsets = {}
         if not _NATIVE_ID_RE.fullmatch(self.session_id):
             self._untrusted = True
             return
@@ -2388,6 +2550,13 @@ class PromptOutcomeWatcher:
             )
             if t_resolved is not None:
                 self._turn_transcript_offset = int(t_resolved[1].st_size)
+            for cid in discover_descendant_conversations(self.app_data_dir, self.session_id):
+                c_resolved = _resolve_managed_path(
+                    self.app_data_dir,
+                    ("brain", cid, ".system_generated", "logs", "transcript.jsonl"),
+                    "file",
+                )
+                self._turn_descendant_offsets[cid] = int(c_resolved[1].st_size) if c_resolved is not None else 0
         if _resolve_managed_path(self.app_data_dir, ("conversations",), "directory") is None:
             return
         seg = ("conversations", f"{self.session_id}.db")
@@ -2511,56 +2680,42 @@ class PromptOutcomeWatcher:
         if resolved is None:
             return []
         path, st = resolved
-        start_offset = self._turn_transcript_offset if 0 <= self._turn_transcript_offset <= st.st_size else 0
-        try:
-            with path.open("rb") as fh:
-                if start_offset > 0:
-                    fh.seek(start_offset)
-                raw_bytes = fh.read()
-        except OSError:
+        return _read_transcript_step_usages(path, st, self._turn_transcript_offset)
+
+    def turn_subagent_step_usages(self) -> list[dict[str, Any]]:
+        """Read incremental usage steps from all descendant conversations spawned/used during this turn."""
+        if self._untrusted or not _NATIVE_ID_RE.fullmatch(self.session_id):
             return []
-
-        entries: dict[int, dict[str, Any]] = {}
-        anonymous: list[dict[str, Any]] = []
-        for raw_line in raw_bytes.splitlines():
-            line = raw_line.strip()
-            if not line:
+        collected: list[dict[str, Any]] = []
+        for cid in discover_descendant_conversations(self.app_data_dir, self.session_id):
+            resolved = _resolve_managed_path(
+                self.app_data_dir,
+                ("brain", cid, ".system_generated", "logs", "transcript.jsonl"),
+                "file",
+            )
+            if resolved is None:
                 continue
-            try:
-                obj = json.loads(line.decode("utf-8", errors="replace"))
-            except ValueError:
+            path, st = resolved
+            raw_start = self._turn_descendant_offsets.get(cid, 0)
+            start_offset = raw_start if 0 <= raw_start <= st.st_size else 0
+            steps = _read_transcript_step_usages(path, st, start_offset)
+            if not steps:
                 continue
-            if not isinstance(obj, dict):
-                continue
-            kind = str(obj.get("type") or "").strip().upper()
-            if kind not in {"PLANNER_RESPONSE", "CHECKPOINT"}:
-                continue
-            in_tok = _nonneg_int(obj.get("input_tokens"))
-            cr_tok = _nonneg_int(obj.get("cache_read_tokens"))
-            cw_tok = _nonneg_int(obj.get("cache_write_tokens"))
-            out_tok = _nonneg_int(obj.get("output_tokens"))
-            think_tok = _nonneg_int(obj.get("thinking_tokens"))
-            if in_tok + cr_tok + cw_tok + out_tok + think_tok <= 0:
-                continue
-            step_idx = obj.get("step_index")
-            item = {
-                "kind": kind,
-                "step_index": step_idx if isinstance(step_idx, int) and not isinstance(step_idx, bool) else None,
-                "model": str(obj.get("model") or "").strip(),
-                "input_tokens": in_tok,
-                "cache_read_tokens": cr_tok,
-                "cache_write_tokens": cw_tok,
-                "output_tokens": out_tok,
-                "thinking_tokens": think_tok,
-            }
-            if item["step_index"] is not None:
-                entries[item["step_index"]] = item
-            else:
-                anonymous.append(item)
-
-        ordered = [entries[idx] for idx in sorted(entries)]
-        ordered.extend(anonymous)
-        return ordered
+            prev_model = ""
+            looked_back = False
+            for step in steps:
+                if step["model"]:
+                    prev_model = step["model"]
+                else:
+                    if not prev_model and not looked_back and start_offset > 0:
+                        looked_back = True
+                        prev_model = _read_transcript_last_model(path, st, start_offset)
+                    if prev_model:
+                        step["model"] = prev_model
+                step["role"] = "subagent"
+                step["conversation_id"] = cid
+            collected.extend(steps)
+        return collected
 
 
 def _read_inbox_messages(app_data_dir: Path, conversation_id: str) -> list[dict[str, Any]] | None:

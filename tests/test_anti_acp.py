@@ -992,3 +992,141 @@ def test_prompt_outcome_watcher_turn_step_usages_incremental_and_fail_closed(tmp
     watcher.prepare()
     assert watcher.turn_step_usages() == []
     assert agy_protocol.PromptOutcomeWatcher(app_data, "../escape").turn_step_usages() == []
+
+
+def test_prompt_outcome_watcher_subagent_step_usages_nested_resumed_and_guarded(tmp_path):
+    import json
+    import sqlite3
+
+    app_data = tmp_path / "agy"
+    summaries_db = app_data / "conversation_summaries.db"
+    summaries_db.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(summaries_db) as conn:
+        conn.execute(
+            "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, parent_conversation_id TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO conversation_summaries (conversation_id, parent_conversation_id) VALUES (?, ?)",
+            [
+                ("sess_root", ""),
+                ("child_1", "sess_root"),
+                ("resumed_child", "sess_root"),
+                ("grand_1", "child_1"),
+                ("other_root", ""),
+                ("other_child", "other_root"),
+                ("cyc_a", "sess_root"),
+                ("cyc_b", "cyc_a"),
+                ("cyc_a_self", "cyc_a_self"),
+                ("../escape", "sess_root"),
+            ],
+        )
+        # Add cycle back-edge cyc_a <- cyc_b after initial row insert
+        conn.execute("CREATE TABLE IF NOT EXISTS _noop (x INT)")
+        conn.commit()
+    with sqlite3.connect(summaries_db) as conn:
+        conn.execute("DELETE FROM conversation_summaries WHERE conversation_id = 'cyc_a'")
+        conn.execute("INSERT INTO conversation_summaries VALUES ('cyc_a', 'cyc_b')")
+        conn.commit()
+
+    def _transcript(cid: str) -> Path:
+        p = app_data / "brain" / cid / ".system_generated" / "logs" / "transcript.jsonl"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    # Pre-turn history in resumed_child must NOT be re-counted, but supplies its own model fallback.
+    _transcript("resumed_child").write_text(
+        json.dumps({
+            "step_index": 0,
+            "type": "PLANNER_RESPONSE",
+            "model": "claude-sonnet-5-5",
+            "input_tokens": 9000,
+            "cache_read_tokens": 0,
+            "output_tokens": 500,
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    watcher = proto.PromptOutcomeWatcher(app_data, "sess_root")
+    watcher.prepare()
+
+    # Append new subagent work during turn across child, grandchild, and resumed child.
+    with _transcript("child_1").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "model": "gemini-3.8-flash",
+            "input_tokens": 1200,
+            "cache_read_tokens": 800,
+            "output_tokens": 150,
+        }) + "\n")
+        fh.write(json.dumps({
+            "step_index": 2,
+            "type": "CHECKPOINT",
+            "input_tokens": 100,
+            "cache_read_tokens": 2000,
+            "output_tokens": 40,
+        }) + "\n")
+
+    with _transcript("grand_1").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "model": "gemini-4-hydrogen",
+            "input_tokens": 600,
+            "cache_read_tokens": 300,
+            "output_tokens": 80,
+            "thinking_tokens": 20,
+        }) + "\n")
+
+    with _transcript("resumed_child").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "step_index": 1,
+            "type": "CHECKPOINT",
+            "input_tokens": 250,
+            "cache_read_tokens": 4000,
+            "output_tokens": 60,
+        }) + "\n")
+
+    _transcript("other_child").write_text(
+        json.dumps({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "model": "gemini-4-neon",
+            "input_tokens": 99999,
+            "output_tokens": 9999,
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    # Steered follow-up within the same turn preserves initial turn offsets.
+    watcher.prepare(reset_turn=False)
+    with _transcript("grand_1").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "step_index": 2,
+            "type": "PLANNER_RESPONSE",
+            "model": "gemini-4-hydrogen",
+            "input_tokens": 300,
+            "cache_read_tokens": 500,
+            "output_tokens": 50,
+        }) + "\n")
+
+    sub_steps = watcher.turn_subagent_step_usages()
+    assert len(sub_steps) == 5
+    assert all(s["role"] == "subagent" for s in sub_steps)
+    assert all(s["conversation_id"] != "other_child" for s in sub_steps)
+
+    by_cid: dict[str, list[dict]] = {}
+    for step in sub_steps:
+        by_cid.setdefault(step["conversation_id"], []).append(step)
+
+    assert set(by_cid) == {"child_1", "grand_1", "resumed_child"}
+    # Empty-model CHECKPOINT inherits from same conversation's prior step, never sibling child.
+    assert [s["model"] for s in by_cid["child_1"]] == ["gemini-3.8-flash", "gemini-3.8-flash"]
+    assert [s["model"] for s in by_cid["resumed_child"]] == ["claude-sonnet-5-5"]
+    assert [s["step_index"] for s in by_cid["resumed_child"]] == [1]
+    assert [s["step_index"] for s in by_cid["grand_1"]] == [1, 2]
+
+    # Starting a new turn advances descendant offsets so previous turn steps are not re-read.
+    watcher.prepare()
+    assert watcher.turn_subagent_step_usages() == []
+    assert proto.discover_descendant_conversations(app_data, "../escape") == []

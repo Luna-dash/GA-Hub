@@ -1266,7 +1266,7 @@ class AgyLedger:
             else 0.0
         )
 
-        role_order = {"planner": 0, "executor": 1, "compaction": 2, "model": 3}
+        role_order = {"planner": 0, "executor": 1, "subagent": 2, "compaction": 3, "model": 4}
         model_acc: dict[str, dict[str, Any]] = {}
 
         def _acc_entry(
