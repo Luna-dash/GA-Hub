@@ -17499,6 +17499,56 @@
         ],
         "title": "ThemeTaskConfig"
       },
+      "TokenChannelStatsResp": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "default": false
+          },
+          "all_time": {
+            "$ref": "#/components/schemas/TokenTotalsResp"
+          },
+          "current_week": {
+            "$ref": "#/components/schemas/TokenWeekStatsResp"
+          },
+          "weeks": {
+            "items": {
+              "$ref": "#/components/schemas/TokenWeekStatsResp"
+            },
+            "type": "array",
+            "title": "Weeks"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/TokenDayStatsResp"
+            },
+            "type": "array",
+            "title": "Days"
+          }
+        },
+        "type": "object",
+        "required": [
+          "current_week"
+        ],
+        "title": "TokenChannelStatsResp"
+      },
+      "TokenChannelsResp": {
+        "properties": {
+          "ga": {
+            "$ref": "#/components/schemas/TokenChannelStatsResp"
+          },
+          "anti": {
+            "$ref": "#/components/schemas/TokenChannelStatsResp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ga",
+          "anti"
+        ],
+        "title": "TokenChannelsResp"
+      },
       "TokenDayStatsResp": {
         "properties": {
           "requests": {
@@ -17603,6 +17653,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/TokenEngineBreakdownResp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "channels": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenChannelsResp"
               },
               {
                 "type": "null"

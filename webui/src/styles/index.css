@@ -102,12 +102,16 @@
   --c-rail-dot-error-hover: #A62D20;
   --c-rail-dot-error-ring: rgba(201, 59, 43, 0.20);
   --c-rail-dot-error-rail-ring: rgba(201, 59, 43, 0.16);
-  --c-chart-input: #748574;
-  --c-chart-output: #aa8959;
-  --c-chart-cache-read: #758d9a;
-  --c-chart-cache-create: #918196;
-  --c-chart-today: #a6b09d;
-  --c-chart-track: #87927d;
+  --c-chart-input: #17825B;
+  --c-chart-output: #D97706;
+  --c-chart-cache-read: #1D70B8;
+  --c-chart-cache-create: #7E4CC2;
+  --c-chart-today: #43B588;
+  --c-chart-track: #17825B;
+  --c-chart-ga: #17825B;
+  --c-chart-ga-rgb: 23 130 91;
+  --c-chart-agy: #1E6FD9;
+  --c-chart-agy-rgb: 30 111 217;
   color-scheme: light;
 }
 
@@ -126,6 +130,16 @@ html[data-theme="crisp-brown-soft"] {
   --c-user-bubble-bg: #EFE6D8;
   --c-user-bubble-fg: #1C1917;
   --c-user-bubble-border: #CBB79B;
+  --c-chart-input: #B85A14;
+  --c-chart-output: #E08B1B;
+  --c-chart-cache-read: #1E73BE;
+  --c-chart-cache-create: #A84370;
+  --c-chart-today: #DE8C47;
+  --c-chart-track: #B85A14;
+  --c-chart-ga: #B85A14;
+  --c-chart-ga-rgb: 184 90 20;
+  --c-chart-agy: #16826E;
+  --c-chart-agy-rgb: 22 130 110;
 }
 
 html[data-theme="crisp-brown-solid"] {
@@ -137,6 +151,16 @@ html[data-theme="crisp-brown-solid"] {
   --c-user-bubble-bg: #6E4219;
   --c-user-bubble-fg: #FFF8EC;
   --c-user-bubble-border: #573312;
+  --c-chart-input: #B85A14;
+  --c-chart-output: #E08B1B;
+  --c-chart-cache-read: #1E73BE;
+  --c-chart-cache-create: #A84370;
+  --c-chart-today: #DE8C47;
+  --c-chart-track: #B85A14;
+  --c-chart-ga: #B85A14;
+  --c-chart-ga-rgb: 184 90 20;
+  --c-chart-agy: #16826E;
+  --c-chart-agy-rgb: 22 130 110;
 }
 
 html[data-theme="warm-parchment"] {
@@ -161,6 +185,16 @@ html[data-theme="warm-parchment"] {
   --c-user-bubble-bg: #DAE7DF;
   --c-user-bubble-fg: #1C1917;
   --c-user-bubble-border: #96B7A6;
+  --c-chart-input: #147A54;
+  --c-chart-output: #D46A08;
+  --c-chart-cache-read: #1969B0;
+  --c-chart-cache-create: #7B46BA;
+  --c-chart-today: #3DA87E;
+  --c-chart-track: #147A54;
+  --c-chart-ga: #147A54;
+  --c-chart-ga-rgb: 20 122 84;
+  --c-chart-agy: #C2571A;
+  --c-chart-agy-rgb: 194 87 26;
 }
 
 html[data-theme="dark-forest"] {
@@ -249,12 +283,16 @@ html[data-theme="dark-forest"] {
   --c-rail-dot-error-hover: #F58F87;
   --c-rail-dot-error-ring: rgba(240, 113, 103, 0.24);
   --c-rail-dot-error-rail-ring: rgba(240, 113, 103, 0.20);
-  --c-chart-input: #68B88C;
-  --c-chart-output: #D9AD6A;
-  --c-chart-cache-read: #7BB4D4;
-  --c-chart-cache-create: #B79FD1;
-  --c-chart-today: #8CC8A6;
-  --c-chart-track: #68B88C;
+  --c-chart-input: #34D399;
+  --c-chart-output: #F59E0B;
+  --c-chart-cache-read: #38BDF8;
+  --c-chart-cache-create: #A78BFA;
+  --c-chart-today: #10B981;
+  --c-chart-track: #34D399;
+  --c-chart-ga: #34D399;
+  --c-chart-ga-rgb: 52 211 153;
+  --c-chart-agy: #38BDF8;
+  --c-chart-agy-rgb: 56 189 248;
   color-scheme: dark;
 }
 

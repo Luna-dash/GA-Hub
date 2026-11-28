@@ -351,6 +351,8 @@ def _native_ledger_usage(metadata: Any = None) -> dict[str, Any]:
     ga_usage = _aggregate_ledger() if ga_available else {"days": {}, "all_time": empty, "sessions": {}}
     agy_usage = _aggregate_agy_ledger()
     agy_available = bool(agy_usage.get("available"))
+    ga_channel = {"available": ga_available, **_series_response(ga_usage, now)}
+    agy_channel = {"available": agy_available, **_series_response(agy_usage, now)}
 
     if not ga_available and not agy_available:
         usage = {"days": {}, "all_time": empty, "sessions": {}}
@@ -359,6 +361,7 @@ def _native_ledger_usage(metadata: Any = None) -> dict[str, Any]:
             "totals": _with_rate(empty),
             "timestamp": now,
             "by_engine": {"ga": _with_rate(empty), "anti": _with_rate(empty)},
+            "channels": {"ga": ga_channel, "anti": agy_channel},
         }
         result.update(_weekly_response(usage, now, metadata=metadata))
         return result
@@ -373,6 +376,7 @@ def _native_ledger_usage(metadata: Any = None) -> dict[str, Any]:
             "ga": _with_rate(ga_usage["all_time"]),
             "anti": _with_rate(agy_usage["all_time"]),
         },
+        "channels": {"ga": ga_channel, "anti": agy_channel},
     }
     result.update(_weekly_response(usage, now, metadata=metadata))
     return result
@@ -467,7 +471,7 @@ def _weeks_from_days(days_source: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _weekly_response(data: dict[str, Any], timestamp: int, *, metadata: Any = None) -> dict[str, Any]:
+def _series_response(data: dict[str, Any], timestamp: int) -> dict[str, Any]:
     days_source = data.get("days") if isinstance(data.get("days"), dict) else {}
     days = [
         {"date": date, **_with_rate(_normalise_totals(days_source[date]))}
@@ -491,6 +495,12 @@ def _weekly_response(data: dict[str, Any], timestamp: int, *, metadata: Any = No
         "current_week": current,
         "weeks": rows,
         "days": days,
+    }
+
+
+def _weekly_response(data: dict[str, Any], timestamp: int, *, metadata: Any = None) -> dict[str, Any]:
+    return {
+        **_series_response(data, timestamp),
         "threads": _session_rows(data, metadata=metadata),
     }
 

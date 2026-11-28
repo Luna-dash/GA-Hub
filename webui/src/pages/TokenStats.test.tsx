@@ -145,6 +145,76 @@ describe('TokenStats dashboard', () => {
     expect(host.querySelector('.token-engine-split')?.textContent).toContain('GA 700 · Agy 300')
     expect([...host.querySelectorAll('.token-engine-tag')].map(el => el.textContent)).toEqual(['GA', 'Agy'])
   })
+  it('switches cleanly between 总, GA, and Agy channels across metrics, charts, and sessions', async () => {
+    const gaDay = { ...zero, date: '2026-10-12', requests: 2, input: 400, output: 100, cache_read: 200, total: 700, cache_hit_rate: 33.3 }
+    const agyDay = { ...zero, date: '2026-10-11', requests: 1, input: 150, output: 50, cache_read: 100, total: 300, cache_hit_rate: 40.0 }
+    const mergedDay1 = { ...agyDay }
+    const mergedDay2 = { ...gaDay }
+    const multiFixture: TokenStatsResponse = {
+      available: true,
+      timestamp: new Date(2026, 9, 12, 12).getTime() / 1000,
+      totals: { ...zero, requests: 3, input: 550, output: 150, cache_read: 300, total: 1000, cache_hit_rate: 35.3 },
+      all_time: { ...zero, requests: 3, input: 550, output: 150, cache_read: 300, total: 1000, cache_hit_rate: 35.3 },
+      current_week: { ...zero, requests: 2, input: 400, output: 100, cache_read: 200, total: 700, cache_hit_rate: 33.3, week_start: '2026-10-12', week_end: '2026-10-18' },
+      weeks: [
+        { ...agyDay, week_start: '2026-10-05', week_end: '2026-10-11' },
+        { ...gaDay, week_start: '2026-10-12', week_end: '2026-10-18' },
+      ],
+      days: [mergedDay1, mergedDay2],
+      by_engine: {
+        ga: { ...gaDay, total: 700, requests: 2 },
+        anti: { ...agyDay, total: 300, requests: 1 },
+      },
+      channels: {
+        ga: {
+          available: true,
+          all_time: gaDay,
+          current_week: { ...gaDay, week_start: '2026-10-12', week_end: '2026-10-18' },
+          weeks: [{ ...gaDay, week_start: '2026-10-12', week_end: '2026-10-18' }],
+          days: [gaDay],
+        },
+        anti: {
+          available: true,
+          all_time: agyDay,
+          current_week: { ...zero, week_start: '2026-10-12', week_end: '2026-10-18' },
+          weeks: [{ ...agyDay, week_start: '2026-10-05', week_end: '2026-10-11' }],
+          days: [agyDay],
+        },
+      },
+      threads: [
+        { ...gaDay, thread: 'ga-1', title: 'GA 会话', total: 700, elapsed_seconds: 0, engine: 'ga' },
+        { ...agyDay, thread: 'anti:a1', title: 'Agy 会话', total: 300, elapsed_seconds: 0, engine: 'anti' },
+      ],
+    }
+    mocks.tokenStats.mockResolvedValue(multiFixture)
+    await render()
+
+    const container = () => host.querySelector('.token-stats')!
+    expect(container().getAttribute('data-token-channel')).toBe('all')
+    expect(host.querySelector('.token-metric-value')?.textContent).toBe('1k')
+    expect(host.querySelectorAll('.token-session-row')).toHaveLength(2)
+
+    await click('GA')
+    expect(container().getAttribute('data-token-channel')).toBe('ga')
+    expect(host.querySelector('.token-metric-value')?.textContent).toBe('700')
+    expect(host.querySelector('.token-chart-key')?.textContent).toContain('GA Tokens')
+    expect(host.querySelectorAll('.token-session-row')).toHaveLength(1)
+    expect(host.querySelector('.token-session-title')?.textContent).toContain('GA 会话')
+    expect(host.querySelector('.token-session-value')?.textContent).toContain('100.0%')
+    expect(host.querySelectorAll('.token-weekly tbody tr')).toHaveLength(1)
+
+    await click('Agy')
+    expect(container().getAttribute('data-token-channel')).toBe('anti')
+    expect(host.querySelector('.token-metric-value')?.textContent).toBe('300')
+    expect(host.querySelector('.token-chart-key')?.textContent).toContain('Agy Tokens')
+    expect(host.querySelectorAll('.token-session-row')).toHaveLength(1)
+    expect(host.querySelector('.token-session-title')?.textContent).toContain('Agy 会话')
+    expect(host.querySelector('.token-session-value')?.textContent).toContain('100.0%')
+
+    await click('查看总计')
+    expect(container().getAttribute('data-token-channel')).toBe('all')
+    expect(host.querySelector('.token-metric-value')?.textContent).toBe('1k')
+  })
   it('shows unavailable and failed states instead of a blank page', async () => {
     mocks.tokenStats.mockResolvedValue({ ...fixture, available: false })
     await render()

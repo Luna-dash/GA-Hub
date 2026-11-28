@@ -466,6 +466,19 @@ class TokenDayStatsResp(TokenTotalsResp):
     date: str
 
 
+class TokenChannelStatsResp(BaseModel):
+    available: bool = False
+    all_time: TokenTotalsResp = Field(default_factory=TokenTotalsResp)
+    current_week: TokenWeekStatsResp
+    weeks: list[TokenWeekStatsResp] = Field(default_factory=list)
+    days: list[TokenDayStatsResp] = Field(default_factory=list)
+
+
+class TokenChannelsResp(BaseModel):
+    ga: TokenChannelStatsResp
+    anti: TokenChannelStatsResp
+
+
 class TokenStatsResp(BaseModel):
     available: bool
     threads: list[TokenThreadStatsResp]
@@ -476,6 +489,7 @@ class TokenStatsResp(BaseModel):
     weeks: list[TokenWeekStatsResp]
     days: list[TokenDayStatsResp]
     by_engine: TokenEngineBreakdownResp | None = None
+    channels: TokenChannelsResp | None = None
 
 
 class SessionUpdate(BaseModel):

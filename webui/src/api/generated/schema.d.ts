@@ -6612,6 +6612,25 @@ export interface components {
              */
             description: string;
         };
+        /** TokenChannelStatsResp */
+        TokenChannelStatsResp: {
+            /**
+             * Available
+             * @default false
+             */
+            available: boolean;
+            all_time?: components["schemas"]["TokenTotalsResp"];
+            current_week: components["schemas"]["TokenWeekStatsResp"];
+            /** Weeks */
+            weeks?: components["schemas"]["TokenWeekStatsResp"][];
+            /** Days */
+            days?: components["schemas"]["TokenDayStatsResp"][];
+        };
+        /** TokenChannelsResp */
+        TokenChannelsResp: {
+            ga: components["schemas"]["TokenChannelStatsResp"];
+            anti: components["schemas"]["TokenChannelStatsResp"];
+        };
         /** TokenDayStatsResp */
         TokenDayStatsResp: {
             /**
@@ -6673,6 +6692,7 @@ export interface components {
             /** Days */
             days: components["schemas"]["TokenDayStatsResp"][];
             by_engine?: components["schemas"]["TokenEngineBreakdownResp"] | null;
+            channels?: components["schemas"]["TokenChannelsResp"] | null;
         };
         /** TokenThreadStatsResp */
         TokenThreadStatsResp: {

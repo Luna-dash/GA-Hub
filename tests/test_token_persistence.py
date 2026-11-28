@@ -273,6 +273,17 @@ class TokenPersistenceTests(unittest.TestCase):
         self.assertEqual(threads["anti:anti-1"]["total"], 1200)
         self.assertEqual(len([t for t in threads if t.startswith("anti:")]), 1)
 
+        # Separate per-channel series allow frontend All / GA / Agy switching without extra queries.
+        channels = result["channels"]
+        self.assertEqual(channels["anti"]["available"], True)
+        self.assertEqual(channels["anti"]["all_time"]["total"], agy_expected_total)
+        self.assertEqual(len(channels["anti"]["days"]), 2)
+        self.assertEqual(sum(d["total"] for d in channels["anti"]["days"]), agy_expected_total)
+        if tokens.usage_bridge is not None:
+            self.assertEqual(channels["ga"]["available"], True)
+            self.assertEqual(channels["ga"]["all_time"]["total"], 200)
+            self.assertEqual(channels["ga"]["days"][0]["total"], 200)
+
     def test_token_stats_stays_available_with_agy_only_when_ga_bridge_missing(self) -> None:
         now = int(datetime(2026, 7, 8, 12, 0).timestamp())
         agy_dt = datetime(2026, 7, 8, 9, 0, tzinfo=datetime.now().astimezone().tzinfo).astimezone(timezone.utc)
