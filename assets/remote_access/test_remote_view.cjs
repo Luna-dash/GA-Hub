@@ -1,4 +1,5 @@
 // Run: node assets/remote_access/test_remote_view.cjs
+const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const modules = path.resolve(__dirname, '../../webui/node_modules');
@@ -146,6 +147,15 @@ test('running filter keeps recovering and aborting sessions with readable labels
   assert.equal(document.getElementById('sessionCount').textContent, '2 / 4');
   assert.equal(document.querySelector('[data-session-id="aborting"] .session-status').textContent, '停止中');
   assert.equal(document.querySelector('[data-session-id="recovering"] .session-status').textContent, '恢复中');
+});
+test('remote.html declares explicit type on every button', () => {
+  const html = new JSDOM(fs.readFileSync(path.join(__dirname, 'remote.html'), 'utf8'));
+  const buttons = [...html.window.document.querySelectorAll('button')];
+  assert.ok(buttons.length > 0);
+  for (const button of buttons) {
+    assert.ok(['button', 'submit'].includes(button.getAttribute('type')), `missing explicit type on button#${button.id || button.textContent}`);
+  }
+  html.window.close();
 });
 console.log(`${count} tests passed`);
 dom.window.close();
