@@ -44,7 +44,7 @@ use windows_sys::Win32::{
         JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
             SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         },
         Pipes::CreatePipe,
         Threading::{
@@ -254,9 +254,14 @@ impl KillOnCloseJob {
         }
         // OwnedHandle closes the job on every return path. The kill-on-close
         // limit then tears down any descendant still attached to the job.
+        // BREAKAWAY_OK allows only children that explicitly pass
+        // CREATE_BREAKAWAY_FROM_JOB (specifically ga-hub-update.exe) to outlive
+        // desktop shutdown so self-updates can finish closing and restarting us;
+        // regular sidecar descendants do not request breakaway and stay owned.
         let handle = unsafe { OwnedHandle::from_raw_handle(raw as _) };
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        limits.BasicLimitInformation.LimitFlags =
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
         let configured = unsafe {
             SetInformationJobObject(
                 handle.as_raw_handle() as HANDLE,
@@ -2191,6 +2196,62 @@ mod tests {
         }
         assert!(terminated, "test job should accept tree termination");
         assert!(exited, "terminating the job must stop its root child");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn breakaway_grandchild_survives_job_termination() {
+        // Prove that a child explicitly spawned with CREATE_BREAKAWAY_FROM_JOB
+        // (like ga-hub-update.exe launched from the sidecar) escapes KillOnCloseJob
+        // and survives when the desktop terminates its sidecar job.
+        let marker = env::temp_dir().join(format!("gahub-breakaway-{}.txt", Uuid::new_v4()));
+        let _ = fs::remove_file(&marker);
+        let script = format!(
+            "import subprocess, sys, time; \
+             p = subprocess.Popen([sys.executable, '-c', 'import pathlib, time; time.sleep(1.2); pathlib.Path(r\"{marker}\").write_text(\"alive\")'], \
+             creationflags=0x01000000 | 0x08000000); \
+             print(p.pid, flush=True); \
+             time.sleep(30)",
+            marker = marker.display()
+        );
+        let mut command = Command::new("python");
+        command
+            .args(["-c", &script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut process = match OwnedProcess::spawn(command) {
+            Ok(p) => p,
+            Err(_) => return, // skip only if python is unavailable on PATH
+        };
+
+        // Wait until the child has actually spawned the breakaway grandchild and flushed its pid.
+        let mut pid_buf = [0u8; 32];
+        let spawned_ok = process
+            .child
+            .stdout
+            .as_mut()
+            .and_then(|out| out.read(&mut pid_buf).ok())
+            .is_some_and(|n| n > 0);
+
+        // Terminate the job immediately (simulating desktop shutdown during update).
+        let _ = process.job.terminate();
+        let _ = wait_for_child_exit(&mut process, FORCE_REAP_TIMEOUT);
+
+        if spawned_ok {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline && !marker.is_file() {
+                thread::sleep(Duration::from_millis(50));
+            }
+            let survived = fs::read_to_string(&marker).unwrap_or_default();
+            let _ = fs::remove_file(&marker);
+            assert_eq!(
+                survived, "alive",
+                "breakaway grandchild must survive KillOnCloseJob termination"
+            );
+        } else {
+            let _ = fs::remove_file(&marker);
+        }
     }
 
     #[test]

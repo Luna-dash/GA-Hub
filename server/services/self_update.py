@@ -270,8 +270,14 @@ class UpdateStore:
                     breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
                     try:
                         spawn(cmd, **kwargs, **hidden_process_kwargs(existing_creationflags=breakaway))
-                    except PermissionError:
-                        spawn(cmd, **kwargs, **hidden_process_kwargs())
+                    except PermissionError as exc:
+                        # Never fall back to spawning inside the sidecar's KillOnCloseJob:
+                        # desktop shutdown would immediately terminate ga-hub-update.exe
+                        # mid-switch and leave state.json stuck in `switching`.
+                        raise PermissionError(
+                            "无法脱离桌面进程作业启动更新助手（CREATE_BREAKAWAY_FROM_JOB 被拒绝）。"
+                            "请直接双击桌面程序重启，或手动解压新版 ZIP 覆盖安装。"
+                        ) from exc
                 else:
                     spawn(cmd, **kwargs)
             except BaseException:

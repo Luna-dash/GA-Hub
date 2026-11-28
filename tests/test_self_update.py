@@ -163,6 +163,7 @@ def test_apply_launches_detached_rust_updater(tmp_path):
     if os.name == "nt":
         flags = spawn_kwargs.get("creationflags", 0)
         assert flags & subprocess.CREATE_NO_WINDOW
+        assert flags & getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
         assert not (flags & subprocess.DETACHED_PROCESS)
 
 
@@ -180,6 +181,31 @@ def test_apply_restores_prepared_state_when_spawn_fails(tmp_path):
 
     with pytest.raises(OSError, match="antivirus"):
         store.apply(plan["id"], tmp_path / "admin", old_pid=4242, old_exe=old_exe, spawn=boom)
+    assert store.read()["state"] == "prepared"
+    assert "switch_started" not in store.read()
+
+
+def test_apply_refuses_in_job_fallback_when_breakaway_denied(tmp_path):
+    import os
+    if os.name != "nt":
+        pytest.skip("Windows Job Object breakaway is nt-only")
+    store = UpdateStore(tmp_path / "updates")
+    plan = prepare(store, release(tmp_path))
+    old_dir = tmp_path / "current-install"
+    old_dir.mkdir()
+    old_exe = old_dir / "ga-hub-desktop.exe"
+    old_exe.write_bytes(b"old-desktop")
+    (old_dir / "ga-hub-update.exe").write_bytes(b"old-helper")
+
+    calls = []
+
+    def deny_breakaway(*args, **kwargs):
+        calls.append(kwargs.get("creationflags", 0))
+        raise PermissionError("access denied")
+
+    with pytest.raises(PermissionError, match="CREATE_BREAKAWAY_FROM_JOB"):
+        store.apply(plan["id"], tmp_path / "admin", old_pid=4242, old_exe=old_exe, spawn=deny_breakaway)
+    assert len(calls) == 1, "must not silently retry without CREATE_BREAKAWAY_FROM_JOB"
     assert store.read()["state"] == "prepared"
     assert "switch_started" not in store.read()
 

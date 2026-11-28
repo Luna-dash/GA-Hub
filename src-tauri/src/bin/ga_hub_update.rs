@@ -24,12 +24,29 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 const DATA_EPOCH: u64 = 2;
 const EXIT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
-const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn log_updater(admin_data: &Path, message: &str) {
+    if cfg!(test) {
+        let _ = (admin_data, message);
+        return;
+    }
+    let updates_dir = admin_data.join("updates");
+    let _ = fs::create_dir_all(&updates_dir);
+    let log_path = updates_dir.join("updater.log");
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+        let _ = writeln!(file, "[{millis}] {message}");
+    }
+}
 
 fn print_usage() {
     println!(
@@ -280,7 +297,7 @@ fn updates_ready_response_ok(response: &str, expected_nonce: &str) -> bool {
     let Some((_, body)) = response.split_once("\r\n\r\n") else {
         return false;
     };
-    let Ok(value) = serde_json::from_str::<Value>(body) else {
+    let Ok(value) = serde_json::from_str::<Value>(body.trim()) else {
         return false;
     };
     let nonce_ok = value.get("nonce").and_then(Value::as_str) == Some(expected_nonce);
@@ -365,13 +382,20 @@ fn cmd_launch(admin_data: &Path) -> Result<(), String> {
         .ok_or_else(|| "invalid current.json: missing executable".to_string())?;
     let exe = PathBuf::from(target);
     if !exe.is_file() {
-        return Err(format!("current target missing: {}", exe.display()));
+        let msg = format!("current target missing: {}", exe.display());
+        log_updater(admin_data, &format!("launch failed: {msg}"));
+        return Err(msg);
     }
+    log_updater(admin_data, &format!("launch -> {}", exe.display()));
     let _ = spawn_detached(&exe, &[("GA_ADMIN_DATA", admin_data.to_string_lossy().into_owned())])?;
     Ok(())
 }
 
 fn cmd_recover(admin_data: &Path, expected_plan_id: Option<&str>) -> Result<(), String> {
+    log_updater(
+        admin_data,
+        &format!("recover requested plan={:?}", expected_plan_id),
+    );
     let updates_dir = admin_data.join("updates");
     let state_path = updates_dir.join("state.json");
     let _ = fs::remove_file(updates_dir.join("maintenance.json"));
@@ -384,14 +408,22 @@ fn cmd_recover(admin_data: &Path, expected_plan_id: Option<&str>) -> Result<(), 
             return Err("update plan id mismatch".to_string());
         }
     }
-    let state = plan.get("state").and_then(Value::as_str).unwrap_or("");
-    if matches!(state, "armed" | "switching" | "verifying" | "failed" | "prepared") {
+    let state = plan
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if matches!(
+        state.as_str(),
+        "armed" | "switching" | "verifying" | "failed" | "prepared"
+    ) {
         if let Some(obj) = plan.as_object_mut() {
             obj.insert("state".to_string(), json!("cancelled"));
             obj.insert("switch_started".to_string(), json!(false));
             obj.insert("error".to_string(), json!("recovered manually via ga-hub-update recover"));
         }
         atomic_write_json(&state_path, &plan)?;
+        log_updater(admin_data, &format!("recover cleared previous state={state}"));
     }
     Ok(())
 }
@@ -404,6 +436,13 @@ fn cmd_switch_with_timeouts(
     exit_timeout: Duration,
     health_timeout: Duration,
 ) -> Result<(), String> {
+    log_updater(
+        admin_data,
+        &format!(
+            "switch start plan={plan_id} wait_pid={wait_pid} old_exe={}",
+            old_exe.display()
+        ),
+    );
     let updates_dir = admin_data.join("updates");
     let state_path = updates_dir.join("state.json");
     let current_path = updates_dir.join("current.json");
@@ -411,9 +450,11 @@ fn cmd_switch_with_timeouts(
 
     let mut plan = read_json(&state_path)?;
     if plan.get("id").and_then(Value::as_str) != Some(plan_id) {
+        log_updater(admin_data, "switch aborted: plan id mismatch");
         return Err("update plan id mismatch".to_string());
     }
     if let Err(reason) = verify_candidate_hashes(&candidate_dir, &plan) {
+        log_updater(admin_data, &format!("pre-switch hash check failed: {reason}"));
         record_pre_switch_failure(&state_path, &mut plan, &reason);
         return Err(reason);
     }
@@ -421,6 +462,7 @@ fn cmd_switch_with_timeouts(
     let candidate_exe = candidate_dir.join("ga-hub-desktop.exe");
     if !candidate_exe.is_file() {
         let reason = "candidate ga-hub-desktop.exe missing".to_string();
+        log_updater(admin_data, &format!("pre-switch failed: {reason}"));
         record_pre_switch_failure(&state_path, &mut plan, &reason);
         return Err(reason);
     }
@@ -433,12 +475,15 @@ fn cmd_switch_with_timeouts(
     atomic_write_json(&state_path, &plan)?;
 
     if wait_pid > 0 {
+        log_updater(admin_data, &format!("closing old desktop pid={wait_pid}"));
         request_close_window(wait_pid);
         if !wait_for_pid_exit(wait_pid, exit_timeout) {
             let reason = format!("old desktop did not exit within {}s", exit_timeout.as_secs());
+            log_updater(admin_data, &format!("pre-switch failed: {reason}"));
             record_pre_switch_failure(&state_path, &mut plan, &reason);
             return Err(reason);
         }
+        log_updater(admin_data, &format!("old desktop pid={wait_pid} exited"));
     }
 
     let previous_current = if current_path.is_file() {
@@ -461,6 +506,10 @@ fn cmd_switch_with_timeouts(
             "executable": candidate_exe.to_string_lossy(),
         }),
     )?;
+    log_updater(
+        admin_data,
+        &format!("switched current.json -> {}", candidate_exe.display()),
+    );
 
     let nonce = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let receipt_path = updates_dir.join("receipts").join(format!("{plan_id}.json"));
@@ -478,6 +527,14 @@ fn cmd_switch_with_timeouts(
     let spawn_res = spawn_detached(&candidate_exe, &envs);
     let health_res = match spawn_res {
         Ok(mut child) => {
+            log_updater(
+                admin_data,
+                &format!(
+                    "spawned candidate pid={}, waiting up to {}s for health",
+                    child.id(),
+                    health_timeout.as_secs()
+                ),
+            );
             let verdict = wait_for_candidate_health(&mut child, &receipt_path, &nonce, health_timeout);
             if verdict.is_err() {
                 let _ = child.kill();
@@ -498,9 +555,14 @@ fn cmd_switch_with_timeouts(
             }
             atomic_write_json(&state_path, &plan)?;
             prune_old_versions(&updates_dir.join("versions"), plan_id);
+            log_updater(admin_data, &format!("switch succeeded plan={plan_id}"));
             Ok(())
         }
         Err(reason) => {
+            log_updater(
+                admin_data,
+                &format!("candidate health failed ({reason}), rolling back"),
+            );
             // Roll back current.json atomically and relaunch the known-good old executable.
             if let Some(prev) = previous_current {
                 let _ = atomic_write_bytes(&current_path, &prev);
