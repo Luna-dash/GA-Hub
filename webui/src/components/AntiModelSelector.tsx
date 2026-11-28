@@ -10,6 +10,7 @@ import { hasHigherLayerOverlay, isInsideTrappedOverlay } from '@/utils/overlaySt
 export const DEFAULT_FAMILY = 'gemini-4-hydrogen'
 export const DEFAULT_MODEL = { id: `${DEFAULT_FAMILY}-high`, display_name: 'Gemini 4 Hydrogen (High)' }
 export const DEFAULT_EFFORT = 'high'
+const ANTI_MODEL_MENU_WIDTH = 272
 export const EFFORT_OPTIONS = [
   { key: 'low', name: 'low' },
   { key: 'medium', name: 'medium' },
@@ -350,7 +351,7 @@ export function AntiModelSelector({
       const above = rect.top - 12
       const upwards = below < 220 && above > below
       const available = Math.max(96, upwards ? above : below)
-      const width = Math.min(340, Math.max(rect.width, 268), window.innerWidth - 16)
+      const width = Math.min(Math.max(rect.width, ANTI_MODEL_MENU_WIDTH), window.innerWidth - 16)
       const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
       setPosition({
         position: 'fixed',
@@ -536,7 +537,7 @@ export function AntiModelSelector({
         onClick={() => { if (open) setOpen(false); else openMenu() }}
         onBlur={handleBlur}
         onKeyDown={onTriggerKeyDown}
-        className="inline-flex h-[35px] min-h-[35px] max-h-[35px] min-w-0 max-w-[15rem] sm:max-w-[19rem] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-line bg-gradient-to-br from-bg-soft to-bg-card px-2.5 text-left text-sm text-ink shadow-[inset_0_1px_var(--c-inset-highlight),0_2px_3px_rgba(58,42,28,0.08)] transition-[border-color,box-shadow] hover:border-accent focus:outline-none focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex h-[35px] min-h-[35px] max-h-[35px] w-[228px] max-w-full min-w-0 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-line bg-gradient-to-br from-bg-soft to-bg-card px-2.5 text-left text-sm text-ink shadow-[inset_0_1px_var(--c-inset-highlight),0_2px_3px_rgba(58,42,28,0.08)] transition-[border-color,box-shadow] hover:border-accent focus:outline-none focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span className="model-select-label min-w-0 flex-1 truncate">
           {selected?.name ?? (families.length ? '选择模型' : '暂无模型')}

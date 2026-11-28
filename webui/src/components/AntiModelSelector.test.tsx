@@ -312,4 +312,64 @@ describe('AntiModelSelector helpers and component', () => {
     expect(onSelectFamily).toHaveBeenCalledWith('claude-sonnet-5-5')
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
   })
+
+  it('uses a compact fixed trigger width across short/long labels and tailored menu width clamped to viewport', () => {
+    const families = buildSelectorFamilies(SAMPLE_ITEMS, DEFAULT_ORCHESTRATOR_PRESETS)
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+
+    const origInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 1280 })
+
+    try {
+      act(() => {
+        root!.render(
+          <AntiModelSelector
+            families={families}
+            selectedFamilyKey={`${ORCH_PRESET_KEY_PREFIX}preset-1`}
+            effort="high"
+            effortOptions={[]}
+            isOrchestrator
+            onSelectFamily={vi.fn()}
+            onSelectEffort={vi.fn()}
+          />,
+        )
+      })
+      const trigger = host.querySelector<HTMLButtonElement>('button[role="combobox"]')!
+      expect(trigger.classList.contains('w-[228px]')).toBe(true)
+      expect(trigger.classList.contains('max-w-full')).toBe(true)
+
+      const bounds = vi.spyOn(trigger, 'getBoundingClientRect')
+      bounds.mockReturnValue({ left: 400, top: 20, bottom: 55, width: 228 } as DOMRect)
+
+      act(() => { trigger.click() })
+      const menu = document.body.querySelector<HTMLElement>('.model-select-menu')!
+      expect(menu.style.width).toBe('272px')
+
+      // Narrow viewport clamps width to innerWidth - 16
+      window.innerWidth = 260
+      act(() => { window.dispatchEvent(new Event('resize')) })
+      expect(menu.style.width).toBe('244px')
+
+      act(() => { trigger.click() })
+      act(() => {
+        root!.render(
+          <AntiModelSelector
+            families={families}
+            selectedFamilyKey="gemini-4-hydrogen"
+            effort="xhigh"
+            effortOptions={[{ key: 'low', name: 'low' }, { key: 'xhigh', name: 'xhigh' }]}
+            isOrchestrator={false}
+            onSelectFamily={vi.fn()}
+            onSelectEffort={vi.fn()}
+          />,
+        )
+      })
+      expect(trigger.classList.contains('w-[228px]')).toBe(true)
+      expect(trigger.classList.contains('max-w-full')).toBe(true)
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: origInnerWidth })
+    }
+  })
 })

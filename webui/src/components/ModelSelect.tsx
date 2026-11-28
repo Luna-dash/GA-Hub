@@ -34,19 +34,20 @@ function ModelMark({ name, follow = false }: { name: string; follow?: boolean })
   )
 }
 
-function ModelSelect({ llms, value, onChange, follow, ...props }: CommonModelSelectProps & {
-  value: string; onChange: (key: string) => void; follow?: boolean
+function ModelSelect({ llms, value, onChange, follow, fixedWidth, ...props }: CommonModelSelectProps & {
+  value: string; onChange: (key: string) => void; follow?: boolean; fixedWidth?: boolean
 }) {
   const options = follow ? [{ key: '', name: '跟随主模型' }, ...llms] : llms
   return <ThemedSelect {...props} options={options} value={value} onChange={onChange}
+    fixedWidth={fixedWidth}
     disabled={props.disabled || llms.length === 0}
     displayName={(option) => modelPresentation(option.name).label}
     placeholder={llms.length ? '选择模型' : '暂无模型'}
     renderMark={(option) => <ModelMark name={option?.name ?? ''} follow={follow && option?.key === ''} />} />
 }
 
-export function MainModelSelect({ value, onChange, ...props }: MainModelSelectProps) {
-  return <ModelSelect {...props} value={value ?? ''} onChange={onChange} />
+export function MainModelSelect({ value, onChange, className, ...props }: MainModelSelectProps) {
+  return <ModelSelect {...props} fixedWidth className={clsx('w-[216px] max-w-full', className)} value={value ?? ''} onChange={onChange} />
 }
 export function SubagentModelSelect({ value, onChange, ...props }: SubagentModelSelectProps) {
   return <ModelSelect {...props} value={value ?? ''} onChange={(key) => onChange(key || null)} follow />

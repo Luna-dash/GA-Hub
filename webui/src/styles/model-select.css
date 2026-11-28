@@ -25,8 +25,8 @@
   text-align: left;
   transition: border-color .15s, box-shadow .15s;
 }
-/* Preserve the original select's longest-option sizing. */
-.model-select-trigger::before { content: attr(data-sizing-label); grid-area: 1 / 2; visibility: hidden; white-space: nowrap; pointer-events: none; }
+/* Preserve the original select's longest-option sizing when data-sizing-label is active. */
+.model-select-trigger[data-sizing-label]::before { content: attr(data-sizing-label); grid-area: 1 / 2; visibility: hidden; white-space: nowrap; overflow: hidden; pointer-events: none; }
 .model-select-trigger > .model-select-mark { grid-area: 1 / 1; }
 .model-select-trigger > .model-select-label { grid-area: 1 / 2; }
 .model-select-trigger > .model-select-chevron { grid-area: 1 / 3; }

@@ -13,14 +13,17 @@ interface ThemedSelectProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>
   displayName: (option: SelectOption) => string
   renderMark: (option: SelectOption | undefined) => ReactNode
   placeholder?: string
+  fixedWidth?: boolean
 }
 
 /** Shared geometry, theme and accessible interaction for header selectors. */
-export function ThemedSelect({ options, value, onChange, displayName, renderMark, placeholder = '', className, disabled, title, ...props }: ThemedSelectProps) {
+export function ThemedSelect({ options, value, onChange, displayName, renderMark, placeholder = '', fixedWidth = false, className, disabled, title, ...props }: ThemedSelectProps) {
   const selected = options.find((option) => option.key === value)
   // Native selects reserve room for the longest option, not just the current value.
-  const sizingLabel = options.map((option) => displayName(option))
-    .reduce((longest, label) => label.length > longest.length ? label : longest, selected ? '' : placeholder)
+  const sizingLabel = fixedWidth
+    ? undefined
+    : options.map((option) => displayName(option))
+      .reduce((longest, label) => label.length > longest.length ? label : longest, selected ? '' : placeholder)
   const disabledNow = disabled || options.length === 0
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
@@ -91,7 +94,7 @@ export function ThemedSelect({ options, value, onChange, displayName, renderMark
       {...props}
       ref={trigger}
       type="button"
-      data-sizing-label={sizingLabel}
+      data-sizing-label={fixedWidth ? undefined : sizingLabel}
       role="combobox"
       aria-haspopup="listbox"
       aria-expanded={open}

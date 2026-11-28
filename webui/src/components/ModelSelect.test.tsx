@@ -35,13 +35,23 @@ describe('model selectors', () => {
     expect(popup.style.left).toBe('16px')
     expect(popup.style.width).toBe('210px')
   })
-  it('reserves the longest displayed model name even when a short model is selected', () => {
+  it('uses a compact fixed trigger width regardless of model name length while keeping full option labels', () => {
     const longName = 'gpt-sol|dpflash41|gpt-luna|dpflashliwan'
-    act(() => root.render(<MainModelSelect llms={[...llms, { key: 'long', name: `Mixin/${longName}` }]} value="beta" onChange={() => {}} />))
-    expect(trigger().getAttribute('data-sizing-label')).toBe(longName)
+    const extended = [...llms, { key: 'long', name: `Mixin/${longName}` }]
+    act(() => root.render(<MainModelSelect llms={extended} value="beta" onChange={() => {}} />))
+    expect(trigger().classList.contains('w-[216px]')).toBe(true)
+    expect(trigger().classList.contains('max-w-full')).toBe(true)
+    expect(trigger().hasAttribute('data-sizing-label')).toBe(false)
     expect(trigger().textContent).toBe('Beta')
+    expect(trigger().title).toBe('NativeOAI/Beta')
     click(trigger())
     expect(document.querySelectorAll('[role="option"]')[3].textContent).toBe(longName)
+    click(trigger())
+    act(() => root.render(<MainModelSelect llms={extended} value="long" onChange={() => {}} />))
+    expect(trigger().classList.contains('w-[216px]')).toBe(true)
+    expect(trigger().classList.contains('max-w-full')).toBe(true)
+    expect(trigger().textContent).toBe(longName)
+    expect(trigger().title).toBe(`Mixin/${longName}`)
   })
   it('shows MyKey icons instead of type prefixes in both trigger and options', () => {
     act(() => root.render(<MainModelSelect llms={llms} value="beta" onChange={() => {}} />))

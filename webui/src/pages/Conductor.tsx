@@ -712,7 +712,6 @@ export default function Conductor() {
               llms={llms}
               value={mainLlmKey}
               onChange={selectMainLlm}
-              className="max-w-[400px]"
               title="选择 Conductor 使用的主模型"
               aria-label="Conductor 主模型"
             />

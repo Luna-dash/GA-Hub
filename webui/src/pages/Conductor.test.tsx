@@ -404,7 +404,7 @@ describe('Conductor chat scroll restoration', () => {
     renderPage()
     await flushQueries()
 
-    expect(host.querySelector('[aria-label="Conductor 主模型"]')?.className).toBe('max-w-[400px]')
+    expect(host.querySelector('[aria-label="Conductor 主模型"]')).not.toBeNull()
     expect(button('子代理设置').getAttribute('aria-haspopup')).toBe('dialog')
     expect(host.textContent).not.toContain('默认模型')
     expect(host.textContent).not.toContain('固定使用所选模型')

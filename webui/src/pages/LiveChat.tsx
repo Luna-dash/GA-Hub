@@ -876,7 +876,6 @@ export default function LiveChat() {
             value={selectedLlmKey ?? ''}
             onChange={(llmKey) => { void changeModel(llmKey) }}
             disabled={!session || !selectedLlmKey || llmLoading || llmSaving || sessionRunning}
-            className="min-w-0 max-w-full sm:max-w-[min(400px,100%)]"
             title={sessionRunning ? '任务运行中，结束后可切换模型' : !session || !selectedLlmKey ? '当前没有可用模型，请先在「LLM管理」中配置模型' : '选择当前会话使用的模型'}
             aria-label="当前会话模型"
           />

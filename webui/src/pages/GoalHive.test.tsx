@@ -164,7 +164,7 @@ describe('Goal Hive compact subagent settings', () => {
     renderPage()
 
     const header = host.querySelector('[data-testid="page-header"]')!
-    expect(header.querySelector('[aria-label="Goal / Hive 主模型"]')?.className).toBe('max-w-[400px]')
+    expect(header.querySelector('[aria-label="Goal / Hive 主模型"]')).not.toBeNull()
     expect(header.textContent).toContain('子代理设置')
     expect(header.textContent).not.toContain('子代理模型')
     expect(header.textContent).not.toContain('GOAL')
