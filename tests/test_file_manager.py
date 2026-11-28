@@ -190,3 +190,25 @@ def test_focus_success_does_not_attach_input(monkeypatch):
     monkeypatch.setattr(win32process, 'AttachThreadInput', attach)
     fm.ExplorerWindow._activate(20)
     attach.assert_not_called()
+
+
+@pytest.mark.skipif(__import__('sys').platform != 'win32', reason='Windows COM adapter')
+def test_missing_com_dependency_raises_oserror_and_releases_lock(tmp_path, monkeypatch):
+    import sys
+    from fastapi import HTTPException
+    from server.routes import upload
+
+    monkeypatch.setitem(sys.modules, 'win32com', None)
+    monkeypatch.setitem(sys.modules, 'win32com.client', None)
+    monkeypatch.setattr(upload.platform, 'system', lambda: 'Windows')
+
+    manager = fm.ExplorerWindow()
+    with pytest.raises(OSError, match='file manager dependency unavailable'):
+        manager.reveal(tmp_path)
+
+    assert manager._lock.acquire(blocking=False)
+    manager._lock.release()
+
+    with pytest.raises(HTTPException) as exc:
+        upload._show_in_file_manager(tmp_path)
+    assert exc.value.status_code == 500

@@ -168,23 +168,52 @@ if __name__ == "__main__":
 
 
 class WindowsDependencyTests(unittest.TestCase):
+    EXPECTED_WINDOWS_IMPORTS = {
+        'win32cred',
+        'win32timezone',
+        'win32file',
+        'pythoncom',
+        'win32com.client.dynamic',
+        'win32con',
+        'win32gui',
+        'win32api',
+        'win32process',
+    }
+
     def test_shared_manifest_matches_packaging_and_frozen_selftest(self):
         import sys
         from unittest.mock import patch
         from desktop.runtime_dependencies import WINDOWS_IMPORTS, hidden_import_args
-        self.assertEqual(set(WINDOWS_IMPORTS), {'win32cred', 'win32timezone', 'win32file'})
+        self.assertEqual(set(WINDOWS_IMPORTS), self.EXPECTED_WINDOWS_IMPORTS)
         self.assertEqual(hidden_import_args('linux'), ['--hidden-import', 'rich', '--hidden-import', 'rich.cells'])
         for name in WINDOWS_IMPORTS:
             args = hidden_import_args('win32')
             self.assertEqual(args[args.index(name)-1], '--hidden-import')
-        sidecar=_load('sidecar_dependencies_test','server/desktop_sidecar.py')
-        with patch.object(sys,'platform','win32'):
+        sidecar = _load('sidecar_dependencies_test', 'server/desktop_sidecar.py')
+        with patch.object(sys, 'platform', 'win32'):
             self.assertTrue(set(WINDOWS_IMPORTS).issubset(sidecar.selftest_modules()))
         sources = '\n'.join((ROOT / relative).read_text(encoding='utf-8') for relative in (
-            'assets/nova/connector.py', 'assets/remote_access/artifacts.py',
+            'assets/nova/connector.py',
+            'assets/remote_access/artifacts.py',
+            'server/services/file_manager.py',
         ))
         for name in WINDOWS_IMPORTS:
-            self.assertIn('import ' + name, sources)
+            if '.' in name:
+                parent, leaf = name.rsplit('.', 1)
+                matched = f'import {name}' in sources or f'from {parent} import {leaf}' in sources
+            else:
+                matched = f'import {name}' in sources
+            self.assertTrue(matched, f'{name} missing from sources')
+
+    def test_required_imports_do_not_overlap_excluded_modules(self):
+        from desktop.runtime_dependencies import COMMON_IMPORTS, WINDOWS_IMPORTS
+        from desktop.sidecar_archive import EXCLUDED_MODULES
+
+        excluded = set(EXCLUDED_MODULES)
+        for name in (*COMMON_IMPORTS, *WINDOWS_IMPORTS):
+            parts = name.split('.')
+            prefixes = {'.'.join(parts[:i]) for i in range(1, len(parts) + 1)}
+            self.assertTrue(prefixes.isdisjoint(excluded), f'{name} overlaps EXCLUDED_MODULES: {prefixes & excluded}')
 
     def test_selftest_rejects_missing_windows_download_dependency(self):
         import importlib

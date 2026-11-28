@@ -6,11 +6,14 @@ spawning more windows on subsequent clicks.
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import time
 from pathlib import Path
 from threading import Lock
+
+log = logging.getLogger(__name__)
 
 
 PENDING_LAUNCH_TTL_SECONDS = 30.0
@@ -27,8 +30,12 @@ class ExplorerWindow:
         if not self._lock.acquire(timeout=8):
             raise OSError("file manager is busy")
         try:
-            import pythoncom
-            from win32com.client import dynamic
+            try:
+                import pythoncom
+                from win32com.client import dynamic
+            except ImportError as exc:
+                log.warning("file_manager_dependency_missing error=%s", exc)
+                raise OSError(f"file manager dependency unavailable: {exc}") from exc
 
             pythoncom.CoInitialize()
             shell = None

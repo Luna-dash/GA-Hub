@@ -10,7 +10,7 @@ EXCLUDED_MODULES = (
     "TMWebDriver", "legacy_llmcore", "agent_loop",
     # Heavy third-party & dev-only libraries not used by the desktop sidecar
     "numpy", "scipy", "matplotlib", "pandas", "torch",
-    "cryptography", "Pythonwin", "pywin", "win32ui", "win32com",
+    "cryptography", "Pythonwin", "pywin", "win32ui",
     "_pytest", "pytest", "setuptools", "pkg_resources",
     "watchfiles", "tornado", "unittest",
 )

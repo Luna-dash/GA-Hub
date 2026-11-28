@@ -5,12 +5,25 @@ is invisible to static analysis and must be frozen explicitly on every platform.
 pywin32 provides the Windows modules. win32cred loads win32timezone implicitly when
 converting CREDENTIAL.LastWritten; merely importing win32cred is insufficient.
 Artifact downloads dynamically load win32file to validate the opened file handle.
+server/services/file_manager.py dynamically imports Windows Explorer COM and
+window-activation modules (pythoncom, win32com.client.dynamic, win32con,
+win32gui, win32api, win32process).
 Keep connector.py's static imports too, for third-party Python packagers.
 """
 from pathlib import Path
 
 COMMON_IMPORTS = ("rich", "rich.cells")
-WINDOWS_IMPORTS = ("win32cred", "win32timezone", "win32file")
+WINDOWS_IMPORTS = (
+    "win32cred",
+    "win32timezone",
+    "win32file",
+    "pythoncom",
+    "win32com.client.dynamic",
+    "win32con",
+    "win32gui",
+    "win32api",
+    "win32process",
+)
 
 
 def hidden_import_args(platform: str) -> list[str]:
