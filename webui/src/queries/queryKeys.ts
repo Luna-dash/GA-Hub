@@ -55,5 +55,6 @@ export const queryKeys = {
   mykey: {
     data: ['mykey'] as const,
     backups: ['mykey.backups'] as const,
+    syncConfig: ['mykey.syncConfig'] as const,
   },
 } as const

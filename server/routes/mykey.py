@@ -19,6 +19,8 @@ from ..schemas import (
     MyKeyDataResp,
     MyKeyOpenResp,
     MyKeySessionTestResp,
+    MyKeySyncConfigReq,
+    MyKeySyncConfigResp,
     MyKeySyncResultResp,
     MyKeyWriteResp,
     MyKeyMutationReq,
@@ -122,6 +124,20 @@ def _auto_sync(request: Request):
     if service is None:
         raise HTTPException(503, "自动同步服务尚未启动")
     return service
+
+
+@router.get("/sync/config", response_model=MyKeySyncConfigResp)
+@_translated
+async def get_mykey_sync_config() -> MyKeySyncConfigResp:
+    """Read the locally configured mykey sync server URL."""
+    return await asyncio.to_thread(mykey_service.get_sync_config)
+
+
+@router.put("/sync/config", response_model=MyKeySyncConfigResp)
+@_translated
+async def save_mykey_sync_config(req: MyKeySyncConfigReq) -> MyKeySyncConfigResp:
+    """Persist the mykey sync server URL to local config.json."""
+    return await asyncio.to_thread(mykey_service.save_sync_config, req.sync_url)
 
 
 @router.get("/sync/auto", response_model=MyKeyAutoSyncStatus)

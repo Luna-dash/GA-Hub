@@ -126,6 +126,7 @@ def test_all_text_writes_share_one_commit(transaction, tmp_path, operation):
     with (
         mock.patch.object(svc, '_backup_dir', return_value=tmp_path),
         mock.patch.object(svc._paths, 'ADMIN_DATA', tmp_path),
+        mock.patch.object(svc, '_sync_base_url', return_value='https://synthetic.invalid'),
         mock.patch.object(svc, '_run_mykey_sync', side_effect=fetch),
     ):
         if operation == 'raw':
@@ -157,6 +158,7 @@ def test_fetch_failure_preserves_live_file_and_cleans_staging(transaction, tmp_p
         return {}
     with (
         mock.patch.object(svc._paths, 'ADMIN_DATA', tmp_path),
+        mock.patch.object(svc, '_sync_base_url', return_value='https://synthetic.invalid'),
         mock.patch.object(svc, '_run_mykey_sync', side_effect=fetch),
         pytest.raises(svc.MykeyHttpError),
     ):

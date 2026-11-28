@@ -29,6 +29,10 @@ describe('human-friendly MyKey sync feedback', () => {
   it('does not claim failed verification rolled back the cloud', () => {
     expect(myKeySyncFailure('upload', new Error('回读校验失败')).message).toContain('可能已收到')
   })
+  it('explains missing sync domain configuration clearly', () => {
+    const error = { body: { detail: { error: 'sync_url_not_configured', message: '未配置同步服务地址' } } }
+    expect(myKeySyncFailure('fetch', error).message).toContain('密钥同步')
+  })
   it('offers a decrypt recovery step without claiming the local file is untouched', () => {
     expect(myKeySyncFailure('fetch', new Error('解密失败')).message).toContain('相同的同步密钥')
     expect(myKeySyncFailure('fetch', new Error('unexpected failure')).message).toContain('本机配置状态')

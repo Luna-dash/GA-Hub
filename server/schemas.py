@@ -1035,6 +1035,16 @@ class MyKeyAutoSyncSettings(BaseModel):
     enabled: bool
 
 
+class MyKeySyncConfigReq(BaseModel):
+    sync_url: str = ""
+
+
+class MyKeySyncConfigResp(BaseModel):
+    sync_url: str = ""
+    effective_url: str = ""
+    env_override: bool = False
+
+
 class MyKeyAutoSyncStatus(BaseModel):
     enabled: bool
     running: bool

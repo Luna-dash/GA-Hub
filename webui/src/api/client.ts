@@ -35,6 +35,7 @@ import type {
   MyKeyOpenResponse,
   MyKeySession,
   MyKeySessionTestResult,
+  MyKeySyncConfig,
   MyKeySyncResult,
   MyKeyWriteResult,
   ProjectItem,
@@ -324,6 +325,9 @@ export const api = {
     http<MyKeySessionTestResult>('POST', `/api/mykey/sessions/${encodeURIComponent(varName)}/test`),
   myKeyAutoSync: () => http<import('./types').MyKeyAutoSyncStatus>('GET', '/api/mykey/sync/auto'),
   setMyKeyAutoSync: (enabled: boolean) => http<import('./types').MyKeyAutoSyncStatus>('PUT', '/api/mykey/sync/auto', { enabled }),
+  myKeySyncConfig: () => http<MyKeySyncConfig>('GET', '/api/mykey/sync/config'),
+  saveMyKeySyncConfig: (sync_url: string) =>
+    http<MyKeySyncConfig>('PUT', '/api/mykey/sync/config', { sync_url }),
   openMyKeyFile: () => http<MyKeyOpenResponse>('POST', '/api/mykey/open'),
   uploadMyKeySync: () => http<MyKeySyncResult>(
     'POST', '/api/mykey/sync/upload', undefined, { timeoutMs: MYKEY_SYNC_HTTP_TIMEOUT_MS },

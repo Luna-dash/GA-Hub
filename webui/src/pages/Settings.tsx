@@ -51,7 +51,7 @@ const SETTINGS_TABS = [
   { id: 'remote', label: '远程连接', description: '关联 Nova 账号与查看本机设备码', icon: Globe },
   { id: 'updates', label: '程序更新', description: '检查版本、校验安装包并安全切换升级', icon: Download },
   { id: 'storage', label: '存储与缓存', description: '查看本机缓存占用并按需手动清理临时文件', icon: HardDrive },
-  { id: 'sync', label: '密钥同步', description: '控制 LLM 管理页中上传 mykey 的显示开关', icon: KeyRound },
+  { id: 'sync', label: '密钥同步', description: '配置云端同步域名并控制 LLM 管理页上传按钮显示开关', icon: KeyRound },
   { id: 'notifications', label: '桌面通知', description: '管理后台完成或需要互动时的桌面消息提醒', icon: Bell },
 ] as const
 
@@ -445,13 +445,45 @@ function NavManagementPanel() {
 
 
 function MyKeySyncPanel() {
+  const qc = useQueryClient()
   const [showUpload, setShowUpload] = useState(getMyKeyShowUpload)
+  const syncConfigQuery = useQuery({ queryKey: queryKeys.mykey.syncConfig, queryFn: api.myKeySyncConfig })
+  const [syncUrl, setSyncUrl] = useState('')
+  const [savingUrl, setSavingUrl] = useState(false)
+  const syncUrlDirtyRef = useRef(false)
+  const lastSyncedUrlRef = useRef<string | null>(null)
 
   useEffect(() => {
     const sync = () => setShowUpload(getMyKeyShowUpload())
     window.addEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
     return () => window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
   }, [])
+
+  useEffect(() => {
+    if (!syncConfigQuery.data) return
+    const nextUrl = syncConfigQuery.data.sync_url || ''
+    if (lastSyncedUrlRef.current === null || (!syncUrlDirtyRef.current && lastSyncedUrlRef.current !== nextUrl)) {
+      setSyncUrl(nextUrl)
+    }
+    lastSyncedUrlRef.current = nextUrl
+  }, [syncConfigQuery.data])
+
+  const saveSyncUrl = async (nextValue: string) => {
+    setSavingUrl(true)
+    try {
+      const saved = await api.saveMyKeySyncConfig(nextValue.trim())
+      syncUrlDirtyRef.current = false
+      lastSyncedUrlRef.current = saved.sync_url
+      setSyncUrl(saved.sync_url)
+      qc.setQueryData(queryKeys.mykey.syncConfig, saved)
+      await qc.invalidateQueries({ queryKey: ['mykey', 'auto-sync'] })
+      toast.success(saved.sync_url ? '同步域名已保存' : '已清除同步域名配置')
+    } catch (e: any) {
+      toast.error(`保存失败：${extractErrorMessage(e)}`)
+    } finally {
+      setSavingUrl(false)
+    }
+  }
 
   const toggle = async () => {
     if (showUpload) {
@@ -470,28 +502,100 @@ function MyKeySyncPanel() {
     toast.success('已显示上传按钮')
   }
 
+  const configured = Boolean(syncConfigQuery.data?.effective_url)
+
   return (
-    <div className="ga-paper-card p-4 flex flex-wrap items-center justify-between gap-4">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <div className="text-sm font-semibold text-ink">mykey 同步</div>
-          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium border ${showUpload ? 'border-status-warning-line bg-status-warning-soft text-status-warning' : 'border-line/50 bg-bg-soft text-ink-faint'}`}>
-            {showUpload ? '已显示上传入口' : '默认仅下载'}
-          </span>
+    <div className="space-y-4">
+      <div className="ga-paper-card p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-semibold text-ink">同步服务域名</div>
+              {syncConfigQuery.data && (
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium border ${configured ? 'border-line/60 bg-bg-soft text-ink' : 'border-status-warning-line bg-status-warning-soft text-status-warning'}`}>
+                  {configured ? '已配置' : '未配置'}
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-ink-faint mt-1">
+              填写你自己的同步服务端域名或完整 URL（如 https://sync.example.com），仅保存在本机配置，不随仓库分发。
+            </div>
+          </div>
         </div>
-        <div className="text-xs text-ink-faint mt-1">
-          上传会以本机配置覆盖云端并影响其他设备，按需手动开启。
-        </div>
+
+        <QueryLoadState query={syncConfigQuery} label="同步服务配置" showDetail>
+          <form
+            className="flex flex-wrap items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void saveSyncUrl(syncUrl)
+            }}
+          >
+            <input
+              type="text"
+              value={syncUrl}
+              onChange={(e) => {
+                syncUrlDirtyRef.current = true
+                setSyncUrl(e.target.value)
+              }}
+              placeholder="https://sync.example.com"
+              aria-label="同步服务域名"
+              disabled={savingUrl}
+              className="ga-input min-w-[16rem] flex-1 font-mono text-sm"
+            />
+            <button
+              type="submit"
+              disabled={savingUrl}
+              className="ga-btn-primary shrink-0"
+            >
+              <Save className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{savingUrl ? '保存中…' : '保存'}</span>
+            </button>
+            {syncUrl.trim() && (
+              <button
+                type="button"
+                disabled={savingUrl}
+                onClick={() => {
+                  syncUrlDirtyRef.current = true
+                  setSyncUrl('')
+                  void saveSyncUrl('')
+                }}
+                className="ga-btn shrink-0"
+              >
+                <span>清空</span>
+              </button>
+            )}
+          </form>
+          {syncConfigQuery.data?.env_override && (
+            <div className="text-xs text-status-warning">
+              当前检测到环境变量 GA_MYKEY_SYNC_URL 覆盖（生效地址：<span className="font-mono">{syncConfigQuery.data.effective_url}</span>）。
+            </div>
+          )}
+        </QueryLoadState>
       </div>
-      <button
-        type="button"
-        onClick={toggle}
-        aria-pressed={showUpload}
-        className={showUpload ? 'ga-btn-primary shrink-0' : 'ga-btn shrink-0'}
-      >
-        {showUpload ? <Eye className="h-3.5 w-3.5" aria-hidden="true" /> : <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />}
-        <span>{showUpload ? '上传按钮已显示 · 点击隐藏' : '显示上传按钮…'}</span>
-      </button>
+
+      <div className="ga-paper-card p-4 flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-ink">mykey 同步</div>
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium border ${showUpload ? 'border-status-warning-line bg-status-warning-soft text-status-warning' : 'border-line/50 bg-bg-soft text-ink-faint'}`}>
+              {showUpload ? '已显示上传入口' : '默认仅下载'}
+            </span>
+          </div>
+          <div className="text-xs text-ink-faint mt-1">
+            上传会以本机配置覆盖云端并影响其他设备，按需手动开启。
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-pressed={showUpload}
+          className={showUpload ? 'ga-btn-primary shrink-0' : 'ga-btn shrink-0'}
+        >
+          {showUpload ? <Eye className="h-3.5 w-3.5" aria-hidden="true" /> : <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />}
+          <span>{showUpload ? '上传按钮已显示 · 点击隐藏' : '显示上传按钮…'}</span>
+        </button>
+      </div>
     </div>
   )
 }

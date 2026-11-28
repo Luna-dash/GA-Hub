@@ -34,6 +34,7 @@ def test_mykey_sync_runs_in_worker_thread(tmp_path) -> None:
 
     with (
         mock.patch.object(mykey_service, "_mykey_path", return_value=path),
+        mock.patch.object(mykey_service, "_sync_base_url", return_value="https://synthetic.invalid"),
         mock.patch.object(mykey_service, "_run_mykey_sync", side_effect=lambda _args: _slow_result({
             "returncode": 0,
             "stdout": "ok",

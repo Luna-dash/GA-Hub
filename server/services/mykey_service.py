@@ -28,6 +28,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .. import _paths, constants
 from ..process_utils import hidden_process_kwargs
@@ -353,13 +354,64 @@ def _mykey_sync_script() -> Path:
     return script
 
 
+def _normalize_sync_url(raw: str | None) -> str:
+    """Validate and normalize a user-configured sync service URL or domain."""
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    if any(ch.isspace() for ch in value):
+        raise MykeyHttpError(400, "同步服务地址不能包含空格")
+    if "://" not in value:
+        value = f"https://{value}"
+    parts = urlsplit(value)
+    if parts.scheme not in {"http", "https"}:
+        raise MykeyHttpError(400, "同步服务地址必须使用 https:// 或 http://")
+    if not parts.netloc or not parts.hostname or parts.query or parts.fragment:
+        raise MykeyHttpError(400, "请输入有效的同步服务域名或 URL")
+    return f"{parts.scheme}://{parts.netloc}{parts.path}".rstrip("/")
+
+
+def get_sync_config() -> dict[str, Any]:
+    """Return local config.json sync URL and effective runtime URL."""
+    env_url = os.environ.get(constants.ENV_MYKEY_SYNC_URL, "").strip().rstrip("/")
+    raw_cfg = _paths.load_config().get("mykey_sync_url")
+    config_url = raw_cfg.strip().rstrip("/") if isinstance(raw_cfg, str) and raw_cfg.strip() else ""
+    return {
+        "sync_url": config_url,
+        "effective_url": env_url or config_url,
+        "env_override": bool(env_url),
+    }
+
+
+def save_sync_config(sync_url: str) -> dict[str, Any]:
+    """Persist mykey_sync_url in local config.json."""
+    normalized = _normalize_sync_url(sync_url)
+
+    def _mutate(cfg: dict) -> None:
+        if normalized:
+            cfg["mykey_sync_url"] = normalized
+        else:
+            cfg.pop("mykey_sync_url", None)
+
+    _paths.update_config(_mutate)
+    return get_sync_config()
+
+
 def _sync_base_url() -> str:
-    # KV 方案(2026-09-17 起)：入口 sync.lunadash.me =
-    # Vercel Serverless Function + Cloudflare Workers KV。
-    # 每次 upload 只是一次 PUT（不再创建 Vercel 部署），下载是一次 GET。
-    # 自定义域名大陆直连可达；*vercel.app 直连被墙，不可作端点。
-    # 旧静态站 ga.lunadash.me 仅作历史兜底，不再写入。
-    return os.environ.get(constants.ENV_MYKEY_SYNC_URL, "https://sync.lunadash.me").rstrip("/")
+    """Resolve the mykey sync service root URL from env or local config.json."""
+    env_url = os.environ.get(constants.ENV_MYKEY_SYNC_URL, "").strip()
+    if env_url:
+        return env_url.rstrip("/")
+    cfg_url = _paths.load_config().get("mykey_sync_url")
+    if isinstance(cfg_url, str) and cfg_url.strip():
+        return cfg_url.strip().rstrip("/")
+    raise MykeyHttpError(400, {
+        "error": "sync_url_not_configured",
+        "message": (
+            "未配置同步服务地址：请在「设置 → 密钥同步」中填写同步域名，"
+            f"或在环境变量 {constants.ENV_MYKEY_SYNC_URL} 中设置"
+        ),
+    })
 
 
 _MYKEY_MIN_PYTHON = (3, 11)
@@ -579,8 +631,8 @@ def sync_upload() -> dict:
     p = _mykey_path()
     if not p.is_file():
         raise MykeyHttpError(404, "mykey.py 不存在")
-    # KV 方案: upload = 加密为单容器后一次 PUT 到 KV（脚本内含回读字节级校验），
-    # --base-url 为服务根 URL（默认 sync.lunadash.me）。
+    # 加密为单容器后一次 PUT 到远端（脚本内含回读字节级校验），
+    # --base-url 由环境变量 GA_MYKEY_SYNC_URL 或本地 config.json 的 mykey_sync_url 提供。
     result = _run_mykey_sync([
         "upload",
         "--base-url", _sync_base_url(),

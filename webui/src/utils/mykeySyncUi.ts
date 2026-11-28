@@ -41,7 +41,9 @@ export function myKeySyncFailure(action: MyKeySyncAction, error: unknown) {
   // Exclude command/path metadata: python.exe is present for every failure.
   const text = `${primary}\n${stderr}`
   let message: string
-  if (/回读|校验失败|验证失败/.test(text) && action === 'upload') {
+  if (/未配置同步服务地址|sync_url_not_configured/.test(text)) {
+    message = '尚未配置同步服务地址。请先在「设置 → 密钥同步」中填写同步域名后重试。'
+  } else if (/回读|校验失败|验证失败/.test(text) && action === 'upload') {
     message = '云端可能已收到配置，但暂时未能确认结果。请稍后重试，确认同步是否完成。'
   } else if (/cryptography|Python|解释器/i.test(text)) {
     message = '同步环境还没准备好。请到设置中选择支持同步的 Python（3.11 及以上，并安装 cryptography）后重试。'

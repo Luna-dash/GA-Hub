@@ -347,23 +347,28 @@ def test_mykey_sync_reports_missing_cryptography_actionably(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("environment", "expected_url"),
+    ("environment", "config_url", "expected_url"),
     [
-        ({}, "https://sync.lunadash.me"),
-        ({"GA_MYKEY_SYNC_URL": "https://mirror.example/"}, "https://mirror.example"),
-            ],
+        ({}, " https://sync.example/ ", "https://sync.example"),
+        ({"GA_MYKEY_SYNC_URL": "https://mirror.example/"}, "https://sync.example", "https://mirror.example"),
+    ],
 )
-def test_mykey_upload_route_preserves_sync_cli_url_contract(tmp_path, environment, expected_url):
+def test_mykey_upload_route_preserves_sync_cli_url_contract(tmp_path, environment, config_url, expected_url):
     target = tmp_path / "mykey.py"
     target.write_text("# config\n", encoding="utf-8")
+    config_file = tmp_path / "config.json"
+    config_file.write_text(f'{{"mykey_sync_url": "{config_url}"}}', encoding="utf-8")
     runner = mock.Mock(return_value={"returncode": 0, "stdout": "ok", "stderr": ""})
 
+    mykey_service._paths.reset_config_cache()
     with (
         mock.patch.object(mykey_service, "_mykey_path", return_value=target),
+        mock.patch.object(mykey_service._paths, "CONFIG_FILE", config_file),
         mock.patch.object(mykey_service, "_run_mykey_sync", runner),
         mock.patch.dict(mykey_service.os.environ, environment, clear=True),
     ):
         result = asyncio.run(mykey_routes.sync_upload_mykey())
+    mykey_service._paths.reset_config_cache()
 
     assert result["ok"] is True
     runner.assert_called_once_with([
@@ -371,3 +376,74 @@ def test_mykey_upload_route_preserves_sync_cli_url_contract(tmp_path, environmen
         "--base-url", expected_url,
         "--source", str(target),
     ])
+
+
+def test_mykey_sync_requires_local_or_env_url(tmp_path):
+    target = tmp_path / "mykey.py"
+    target.write_text("# config\n", encoding="utf-8")
+    config_file = tmp_path / "config.json"
+    config_file.write_text("{}", encoding="utf-8")
+    runner = mock.Mock()
+
+    mykey_service._paths.reset_config_cache()
+    with (
+        mock.patch.object(mykey_service, "_mykey_path", return_value=target),
+        mock.patch.object(mykey_service._paths, "CONFIG_FILE", config_file),
+        mock.patch.object(mykey_service, "_run_mykey_sync", runner),
+        mock.patch.dict(mykey_service.os.environ, {}, clear=True),
+        pytest.raises(mykey_service.MykeyHttpError) as error,
+    ):
+        mykey_service.sync_upload()
+    mykey_service._paths.reset_config_cache()
+
+    assert error.value.status_code == 400
+    assert error.value.detail["error"] == "sync_url_not_configured"
+    runner.assert_not_called()
+
+
+def test_mykey_sync_config_roundtrip_and_validation(tmp_path):
+    config_file = tmp_path / "config.json"
+    config_file.write_text('{"ga_root": "D:/ga"}', encoding="utf-8")
+
+    mykey_service._paths.reset_config_cache()
+    with (
+        mock.patch.object(mykey_service._paths, "CONFIG_FILE", config_file),
+        mock.patch.dict(mykey_service.os.environ, {}, clear=True),
+    ):
+        assert asyncio.run(mykey_routes.get_mykey_sync_config()) == {
+            "sync_url": "",
+            "effective_url": "",
+            "env_override": False,
+        }
+
+        saved = asyncio.run(
+            mykey_routes.save_mykey_sync_config(mykey_routes.MyKeySyncConfigReq(sync_url="sync.example.com/"))
+        )
+        assert saved == {
+            "sync_url": "https://sync.example.com",
+            "effective_url": "https://sync.example.com",
+            "env_override": False,
+        }
+        assert '"ga_root": "D:/ga"' in config_file.read_text(encoding="utf-8")
+
+        with pytest.raises(mykey_service.MykeyHttpError) as bad:
+            mykey_service.save_sync_config("ftp://sync.example.com")
+        assert bad.value.status_code == 400
+
+        with mock.patch.dict(mykey_service.os.environ, {"GA_MYKEY_SYNC_URL": "https://env.example/"}, clear=True):
+            overridden = asyncio.run(mykey_routes.get_mykey_sync_config())
+            assert overridden == {
+                "sync_url": "https://sync.example.com",
+                "effective_url": "https://env.example",
+                "env_override": True,
+            }
+
+        cleared = asyncio.run(
+            mykey_routes.save_mykey_sync_config(mykey_routes.MyKeySyncConfigReq(sync_url="   "))
+        )
+        assert cleared == {
+            "sync_url": "",
+            "effective_url": "",
+            "env_override": False,
+        }
+    mykey_service._paths.reset_config_cache()

@@ -3480,6 +3480,68 @@
         }
       }
     },
+    "/api/mykey/sync/config": {
+      "get": {
+        "tags": [
+          "mykey"
+        ],
+        "summary": "Get Mykey Sync Config",
+        "description": "Read the locally configured mykey sync server URL.",
+        "operationId": "get_mykey_sync_config_api_mykey_sync_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeySyncConfigResp"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "mykey"
+        ],
+        "summary": "Save Mykey Sync Config",
+        "description": "Persist the mykey sync server URL to local config.json.",
+        "operationId": "save_mykey_sync_config_api_mykey_sync_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MyKeySyncConfigReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeySyncConfigResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/mykey/sync/auto": {
       "get": {
         "tags": [
@@ -14817,6 +14879,38 @@
           "globals"
         ],
         "title": "MyKeyStructured"
+      },
+      "MyKeySyncConfigReq": {
+        "properties": {
+          "sync_url": {
+            "type": "string",
+            "title": "Sync Url",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "MyKeySyncConfigReq"
+      },
+      "MyKeySyncConfigResp": {
+        "properties": {
+          "sync_url": {
+            "type": "string",
+            "title": "Sync Url",
+            "default": ""
+          },
+          "effective_url": {
+            "type": "string",
+            "title": "Effective Url",
+            "default": ""
+          },
+          "env_override": {
+            "type": "boolean",
+            "title": "Env Override",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "MyKeySyncConfigResp"
       },
       "MyKeySyncResultResp": {
         "properties": {

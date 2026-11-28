@@ -150,6 +150,8 @@ def test_schedule_noon_catchup_and_persisted_daily_dedup(monkeypatch, tmp_path):
     fetch = Mock(return_value={'changed': False})
     monkeypatch.setattr(auto, 'checked_fetch', fetch)
     service = auto.MykeyAutoSync(scheduler_runtime=runtime, path=path, now=lambda: now[0])
+    assert not service.status()['enabled']
+    service.configure(True)
     service.start()
     runtime.add_job.assert_called_once()
     service.tick()
@@ -179,6 +181,7 @@ def test_updates_and_failure_status_are_persisted(monkeypatch, tmp_path, outcome
     monkeypatch.setattr(auto, 'checked_fetch', fetch)
     service = auto.MykeyAutoSync(scheduler_runtime=Mock(), path=tmp_path / 'state.json',
                                 now=lambda: datetime(2026, 11, 5, 16, tzinfo=timezone.utc))
+    service.configure(True)
     service.start()
     service.tick()
     service.tick()
@@ -209,7 +212,8 @@ def test_auto_routes_use_owned_service(tmp_path):
     service = auto.MykeyAutoSync(scheduler_runtime=Mock(), path=tmp_path / 'state.json')
     app = SimpleNamespace(state=SimpleNamespace(services=SimpleNamespace(mykey_sync=service)))
     request = Request({'type': 'http', 'app': app})
-    assert asyncio.run(mykey.auto_sync_status(request))['enabled']
+    assert not asyncio.run(mykey.auto_sync_status(request))['enabled']
+    assert asyncio.run(mykey.auto_sync_settings(request, MyKeyAutoSyncSettings(enabled=True)))['enabled']
     assert not asyncio.run(mykey.auto_sync_settings(request, MyKeyAutoSyncSettings(enabled=False)))['enabled']
     app.state.services.mykey_sync = None
     with pytest.raises(HTTPException) as exc:
@@ -226,6 +230,7 @@ def test_concurrent_edit_during_fetch_is_not_overwritten(monkeypatch, config, tm
         config.write_text("oai_config_local = {'name': 'Local edit'}\n", encoding='utf-8')
         return {'returncode': 0, 'stdout': '', 'stderr': ''}
     monkeypatch.setattr(svc._paths, 'ADMIN_DATA', tmp_path)
+    monkeypatch.setattr(svc, '_sync_base_url', lambda: 'https://synthetic.invalid')
     monkeypatch.setattr(svc, '_run_mykey_sync', worker)
     backup, reload = Mock(), Mock()
     monkeypatch.setattr(svc, '_backup_current', backup)

@@ -1713,6 +1713,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mykey/sync/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mykey Sync Config
+         * @description Read the locally configured mykey sync server URL.
+         */
+        get: operations["get_mykey_sync_config_api_mykey_sync_config_get"];
+        /**
+         * Save Mykey Sync Config
+         * @description Persist the mykey sync server URL to local config.json.
+         */
+        put: operations["save_mykey_sync_config_api_mykey_sync_config_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/mykey/sync/auto": {
         parameters: {
             query?: never;
@@ -5631,6 +5655,32 @@ export interface components {
             };
         } & {
             [key: string]: unknown;
+        };
+        /** MyKeySyncConfigReq */
+        MyKeySyncConfigReq: {
+            /**
+             * Sync Url
+             * @default
+             */
+            sync_url: string;
+        };
+        /** MyKeySyncConfigResp */
+        MyKeySyncConfigResp: {
+            /**
+             * Sync Url
+             * @default
+             */
+            sync_url: string;
+            /**
+             * Effective Url
+             * @default
+             */
+            effective_url: string;
+            /**
+             * Env Override
+             * @default false
+             */
+            env_override: boolean;
         };
         /** MyKeySyncResultResp */
         MyKeySyncResultResp: {
@@ -9739,6 +9789,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MyKeyOpenResp"];
+                };
+            };
+        };
+    };
+    get_mykey_sync_config_api_mykey_sync_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyKeySyncConfigResp"];
+                };
+            };
+        };
+    };
+    save_mykey_sync_config_api_mykey_sync_config_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MyKeySyncConfigReq"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyKeySyncConfigResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -143,6 +143,7 @@ export type MyKeySessionTestResult = ApiSchemas['MyKeySessionTestResp']
 export type MyKeyBackup = ApiSchemas['MyKeyBackup']
 export type MyKeyBackupListResponse = ApiSchemas['MyKeyBackupListResp']
 export type MyKeyAutoSyncStatus = ApiSchemas['MyKeyAutoSyncStatus']
+export type MyKeySyncConfig = ApiSchemas['MyKeySyncConfigResp']
 export type MyKeySyncResult = ApiSchemas['MyKeySyncResultResp']
 export type MyKeyOpenResponse = ApiSchemas['MyKeyOpenResp']
 

@@ -131,7 +131,7 @@ class MykeyAutoSync:
         self.lock = threading.RLock()
         self.running = False
         self.stopped = True
-        self.state = {"enabled": True, "last_attempt_day": None, "last_checked": None,
+        self.state = {"enabled": False, "last_attempt_day": None, "last_checked": None,
                       "last_updated": None, "result": "never", "message": "尚未检查"}
         if self.path.is_file():
             try:
