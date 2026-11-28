@@ -112,6 +112,9 @@
   --c-chart-ga-rgb: 23 130 91;
   --c-chart-agy: #1E6FD9;
   --c-chart-agy-rgb: 30 111 217;
+  --c-quota-blue-rgb: 43 114 184;
+  --c-quota-blue-soft-rgb: 74 143 210;
+  --c-quota-blue-text-rgb: 31 94 160;
   color-scheme: light;
 }
 
@@ -293,6 +296,9 @@ html[data-theme="dark-forest"] {
   --c-chart-ga-rgb: 52 211 153;
   --c-chart-agy: #38BDF8;
   --c-chart-agy-rgb: 56 189 248;
+  --c-quota-blue-rgb: 66 153 225;
+  --c-quota-blue-soft-rgb: 108 182 242;
+  --c-quota-blue-text-rgb: 108 182 242;
   color-scheme: dark;
 }
 

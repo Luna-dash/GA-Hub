@@ -9,13 +9,13 @@ afterEach(() => {
 })
 
 describe('AntiQuotaProgressList', () => {
-  it('uses softened translucent gradient tones across remaining percentage thresholds', () => {
-    expect(quotaTone(80)).toContain('text-status-success/')
-    expect(quotaTone(30)).toContain('text-status-warning/')
-    expect(quotaTone(10)).toContain('text-status-danger/')
+  it('uses balanced blue and clear warning/danger tones across remaining percentage thresholds', () => {
+    expect(quotaTone(80)).toContain('text-quota-blue-text')
+    expect(quotaTone(30)).toContain('text-status-warning-hot')
+    expect(quotaTone(10)).toContain('text-status-danger')
 
-    expect(quotaBarTone(80)).toContain('from-status-success/')
-    expect(quotaBarTone(30)).toContain('from-status-warning/')
+    expect(quotaBarTone(80)).toContain('from-quota-blue/')
+    expect(quotaBarTone(30)).toContain('from-status-warning-hot/')
     expect(quotaBarTone(10)).toContain('from-status-danger/')
   })
 

@@ -58,6 +58,13 @@ export default {
             hot: 'rgb(var(--c-status-warning-hot-rgb) / <alpha-value>)',
           },
         },
+        quota: {
+          blue: {
+            DEFAULT: 'rgb(var(--c-quota-blue-rgb) / <alpha-value>)',
+            soft: 'rgb(var(--c-quota-blue-soft-rgb) / <alpha-value>)',
+            text: 'rgb(var(--c-quota-blue-text-rgb) / <alpha-value>)',
+          },
+        },
       },
       fontFamily: {
         sans: ['var(--ga-font-sans, "PingFang SC")', '"Segoe UI"', '"Microsoft YaHei UI"', 'system-ui', 'sans-serif'],

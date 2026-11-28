@@ -23,15 +23,15 @@ export function formatQuotaTime(raw?: string | null): string | null {
 }
 
 export function quotaTone(pct: number): string {
-  if (pct >= 50) return 'text-status-success/85'
-  if (pct >= 20) return 'text-status-warning/90'
-  return 'text-status-danger/90'
+  if (pct >= 50) return 'text-quota-blue-text'
+  if (pct >= 20) return 'text-status-warning-hot'
+  return 'text-status-danger'
 }
 
 export function quotaBarTone(pct: number): string {
-  if (pct >= 50) return 'bg-gradient-to-r from-status-success/35 to-status-success/55'
-  if (pct >= 20) return 'bg-gradient-to-r from-status-warning/40 to-status-warning/60'
-  return 'bg-gradient-to-r from-status-danger/45 to-status-danger/65'
+  if (pct >= 50) return 'bg-gradient-to-r from-quota-blue/85 to-quota-blue-soft'
+  if (pct >= 20) return 'bg-gradient-to-r from-status-warning-hot/80 to-status-warning-hot'
+  return 'bg-gradient-to-r from-status-danger/85 to-status-danger'
 }
 
 export function AntiQuotaProgressList({
@@ -83,7 +83,7 @@ export function AntiQuotaProgressList({
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={pct}
-              className="h-1 w-full overflow-hidden rounded-full bg-line/25"
+              className="h-1 w-full overflow-hidden rounded-full bg-line/35"
             >
               <div
                 className={clsx('h-full rounded-full transition-[width] duration-300 ease-out', quotaBarTone(pct))}
