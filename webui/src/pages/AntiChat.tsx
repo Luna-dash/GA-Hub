@@ -565,8 +565,8 @@ function Conversation({ session, headerActions, profileId, profilesData, support
   const prevActiveRunIdRef = useRef<string | null | undefined>(undefined)
   const [familyKey, setFamilyKey] = usePageState('antiChat.modelFamily', DEFAULT_FAMILY)
   const [preferredEffort, setEffort] = usePageState('antiChat.effort', DEFAULT_EFFORT)
-  const [mode, setMode] = usePageState<AntiMode>('antiChat.mode', 'plan')
-  const [permissionMode, setPermissionMode] = usePageState<AntiPermissionMode>('antiChat.permissionMode', 'approval-required')
+  const [mode, setMode] = usePageState<AntiMode>('antiChat.mode', 'accept-edits')
+  const [permissionMode, setPermissionMode] = usePageState<AntiPermissionMode>('antiChat.permissionMode', 'auto')
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null)
   const [policyOpen, setPolicyOpen] = useState(false)
@@ -576,7 +576,9 @@ function Conversation({ session, headerActions, profileId, profilesData, support
   const composerWrapRef = useRef<HTMLDivElement>(null)
   const activePolicy = mode === 'plan'
     ? EXECUTION_POLICIES[0]
-    : (EXECUTION_POLICIES.find(p => p.mode === 'accept-edits' && p.permissionMode === permissionMode) ?? EXECUTION_POLICIES[1])
+    : (EXECUTION_POLICIES.find(p => p.mode === 'accept-edits' && p.permissionMode === permissionMode)
+      ?? EXECUTION_POLICIES.find(p => p.id === 'accept-edits:auto')
+      ?? EXECUTION_POLICIES[1])
 
   useOverlayRegistration({
     active: policyOpen,

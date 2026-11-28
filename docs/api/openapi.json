@@ -9724,7 +9724,7 @@
               "accept-edits"
             ],
             "title": "Mode",
-            "default": "plan"
+            "default": "accept-edits"
           },
           "permission_mode": {
             "anyOf": [
@@ -9895,7 +9895,7 @@
               "accept-edits"
             ],
             "title": "Mode",
-            "default": "plan"
+            "default": "accept-edits"
           },
           "permission_mode": {
             "type": "string",
@@ -9906,7 +9906,7 @@
               "full-access"
             ],
             "title": "Permission Mode",
-            "default": "approval-required"
+            "default": "auto"
           },
           "orchestrator_planner": {
             "anyOf": [
@@ -10154,7 +10154,7 @@
               "accept-edits"
             ],
             "title": "Mode",
-            "default": "plan"
+            "default": "accept-edits"
           },
           "permission_mode": {
             "anyOf": [
@@ -10370,7 +10370,7 @@
               "accept-edits"
             ],
             "title": "Mode",
-            "default": "plan"
+            "default": "accept-edits"
           },
           "permission_mode": {
             "type": "string",
@@ -10381,7 +10381,7 @@
               "full-access"
             ],
             "title": "Permission Mode",
-            "default": "approval-required"
+            "default": "auto"
           },
           "approval": {
             "anyOf": [
@@ -10597,7 +10597,7 @@
               "accept-edits"
             ],
             "title": "Mode",
-            "default": "plan"
+            "default": "accept-edits"
           },
           "permission_mode": {
             "anyOf": [

@@ -18,6 +18,8 @@ def test_session_mode_and_permission_policy_decoupling(tmp_path):
     assert proto.session_mode_for_policy("accept-edits", "full-access") == "default"
     assert proto.session_mode_for_policy("accept-edits", "auto", [{"id": "default"}, {"id": "auto"}]) == "auto"
     assert proto.session_mode_for_policy("accept-edits", "auto", [{"id": "default"}]) == "default"
+    assert proto.default_permission_mode("accept-edits", None) == "auto"
+    assert proto.default_permission_mode("plan", None) == "approval-required"
 
     grants = proto.RuntimeGrants()
     read_req = {"toolCall": {"toolCallId": "t1", "kind": "read", "locations": [{"path": str(inside)}]}}

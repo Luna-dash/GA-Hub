@@ -270,7 +270,7 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     const transcript = host.querySelector('[data-anti-chat-scroll]')!
     expect(transcript.parentElement?.contains(control('中转箱'))).toBe(true)
     expect(transcript.contains(control('中转箱'))).toBe(false)
-    expect(control('发送').previousElementSibling?.textContent).toBe('Plan')
+    expect(control('发送').previousElementSibling?.textContent).toBe('Edit · Auto')
     expect(control('发送').previousElementSibling?.querySelector('button')?.className).toContain('h-10')
     expect(control('发送').previousElementSibling?.className).toContain('mb-0.5')
     expect(control('发送').className).toContain('mb-0.5')
@@ -322,8 +322,8 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
       prompt: 'Read the project',
       model: outcome === 'success' ? 'gemini-4-neon-xhigh' : 'alternate-medium',
       effort: outcome === 'success' ? 'xhigh' : 'medium',
-      mode: 'plan',
-      permission_mode: 'approval-required',
+      mode: 'accept-edits',
+      permission_mode: 'auto',
       operation: expect.any(String),
     }])
     const toDocument = host.querySelector<HTMLButtonElement>('button[title="放入中转箱"]') ?? undefined
@@ -926,7 +926,7 @@ it('supports Edit mode switching, permission policy selection, and interactive A
     await flush()
 
     const policyBtn = host.querySelector<HTMLButtonElement>('button[aria-label="执行与审批模式"]')!
-    expect(policyBtn.textContent).toBe('Plan')
+    expect(policyBtn.textContent).toBe('Edit · Auto')
     await act(async () => { policyBtn.click() })
     await flush()
 

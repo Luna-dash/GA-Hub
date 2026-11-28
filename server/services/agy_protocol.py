@@ -117,7 +117,7 @@ def supports_system_prompt_append(init_result: dict[str, Any]) -> bool:
 def default_permission_mode(mode: str, permission_mode: str | None) -> str:
     if permission_mode in PERMISSION_MODES:
         return permission_mode
-    return "approval-required"
+    return "approval-required" if mode == "plan" else "auto"
 
 
 def session_mode_for_policy(

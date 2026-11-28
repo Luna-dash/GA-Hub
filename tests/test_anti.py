@@ -193,7 +193,8 @@ def test_unified_acp_round_trip_mode_switch_and_resume(tmp_path, monkeypatch):
         assert completed["finished_at"]
         assert completed["answer"] == "完整结果"
         assert completed["progress_messages"] == []
-        assert runtime.calls[0]["mode"] == "plan"
+        assert runtime.calls[0]["mode"] == "accept-edits"
+        assert runtime.calls[0]["permission_mode"] == "auto"
         assert runtime.calls[0]["conversation"] is None
 
         ev = client.get(path + "/events").json()
@@ -203,7 +204,7 @@ def test_unified_acp_round_trip_mode_switch_and_resume(tmp_path, monkeypatch):
         assert ev[2]["type"] == "message.delta" and ev[2]["text"] == "好"
         assert client.get(path + "/events?after=2").json() == [ev[2]]
 
-        # Switching to accept-edits in the SAME session resumes the exact same conversation_id!
+        # Switching mode/policy in the SAME session resumes the exact same conversation_id!
         second = client.post(runs, json={
             "operation": "message2",
             "prompt": "apply patch",

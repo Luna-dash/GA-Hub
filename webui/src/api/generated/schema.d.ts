@@ -3759,7 +3759,7 @@ export interface components {
             attachments?: components["schemas"]["AttachmentRef"][];
             /**
              * Mode
-             * @default plan
+             * @default accept-edits
              * @enum {string}
              */
             mode: "plan" | "accept-edits";
@@ -3815,13 +3815,13 @@ export interface components {
             attachments?: components["schemas"]["AttachmentRef"][];
             /**
              * Mode
-             * @default plan
+             * @default accept-edits
              * @enum {string}
              */
             mode: "plan" | "accept-edits";
             /**
              * Permission Mode
-             * @default approval-required
+             * @default auto
              * @enum {string}
              */
             permission_mode: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
@@ -3893,7 +3893,7 @@ export interface components {
             attachments?: components["schemas"]["AttachmentRef"][];
             /**
              * Mode
-             * @default plan
+             * @default accept-edits
              * @enum {string}
              */
             mode: "plan" | "accept-edits";
@@ -3984,13 +3984,13 @@ export interface components {
             fallback_notice?: string | null;
             /**
              * Mode
-             * @default plan
+             * @default accept-edits
              * @enum {string}
              */
             mode: "plan" | "accept-edits";
             /**
              * Permission Mode
-             * @default approval-required
+             * @default auto
              * @enum {string}
              */
             permission_mode: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
@@ -4063,7 +4063,7 @@ export interface components {
             effort?: ("low" | "medium" | "high" | "xhigh" | "max") | null;
             /**
              * Mode
-             * @default plan
+             * @default accept-edits
              * @enum {string}
              */
             mode: "plan" | "accept-edits";

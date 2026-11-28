@@ -274,8 +274,8 @@ class AntiRunResp(BaseModel):
     effort: str | None = None
     effective_model: str | None = None
     fallback_notice: str | None = None
-    mode: Literal["plan", "accept-edits"] = "plan"
-    permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] = "approval-required"
+    mode: Literal["plan", "accept-edits"] = "accept-edits"
+    permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] = "auto"
     approval: AntiApprovalPrompt | None = None
     usage: AntiRunUsage | None = None
     attachments: list[AttachmentRef] = Field(default_factory=list)
@@ -305,7 +305,7 @@ class AntiRunCreate(BaseModel):
     effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
     references: list[AntiFileReference] = Field(default_factory=list, max_length=8)
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=256)
-    mode: Literal["plan", "accept-edits"] = "plan"
+    mode: Literal["plan", "accept-edits"] = "accept-edits"
     permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] | None = None
     orchestrator_planner: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None
     orchestrator_executor: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None
@@ -320,7 +320,7 @@ class AntiRunCreate(BaseModel):
 class AntiSessionCompactReq(BaseModel):
     model: Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$")] | None = None
     effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
-    mode: Literal["plan", "accept-edits"] = "plan"
+    mode: Literal["plan", "accept-edits"] = "accept-edits"
     permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] | None = None
 
 
@@ -345,8 +345,8 @@ class AntiQueuedPromptItem(BaseModel):
     effort: str | None = None
     references: list[AntiFileReference] = Field(default_factory=list)
     attachments: list[AttachmentRef] = Field(default_factory=list)
-    mode: Literal["plan", "accept-edits"] = "plan"
-    permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] = "approval-required"
+    mode: Literal["plan", "accept-edits"] = "accept-edits"
+    permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] = "auto"
     orchestrator_planner: str | None = None
     orchestrator_executor: str | None = None
     created_at: str
@@ -364,7 +364,7 @@ class AntiQueueEnqueueReq(BaseModel):
     effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
     references: list[AntiFileReference] = Field(default_factory=list, max_length=8)
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=256)
-    mode: Literal["plan", "accept-edits"] = "plan"
+    mode: Literal["plan", "accept-edits"] = "accept-edits"
     permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] | None = None
     orchestrator_planner: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None
     orchestrator_executor: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] | None = None

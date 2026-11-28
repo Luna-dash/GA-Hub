@@ -481,7 +481,7 @@ class AntiSessions:
         profile_id: str = "default",
         model: str | None = None,
         effort: str | None = None,
-        mode: str = "plan",
+        mode: str = "accept-edits",
         permission_mode: str | None = None,
     ) -> dict:
         def_model, def_effort = agy_models.default_model_and_effort()
@@ -558,7 +558,7 @@ class AntiSessions:
         else:
             item["progress_messages"] = []
         if not item.get("mode"):
-            item["mode"] = "plan"
+            item["mode"] = "accept-edits"
         if not item.get("permission_mode"):
             item["permission_mode"] = default_permission_mode(item["mode"], None)
         return item
@@ -964,7 +964,7 @@ class AntiSessions:
         references: list[tuple[int, str]] | None = None,
         profile_id: str = "default",
         attachments: list[dict] | None = None,
-        mode: str = "plan",
+        mode: str = "accept-edits",
         permission_mode: str | None = None,
         orchestrator_planner: str | None = None,
         orchestrator_executor: str | None = None,
@@ -1005,7 +1005,7 @@ class AntiSessions:
                         or (decoded["effort"] or DEFAULT_EFFORT) != effort
                         or (decoded.get("references_json") or "[]") != refs_json
                         or (decoded.get("attachments_json") or "[]") != attachments_json
-                        or (decoded.get("mode") or "plan") != mode
+                        or (decoded.get("mode") or "accept-edits") != mode
                         or (decoded.get("permission_mode") or default_permission_mode(mode, None)) != resolved_permission
                     ):
                         raise AntiError(409, "Operation already exists with different parameters")
@@ -1469,7 +1469,7 @@ class AntiSessions:
             except ValueError:
                 pass
         item["attachments"] = decoded_atts
-        mode = item.get("mode") if item.get("mode") in {"plan", "accept-edits"} else "plan"
+        mode = item.get("mode") if item.get("mode") in {"plan", "accept-edits"} else "accept-edits"
         item["mode"] = mode
         item["permission_mode"] = item.get("permission_mode") or default_permission_mode(mode, None)
         return item
@@ -1513,7 +1513,7 @@ class AntiSessions:
         effort: str | None = None,
         references: list[tuple[int, str]] | None = None,
         attachments: list[dict] | None = None,
-        mode: str = "plan",
+        mode: str = "accept-edits",
         permission_mode: str | None = None,
         orchestrator_planner: str | None = None,
         orchestrator_executor: str | None = None,
