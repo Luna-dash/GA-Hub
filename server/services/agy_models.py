@@ -46,6 +46,16 @@ _DEFAULT_QUOTA_RULES: list[dict[str, str]] = [
     {"pattern": r"gemini-3", "group": "gemini-3"},
 ]
 
+_LEGACY_MODEL_RE = re.compile(
+    r"^(?:"
+    r"gemini-(?:1(?:\.\d+)?|2(?:\.\d+)?|3(?:\.0|\.1|\.5|\.8)?)(?:-|$)"
+    r"|claude-(?:opus|sonnet|haiku)-(?:3(?:\.\d+)?|4(?:[.-]\d+)?)(?:-|$)"
+    r"|gpt-oss-120b(?:-\w+)?$"
+    r")",
+    re.IGNORECASE,
+)
+_EFFORT_SUFFIX_RE = re.compile(r"-(low|medium|high|xhigh|max)$", re.IGNORECASE)
+
 _lock = threading.RLock()
 _cache: tuple[tuple[str, int, int], dict[str, Any]] | None = None
 
@@ -173,6 +183,7 @@ def _default_payload() -> dict[str, Any]:
         "sync": {
             "auto_sync": True,
             "schedule_hours": list(DEFAULT_SCHEDULE_HOURS),
+            "hide_legacy_models": True,
             "last_synced_at": None,
             "last_error": None,
         },
@@ -264,6 +275,8 @@ def _normalize_item(raw: Any) -> dict[str, Any] | None:
             item["default_effort"] = raw["default_effort"].strip().lower()
     if raw.get("is_default") is True:
         item["is_default"] = True
+    if raw.get("deprecated") is True:
+        item["deprecated"] = True
     return item
 
 
@@ -276,6 +289,7 @@ def _normalize_payload(raw: Any) -> dict[str, Any]:
     base["sync"] = {
         "auto_sync": bool(sync_raw.get("auto_sync", True)),
         "schedule_hours": normalize_schedule_hours(sync_raw.get("schedule_hours")),
+        "hide_legacy_models": bool(sync_raw.get("hide_legacy_models", True)),
         "last_synced_at": sync_raw.get("last_synced_at") if isinstance(sync_raw.get("last_synced_at"), str) else None,
         "last_error": sync_raw.get("last_error") if isinstance(sync_raw.get("last_error"), str) else None,
     }
@@ -401,6 +415,7 @@ def patch_user_config(
     *,
     auto_sync: bool | None = None,
     schedule_hours: list[int] | None = None,
+    hide_legacy_models: bool | None = None,
     default_model: str | None = None,
     default_effort: str | None = None,
     allow_auto_fallback: bool | None = None,
@@ -415,6 +430,8 @@ def patch_user_config(
             cfg["sync"]["auto_sync"] = bool(auto_sync)
         if schedule_hours is not None:
             cfg["sync"]["schedule_hours"] = normalize_schedule_hours(schedule_hours)
+        if hide_legacy_models is not None:
+            cfg["sync"]["hide_legacy_models"] = bool(hide_legacy_models)
         if default_model is not None and default_model.strip():
             cfg["defaults"]["model"] = default_model.strip()
         if default_effort is not None and default_effort.strip():
@@ -482,35 +499,146 @@ def match_quota_group(model: str) -> str | None:
     return None
 
 
+def _merge_entry_into(cur: dict[str, Any], norm: dict[str, Any]) -> None:
+    mid = norm["id"]
+    if norm.get("display_name") and (norm["display_name"] != mid or cur["display_name"] == mid):
+        cur["display_name"] = norm["display_name"]
+    if norm.get("is_orchestrator"):
+        cur["is_orchestrator"] = True
+        cur.pop("efforts", None)
+        cur.pop("default_effort", None)
+    else:
+        if norm.get("efforts"):
+            cur["efforts"] = list(norm["efforts"])
+        if norm.get("default_effort"):
+            cur["default_effort"] = norm["default_effort"]
+    if norm.get("is_default"):
+        cur["is_default"] = True
+    if norm.get("deprecated"):
+        cur["deprecated"] = True
+
+
+def reconcile_catalog_items(
+    existing: list[dict[str, Any]],
+    incoming: list[dict[str, Any]],
+    *,
+    prune_missing: bool = True,
+) -> list[dict[str, Any]]:
+    """Reconcile cached catalog with upstream `incoming` items.
+
+    When `prune_missing=True`, keeps ONLY items present in `incoming` (in `incoming` order)
+    while carrying over richer `efforts`, `default_effort`, and display names from `existing`.
+    """
+    if not prune_missing:
+        merged: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for src in (existing, incoming):
+            for raw in src:
+                norm = _normalize_item(raw)
+                if not norm:
+                    continue
+                mid = norm["id"]
+                if mid not in merged:
+                    merged[mid] = dict(norm)
+                    order.append(mid)
+                    continue
+                _merge_entry_into(merged[mid], norm)
+        return [merged[mid] for mid in order]
+
+    existing_by_id: dict[str, dict[str, Any]] = {}
+    for raw in existing:
+        norm = _normalize_item(raw)
+        if norm and norm["id"] not in existing_by_id:
+            existing_by_id[norm["id"]] = norm
+
+    reconciled: dict[str, dict[str, Any]] = {}
+    order = []
+    for raw in incoming:
+        norm = _normalize_item(raw)
+        if not norm:
+            continue
+        mid = norm["id"]
+        if mid not in reconciled:
+            entry = dict(norm)
+            prev = existing_by_id.get(mid)
+            if prev is not None:
+                if entry["display_name"] == mid and prev.get("display_name") and prev["display_name"] != mid:
+                    entry["display_name"] = prev["display_name"]
+                if not entry.get("is_orchestrator"):
+                    if not entry.get("efforts") and prev.get("efforts"):
+                        entry["efforts"] = list(prev["efforts"])
+                    if not entry.get("default_effort") and prev.get("default_effort"):
+                        entry["default_effort"] = prev["default_effort"]
+            reconciled[mid] = entry
+            order.append(mid)
+            continue
+        _merge_entry_into(reconciled[mid], norm)
+    return [reconciled[mid] for mid in order]
+
+
 def merge_catalog_items(existing: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Merge upstream model entries, enriching display names and effort capabilities."""
-    merged: dict[str, dict[str, Any]] = {}
-    order: list[str] = []
-    for src in (existing, incoming):
-        for raw in src:
-            norm = _normalize_item(raw)
-            if not norm:
-                continue
-            mid = norm["id"]
-            if mid not in merged:
-                merged[mid] = dict(norm)
-                order.append(mid)
-                continue
-            cur = merged[mid]
-            if norm.get("display_name") and (norm["display_name"] != mid or cur["display_name"] == mid):
-                cur["display_name"] = norm["display_name"]
-            if norm.get("is_orchestrator"):
-                cur["is_orchestrator"] = True
-                cur.pop("efforts", None)
-                cur.pop("default_effort", None)
-            else:
-                if norm.get("efforts"):
-                    cur["efforts"] = list(norm["efforts"])
-                if norm.get("default_effort"):
-                    cur["default_effort"] = norm["default_effort"]
-            if norm.get("is_default"):
-                cur["is_default"] = True
-    return [merged[mid] for mid in order]
+    return reconcile_catalog_items(existing, incoming, prune_missing=False)
+
+
+def _model_family_key(model_id: str) -> str:
+    return _EFFORT_SUFFIX_RE.sub("", (model_id or "").strip().lower())
+
+
+def is_legacy_model_entry(item: dict[str, Any]) -> bool:
+    """Return True when an item is explicitly deprecated or matches a superseded model generation."""
+    if not isinstance(item, dict):
+        return False
+    if item.get("is_orchestrator") or item.get("is_default"):
+        return False
+    if item.get("deprecated") is True:
+        return True
+    mid = str(item.get("id") or "").strip()
+    if not mid or is_orchestrator_model(mid):
+        return False
+    return bool(_LEGACY_MODEL_RE.match(mid))
+
+
+def _protected_model_keys(cfg: dict[str, Any]) -> set[str]:
+    protected: set[str] = set()
+    candidates: list[str | None] = [str(cfg.get("defaults", {}).get("model") or "")]
+    for preset in cfg.get("orchestrator_presets") or []:
+        if isinstance(preset, dict):
+            candidates.append(preset.get("planner"))
+            candidates.append(preset.get("executor"))
+    for raw in candidates:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        low = raw.strip().lower()
+        protected.add(low)
+        protected.add(_model_family_key(low))
+    return protected
+
+
+def filter_legacy_catalog_items(
+    items: list[dict[str, Any]],
+    *,
+    cfg: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Filter legacy/deprecated models while preserving active/default/orchestrator entries."""
+    if not items:
+        return [], 0
+    config = cfg if cfg is not None else load_models_config()
+    if not bool(config.get("sync", {}).get("hide_legacy_models", True)):
+        return [dict(i) for i in items], 0
+    protected = _protected_model_keys(config)
+    kept: list[dict[str, Any]] = []
+    filtered = 0
+    for item in items:
+        mid_low = str(item.get("id") or "").strip().lower()
+        fam_low = _model_family_key(mid_low)
+        if (mid_low in protected or fam_low in protected) or not is_legacy_model_entry(item):
+            kept.append(dict(item))
+        else:
+            filtered += 1
+    if not kept:
+        return [dict(i) for i in items], 0
+    return kept, filtered
 
 
 def save_profile_catalog(
@@ -519,6 +647,7 @@ def save_profile_catalog(
     *,
     source: str,
     merge_existing: bool = False,
+    prune_missing: bool = False,
     now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     pid = profile_id or agy_profile.DEFAULT
@@ -531,8 +660,13 @@ def save_profile_catalog(
 
     def mutate(cfg: dict[str, Any]) -> None:
         nonlocal stored_items
-        prev = cfg["profiles"].get(pid, {}).get("items", []) if merge_existing else []
-        merged = merge_catalog_items(prev, cleaned_incoming) if merge_existing else cleaned_incoming
+        prev = cfg["profiles"].get(pid, {}).get("items", []) if (prune_missing or merge_existing) else []
+        if prune_missing:
+            merged = reconcile_catalog_items(prev, cleaned_incoming, prune_missing=True)
+        elif merge_existing:
+            merged = reconcile_catalog_items(prev, cleaned_incoming, prune_missing=False)
+        else:
+            merged = cleaned_incoming
         stored_items = merged
         cfg["profiles"][pid] = {
             "updated_at": stamp,
@@ -568,20 +702,31 @@ def is_profile_catalog_stale(profile_id: str, *, now: datetime | None = None) ->
     return updated < slot
 
 
-def profile_catalog(profile_id: str, *, now: datetime | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def profile_catalog(
+    profile_id: str,
+    *,
+    now: datetime | None = None,
+    apply_legacy_filter: bool = True,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     cfg = load_models_config()
     pid = profile_id or agy_profile.DEFAULT
     entry = cfg["profiles"].get(pid) or {}
-    items = [dict(i) for i in (entry.get("items") or [])]
+    raw_items = [dict(i) for i in (entry.get("items") or [])]
+    if apply_legacy_filter:
+        items, filtered_legacy_count = filter_legacy_catalog_items(raw_items, cfg=cfg)
+    else:
+        items, filtered_legacy_count = raw_items, 0
     hours = cfg["sync"].get("schedule_hours") or list(DEFAULT_SCHEDULE_HOURS)
     updated_at = entry.get("updated_at")
     parsed = _parse_iso(updated_at)
-    stale = True if not items or parsed is None else (bool(cfg["sync"].get("auto_sync", True)) and parsed < latest_scheduled_slot(now, hours))
+    stale = True if not raw_items or parsed is None else (bool(cfg["sync"].get("auto_sync", True)) and parsed < latest_scheduled_slot(now, hours))
     meta = {
         "synced_at": updated_at or cfg["sync"].get("last_synced_at"),
         "next_sync_at": next_scheduled_slot(now, hours).isoformat() if cfg["sync"].get("auto_sync", True) else None,
         "stale": stale,
         "source": entry.get("source"),
+        "hide_legacy_models": bool(cfg["sync"].get("hide_legacy_models", True)),
+        "filtered_legacy_count": filtered_legacy_count,
         "default_model": cfg["defaults"]["model"],
         "default_effort": cfg["defaults"]["effort"],
         "allow_auto_fallback": bool(cfg["defaults"].get("allow_auto_fallback", True)),
@@ -609,6 +754,7 @@ def public_config_view(*, now: datetime | None = None) -> dict[str, Any]:
         "config_path": str(config_path()),
         "auto_sync": bool(cfg["sync"].get("auto_sync", True)),
         "schedule_hours": hours,
+        "hide_legacy_models": bool(cfg["sync"].get("hide_legacy_models", True)),
         "last_synced_at": cfg["sync"].get("last_synced_at"),
         "next_sync_at": next_scheduled_slot(now, hours).isoformat() if cfg["sync"].get("auto_sync", True) else None,
         "last_error": cfg["sync"].get("last_error"),

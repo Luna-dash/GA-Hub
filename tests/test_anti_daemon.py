@@ -3569,3 +3569,198 @@ def test_merge_subagent_usage_and_ledger_role_ordering(tmp_path, monkeypatch):
     assert by_model["gemini-3.8-flash"]["roles"] == ["subagent", "compaction"]
     assert by_model["gemini-3.8-flash"]["calls"] == 3
     assert by_model["gemini-4-neon"]["calls"] == 1
+
+
+def test_models_sync_prunes_stale_prefers_acp_and_filters_legacy_safely(tmp_path, monkeypatch):
+    from server.services import agy_models
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    agy_models.reset_cache()
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+
+    # Seed agy_models.json with stale retired models and an active model that already has ACP efforts.
+    agy_models.save_profile_catalog(
+        "default",
+        [
+            {"id": "retired-model-old", "display_name": "Retired Old"},
+            {"id": "gemini-2.5-pro", "display_name": "Gemini 2.5 Pro"},
+            {"id": "gemini-4-hydrogen", "display_name": "Gemini 4 Hydrogen", "efforts": ["low", "high"]},
+        ],
+        source="cli",
+    )
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    monkeypatch.setattr(
+        mgr,
+        "_fetch_acp_models",
+        lambda pid: [
+            {"id": "gemini-4-neon", "display_name": "Gemini 4 Neon", "efforts": ["low", "high", "xhigh"]},
+            {"id": "gemini-4-hydrogen", "display_name": "Gemini 4 Hydrogen", "efforts": ["low", "medium", "high"], "is_default": True},
+            {"id": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash"},
+            {"id": "gemini-pro-orchestrator-neon", "display_name": "Orchestrator (Neon)", "is_orchestrator": True},
+        ],
+    )
+    monkeypatch.setattr(
+        mgr,
+        "_fetch_cli_models",
+        lambda pid: (_ for _ in ()).throw(AssertionError("CLI fallback should not run when ACP succeeds")),
+    )
+
+    synced = mgr.sync_models("default")
+    assert synced["source"] == "acp"
+    assert synced["filtered_legacy_count"] == 1
+    assert [m["id"] for m in synced["items"]] == [
+        "gemini-4-neon",
+        "gemini-4-hydrogen",
+        "gemini-pro-orchestrator-neon",
+    ]
+    # Persisted snapshot pruned retired-model-old & gemini-2.5-pro completely.
+    raw_items, raw_meta = agy_models.profile_catalog("default", apply_legacy_filter=False)
+    assert [m["id"] for m in raw_items] == [
+        "gemini-4-neon",
+        "gemini-4-hydrogen",
+        "gemini-3.8-flash",
+        "gemini-pro-orchestrator-neon",
+    ]
+    assert raw_meta["source"] == "acp"
+
+    # Toggling hide_legacy_models=False reveals gemini-3.8-flash immediately without upstream sync.
+    agy_models.patch_user_config(hide_legacy_models=False)
+    unfiltered = mgr.models_catalog_info("default", force_refresh=False)
+    assert unfiltered["filtered_legacy_count"] == 0
+    assert "gemini-3.8-flash" in [m["id"] for m in unfiltered["items"]]
+
+    # Re-enabling filter keeps protected preset/default models visible even if legacy.
+    agy_models.patch_user_config(
+        hide_legacy_models=True,
+        orchestrator_presets=[{"id": "preset-1", "name": "Legacy Test", "planner": "gemini-3.8-flash-high", "executor": "gemini-4-hydrogen-high"}],
+    )
+    protected_view = mgr.models_catalog_info("default", force_refresh=False)
+    assert "gemini-3.8-flash" in [m["id"] for m in protected_view["items"]]
+
+    # Fallback to CLI when ACP probe fails still prunes stale entries and preserves efforts for surviving models.
+    agy_models.patch_user_config(
+        orchestrator_presets=[dict(p) for p in agy_models.DEFAULT_ORCHESTRATOR_PRESETS],
+    )
+    monkeypatch.setattr(
+        mgr,
+        "_fetch_acp_models",
+        lambda pid: (_ for _ in ()).throw(agy_runtime.AgyProfileError(503, "acp unavailable")),
+    )
+    monkeypatch.setattr(
+        mgr,
+        "_fetch_cli_models",
+        lambda pid: [
+            {"id": "gemini-4-hydrogen", "display_name": "Gemini 4 Hydrogen"},
+            {"id": "claude-sonnet-4", "display_name": "Claude Sonnet 4"},
+        ],
+    )
+    cli_synced = mgr.sync_models("default")
+    assert cli_synced["source"] == "cli"
+    assert cli_synced["filtered_legacy_count"] == 1
+    assert [m["id"] for m in cli_synced["items"]] == ["gemini-4-hydrogen"]
+    assert cli_synced["items"][0]["efforts"] == ["low", "medium", "high"]
+
+    # _record_models from an ACP session also replaces stale entries instead of merging forever.
+    mgr._record_models("default", [{"id": "gemini-4-carbon", "display_name": "Gemini 4 Carbon"}])
+    after_record, _ = agy_models.profile_catalog("default", apply_legacy_filter=False)
+    assert [m["id"] for m in after_record] == ["gemini-4-carbon"]
+
+
+def test_fetch_acp_models_reads_curated_session_new_catalog(tmp_path, monkeypatch):
+    import io
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+
+    written_methods: list[str] = []
+
+    class FakeStdin(io.StringIO):
+        def __init__(self, out_q):
+            super().__init__()
+            self._out_q = out_q
+
+        def write(self, s):
+            import json as _json
+
+            for line in s.splitlines():
+                if not line.strip():
+                    continue
+                req = _json.loads(line)
+                written_methods.append(req["method"])
+                if req["method"] == "initialize":
+                    self._out_q.append(_json.dumps({"jsonrpc": "2.0", "id": req["id"], "result": {"protocolVersion": 1}}) + "\n")
+                elif req["method"] == "authenticate":
+                    self._out_q.append(_json.dumps({"jsonrpc": "2.0", "id": req["id"], "result": {}}) + "\n")
+                elif req["method"] == "session/new":
+                    self._out_q.append(_json.dumps({
+                        "jsonrpc": "2.0",
+                        "id": req["id"],
+                        "result": {
+                            "sessionId": "probe-s1",
+                            "configOptions": [
+                                {
+                                    "id": "model",
+                                    "category": "model",
+                                    "currentValue": "gemini-4-neon",
+                                    "options": [
+                                        {"value": "gemini-4-neon", "name": "Gemini 4 Neon"},
+                                        {"value": "gemini-4-hydrogen", "name": "Gemini 4 Hydrogen"},
+                                    ],
+                                }
+                            ],
+                            "models": {
+                                "currentModelId": "gemini-4-neon-high",
+                                "availableModels": [
+                                    {"modelId": "gemini-4-neon-low", "name": "Gemini 4 Neon (Low)"},
+                                    {"modelId": "gemini-4-neon-high", "name": "Gemini 4 Neon (High)"},
+                                    {"modelId": "gemini-2.5-pro-high", "name": "Gemini 2.5 Pro (High)"},
+                                ],
+                            },
+                        },
+                    }) + "\n")
+            return len(s)
+
+    class FakeStdout:
+        def __init__(self, buf: list[str]):
+            self._buf = buf
+
+        def __iter__(self):
+            import time as _time
+
+            while True:
+                if self._buf:
+                    yield self._buf.pop(0)
+                    if len(written_methods) >= 3 and not self._buf:
+                        break
+                else:
+                    _time.sleep(0.005)
+
+        def close(self):
+            pass
+
+    class FakeProc:
+        def __init__(self):
+            self.pid = 42424
+            buf: list[str] = []
+            self.stdin = FakeStdin(buf)
+            self.stdout = FakeStdout(buf)
+            self.stderr = io.StringIO("")
+
+    class FakeGroup:
+        def terminate(self, pid):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(agy_runtime.child_job, "spawn", lambda *a, **kw: FakeProc())
+    monkeypatch.setattr(agy_runtime.child_job, "create_process_group", lambda proc: FakeGroup())
+    monkeypatch.setattr(agy_runtime.child_job, "forget", lambda pid: None)
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    items = mgr._fetch_acp_models("default")
+    assert written_methods == ["initialize", "authenticate", "session/new"]
+    assert [m["id"] for m in items] == ["gemini-4-neon", "gemini-4-hydrogen"]
+    assert items[0]["efforts"] == ["low", "high"]
+    assert items[0].get("is_default") is True

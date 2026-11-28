@@ -93,4 +93,57 @@ describe('AntiOrchestratorModal', () => {
       expect(dialog.textContent).toContain('预设名称非法')
     })
   })
+
+  it('displays filtered legacy count and saves hide_legacy_models toggle', async () => {
+    antiApiMock.models.mockResolvedValue({
+      items: [
+        { id: 'gemini-4-hydrogen', display_name: 'Gemini 4 Hydrogen', efforts: ['low', 'high'] },
+      ],
+      source: 'acp',
+      filtered_legacy_count: 3,
+      synced_at: '2026-11-28T09:00:00+08:00',
+    })
+    antiApiMock.modelsConfig.mockResolvedValue({
+      config_path: '',
+      orchestrator_presets: [],
+      hidden_models: [],
+      hide_legacy_models: true,
+    })
+    antiApiMock.updateModelsConfig.mockResolvedValue({
+      config_path: '',
+      orchestrator_presets: [],
+      hidden_models: [],
+      hide_legacy_models: false,
+    })
+    antiApiMock.updateProfileOrchestrator.mockResolvedValue({ profile_id: 'p1', planner: null, executor: null })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <AntiOrchestratorModal open onClose={() => {}} profileId="p1" />
+        </QueryClientProvider>,
+      )
+    })
+
+    await vi.waitFor(() => {
+      const dialog = document.body.querySelector('[role="dialog"]')!
+      expect(dialog.textContent).toContain('共 1 个模型（已隐藏 3 个旧模型） · ACP')
+    })
+
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    const toggle = dialog.querySelector<HTMLInputElement>('input[aria-label="自动隐藏旧世代模型"]')!
+    expect(toggle.checked).toBe(true)
+
+    await act(async () => { toggle.click() })
+    expect(toggle.checked).toBe(false)
+
+    const saveBtn = Array.from(dialog.querySelectorAll('button')).find(b => b.textContent === '保存设置') as HTMLButtonElement
+    await act(async () => { saveBtn.click() })
+
+    await vi.waitFor(() => {
+      expect(antiApiMock.updateModelsConfig).toHaveBeenCalledWith(expect.objectContaining({
+        hide_legacy_models: false,
+      }))
+    })
+  })
 })

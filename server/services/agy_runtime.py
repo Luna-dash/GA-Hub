@@ -2521,7 +2521,7 @@ class AgyRuntimeManager:
         if not items:
             return
         try:
-            saved = agy_models.save_profile_catalog(profile_id, items, source="acp", merge_existing=True)
+            saved = agy_models.save_profile_catalog(profile_id, items, source="acp", prune_missing=True)
         except OSError:
             saved = [dict(i) for i in items]
         with self._lock:
@@ -2782,6 +2782,172 @@ class AgyRuntimeManager:
                 items.append(entry)
         return items
 
+    def _fetch_acp_models(self, pid: str) -> list[dict[str, Any]]:
+        """Probe official `agy acp` `session/new` for the curated runtime model catalog."""
+        executable = agy_profile.agy_executable()
+        if pid == agy_profile.DEFAULT:
+            agy_profile._seed_default_vault_if_empty()
+        agy_profile.prepare_profile(pid)
+        temp_dir = agy_profile.make_runtime_temp_dir(pid)
+        probe_ws = temp_dir / "ws"
+        probe_ws.mkdir(parents=True, exist_ok=True)
+        proc: subprocess.Popen | None = None
+        group: child_job.ProcessGroupHandle | None = None
+        incoming: queue.Queue[dict[str, Any] | None] = queue.Queue()
+        stderr_lines: list[str] = []
+        with self._lock:
+            known_version = self._cached_version
+        try:
+            env = agy_profile.clean_agy_env(pid, temp_dir=temp_dir, vault_only=True)
+            cmd = [
+                executable,
+                "acp",
+                "--gemini-dir",
+                str(agy_profile.profile_vault_gemini_dir(pid)),
+                "--app-data-dir",
+                agy_profile.APP_DATA_DIR_NAME,
+            ]
+            proc = child_job.spawn(
+                cmd,
+                kind="agy-acp-probe",
+                marker=executable,
+                cwd=str(probe_ws),
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                **hidden_process_kwargs(),
+            )
+            group = child_job.create_process_group(proc)
+
+            def _read_stdout() -> None:
+                try:
+                    if proc is None or proc.stdout is None:
+                        return
+                    for raw_line in proc.stdout:
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+                        try:
+                            frame = json.loads(line)
+                        except ValueError:
+                            continue
+                        if isinstance(frame, dict):
+                            incoming.put(frame)
+                except OSError:
+                    pass
+                finally:
+                    incoming.put(None)
+
+            def _read_stderr() -> None:
+                try:
+                    if proc is None or proc.stderr is None:
+                        return
+                    for raw_line in proc.stderr:
+                        text = raw_line.strip()
+                        if text and len(stderr_lines) < 32:
+                            stderr_lines.append(text)
+                except OSError:
+                    pass
+
+            t_out = threading.Thread(target=_read_stdout, name="agy-acp-probe-out", daemon=True)
+            t_err = threading.Thread(target=_read_stderr, name="agy-acp-probe-err", daemon=True)
+            t_out.start()
+            t_err.start()
+
+            def _rpc_once(req_id: int, method: str, params: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+                if proc is None or proc.stdin is None:
+                    raise AgyProfileError(503, "Agy ACP 探测通道不可用")
+                frame = json.dumps({"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}, ensure_ascii=False)
+                try:
+                    proc.stdin.write(frame + "\n")
+                    proc.stdin.flush()
+                except OSError as exc:
+                    raise AgyProfileError(503, f"发送 Agy ACP 探测请求失败: {exc}") from exc
+                deadline = time.monotonic() + timeout
+                while True:
+                    rem = deadline - time.monotonic()
+                    if rem <= 0:
+                        raise AgyProfileError(503, f"Agy ACP {method} 探测超时")
+                    try:
+                        msg = incoming.get(timeout=rem)
+                    except queue.Empty as exc:
+                        raise AgyProfileError(503, f"Agy ACP {method} 探测超时") from exc
+                    if msg is None:
+                        detail = "；".join(stderr_lines[-3:]) if stderr_lines else "ACP 进程提前退出"
+                        if re.search(r"please sign in|not logged in|login required|authentication required", detail, re.I):
+                            raise AgyProfileError(409, "Agy 账号尚未登录，请先完成官方登录后重试")
+                        raise AgyProfileError(503, f"Agy ACP 模型探测失败: {detail}")
+                    if msg.get("id") != req_id:
+                        continue
+                    err = msg.get("error")
+                    if isinstance(err, dict):
+                        err_msg = str(err.get("message") or err)
+                        err_code = err.get("code")
+                        if err_code in (-32000, -32603) or re.search(r"login|auth|sign in", err_msg, re.I):
+                            raise AgyProfileError(409, "Agy 账号尚未登录，请先完成官方登录后重试")
+                        raise AgyProfileError(503, f"Agy ACP {method} 返回错误: {err_msg}")
+                    res = msg.get("result")
+                    return res if isinstance(res, dict) else {}
+
+            _rpc_once(
+                1,
+                "initialize",
+                {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {
+                        "fs": {"readTextFile": False, "writeTextFile": False},
+                        "terminal": False,
+                    },
+                    "clientInfo": client_info_for_version(known_version),
+                },
+                timeout=8.0,
+            )
+            try:
+                _rpc_once(2, "authenticate", {"methodId": "oauth-personal"}, timeout=10.0)
+            except AgyProfileError as exc:
+                if exc.status == 409:
+                    raise
+            started = _rpc_once(
+                3,
+                "session/new",
+                {"cwd": str(probe_ws), "mcpServers": []},
+                timeout=12.0,
+            )
+            items = extract_enriched_model_catalog_from_setup(started)
+        except AgyProfileError:
+            raise
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            raise AgyProfileError(503, f"Agy ACP 模型探测失败: {exc}") from exc
+        finally:
+            if proc is not None:
+                if proc.stdin is not None:
+                    try:
+                        proc.stdin.close()
+                    except OSError:
+                        pass
+                if group is not None:
+                    group.terminate(proc.pid)
+                    group.close()
+                else:
+                    child_job.terminate_tree(proc.pid)
+                for stream in (proc.stdout, proc.stderr):
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass
+                child_job.forget(proc.pid)
+            elif group is not None:
+                group.close()
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        if not items:
+            raise AgyProfileError(502, "Agy ACP 未返回模型目录")
+        return items
+
     def _fetch_cli_models(self, pid: str) -> list[dict[str, Any]]:
         executable = agy_profile.agy_executable()
         if pid == agy_profile.DEFAULT:
@@ -2832,10 +2998,28 @@ class AgyRuntimeManager:
         if not force_refresh:
             if disk_items and not meta["stale"]:
                 with self._lock:
-                    self._cached_models[pid] = list(disk_items)
+                    self._cached_models[pid] = list(agy_models.profile_catalog(pid, apply_legacy_filter=False)[0])
                 return list(disk_items)
             if cached and not disk_items:
-                return list(cached)
+                filtered_cached, _ = agy_models.filter_legacy_catalog_items(cached)
+                return filtered_cached
+
+        acp_items: list[dict[str, Any]] = []
+        acp_error: AgyProfileError | None = None
+        try:
+            acp_items = self._fetch_acp_models(pid)
+        except AgyProfileError as exc:
+            acp_error = exc
+
+        if acp_items:
+            try:
+                saved = agy_models.save_profile_catalog(pid, acp_items, source="acp", prune_missing=True)
+            except OSError:
+                saved = list(acp_items)
+            with self._lock:
+                self._cached_models[pid] = list(saved)
+            filtered, _ = agy_models.filter_legacy_catalog_items(saved)
+            return filtered
 
         cli_items: list[dict[str, Any]] = []
         cli_error: AgyProfileError | None = None
@@ -2844,26 +3028,31 @@ class AgyRuntimeManager:
         except AgyProfileError as exc:
             cli_error = exc
 
-        merged = agy_models.merge_catalog_items(cli_items, []) if cli_items else []
-        if merged:
+        if cli_items:
             try:
-                saved = agy_models.save_profile_catalog(pid, merged, source="cli", merge_existing=True)
+                saved = agy_models.save_profile_catalog(pid, cli_items, source="cli", prune_missing=True)
             except OSError:
-                saved = merged
+                saved = list(cli_items)
             with self._lock:
                 self._cached_models[pid] = list(saved)
-            return list(saved)
+            filtered, _ = agy_models.filter_legacy_catalog_items(saved)
+            return filtered
 
-        if cli_error is not None:
+        chosen_error = (
+            acp_error
+            if (acp_error is not None and acp_error.status == 409)
+            else (cli_error or acp_error)
+        )
+        if chosen_error is not None:
             try:
-                agy_models.record_sync_error(str(cli_error))
+                agy_models.record_sync_error(str(chosen_error))
             except OSError:
                 pass
             if not force_refresh and disk_items:
                 with self._lock:
-                    self._cached_models[pid] = list(disk_items)
+                    self._cached_models[pid] = list(agy_models.profile_catalog(pid, apply_legacy_filter=False)[0])
                 return list(disk_items)
-            raise cli_error
+            raise chosen_error
         raise AgyProfileError(502, "Agy 返回了空的模型目录")
 
     def models_catalog_info(
@@ -2880,6 +3069,8 @@ class AgyRuntimeManager:
             "synced_at": meta.get("synced_at"),
             "next_sync_at": meta.get("next_sync_at"),
             "stale": bool(meta.get("stale")),
+            "source": meta.get("source"),
+            "filtered_legacy_count": int(meta.get("filtered_legacy_count") or 0),
             "default_model": meta.get("default_model"),
             "default_effort": meta.get("default_effort"),
         }

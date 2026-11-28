@@ -3580,6 +3580,10 @@ export interface components {
             next_sync_at?: string | null;
             /** Stale */
             stale?: boolean | null;
+            /** Source */
+            source?: string | null;
+            /** Filtered Legacy Count */
+            filtered_legacy_count?: number | null;
             /** Default Model */
             default_model?: string | null;
             /** Default Effort */
@@ -3616,6 +3620,8 @@ export interface components {
             auto_sync?: boolean | null;
             /** Schedule Hours */
             schedule_hours?: number[] | null;
+            /** Hide Legacy Models */
+            hide_legacy_models?: boolean | null;
             /** Default Model */
             default_model?: string | null;
             /** Default Effort */
@@ -3648,6 +3654,11 @@ export interface components {
             auto_sync: boolean;
             /** Schedule Hours */
             schedule_hours?: number[];
+            /**
+             * Hide Legacy Models
+             * @default true
+             */
+            hide_legacy_models: boolean;
             /** Last Synced At */
             last_synced_at?: string | null;
             /** Next Sync At */

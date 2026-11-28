@@ -9070,6 +9070,28 @@
             ],
             "title": "Stale"
           },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "filtered_legacy_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filtered Legacy Count"
+          },
           "default_model": {
             "anyOf": [
               {
@@ -9254,6 +9276,17 @@
             ],
             "title": "Schedule Hours"
           },
+          "hide_legacy_models": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hide Legacy Models"
+          },
           "default_model": {
             "anyOf": [
               {
@@ -9389,6 +9422,11 @@
             },
             "type": "array",
             "title": "Schedule Hours"
+          },
+          "hide_legacy_models": {
+            "type": "boolean",
+            "title": "Hide Legacy Models",
+            "default": true
           },
           "last_synced_at": {
             "anyOf": [

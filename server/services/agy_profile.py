@@ -706,12 +706,22 @@ def record_usage(
 
 def agy_executable_or_none() -> str | None:
     name = "agy.exe" if os.name == "nt" else "agy"
-    candidates = (
+    candidates: list[str | None] = [
         os.environ.get(ENV_AGY_PATH),
         os.environ.get("ANTICLI_AGY_PATH"),
         shutil.which(name),
         str(Path.home() / ".gemini" / "bin" / name),
-    )
+    ]
+    if os.name == "nt":
+        local_app = os.environ.get("LOCALAPPDATA")
+        prog_files = os.environ.get("ProgramFiles")
+        if local_app:
+            candidates.extend([
+                str(Path(local_app) / "Programs" / "Antigravity" / "bin" / name),
+                str(Path(local_app) / "Antigravity" / "bin" / name),
+            ])
+        if prog_files:
+            candidates.append(str(Path(prog_files) / "Antigravity" / "bin" / name))
     for candidate in candidates:
         if candidate and Path(candidate).is_file():
             return str(Path(candidate).resolve())

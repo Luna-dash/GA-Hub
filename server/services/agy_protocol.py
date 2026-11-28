@@ -1745,7 +1745,7 @@ def _extract_concrete_efforts_by_family(setup_result: dict[str, Any]) -> tuple[d
     if isinstance(raw_cur, str) and raw_cur.strip():
         current_id = raw_cur.strip()
     for m in models_block.get("availableModels") or []:
-        if not isinstance(m, dict):
+        if not isinstance(m, dict) or m.get("isInternal") is True:
             continue
         mid = m.get("modelId")
         if not isinstance(mid, str) or not mid.strip():
@@ -1762,9 +1762,16 @@ def _extract_concrete_efforts_by_family(setup_result: dict[str, Any]) -> tuple[d
     return by_family, current_id
 
 
-def extract_model_catalog_from_setup(setup_result: dict[str, Any]) -> list[dict[str, str]]:
+def _is_entry_deprecated(entry: dict[str, Any]) -> bool:
+    if entry.get("deprecated") is True or entry.get("isDeprecated") is True:
+        return True
+    meta = entry.get("_meta") or entry.get("meta")
+    return isinstance(meta, dict) and (meta.get("deprecated") is True or meta.get("isDeprecated") is True)
+
+
+def extract_model_catalog_from_setup(setup_result: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract normalized `{id, display_name}` models from ACP `session/new` or `session/resume`."""
-    items: list[dict[str, str]] = []
+    items: list[dict[str, Any]] = []
     seen: set[str] = set()
     config_options = setup_result.get("configOptions")
     if isinstance(config_options, list):
@@ -1776,21 +1783,34 @@ def extract_model_catalog_from_setup(setup_result: dict[str, Any]) -> list[dict[
                     continue
                 if "options" in entry and isinstance(entry["options"], list):
                     for sub in entry["options"]:
-                        val = sub.get("value") if isinstance(sub, dict) else None
+                        if not isinstance(sub, dict):
+                            continue
+                        val = sub.get("value")
                         if isinstance(val, str) and val and val not in seen:
                             seen.add(val)
-                            items.append({"id": val, "display_name": str(sub.get("name") or val)})
+                            row: dict[str, Any] = {"id": val, "display_name": str(sub.get("name") or val)}
+                            if _is_entry_deprecated(sub):
+                                row["deprecated"] = True
+                            items.append(row)
                 else:
                     val = entry.get("value")
                     if isinstance(val, str) and val and val not in seen:
                         seen.add(val)
-                        items.append({"id": val, "display_name": str(entry.get("name") or val)})
+                        row = {"id": val, "display_name": str(entry.get("name") or val)}
+                        if _is_entry_deprecated(entry):
+                            row["deprecated"] = True
+                        items.append(row)
     models_block = setup_result.get("models")
     if not items and isinstance(models_block, dict):
         for m in models_block.get("availableModels") or []:
-            if isinstance(m, dict) and isinstance(m.get("modelId"), str) and m["modelId"] not in seen:
+            if not isinstance(m, dict) or m.get("isInternal") is True:
+                continue
+            if isinstance(m.get("modelId"), str) and m["modelId"] and m["modelId"] not in seen:
                 seen.add(m["modelId"])
-                items.append({"id": m["modelId"], "display_name": str(m.get("name") or m["modelId"])})
+                row = {"id": m["modelId"], "display_name": str(m.get("name") or m["modelId"])}
+                if _is_entry_deprecated(m):
+                    row["deprecated"] = True
+                items.append(row)
     return items
 
 
@@ -1812,6 +1832,8 @@ def extract_enriched_model_catalog_from_setup(setup_result: dict[str, Any]) -> l
             "id": mid,
             "display_name": item["display_name"],
         }
+        if item.get("deprecated"):
+            entry["deprecated"] = True
         if is_orchestrator_model_id(mid):
             entry["is_orchestrator"] = True
         elif mid in efforts_by_family:

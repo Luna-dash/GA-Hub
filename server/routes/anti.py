@@ -99,6 +99,8 @@ class AntiModelList(BaseModel):
     synced_at: str | None = None
     next_sync_at: str | None = None
     stale: bool | None = None
+    source: str | None = None
+    filtered_legacy_count: int | None = None
     default_model: str | None = None
     default_effort: str | None = None
 
@@ -134,6 +136,7 @@ class AntiModelsConfigResp(BaseModel):
     config_path: str
     auto_sync: bool = True
     schedule_hours: list[int] = Field(default_factory=lambda: [0, 6, 12, 18])
+    hide_legacy_models: bool = True
     last_synced_at: str | None = None
     next_sync_at: str | None = None
     last_error: str | None = None
@@ -152,6 +155,7 @@ class AntiModelsConfigResp(BaseModel):
 class AntiModelsConfigPatch(BaseModel):
     auto_sync: bool | None = None
     schedule_hours: list[int] | None = None
+    hide_legacy_models: bool | None = None
     default_model: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)] | None = None
     default_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
     allow_auto_fallback: bool | None = None
@@ -867,6 +871,7 @@ def update_models_config(body: AntiModelsConfigPatch, request: Request):
     agy_models.patch_user_config(
         auto_sync=body.auto_sync,
         schedule_hours=body.schedule_hours,
+        hide_legacy_models=body.hide_legacy_models,
         default_model=body.default_model,
         default_effort=body.default_effort,
         allow_auto_fallback=body.allow_auto_fallback,

@@ -141,6 +141,7 @@ export function AntiOrchestratorModal({
     normalizeOrchestratorPresets(DEFAULT_ORCHESTRATOR_PRESETS),
   )
   const [hiddenDraft, setHiddenDraft] = useState<string[]>([])
+  const [hideLegacyDraft, setHideLegacyDraft] = useState(true)
 
   const modelsQuery = useQuery({
     queryKey: ['anti-models', effectivePid],
@@ -161,6 +162,7 @@ export function AntiOrchestratorModal({
     if (!open) return
     setPresetDrafts(normalizeOrchestratorPresets(modelsConfigQuery.data?.orchestrator_presets))
     setHiddenDraft(Array.isArray(modelsConfigQuery.data?.hidden_models) ? modelsConfigQuery.data.hidden_models : [])
+    setHideLegacyDraft(modelsConfigQuery.data?.hide_legacy_models ?? true)
   }, [open, modelsConfigQuery.data])
 
   const syncModels = useMutation({
@@ -179,9 +181,11 @@ export function AntiOrchestratorModal({
     mutationFn: async ({
       presets,
       hiddenModels,
+      hideLegacyModels,
     }: {
       presets: ReadonlyArray<AntiOrchestratorPreset>
       hiddenModels: ReadonlyArray<string>
+      hideLegacyModels: boolean
     }) => {
       const cleanedPresets = normalizeOrchestratorPresets(presets).map((preset, idx) => ({
         ...preset,
@@ -190,6 +194,7 @@ export function AntiOrchestratorModal({
       const saved = await antiApi.updateModelsConfig({
         orchestrator_presets: cleanedPresets,
         hidden_models: [...new Set(hiddenModels.map(m => m.trim()).filter(Boolean))],
+        hide_legacy_models: hideLegacyModels,
       })
       const activePresetId = resolveActivePresetIdFromStorage()
       const activePreset = activePresetId
@@ -212,6 +217,8 @@ export function AntiOrchestratorModal({
       cache.setQueryData(['anti-models-config'], saved)
       setPresetDrafts(normalizeOrchestratorPresets(saved.orchestrator_presets))
       setHiddenDraft(Array.isArray(saved.hidden_models) ? saved.hidden_models : [])
+      setHideLegacyDraft(saved.hide_legacy_models ?? true)
+      void cache.invalidateQueries({ queryKey: ['anti-models'] })
       setMessage('已保存，顶栏模型与空闲进程已刷新。')
     },
   })
@@ -243,6 +250,7 @@ export function AntiOrchestratorModal({
     () => [...new Set((Array.isArray(modelsConfigQuery.data?.hidden_models) ? modelsConfigQuery.data.hidden_models : []).map(m => m.trim()).filter(Boolean))].sort(),
     [modelsConfigQuery.data?.hidden_models],
   )
+  const baselineHideLegacy = modelsConfigQuery.data?.hide_legacy_models ?? true
   const normalizedHiddenDraft = useMemo(
     () => [...new Set(hiddenDraft.map(m => m.trim()).filter(Boolean))].sort(),
     [hiddenDraft],
@@ -250,7 +258,8 @@ export function AntiOrchestratorModal({
   const isDirty = useMemo(() => (
     JSON.stringify(presetDrafts) !== JSON.stringify(baselinePresets)
     || JSON.stringify(normalizedHiddenDraft) !== JSON.stringify(baselineHidden)
-  ), [presetDrafts, baselinePresets, normalizedHiddenDraft, baselineHidden])
+    || hideLegacyDraft !== baselineHideLegacy
+  ), [presetDrafts, baselinePresets, normalizedHiddenDraft, baselineHidden, hideLegacyDraft, baselineHideLegacy])
 
   const { requestClose } = useDirtyClose({
     dirty: isDirty,
@@ -313,7 +322,7 @@ export function AntiOrchestratorModal({
               </h3>
               <p className="mt-0.5 text-[11px] text-ink-muted">
                 {modelsQuery.data?.items
-                  ? `共 ${modelsQuery.data.items.length} 个模型${formatSyncTime(modelsQuery.data.synced_at) ? ` · 同步于 ${formatSyncTime(modelsQuery.data.synced_at)}` : ''}`
+                  ? `共 ${modelsQuery.data.items.length} 个模型${modelsQuery.data.filtered_legacy_count ? `（已隐藏 ${modelsQuery.data.filtered_legacy_count} 个旧模型）` : ''}${modelsQuery.data.source ? ` · ${modelsQuery.data.source.toUpperCase()}` : ''}${formatSyncTime(modelsQuery.data.synced_at) ? ` · 同步于 ${formatSyncTime(modelsQuery.data.synced_at)}` : ''}`
                   : '默认每日 00/06/12/18 点自动同步上游目录'}
               </p>
             </div>
@@ -328,6 +337,17 @@ export function AntiOrchestratorModal({
               <span>{syncModels.isPending ? '同步中…' : '同步上游模型'}</span>
             </button>
           </div>
+          <label className="flex cursor-pointer items-center justify-between gap-2 rounded-md border border-line/50 bg-bg-soft/35 px-2.5 py-1.5 text-[11px] text-ink">
+            <span>自动隐藏旧世代与已下线模型（对齐 IDE 活跃目录）</span>
+            <input
+              type="checkbox"
+              aria-label="自动隐藏旧世代模型"
+              checked={hideLegacyDraft}
+              disabled={formDisabled}
+              onChange={event => setHideLegacyDraft(event.target.checked)}
+              className="h-3.5 w-3.5 rounded border-line text-accent accent-accent"
+            />
+          </label>
           {modelsQuery.isError && (
             <div className="flex items-center justify-between gap-2 rounded-md border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-[11px] text-status-danger">
               <span role="alert" className="min-w-0">
@@ -487,6 +507,7 @@ export function AntiOrchestratorModal({
               onClick={() => saveConfig.mutate({
                 presets: [...DEFAULT_ORCHESTRATOR_PRESETS],
                 hiddenModels: [],
+                hideLegacyModels: true,
               })}
             >
               恢复默认
@@ -498,6 +519,7 @@ export function AntiOrchestratorModal({
               onClick={() => saveConfig.mutate({
                 presets: presetDrafts,
                 hiddenModels: hiddenDraft,
+                hideLegacyModels: hideLegacyDraft,
               })}
             >
               {saveConfig.isPending ? '保存中…' : '保存设置'}

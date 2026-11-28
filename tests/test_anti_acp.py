@@ -1130,3 +1130,36 @@ def test_prompt_outcome_watcher_subagent_step_usages_nested_resumed_and_guarded(
     watcher.prepare()
     assert watcher.turn_subagent_step_usages() == []
     assert proto.discover_descendant_conversations(app_data, "../escape") == []
+
+
+def test_extract_enriched_model_catalog_filters_internal_and_respects_config_options():
+    setup = {
+        "configOptions": [
+            {
+                "id": "model",
+                "category": "model",
+                "type": "select",
+                "currentValue": "gemini-4-hydrogen",
+                "options": [
+                    {"value": "gemini-4-hydrogen", "name": "Gemini 4 Hydrogen"},
+                    {"value": "gemini-4-neon", "name": "Gemini 4 Neon"},
+                    {"value": "gemini-3.8-flash", "name": "Gemini 3.8 Flash", "deprecated": True},
+                ],
+            }
+        ],
+        "models": {
+            "currentModelId": "gemini-4-hydrogen-high",
+            "availableModels": [
+                {"modelId": "gemini-4-hydrogen-low", "name": "Gemini 4 Hydrogen (Low)"},
+                {"modelId": "gemini-4-hydrogen-high", "name": "Gemini 4 Hydrogen (High)"},
+                {"modelId": "gemini-4-hydrogen-xhigh", "name": "Internal Preview", "isInternal": True},
+                {"modelId": "gemini-2.5-pro-high", "name": "Gemini 2.5 Pro (High)"},
+            ],
+        },
+    }
+    enriched = proto.extract_enriched_model_catalog_from_setup(setup)
+    assert [m["id"] for m in enriched] == ["gemini-4-hydrogen", "gemini-4-neon", "gemini-3.8-flash"]
+    hydrogen = enriched[0]
+    assert hydrogen["efforts"] == ["low", "high"]
+    assert hydrogen.get("is_default") is True
+    assert enriched[2].get("deprecated") is True
